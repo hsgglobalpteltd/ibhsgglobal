@@ -1,0 +1,3796 @@
+<div class="content">
+    <div class="promoter-module w-full flex flex-col gap-4" id="promoter-module-root">
+        <style>
+            /* Custom Scoped Styles for Promoter Scheduler */
+            .promoter-module {
+                width: 100%;
+                max-width: 100%;
+                min-width: 0;
+                overflow: hidden;
+            }
+
+            #module-container {
+                min-width: 0 !important;
+                overflow-x: hidden !important;
+            }
+
+            .promoter-module .tab-container {
+                display: flex;
+                border-bottom: 2px solid var(--border);
+                align-items: flex-end;
+                padding: 0 1rem;
+                gap: 4px;
+                margin-bottom: 0;
+                width: 100%;
+                background: transparent;
+            }
+
+            .promoter-module .tab-btn {
+                font-weight: 700;
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.05em;
+                color: var(--text-muted);
+                cursor: pointer;
+                height: 40px;
+                box-sizing: border-box;
+                padding: 0 1.5rem;
+                border: 2px solid var(--border);
+                border-bottom: none;
+                border-radius: 10px 10px 0 0;
+                background: linear-gradient(to bottom, #f8fafc, #f1f5f9);
+                transition: all 0.15s ease-in-out;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                position: relative;
+                bottom: -2px;
+                z-index: 1;
+                margin-right: -2px;
+            }
+
+            .promoter-module .tab-btn[data-tab="overview"] {
+                width: 40px;
+                padding: 0;
+                justify-content: center;
+            }
+
+            .promoter-module .tab-btn:hover {
+                color: var(--text-main);
+                background: linear-gradient(to bottom, #ffffff, #f1f5f9);
+                z-index: 3;
+            }
+
+            .promoter-module .tab-btn.active {
+                color: var(--primary) !important;
+                background: #ffffff !important;
+                border-color: var(--border) !important;
+                border-bottom: 2px solid #ffffff !important;
+                z-index: 4;
+                font-weight: 800;
+                box-shadow: 0 -3px 6px rgba(0, 0, 0, 0.03);
+            }
+
+            .promoter-module .tab-action-btn {
+                font-size: 0.8rem;
+                color: var(--text-muted);
+                background: linear-gradient(to bottom, #f8fafc, #f1f5f9);
+                border: 2px solid var(--border);
+                border-bottom: none;
+                border-radius: 10px 10px 0 0;
+                width: 40px;
+                height: 40px;
+                box-sizing: border-box;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                transition: all 0.15s ease-in-out;
+                position: relative;
+                bottom: -2px;
+                z-index: 1;
+                margin-right: -2px;
+            }
+
+            .promoter-module .tab-action-btn:hover:not(:disabled) {
+                color: var(--primary);
+                background: linear-gradient(to bottom, #ffffff, #f1f5f9);
+                z-index: 3;
+            }
+
+            .promoter-module .tab-action-btn:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+                background: #f8fafc;
+            }
+
+            .promoter-module #btn-redo {
+                margin-right: 16px;
+            }
+
+            .promoter-module .tab-close {
+                font-size: 0.75rem;
+                opacity: 0.6;
+                cursor: pointer;
+                padding: 2px;
+                border-radius: 50%;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                transition: var(--transition);
+                color: var(--text-muted);
+            }
+
+            .promoter-module .tab-close:hover {
+                background-color: #f1f5f9;
+                color: #ef4444;
+                opacity: 1;
+            }
+
+            .promoter-module .sched-table-wrapper {
+                overflow-x: auto;
+                width: 100%;
+                border: 1px solid var(--border);
+                background-color: white;
+                border-radius: var(--radius-lg);
+                box-shadow: var(--shadow-sm);
+                padding-right: calc(100% - 400px);
+                box-sizing: border-box;
+            }
+
+            .promoter-module [id^="board-table-pane-"] {
+                position: relative;
+            }
+
+            .promoter-module .hidden-cols-indicator {
+                position: absolute;
+                left: 121px;
+                top: 0;
+                transform: translate(-50%, -50%) scale(0.9);
+                width: 26px;
+                height: 26px;
+                background-color: var(--primary);
+                color: white;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                box-shadow: 0 4px 10px rgba(115, 81, 251, 0.35);
+                z-index: 30;
+                opacity: 0;
+                pointer-events: none;
+                transition: opacity 0.25s cubic-bezier(0.4, 0, 0.2, 1), transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+
+            .promoter-module .has-hidden-cols .hidden-cols-indicator {
+                opacity: 1 !important;
+                transform: translate(-50%, -50%) scale(1);
+            }
+
+            .promoter-module .sched-table-wrapper::-webkit-scrollbar {
+                height: 8px;
+            }
+
+            .promoter-module .sched-table-wrapper::-webkit-scrollbar-track {
+                background: #f1f5f9;
+                border-radius: 4px;
+            }
+
+            .promoter-module .sched-table-wrapper::-webkit-scrollbar-thumb {
+                background: #cbd5e1;
+                border-radius: 4px;
+            }
+
+            .promoter-module .sched-table-wrapper::-webkit-scrollbar-thumb:hover {
+                background: var(--primary);
+            }
+
+            .promoter-module .sched-table {
+                width: max-content;
+                border-collapse: separate;
+                border-spacing: 0;
+                transition: filter 0.35s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+
+            .promoter-module .mode-shifting .sched-table {
+                filter: blur(8px);
+                opacity: 0.3;
+            }
+
+            .promoter-module .sched-table th,
+            .promoter-module .sched-table td {
+                border-right: 1px solid var(--border);
+                border-bottom: 1px solid var(--border);
+                padding: 1rem;
+                vertical-align: top;
+                box-sizing: border-box;
+            }
+
+            .promoter-module .sched-table th:not(:first-child):not(.add-promoter-th),
+            .promoter-module .sched-table td:not(:first-child):not(.add-promoter-td) {
+                min-width: 280px;
+                width: 280px;
+                max-width: 280px;
+            }
+
+            .promoter-module .sched-table th {
+                background-color: var(--bg);
+                font-weight: 700;
+                text-align: left;
+                border-top: 1px solid var(--border);
+            }
+
+            .promoter-module .sched-table th:first-child,
+            .promoter-module .sched-table td:first-child {
+                position: sticky;
+                left: 0;
+                z-index: 10;
+                min-width: 120px !important;
+                width: 120px !important;
+                max-width: 120px !important;
+                text-align: center;
+                border-left: 1px solid var(--border);
+                border-right: 2px solid var(--border) !important;
+                background-color: #ffffff !important;
+                box-shadow: 4px 0 8px -4px rgba(20, 18, 30, 0.08);
+            }
+
+            .promoter-module .sched-table td:first-child {
+                background-color: white !important;
+            }
+
+            .promoter-module .sched-table th:first-child {
+                background-color: var(--bg) !important;
+                z-index: 20;
+            }
+
+            .promoter-module .sched-table th.add-promoter-th,
+            .promoter-module .sched-table td.add-promoter-td {
+                min-width: 150px !important;
+                width: 150px !important;
+                max-width: 150px !important;
+            }
+
+            .promoter-module .floating-sidebar {
+                position: fixed;
+                top: var(--header-height, 3.5rem);
+                right: 0;
+                bottom: 0;
+                width: 350px;
+                background-color: white;
+                border-left: 1px solid var(--border);
+                box-shadow: -4px 0 24px rgba(20, 18, 30, 0.15);
+                z-index: 2500;
+                transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.3s;
+                display: flex;
+                flex-direction: column;
+                padding: 1.5rem;
+                gap: 1rem;
+                height: calc(100vh - var(--header-height, 3.5rem));
+                visibility: visible;
+            }
+
+            .promoter-module .floating-sidebar.collapsed {
+                transform: translateX(100%);
+                visibility: hidden;
+            }
+
+            .promoter-module .floating-sidebar.completely-hidden {
+                transform: translateX(calc(100% + 50px)) !important;
+                visibility: hidden !important;
+            }
+
+            .promoter-module .sidebar-toggle-btn {
+                position: absolute;
+                left: -40px;
+                top: 50%;
+                transform: translateY(-50%);
+                width: 40px;
+                height: 50px;
+                background-color: white;
+                border: 1px solid var(--border);
+                border-right: none;
+                border-radius: 12px 0 0 12px;
+                box-shadow: -4px 0 12px rgba(20, 18, 30, 0.08);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                color: var(--text-muted);
+                transition: var(--transition);
+                z-index: 10;
+                visibility: visible;
+            }
+
+            .promoter-module .sidebar-toggle-btn:hover {
+                color: var(--primary);
+                background-color: var(--bg);
+            }
+
+            .promoter-module .dropzone {
+                min-height: 120px;
+                background-color: var(--bg);
+                border: 2px dashed var(--border);
+                border-radius: var(--radius-md);
+                padding: 0.5rem;
+                display: flex;
+                flex-direction: column;
+                gap: 0.5rem;
+                transition: var(--transition);
+            }
+
+            .promoter-module .dropzone.drag-over {
+                border-color: var(--primary);
+                background-color: rgba(115, 81, 251, 0.05);
+            }
+
+            /* Saved (Display) Mode adjustments for clean layout */
+            .promoter-module .saved-mode .dropzone {
+                border: none !important;
+                background: transparent !important;
+                min-height: auto !important;
+                padding: 0 !important;
+            }
+
+            .promoter-module .saved-mode .store-cell-card {
+                box-shadow: none !important;
+                border: 1px solid var(--border) !important;
+                border-left: 4px solid var(--primary) !important;
+                background-color: var(--bg) !important;
+            }
+
+            .promoter-module .saved-mode .time-inputs input {
+                border: none !important;
+                background: transparent !important;
+                padding: 0 !important;
+                width: 38px !important;
+                color: var(--text-main) !important;
+                font-weight: 700;
+                cursor: default;
+                text-align: center;
+            }
+
+            .promoter-module .saved-mode .time-inputs input::-webkit-calendar-picker-indicator {
+                display: none !important;
+                background: transparent !important;
+                -webkit-appearance: none;
+                appearance: none;
+            }
+
+            .promoter-module .fab-btn {
+                position: fixed;
+                bottom: 2rem;
+                right: 2.5rem;
+                width: 3.5rem;
+                height: 3.5rem;
+                border-radius: 50%;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                box-shadow: 0 10px 25px -5px rgba(115, 81, 251, 0.4), 0 8px 16px -6px rgba(115, 81, 251, 0.4);
+                cursor: pointer;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                z-index: 3000;
+                border: none;
+                outline: none;
+            }
+
+            .promoter-module .fab-btn-save {
+                background-color: var(--primary);
+            }
+
+            .promoter-module .fab-btn-save:hover {
+                background-color: #5b3ce3;
+                transform: scale(1.1) translateY(-2px);
+            }
+
+            .promoter-module .fab-btn-edit {
+                background-color: #475569;
+                box-shadow: 0 10px 25px -5px rgba(71, 85, 105, 0.4), 0 8px 16px -6px rgba(71, 85, 105, 0.4);
+            }
+
+            .promoter-module .fab-btn-edit:hover {
+                background-color: #334155;
+                transform: scale(1.1) translateY(-2px);
+            }
+
+            .promoter-module .store-drag-card {
+                background-color: white;
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                padding: 0.75rem;
+                cursor: grab;
+                transition: var(--transition);
+                box-shadow: var(--shadow-sm);
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .promoter-module .store-drag-card:hover {
+                border-color: var(--primary);
+                box-shadow: var(--shadow-md);
+            }
+
+            .promoter-module .store-drag-card.dragging {
+                opacity: 0.5;
+            }
+
+            .promoter-module .store-cell-card {
+                background-color: white;
+                border: 1px solid var(--border);
+                border-left: 4px solid var(--primary);
+                border-radius: var(--radius-sm);
+                padding: 0.5rem;
+                font-size: 0.8rem;
+                position: relative;
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+                box-shadow: var(--shadow-sm);
+            }
+
+            .promoter-module .store-cell-card .remove-btn {
+                position: absolute;
+                top: 4px;
+                right: 4px;
+                color: var(--text-muted);
+                cursor: pointer;
+                transition: var(--transition);
+            }
+
+            .promoter-module .store-cell-card .remove-btn:hover {
+                color: #ef4444;
+            }
+
+            .promoter-module .time-inputs {
+                display: flex;
+                gap: 6px;
+                align-items: center;
+                margin-top: 4px;
+            }
+
+            .promoter-module .time-inputs input {
+                font-size: 0.75rem;
+                font-weight: 700;
+                padding: 6px 8px;
+                border: 1.5px solid #e2e8f0;
+                border-radius: 8px;
+                width: 65px;
+                text-align: center;
+                background-color: #f8fafc;
+                color: #1e293b;
+                outline: none;
+                transition: all 0.2s ease;
+            }
+
+            .promoter-module .time-inputs input:focus {
+                border-color: var(--primary);
+                background-color: white;
+                box-shadow: 0 0 0 3px rgba(115, 81, 251, 0.15);
+            }
+
+            /* Autocomplete Multi-select dropdown */
+            .promoter-module .select-autocomplete {
+                position: relative;
+            }
+
+            .promoter-module .autocomplete-list {
+                position: absolute;
+                top: 100%;
+                left: 0;
+                right: 0;
+                background: white;
+                border: 1px solid var(--border);
+                border-radius: var(--radius-sm);
+                max-height: 150px;
+                overflow-y: auto;
+                z-index: 100;
+                box-shadow: var(--shadow-md);
+            }
+
+            .promoter-module .autocomplete-item {
+                padding: 0.5rem 1rem;
+                cursor: pointer;
+                transition: var(--transition);
+                font-size: 0.85rem;
+            }
+
+            .promoter-module .autocomplete-item:hover {
+                background-color: var(--bg);
+                color: var(--primary);
+            }
+
+            .promoter-module .badge-list {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                margin-top: 8px;
+            }
+
+            .promoter-module .badge-item {
+                background-color: rgba(115, 81, 251, 0.1);
+                color: var(--primary);
+                padding: 4px 10px;
+                border-radius: 100px;
+                font-size: 0.75rem;
+                font-weight: 600;
+                display: flex;
+                align-items: center;
+                gap: 6px;
+            }
+
+            .promoter-module .badge-remove {
+                cursor: pointer;
+                font-size: 0.9rem;
+            }
+
+            .promoter-module .badge-remove:hover {
+                color: #ef4444;
+            }
+
+            .promoter-module .weekday-btn {
+                border: 1px solid var(--border);
+                background-color: white;
+                color: var(--text-muted);
+                padding: 6px 12px;
+                border-radius: var(--radius-sm);
+                font-size: 0.8rem;
+                font-weight: 600;
+                cursor: pointer;
+                transition: var(--transition);
+            }
+
+            .promoter-module .weekday-btn.active {
+                background-color: var(--primary);
+                color: white;
+                border-color: var(--primary);
+            }
+
+            /* Modal overlay blur backdrop */
+            .promoter-module .modal-overlay-blur {
+                position: fixed;
+                inset: 0;
+                background: rgba(20, 18, 30, 0.4);
+                backdrop-filter: blur(8px);
+                -webkit-backdrop-filter: blur(8px);
+                z-index: 3000;
+                display: none;
+                align-items: center;
+                justify-content: center;
+            }
+
+            .promoter-module .modal-overlay-blur.active {
+                display: flex;
+            }
+
+            .promoter-module .wizard-modal {
+                background: white;
+                border-radius: var(--radius-lg);
+                width: 90%;
+                max-width: 600px;
+                box-shadow: var(--shadow-md);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                animation: modalIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            }
+
+            .promoter-module .wizard-header {
+                padding: 1.5rem;
+                border-bottom: 1px solid var(--border);
+                background-color: var(--bg);
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            .promoter-module .wizard-body {
+                padding: 1.5rem;
+                max-height: 70vh;
+                overflow-y: auto;
+            }
+
+            .promoter-module .wizard-footer {
+                padding: 1rem 1.5rem;
+                border-top: 1px solid var(--border);
+                display: flex;
+                justify-content: justify;
+                gap: 10px;
+                background-color: var(--bg);
+            }
+
+            /* Store Details Modal Styles */
+            .promoter-module .details-modal-wrapper {
+                position: fixed;
+                inset: 0;
+                z-index: 4000;
+                background-color: rgba(20, 18, 30, 0.4);
+                backdrop-filter: blur(15px);
+                -webkit-backdrop-filter: blur(15px);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                padding: 2rem;
+                animation: modalIn 0.3s ease-out;
+            }
+
+            .promoter-module .details-modal-content {
+                background-color: white;
+                width: 100%;
+                max-width: 68rem;
+                height: 90vh;
+                max-height: 52rem;
+                border-radius: 2rem;
+                box-shadow: var(--shadow-md);
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+                position: relative;
+                border: 1px solid var(--border);
+            }
+
+            .promoter-module .modal-tab-btn {
+                position: relative;
+                padding-bottom: 0.75rem;
+                transition: all 0.3s ease;
+                cursor: pointer;
+                font-size: 0.75rem;
+                font-weight: 700;
+                text-transform: uppercase;
+                letter-spacing: 0.05rem;
+                color: var(--text-muted);
+                border: none;
+                background: none;
+                outline: none;
+            }
+
+            .promoter-module .modal-tab-btn.active {
+                color: var(--primary);
+            }
+
+            .promoter-module .modal-tab-btn.active::after {
+                content: '';
+                position: absolute;
+                bottom: -1px;
+                left: 0;
+                right: 0;
+                height: 2px;
+                background-color: var(--primary);
+            }
+
+            html.modal-locked,
+            body.modal-locked {
+                overflow: hidden !important;
+                height: 100vh !important;
+                width: 100% !important;
+                position: fixed !important;
+                touch-action: none !important;
+                -webkit-overflow-scrolling: none !important;
+            }
+
+            .promoter-module .saved-mode .remove-promoter-btn {
+                display: none !important;
+            }
+
+            .promoter-module .saved-mode .add-promoter-th {
+                display: none !important;
+            }
+
+            .promoter-module .saved-mode .add-promoter-td {
+                display: none !important;
+            }
+
+            .promoter-module .print-controls-wrapper {
+                position: relative;
+            }
+
+            .promoter-module #print-dropdown-menu button:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+                background-color: transparent !important;
+                color: var(--text-muted) !important;
+            }
+
+            .promoter-module #print-dropdown-menu button:not(:disabled):hover {
+                background-color: #f1f5f9;
+                color: var(--primary);
+            }
+
+            /* Print Specific layout styling */
+            @media screen {
+                #print-section {
+                    display: none;
+                }
+            }
+
+            @media print {
+                body>*:not(#print-section) {
+                    display: none !important;
+                }
+
+                #print-section {
+                    display: block !important;
+                    position: absolute;
+                    left: 0;
+                    top: 0;
+                    width: 100%;
+                    background: white !important;
+                    color: black !important;
+                    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+                    padding: 20px;
+                }
+
+                .page-break {
+                    page-break-after: always;
+                    break-after: page;
+                }
+
+                .print-header {
+                    margin-bottom: 24px;
+                    border-bottom: 2px solid #334155;
+                    padding-bottom: 12px;
+                }
+
+                .print-header h1 {
+                    font-size: 22px;
+                    font-weight: 850;
+                    color: #0f172a;
+                    margin: 0;
+                    text-transform: uppercase;
+                    letter-spacing: 0.05em;
+                }
+
+                .print-header p {
+                    font-size: 13px;
+                    color: #475569;
+                    margin: 6px 0 0 0;
+                }
+
+                .print-table {
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-top: 15px;
+                    font-size: 11px;
+                }
+
+                .print-table th,
+                .print-table td {
+                    border: 1px solid #cbd5e1 !important;
+                    padding: 8px;
+                    text-align: left;
+                    vertical-align: top;
+                }
+
+                .print-table th {
+                    background-color: #f8fafc !important;
+                    color: #0f172a !important;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                    font-size: 10px;
+                    letter-spacing: 0.05em;
+                    -webkit-print-color-adjust: exact;
+                    print-color-adjust: exact;
+                }
+
+                .print-store-card {
+                    border-left: 3px solid #7351fb !important;
+                    padding-left: 8px;
+                    margin-bottom: 8px;
+                }
+
+                .print-store-retailer {
+                    font-size: 9px;
+                    font-weight: 800;
+                    color: #7351fb;
+                    text-transform: uppercase;
+                }
+
+                .print-store-name {
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: #1e293b;
+                }
+
+                .print-store-time {
+                    font-size: 9px;
+                    font-weight: 600;
+                    color: #475569;
+                    margin-top: 2px;
+                }
+
+                .print-resting {
+                    font-size: 9px;
+                    color: #94a3b8;
+                    font-style: italic;
+                    text-align: center;
+                    padding: 8px 0;
+                }
+            }
+        </style>
+
+        <!-- Dynamic Header Tabs -->
+        <div class="tab-container flex-wrap justify-between items-end">
+            <div id="module-tabs" class="flex items-end gap-1.5 flex-wrap flex-1">
+                <!-- Print Controls Dropdown on the left -->
+                <div class="print-controls-wrapper pb-[2px] relative" style="z-index: 100;">
+                    <button id="btn-print-dropdown" class="tab-action-btn flex items-center gap-2 px-3"
+                        style="border-radius: 10px 10px 0 0; width: auto;" title="Print Options">
+                        <i class="fas fa-print"></i>
+                        <span class="text-xs font-bold uppercase tracking-wider">Print</span>
+                        <i class="fas fa-chevron-down text-[10px] ml-1"></i>
+                    </button>
+                    <div id="print-dropdown-menu"
+                        class="absolute left-0 mt-0.5 w-64 bg-white border border-slate-200 rounded-lg shadow-lg hidden z-50 py-1 text-left">
+                        <button id="btn-print-active-schedule"
+                            class="w-full text-left px-4 py-2.5 hover:bg-slate-50 cursor-pointer text-xs font-semibold text-slate-700 flex items-center gap-2"
+                            disabled>
+                            <i class="fas fa-calendar-week text-hsg-primary font-bold"></i>
+                            <span>Print Active Schedule</span>
+                        </button>
+                        <button id="btn-print-promoter-schedule"
+                            class="w-full text-left px-4 py-2.5 hover:bg-slate-50 cursor-pointer text-xs font-semibold text-slate-700 flex items-center gap-2">
+                            <i class="fas fa-user-friends text-hsg-primary font-bold"></i>
+                            <span>Print Promoter Schedule</span>
+                        </button>
+                        <button id="btn-print-master-combined"
+                            class="w-full text-left px-4 py-2.5 hover:bg-slate-50 cursor-pointer text-xs font-semibold text-slate-700 flex items-center gap-2">
+                            <i class="fas fa-calendar-check text-hsg-primary font-bold"></i>
+                            <span>Print Master Calendar</span>
+                        </button>
+                    </div>
+                </div>
+
+                <button id="btn-undo" class="tab-action-btn" title="Undo (Ctrl+Z)" disabled>
+                    <i class="fas fa-undo"></i>
+                </button>
+                <button class="tab-btn active" data-tab="overview" title="Overview">
+                    <i class="fas fa-calendar-alt text-base"></i>
+                </button>
+                <button id="btn-redo" class="tab-action-btn" title="Redo (Ctrl+Y)" disabled>
+                    <i class="fas fa-redo"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Tab Contents -->
+        <div id="tab-contents-wrapper" class="w-full">
+            <!-- Overview Tab (Launcher and Schedule List) -->
+            <div id="tab-content-overview" class="w-full">
+                <div class="launch-grid" id="schedules-grid">
+                    <!-- Standard launcher Add Schedule Card -->
+                    <div class="launch-card" id="btn-add-schedule-wizard">
+                        <i class="fas fa-plus"></i>
+                        <h4>Create Schedule</h4>
+                        <p>Generate promoter working calendars and shift plans</p>
+                    </div>
+                    <!-- Existing schedule cards will be dynamically rendered here -->
+                </div>
+            </div>
+
+            <!-- Dynamic workspace tabs will be appended here -->
+        </div>
+
+        <!-- Wizard Modal for Add Schedule -->
+        <div class="modal-overlay-blur" id="schedule-wizard-modal">
+            <div class="wizard-modal">
+                <div class="wizard-header">
+                    <h3 class="font-bold text-slate-900" id="wizard-title">New Schedule Creation</h3>
+                    <button
+                        class="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-500"
+                        onclick="closeWizard()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="wizard-body">
+                    <!-- Step 1: Meta Details -->
+                    <div class="wizard-step" id="wizard-step-1">
+                        <h4 class="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4">Step 1: Schedule
+                            Details</h4>
+                        <div class="flex flex-col gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Schedule Name</label>
+                                <input type="text" id="wizard-name" placeholder="e.g. Promoter Schedule - June 2026"
+                                    class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Description</label>
+                                <textarea id="wizard-desc" placeholder="Brief notes about the promotion..."
+                                    class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary h-20"></textarea>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-slate-600 mb-1">Special
+                                    Instruction</label>
+                                <textarea id="wizard-instruction" placeholder="Instructions for promoters..."
+                                    class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary h-20"></textarea>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Dates, Days & Promoters -->
+                    <div class="wizard-step hidden" id="wizard-step-2">
+                        <h4 class="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4">Step 2: Timeline &
+                            Promoters</h4>
+                        <div class="flex flex-col gap-4">
+                            <!-- Date Range picker -->
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">Start Date</label>
+                                    <input type="date" id="wizard-start-date"
+                                        class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-semibold text-slate-600 mb-1">End Date</label>
+                                    <input type="date" id="wizard-end-date"
+                                        class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary">
+                                </div>
+                            </div>
+                            <!-- Selection of active days -->
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-xs font-semibold text-slate-600">Active Days</label>
+                                    <button class="text-[10px] font-bold text-hsg-primary hover:underline"
+                                        id="wizard-toggle-days">Select All</button>
+                                </div>
+                                <div class="flex flex-wrap gap-2 mt-1" id="wizard-weekday-container">
+                                    <button class="weekday-btn active" data-day="Monday">Mon</button>
+                                    <button class="weekday-btn active" data-day="Tuesday">Tue</button>
+                                    <button class="weekday-btn active" data-day="Wednesday">Wed</button>
+                                    <button class="weekday-btn active" data-day="Thursday">Thu</button>
+                                    <button class="weekday-btn active" data-day="Friday">Fri</button>
+                                    <button class="weekday-btn active" data-day="Saturday">Sat</button>
+                                    <button class="weekday-btn active" data-day="Sunday">Sun</button>
+                                </div>
+                            </div>
+                            <!-- Autocomplete multi-select promoters -->
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-xs font-semibold text-slate-600">Select Promoters
+                                        On-Duty</label>
+                                    <button class="text-[10px] font-bold text-hsg-primary hover:underline"
+                                        id="wizard-select-all-promoters">Select All</button>
+                                </div>
+                                <div class="select-autocomplete">
+                                    <input type="text" id="promoter-search-input"
+                                        placeholder="Type promoter name to search..."
+                                        class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary">
+                                    <div class="autocomplete-list hidden" id="promoter-autocomplete-list"></div>
+                                </div>
+                                <div class="badge-list" id="selected-promoters-badges"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Brands & Products -->
+                    <div class="wizard-step hidden" id="wizard-step-3">
+                        <h4 class="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4">Step 3: Brands &
+                            Products</h4>
+                        <div class="flex flex-col gap-4">
+                            <!-- Autocomplete multi-select brands (Max 3) -->
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-xs font-semibold text-slate-600">Target Brands (Max
+                                        3)</label>
+                                    <span class="text-[10px] font-bold text-slate-400"
+                                        id="brand-limit-counter">0/3</span>
+                                </div>
+                                <div class="select-autocomplete">
+                                    <input type="text" id="brand-search-input" placeholder="Search brands..."
+                                        class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary">
+                                    <div class="autocomplete-list hidden" id="brand-autocomplete-list"></div>
+                                </div>
+                                <div class="badge-list" id="selected-brands-badges"></div>
+                            </div>
+                            <!-- Autocomplete multi-select products (Min 1, filtered by active brands) -->
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-xs font-semibold text-slate-600">Target Products (Min
+                                        1)</label>
+                                    <button class="text-[10px] font-bold text-hsg-primary hover:underline"
+                                        id="wizard-select-all-products">Select All</button>
+                                </div>
+                                <div class="select-autocomplete">
+                                    <input type="text" id="product-search-input" placeholder="Search products..."
+                                        class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary">
+                                    <div class="autocomplete-list hidden" id="product-autocomplete-list"></div>
+                                </div>
+                                <div class="badge-list" id="selected-products-badges"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Step 4: Summary -->
+                    <div class="wizard-step hidden" id="wizard-step-4">
+                        <h4 class="text-sm font-bold uppercase tracking-wider text-slate-500 mb-4">Step 4: Summary
+                            Confirmation</h4>
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs flex flex-col gap-3">
+                            <div>
+                                <div class="font-bold text-slate-700">Schedule Name:</div>
+                                <div id="summary-name" class="text-sm font-semibold text-hsg-primary mt-1">-</div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <div class="font-bold text-slate-700">Timeline:</div>
+                                    <div id="summary-dates" class="font-semibold text-slate-900 mt-0.5">-</div>
+                                </div>
+                                <div>
+                                    <div class="font-bold text-slate-700">Active Weekdays:</div>
+                                    <div id="summary-days" class="font-semibold text-slate-900 mt-0.5">-</div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="font-bold text-slate-700">Promoters:</div>
+                                <div id="summary-promoters" class="font-semibold text-slate-900 mt-0.5">-</div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <div class="font-bold text-slate-700">Selected Brands:</div>
+                                    <div id="summary-brands" class="font-semibold text-slate-900 mt-0.5">-</div>
+                                </div>
+                                <div>
+                                    <div class="font-bold text-slate-700">Selected Products:</div>
+                                    <div id="summary-products" class="font-semibold text-slate-900 mt-0.5">-</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="wizard-footer flex justify-between">
+                    <button class="btn btn-ghost" id="wizard-prev-btn" disabled>Back</button>
+                    <button class="btn btn-primary" id="wizard-next-btn">Next Step</button>
+                </div>
+            </div>
+        </div>
+        <!-- Details Popup Modal (Full Screen) -->
+        <div id="detailsModal" class="details-modal-wrapper" onclick="if(event.target === this) closeDetailsModal()">
+            <div class="details-modal-content">
+                <!-- Modal Header -->
+                <div
+                    class="flex items-center justify-between px-10 py-6 border-b border-slate-100 bg-white sticky top-0 z-20">
+                    <div class="flex items-center gap-6">
+                        <div id="modalRetailerLogo"
+                            class="w-12 h-12 rounded-2xl bg-gray-50 border border-gray-100 overflow-hidden flex items-center justify-center shadow-sm">
+                            <!-- Logo or Initials -->
+                        </div>
+                        <div class="text-left">
+                            <div id="modalRetailerName"
+                                class="text-[9px] font-black text-hsg-primary uppercase tracking-[0.2em] mb-0.5">
+                                Retailer Name</div>
+                            <h2 id="modalStoreName"
+                                class="text-lg font-black text-slate-800 uppercase leading-none tracking-tight">Store
+                                Name</h2>
+                        </div>
+                    </div>
+                    <button onclick="closeDetailsModal()"
+                        class="w-10 h-10 flex items-center justify-center rounded-full hover:bg-gray-100 transition-all duration-300 border-none bg-transparent cursor-pointer text-slate-400 hover:text-slate-700">
+                        <i class="fas fa-times text-lg"></i>
+                    </button>
+                </div>
+
+                <!-- Modal Content Body -->
+                <div class="flex flex-1 overflow-hidden flex-col md:flex-row">
+                    <!-- Left: Map (40%) -->
+                    <div class="w-full md:w-[40%] bg-gray-50 border-r border-gray-100 overflow-hidden h-48 md:h-auto">
+                        <div id="modalMapContainer" class="w-full h-full">
+                            <!-- Google Maps Iframe -->
+                        </div>
+                    </div>
+
+                    <!-- Right: Tabs & Data (60%) -->
+                    <div class="w-full md:w-[60%] flex flex-col overflow-hidden">
+                        <!-- Tabs Navigation -->
+                        <div class="flex px-8 border-b border-slate-150 bg-white pt-3 gap-6">
+                            <button onclick="switchModalTab('carried-brands')" id="modal-tab-carried-brands"
+                                class="modal-tab-btn active">
+                                Carried Brands
+                            </button>
+                            <button onclick="switchModalTab('contacts')" id="modal-tab-contacts" class="modal-tab-btn">
+                                Contact List
+                            </button>
+                        </div>
+
+                        <!-- Tabs Content -->
+                        <div class="flex-1 overflow-y-auto p-6 bg-slate-50/50">
+                            <!-- Tab 1: Carried Brands -->
+                            <div id="modal-content-carried-brands" class="space-y-6 flex flex-col gap-6">
+                                <!-- Injected by JS -->
+                            </div>
+
+                            <!-- Tab 2: Contacts -->
+                            <div id="modal-content-contacts" class="hidden space-y-4 flex flex-col gap-4">
+                                <!-- Injected by JS -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal for Selecting Promoter to Print -->
+        <div class="modal-overlay-blur" id="print-promoter-select-modal">
+            <div class="wizard-modal" style="max-width: 450px;">
+                <div class="wizard-header">
+                    <h3 class="font-bold text-slate-900">Select Promoter to Print</h3>
+                    <button
+                        class="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-500"
+                        onclick="closePrintPromoterModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="wizard-body flex flex-col gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1.5">Select Promoter</label>
+                        <select id="print-promoter-select-dropdown"
+                            class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary bg-white font-medium text-slate-700">
+                            <!-- Populated dynamically -->
+                        </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1.5">Start Date</label>
+                            <input type="date" id="print-promoter-start-date"
+                                class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary bg-white font-medium text-slate-700">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-600 mb-1.5">End Date</label>
+                            <input type="date" id="print-promoter-end-date"
+                                class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary bg-white font-medium text-slate-700">
+                        </div>
+                    </div>
+                </div>
+                <div class="wizard-footer flex justify-end gap-3">
+                    <button class="btn btn-ghost" onclick="closePrintPromoterModal()">Cancel</button>
+                    <button class="btn btn-primary font-bold" id="btn-submit-print-promoter">Print Schedule</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal for Selecting Month & Year to Print Master Calendar -->
+        <div class="modal-overlay-blur" id="print-master-select-modal">
+            <div class="wizard-modal" style="max-width: 450px;">
+                <div class="wizard-header">
+                    <h3 class="font-bold text-slate-900">Print Master Calendar</h3>
+                    <button
+                        class="w-8 h-8 rounded-full hover:bg-slate-200 flex items-center justify-center text-slate-500"
+                        onclick="closePrintMasterModal()">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="wizard-body flex flex-col gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 mb-1.5">Select Month & Year</label>
+                        <select id="print-master-select-dropdown"
+                            class="w-full border border-slate-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-hsg-primary bg-white font-medium text-slate-700">
+                            <!-- Populated dynamically -->
+                        </select>
+                    </div>
+                </div>
+                <div class="wizard-footer flex justify-end gap-3">
+                    <button class="btn btn-ghost" onclick="closePrintMasterModal()">Cancel</button>
+                    <button class="btn btn-primary font-bold" id="btn-submit-print-master">Print Calendar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function () {
+        const root = document.getElementById('promoter-module-root');
+        if (!root) return;
+
+        // Universal showCustomConfirm from global.js will be used.
+
+        // Navigation DOM References
+        const tabsContainer = root.querySelector('#module-tabs');
+        const contentsWrapper = root.querySelector('#tab-contents-wrapper');
+        const schedulesGrid = root.querySelector('#schedules-grid');
+
+        // Wizard DOM References
+        const wizardModal = root.querySelector('#schedule-wizard-modal');
+        const wizardTitle = root.querySelector('#wizard-title');
+        const wizardPrevBtn = root.querySelector('#wizard-prev-btn');
+        const wizardNextBtn = root.querySelector('#wizard-next-btn');
+        const btnAddSchedule = root.querySelector('#btn-add-schedule-wizard');
+        const weekdayContainer = root.querySelector('#wizard-weekday-container');
+        const btnToggleDays = root.querySelector('#wizard-toggle-days');
+
+        // Autocomplete Inputs
+        const promoterSearch = root.querySelector('#promoter-search-input');
+        const promoterList = root.querySelector('#promoter-autocomplete-list');
+        const promoterBadges = root.querySelector('#selected-promoters-badges');
+
+        const brandSearch = root.querySelector('#brand-search-input');
+        const brandList = root.querySelector('#brand-autocomplete-list');
+        const brandBadges = root.querySelector('#selected-brands-badges');
+        const brandLimitCounter = root.querySelector('#brand-limit-counter');
+
+        const productSearch = root.querySelector('#product-search-input');
+        const productList = root.querySelector('#product-autocomplete-list');
+        const productBadges = root.querySelector('#selected-products-badges');
+
+        // Wizard State
+        let currentStep = 1;
+        let selectedPromoters = []; // array of promoter objects {id, name}
+        let selectedBrands = []; // array of brand objects {id, name}
+        let selectedProducts = []; // array of product objects {sku, name}
+        let activeWeekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+        // Module Central State
+        let schedules = {}; // cached locally
+        let openTabs = new Set(['overview']); // active tab keys
+        let activeTab = 'overview';
+
+        // --- Undo / Redo History Stack Engine ---
+        const HISTORY_LIMIT = 30;
+
+        const getHistory = () => {
+            try {
+                return JSON.parse(localStorage.getItem('hsg_promoter_history')) || { past: [], future: [] };
+            } catch (e) {
+                return { past: [], future: [] };
+            }
+        };
+
+        const saveHistory = (history) => {
+            localStorage.setItem('hsg_promoter_history', JSON.stringify(history));
+        };
+
+        const pushHistoryState = (currentSchedules) => {
+            const history = getHistory();
+            const state = JSON.parse(JSON.stringify(currentSchedules));
+            history.past.push(state);
+            if (history.past.length > HISTORY_LIMIT) {
+                history.past.shift();
+            }
+            history.future = []; // Clear redo stack on new action
+            saveHistory(history);
+            updateUndoRedoUI();
+        };
+
+        const updateUndoRedoUI = () => {
+            const history = getHistory();
+            const undoBtn = document.getElementById('btn-undo');
+            const redoBtn = document.getElementById('btn-redo');
+            if (undoBtn) undoBtn.disabled = history.past.length <= 1;
+            if (redoBtn) redoBtn.disabled = history.future.length === 0;
+        };
+
+        const syncSchedulesToDB = () => {
+            if (window.oc && window.oc.db) {
+                const dbRows = Object.values(schedules).map(s => {
+                    const serialized = serializeScheduleObj(s);
+                    return {
+                        id: s.id,
+                        timestamp: new Date().toISOString(),
+                        json: btoa(unescape(encodeURIComponent(JSON.stringify(serialized))))
+                    };
+                });
+                window.oc.db.Promoter_Schedule = dbRows;
+                localStorage.setItem('hsg_global_db', JSON.stringify(window.oc.db));
+            }
+        };
+
+        const refreshActiveView = () => {
+            if (activeTab === 'overview') {
+                renderSchedulesGrid();
+            } else {
+                const tabContent = contentsWrapper.querySelector(`#tab-content-${activeTab}`);
+                if (tabContent) {
+                    const tableWrapper = tabContent.querySelector('.sched-table-wrapper');
+                    const wasSaved = tableWrapper ? tableWrapper.classList.contains('saved-mode') : true;
+                    renderScheduleBoard(activeTab, tabContent, !wasSaved);
+                }
+            }
+        };
+
+        const handleUndo = () => {
+            const history = getHistory();
+            if (history.past.length <= 1) return;
+
+            const currentState = history.past.pop();
+            history.future.push(currentState);
+
+            const prevState = history.past[history.past.length - 1];
+            schedules = JSON.parse(JSON.stringify(prevState));
+
+            syncSchedulesToDB();
+            saveHistory(history);
+            updateUndoRedoUI();
+            refreshActiveView();
+        };
+
+        const handleRedo = () => {
+            const history = getHistory();
+            if (history.future.length === 0) return;
+
+            const nextState = history.future.pop();
+            history.past.push(nextState);
+
+            schedules = JSON.parse(JSON.stringify(nextState));
+
+            syncSchedulesToDB();
+            saveHistory(history);
+            updateUndoRedoUI();
+            refreshActiveView();
+        };
+
+        const setupUndoRedoListeners = () => {
+            const undoBtn = document.getElementById('btn-undo');
+            const redoBtn = document.getElementById('btn-redo');
+            if (undoBtn) undoBtn.onclick = handleUndo;
+            if (redoBtn) redoBtn.onclick = handleRedo;
+
+            // Keyboard listeners
+            window.addEventListener('keydown', (e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+                    e.preventDefault();
+                    handleUndo();
+                } else if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+                    e.preventDefault();
+                    handleRedo();
+                }
+            });
+        };
+
+        // Wait for global cache and initialize
+        const init = () => {
+            setupWizardListeners();
+            setupTabNavigation();
+            setupUndoRedoListeners();
+            setupPrintListeners();
+            waitForDB();
+        };
+
+        const waitForDB = () => {
+            const check = () => {
+                if (window.oc && window.oc.db && Object.keys(window.oc.db).length > 0) {
+                    loadFromDB(window.oc.db);
+                } else {
+                    setTimeout(check, 300);
+                }
+            };
+            check();
+        };
+
+        const resolvePromoter = (p) => {
+            if (typeof p === 'object' && p !== null && p.name) return p;
+            const dbUsers = window.oc?.db?.Promoter_Users || [];
+            const found = dbUsers.find(u => String(u.id) === String(p));
+            return found ? { id: String(found.id), name: found.name } : { id: String(p), name: `Promoter #${p}` };
+        };
+
+        const resolveBrand = (b) => {
+            if (typeof b === 'object' && b !== null && b.name) return b;
+            const dbBrands = window.oc?.db?.brands_db || [];
+            const found = dbBrands.find(x => String(x.id) === String(b));
+            return found ? { id: String(found.id), name: found.name } : { id: String(b), name: `Brand #${b}` };
+        };
+
+        const resolveProduct = (pr) => {
+            if (typeof pr === 'object' && pr !== null && pr.name) return pr;
+            const dbProducts = window.oc?.db?.products_db || [];
+            const found = dbProducts.find(x => String(x.sku) === String(pr));
+            return found ? { sku: String(found.sku), name: found.name } : { sku: String(pr), name: `Product ${pr}` };
+        };
+
+        const serializeScheduleObj = (s) => {
+            return {
+                id: s.id,
+                name: s.name,
+                description: s.description,
+                instruction: s.instruction,
+                startDate: s.startDate,
+                endDate: s.endDate,
+                activeDays: s.activeDays,
+                promoters: (s.promoters || []).map(p => typeof p === 'object' && p !== null ? (p.id || p.sku) : p),
+                brands: (s.brands || []).map(b => typeof b === 'object' && b !== null ? b.id : b),
+                products: (s.products || []).map(p => typeof p === 'object' && p !== null ? (p.id || p.sku) : p),
+                schedule: s.schedule || {}
+            };
+        };
+
+        const loadFromDB = (db) => {
+            console.log("Promoter Scheduler: loadFromDB called with", db);
+            schedules = {};
+            const rawSchedules = db.Promoter_Schedule || [];
+            console.log("Promoter Scheduler: Raw schedules count in DB:", rawSchedules.length);
+
+            // Log indexing (Event-Sourcing pattern: latest wins)
+            const sorted = [...rawSchedules].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            sorted.forEach(row => {
+                console.log("Promoter Scheduler: Processing row ID:", row.id, "has JSON:", !!row.json);
+                if (!row.id || !row.json) return;
+                try {
+                    let parsed;
+                    const trimmed = row.json.trim();
+                    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+                        parsed = JSON.parse(trimmed);
+                    } else {
+                        try {
+                            parsed = JSON.parse(decodeURIComponent(escape(atob(trimmed))));
+                        } catch (e1) {
+                            console.warn("Promoter Scheduler: Base64 UTF-8 decode failed, trying standard atob decode:", e1);
+                            try {
+                                parsed = JSON.parse(atob(trimmed));
+                            } catch (e2) {
+                                console.warn("Promoter Scheduler: Standard atob decode failed, trying TextDecoder:", e2);
+                                const binaryString = atob(trimmed);
+                                const bytes = new Uint8Array(binaryString.length);
+                                for (let i = 0; i < binaryString.length; i++) {
+                                    bytes[i] = binaryString.charCodeAt(i);
+                                }
+                                parsed = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+                            }
+                        }
+                    }
+                    schedules[row.id] = parsed;
+                    console.log("Promoter Scheduler: Successfully loaded schedule:", row.id, parsed.name);
+                } catch (e) {
+                    console.error("Promoter Scheduler: Failed to parse JSON for row", row.id, e);
+                }
+            });
+
+            // Initialize or sync history
+            const history = getHistory();
+            if (history.past.length === 0) {
+                const state = JSON.parse(JSON.stringify(schedules));
+                history.past.push(state);
+                saveHistory(history);
+            }
+            updateUndoRedoUI();
+
+            renderSchedulesGrid();
+        };
+
+        window.addEventListener('hsg_db_updated', (e) => {
+            if (e.detail) {
+                loadFromDB(e.detail);
+            }
+        });
+
+        // Date helper format
+        const formatHumanDate = (dateStr) => {
+            if (!dateStr) return '';
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return dateStr;
+            return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        };
+
+        // Render schedules cards in Overview
+        const renderSchedulesGrid = () => {
+            // Keep the static create card
+            schedulesGrid.innerHTML = '';
+            schedulesGrid.appendChild(btnAddSchedule);
+
+            Object.values(schedules).forEach(sched => {
+                const card = document.createElement('div');
+                card.className = "launch-card relative group";
+
+                const promList = (sched.promoters || []).map(p => resolvePromoter(p).name).join(', ') || 'No Promoters';
+                const dateRangeStr = `${formatHumanDate(sched.startDate)} - ${formatHumanDate(sched.endDate)}`;
+
+                card.innerHTML = `
+                    <i class="fas fa-calendar-check"></i>
+                    <h4>${sched.name}</h4>
+                    <p class="font-semibold text-hsg-primary">${dateRangeStr}</p>
+                    <p class="text-xs truncate max-w-full text-slate-400 mt-1">${promList}</p>
+                    <span class="absolute top-2 right-3 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-sm font-bold" data-delete-id="${sched.id}" title="Delete Schedule">x</span>
+                `;
+
+                // Open schedule tab on click
+                card.onclick = (e) => {
+                    const deleteBtn = e.target.closest('[data-delete-id]');
+                    if (deleteBtn) {
+                        e.stopPropagation();
+                        deleteSchedule(deleteBtn.getAttribute('data-delete-id'));
+                        return;
+                    }
+                    openScheduleTab(sched.id);
+                };
+
+                schedulesGrid.appendChild(card);
+            });
+        };
+        const deleteSchedule = async (id) => {
+            const confirmed = await showCustomConfirm("Are you sure to delete it?", "Delete Schedule");
+            if (!confirmed) return;
+            try {
+                const res = await window.oc.genericPost('delete', { table: 'Promoter_Schedule', id: id });
+                if (res && res.status === 'success') {
+                    if (openTabs.has(id)) {
+                        closeTab(id, true);
+                    }
+                    delete schedules[id];
+                    pushHistoryState(schedules);
+                    renderSchedulesGrid();
+                }
+            } catch (e) {
+                window.oc.showAlert("Failed to delete schedule: " + e.message, "error");
+            }
+        };
+
+        // Tab Navigation management
+        const setupTabNavigation = () => {
+            tabsContainer.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-tab]');
+                if (!btn) return;
+
+                const tabKey = btn.getAttribute('data-tab');
+                const closeBtn = e.target.closest('.tab-close');
+
+                if (closeBtn) {
+                    e.stopPropagation();
+                    closeTab(tabKey);
+                    return;
+                }
+
+                switchActiveTab(tabKey);
+            });
+        };
+
+        const switchActiveTab = (tabKey) => {
+            activeTab = tabKey;
+
+            // Toggle tab button states
+            tabsContainer.querySelectorAll('[data-tab]').forEach(btn => {
+                btn.classList.toggle('active', btn.getAttribute('data-tab') === tabKey);
+            });
+
+            // Toggle wrapper contents
+            contentsWrapper.querySelectorAll('[id^="tab-content-"]').forEach(content => {
+                content.classList.toggle('hidden', content.id !== `tab-content-${tabKey}`);
+            });
+
+            // Toggle print option dropdown buttons availability
+            const isOverview = (tabKey === 'overview');
+            const btnActive = root.querySelector('#btn-print-active-schedule');
+            if (btnActive) btnActive.disabled = isOverview;
+        };
+
+        const closeTab = (tabKey, force = false) => {
+            if (!openTabs.has(tabKey)) return;
+
+            if (!force) {
+                const content = contentsWrapper.querySelector(`#tab-content-${tabKey}`);
+                if (content) {
+                    const tableWrapper = content.querySelector('.sched-table-wrapper');
+                    if (tableWrapper && !tableWrapper.classList.contains('saved-mode')) {
+                        window.oc.showAlert("Please save the schedule before closing", "warning");
+                        return;
+                    }
+                }
+            }
+
+            // Remove Tab header
+            const btn = tabsContainer.querySelector(`[data-tab="${tabKey}"]`);
+            if (btn) btn.remove();
+
+            // Remove Tab content
+            const content = contentsWrapper.querySelector(`#tab-content-${tabKey}`);
+            if (content) content.remove();
+
+            openTabs.delete(tabKey);
+
+            // Back to overview if closed active tab
+            if (activeTab === tabKey) {
+                switchActiveTab('overview');
+            }
+        };
+
+        const openScheduleTab = (schedId) => {
+            const sched = schedules[schedId];
+            if (!sched) return;
+
+            if (openTabs.has(schedId)) {
+                switchActiveTab(schedId);
+                return;
+            }
+
+            // Create Tab Header
+            const newTabBtn = document.createElement('button');
+            newTabBtn.className = "tab-btn active";
+            newTabBtn.setAttribute('data-tab', schedId);
+            newTabBtn.innerHTML = `
+                <i class="fas fa-calendar-week"></i> ${sched.name.toUpperCase()} 
+                <span class="tab-close"><i class="fas fa-times"></i></span>
+            `;
+            tabsContainer.appendChild(newTabBtn);
+            openTabs.add(schedId);
+
+            // Create Tab Content container
+            const tabContent = document.createElement('div');
+            tabContent.id = `tab-content-${schedId}`;
+            tabContent.className = "w-full flex flex-col gap-4";
+            contentsWrapper.appendChild(tabContent);
+
+            // Initialize scheduling board layout
+            renderScheduleBoard(schedId, tabContent);
+            switchActiveTab(schedId);
+        };
+
+        // Create Date List inside timeline
+        const getDatesInRange = (start, end, weekdays) => {
+            const dates = [];
+            let curr = new Date(start);
+            const stop = new Date(end);
+
+            while (curr <= stop) {
+                const dayName = curr.toLocaleDateString('en-US', { weekday: 'long' });
+                if (weekdays.includes(dayName)) {
+                    dates.push({
+                        isoString: curr.toISOString().split('T')[0],
+                        dateLabel: curr.toLocaleDateString('en-US', { day: '2-digit', month: 'short' }),
+                        dayLabel: curr.toLocaleDateString('en-US', { weekday: 'short' })
+                    });
+                }
+                curr.setDate(curr.getDate() + 1);
+            }
+            return dates;
+        };
+
+        // Render schedule board view (70% left scheduling table, 30% right store selection sidebar)
+        const renderScheduleBoard = (schedId, container, forceEditMode = null) => {
+            const sched = schedules[schedId];
+            if (!sched) return;
+
+            let isBoardSaved = false;
+            let isFirstRender = true;
+
+            // Generate rows
+            const timelineDates = getDatesInRange(sched.startDate, sched.endDate, sched.activeDays || []);
+            const promoters = (sched.promoters || []).map(resolvePromoter);
+
+            // Calculate available promoters not yet in this schedule
+            const allDbUsers = window.oc?.db?.Promoter_Users || [];
+            const currentPromoterIds = (sched.promoters || []).map(p => typeof p === 'object' && p !== null ? String(p.id) : String(p));
+            const availablePromoters = allDbUsers.filter(u => !currentPromoterIds.includes(String(u.id)));
+            const hasMorePromoters = availablePromoters.length > 0;
+
+            // We keep a temporary schedule working copy in state or object properties to save on change
+            let editSchedule = JSON.parse(JSON.stringify(sched.schedule || {}));
+
+            // Structure: Left Table (100%), Right floating list
+            container.innerHTML = `
+                <div class="flex flex-col gap-4 items-start w-full relative">
+                    <!-- Left schedule grid -->
+                    <div class="w-full flex flex-col gap-4 min-w-0 relative" id="board-table-pane-${schedId}">
+                        <!-- Floating Hidden Columns Indicator (Circle Pin) -->
+                        <div class="hidden-cols-indicator" title="Scroll left to view hidden promoters">
+                            <i class="fas fa-chevron-left text-[10px]"></i>
+                        </div>
+                        <div class="sched-table-wrapper">
+                            <table class="sched-table">
+                                <thead>
+                                    <tr>
+                                        <th>Day & Date</th>
+                                        ${promoters.map(p => `
+                                            <th>
+                                                <div class="flex items-center justify-between gap-2">
+                                                    <span class="flex-grow text-center">${p.name}</span>
+                                                    <button class="text-red-500 hover:text-red-755 border-none bg-transparent cursor-pointer remove-promoter-btn p-1 flex items-center justify-center shrink-0" data-promoter-id="${p.id}" title="Remove Promoter">
+                                                        <i class="fas fa-times-circle text-sm"></i>
+                                                    </button>
+                                                </div>
+                                            </th>
+                                        `).join('')}
+                                        ${hasMorePromoters ? `
+                                            <th class="add-promoter-th" style="min-width: 150px; text-align: center; vertical-align: middle;">
+                                                <div class="relative inline-block text-left mx-auto" id="add-promoter-dropdown-wrapper-${schedId}">
+                                                    <button class="w-8 h-8 rounded-full bg-hsg-primary/10 text-hsg-primary hover:bg-hsg-primary hover:text-white transition-all flex items-center justify-center border-none cursor-pointer mx-auto" id="btn-add-promoter-trigger-${schedId}" title="Add Promoter to Schedule">
+                                                        <i class="fas fa-plus"></i>
+                                                    </button>
+                                                    <div class="absolute right-0 mt-2 w-48 bg-white border border-slate-200 rounded-lg shadow-lg hidden z-50 text-left" id="add-promoter-menu-${schedId}">
+                                                        <!-- Options populated dynamically -->
+                                                    </div>
+                                                </div>
+                                            </th>
+                                        ` : ''}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${timelineDates.map(d => `
+                                        <tr data-date="${d.isoString}">
+                                            <td>
+                                                <div class="text-xs text-slate-400 font-normal uppercase">${d.dayLabel}</div>
+                                                <div class="text-sm font-semibold text-hsg-primary">${d.dateLabel}</div>
+                                            </td>
+                                            ${promoters.map(p => `
+                                                <td data-date="${d.isoString}" data-promoter-id="${p.id}">
+                                                    <div class="dropzone" id="dz-${schedId}-${d.isoString}-${p.id}" data-date="${d.isoString}" data-promoter-id="${p.id}">
+                                                        <!-- Dropped stores here -->
+                                                    </div>
+                                                </td>
+                                            `).join('')}
+                                            ${hasMorePromoters ? `
+                                                <td class="add-promoter-td" style="background-color: var(--bg); text-align: center; vertical-align: middle; min-width: 150px;"></td>
+                                            ` : ''}
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Right sidebar (draggable stores list) -->
+                    <div class="floating-sidebar completely-hidden" id="board-sidebar-pane-${schedId}">
+                        <!-- Toggle button to collapse/expand -->
+                        <div class="sidebar-toggle-btn" id="sidebar-toggle-${schedId}">
+                            <i class="fas fa-chevron-right"></i>
+                        </div>
+                        <div class="pb-3 border-b border-slate-100">
+                            <h4 class="font-bold text-slate-900 flex items-center gap-2">
+                                <i class="fas fa-store text-hsg-primary"></i>
+                                <span>Assign Stores</span>
+                            </h4>
+                            <p class="text-[10px] text-slate-400 uppercase tracking-widest mt-1">Drag store cards to calendar cells</p>
+                        </div>
+
+                        <!-- Sidebar Filters & Search -->
+                        <div class="flex flex-col gap-3">
+                            <div class="grid grid-cols-2 gap-2">
+                                <select id="sidebar-retailer-filter-${schedId}" class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-hsg-primary">
+                                    <option value="all">All Retailers</option>
+                                </select>
+                                <select id="sidebar-zone-filter-${schedId}" class="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-hsg-primary">
+                                    <option value="all">All Zones</option>
+                                </select>
+                            </div>
+                            <div class="relative w-full">
+                                <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+                                <input type="text" id="sidebar-search-${schedId}" placeholder="Search code, name, address..." class="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-hsg-primary">
+                            </div>
+                        </div>
+
+                        <!-- Scrollable store list -->
+                        <div class="flex flex-col gap-3 flex-1 overflow-y-auto pr-1" id="sidebar-stores-list-${schedId}">
+                            <!-- Store cards dynamically populated -->
+                        </div>
+                    </div>
+
+                    <!-- Floating Action Buttons -->
+                    <button class="fab-btn fab-btn-save" id="btn-save-board-${schedId}" title="Save Schedule">
+                        <i class="fas fa-save text-lg"></i>
+                    </button>
+                    <button class="fab-btn fab-btn-edit" id="btn-edit-board-${schedId}" style="display: none;" title="Edit Schedule">
+                        <i class="fas fa-pen text-lg"></i>
+                    </button>
+                </div>
+            `;
+
+            // Logic elements
+            const saveBtn = container.querySelector(`#btn-save-board-${schedId}`);
+            const editBtn = container.querySelector(`#btn-edit-board-${schedId}`);
+            const sidebarPane = container.querySelector(`#board-sidebar-pane-${schedId}`);
+            const tablePane = container.querySelector(`#board-table-pane-${schedId}`);
+            const zoneFilter = container.querySelector(`#sidebar-zone-filter-${schedId}`);
+            const retailerFilter = container.querySelector(`#sidebar-retailer-filter-${schedId}`);
+            const sidebarSearch = container.querySelector(`#sidebar-search-${schedId}`);
+            const storesList = container.querySelector(`#sidebar-stores-list-${schedId}`);
+
+            // Toggle sidebar minimize/collapse
+            const sidebarToggle = container.querySelector(`#sidebar-toggle-${schedId}`);
+            if (sidebarToggle) {
+                sidebarToggle.onclick = () => {
+                    sidebarPane.classList.toggle('collapsed');
+                    const icon = sidebarToggle.querySelector('i');
+                    if (icon) {
+                        if (sidebarPane.classList.contains('collapsed')) {
+                            icon.className = "fas fa-chevron-left";
+                        } else {
+                            icon.className = "fas fa-chevron-right";
+                        }
+                    }
+                };
+            }
+
+            isBoardSaved = false;
+
+            // Generate lists of stores carrying the selected products
+            let matchingStores = [];
+            const loadSidebarStores = () => {
+                const selectedProductSkus = (sched.products || []).map(p => {
+                    const resolved = resolveProduct(p);
+                    return resolved.sku || resolved.id;
+                });
+                const dbStores = window.oc?.db?.stores_retailer_db || [];
+                const dbProductLogs = window.oc?.db?.merch_visit_product_audit_logs || [];
+
+                // 1. Calculate latest audit log quantity sum per store
+                const storeLatestAudit = {};
+                const sortedLogs = [...dbProductLogs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                sortedLogs.forEach(log => {
+                    const sid = String(log.store_id || '');
+                    if (sid && !storeLatestAudit[sid]) {
+                        storeLatestAudit[sid] = log;
+                    }
+                });
+
+                // 2. Aggregate stock quantity for all stores
+                const storeStockQty = {};
+                dbStores.forEach(s => {
+                    const sid = String(s.id || '');
+                    const log = storeLatestAudit[sid];
+                    let totalQty = 0;
+                    if (log && log.audit_json) {
+                        let items = [];
+                        try {
+                            if (typeof log.audit_json === 'string') {
+                                items = JSON.parse(log.audit_json);
+                            } else if (Array.isArray(log.audit_json)) {
+                                items = log.audit_json;
+                            }
+                        } catch (e) { }
+                        if (Array.isArray(items)) {
+                            items.forEach(item => {
+                                const sku = item.sku || item.SKU || item.Sku || item.code || item.id;
+                                if (selectedProductSkus.includes(sku)) {
+                                    const q = parseInt(item.qty || item.QTY || item.Qty || 0);
+                                    totalQty += isNaN(q) ? 0 : q;
+                                }
+                            });
+                        }
+                    }
+                    storeStockQty[sid] = totalQty;
+                });
+
+                // 3. Map all stores to the matchingStores list
+                matchingStores = dbStores.map(s => {
+                    const retailerName = s.retailer_id ? (window.oc?.db?.retailers_db?.find(r => String(r.id) === String(s.retailer_id))?.name || s.retailer_id) : 'Other';
+                    return {
+                        id: s.id,
+                        retailerName: retailerName,
+                        storeName: s.name,
+                        address: s.address,
+                        zone: s.zone,
+                        qty: storeStockQty[s.id] || 0
+                    };
+                });
+
+                // 4. Sort: high quantity first
+                matchingStores.sort((a, b) => b.qty - a.qty);
+
+                // Populate Zone filter options
+                const zones = ['all', ...new Set(matchingStores.map(s => s.zone).filter(Boolean))].sort();
+                zoneFilter.innerHTML = zones.map(z => `<option value="${z}">${z === 'all' ? 'All Zones' : z}</option>`).join('');
+                zoneFilter.value = 'all';
+
+                // Populate Retailer filter options
+                const retailers = ['all', ...new Set(matchingStores.map(s => s.retailerName).filter(Boolean))].sort();
+                retailerFilter.innerHTML = retailers.map(r => `<option value="${r}">${r === 'all' ? 'All Retailers' : r}</option>`).join('');
+                retailerFilter.value = 'all';
+            };
+
+            const renderSidebarStores = () => {
+                const zone = zoneFilter.value;
+                const retailer = retailerFilter.value;
+                const search = sidebarSearch.value.toLowerCase().trim();
+
+                const filtered = matchingStores.filter(s => {
+                    if (zone !== 'all' && s.zone !== zone) return false;
+                    if (retailer !== 'all' && s.retailerName !== retailer) return false;
+                    if (search) {
+                        const matchStr = `${s.id} ${s.storeName} ${s.address}`.toLowerCase();
+                        if (!matchStr.includes(search)) return false;
+                    }
+                    return true;
+                });
+
+                storesList.innerHTML = '';
+                if (filtered.length === 0) {
+                    storesList.innerHTML = `<div class="text-center py-6 text-xs text-slate-400 font-semibold uppercase">No matching stores</div>`;
+                    return;
+                }
+
+                filtered.forEach(s => {
+                    const card = document.createElement('div');
+                    card.className = "store-drag-card";
+                    card.setAttribute('draggable', isBoardSaved ? 'false' : 'true');
+                    card.setAttribute('data-store-id', s.id);
+
+                    card.innerHTML = `
+                        <div class="text-slate-300 font-semibold shrink-0 cursor-grab"><i class="fas fa-grip-vertical"></i></div>
+                        <div class="flex-grow min-w-0">
+                            <div class="text-[9px] font-black text-hsg-primary uppercase truncate">${s.retailerName}</div>
+                            <div class="font-bold text-slate-800 text-xs truncate leading-snug mt-0.5">${s.storeName}</div>
+                            <div class="text-[9px] text-slate-400 truncate mt-0.5">${s.address}</div>
+                        </div>
+                        <div class="shrink-0 flex items-center gap-2">
+                            <button class="w-7 h-7 flex items-center justify-center bg-slate-100 hover:bg-hsg-primary/10 hover:text-hsg-primary text-slate-400 rounded-lg transition-all border-none cursor-pointer details-btn" title="View Store Details">
+                                <i class="fas fa-info-circle text-sm"></i>
+                            </button>
+                            <div class="text-[10px] font-black text-slate-500 bg-slate-100 px-2 py-1.5 rounded" title="Total audited stock of target items">${s.qty}</div>
+                        </div>
+                    `;
+
+                    // Details click
+                    const infoBtn = card.querySelector('.details-btn');
+                    infoBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        openDetailsModal(s.id);
+                    };
+
+                    // HTML5 Drag and Drop events
+                    card.ondragstart = (e) => {
+                        card.classList.add('dragging');
+                        e.dataTransfer.setData('text/plain', s.id);
+                    };
+
+                    card.ondragend = () => {
+                        card.classList.remove('dragging');
+                    };
+
+                    storesList.appendChild(card);
+                });
+            };
+
+            // Dropzones cell renderer
+            const renderCell = (date, promoterId) => {
+                const dz = container.querySelector(`#dz-${schedId}-${date}-${promoterId}`);
+                if (!dz) return;
+
+                const cellData = editSchedule[date]?.[promoterId] || [];
+                dz.innerHTML = '';
+
+                if (cellData.length === 0) {
+                    if (!isBoardSaved) {
+                        dz.innerHTML = `<div class="text-[9px] font-black text-slate-300 uppercase tracking-widest text-center py-8">Drop Store Here</div>`;
+                    } else {
+                        dz.innerHTML = `<div class="text-[9px] font-black uppercase tracking-widest text-center py-4" style="color: #cbd5e1 !important;">Resting Day</div>`;
+                    }
+                    return;
+                }
+
+                cellData.forEach((store, idx) => {
+                    const storeObj = matchingStores.find(s => String(s.id) === String(store.store_id));
+                    const storeName = storeObj ? storeObj.storeName : store.store_name;
+                    const retailerName = storeObj ? storeObj.retailerName : store.retailer_name;
+                    const address = storeObj ? storeObj.address : store.address;
+
+                    const card = document.createElement('div');
+                    card.className = "store-cell-card";
+
+                    card.innerHTML = `
+                        ${!isBoardSaved ? `<span class="remove-btn" data-remove-idx="${idx}"><i class="fas fa-times-circle"></i></span>` : ''}
+                        <div class="flex gap-2 items-start">
+                            ${!isBoardSaved ? `
+                                <div class="flex flex-col items-center gap-1 shrink-0 mt-0.5">
+                                    <div class="text-slate-300 font-semibold cursor-grab" style="font-size: 10px;" title="Drag card to move"><i class="fas fa-grip-vertical"></i></div>
+                                    <button class="w-4 h-4 flex items-center justify-center text-slate-300 hover:text-hsg-primary transition-all border-none bg-transparent cursor-pointer cell-duplicate-btn" title="Duplicate Store Shift">
+                                        <i class="fas fa-copy text-[10px]"></i>
+                                    </button>
+                                </div>
+                            ` : ''}
+                            <div class="flex-grow min-w-0 text-left">
+                                <div class="text-[9px] font-black text-hsg-primary uppercase truncate pr-4">${retailerName}</div>
+                                <div class="font-bold text-slate-800 leading-snug truncate flex items-center justify-between gap-1">
+                                    <span class="truncate">${storeName}</span>
+                                    <button class="w-4 h-4 flex items-center justify-center text-slate-300 hover:text-hsg-primary transition-all border-none bg-transparent cursor-pointer cell-details-btn" title="View Store Details">
+                                        <i class="fas fa-info-circle text-[10px]"></i>
+                                    </button>
+                                </div>
+                                <div class="text-[9px] text-slate-400 truncate">${address}</div>
+                            </div>
+                        </div>
+                        
+                        <div class="time-inputs pl-[18px]">
+                            <input type="text" data-idx="${idx}" data-field="startTime" value="${store.startTime || '09:00'}" ${isBoardSaved ? 'disabled' : ''} placeholder="HH:MM" maxlength="5">
+                            <span class="text-slate-300 text-[10px]">-</span>
+                            <input type="text" data-idx="${idx}" data-field="endTime" value="${store.endTime || '17:00'}" ${isBoardSaved ? 'disabled' : ''} placeholder="HH:MM" maxlength="5">
+                        </div>
+                    `;
+
+                    // Details click
+                    const infoBtn = card.querySelector('.cell-details-btn');
+                    if (infoBtn) {
+                        infoBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            openDetailsModal(store.store_id);
+                        };
+                    }
+
+                    // Duplicate click
+                    const dupBtn = card.querySelector('.cell-duplicate-btn');
+                    if (dupBtn) {
+                        dupBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            const cellList = editSchedule[date]?.[promoterId] || [];
+                            if (cellList.length >= 4) {
+                                window.oc.showAlert("Maximum 4 stores can be assigned per cell", "error");
+                                return;
+                            }
+
+                            const dayExistingShifts = [];
+                            for (const sId in schedules) {
+                                const sObj = schedules[sId];
+                                const sShifts = sObj.schedule?.[date]?.[promoterId] || [];
+                                dayExistingShifts.push(...sShifts);
+                            }
+
+                            const defaultTime = getNonConflictingTime(dayExistingShifts);
+                            const checkResult = hasConflictAllSchedules(schedId, date, promoterId, null, defaultTime.startTime, defaultTime.endTime);
+                            if (checkResult.conflict) {
+                                const storeInfo = resolveStore(checkResult.storeId);
+                                window.oc.showAlert(`Conflict: No free time slot on this day. Overlaps with ${storeInfo.retailerName} ${storeInfo.storeName} (${checkResult.startTime} - ${checkResult.endTime}) in ${checkResult.scheduleName}.`, "error");
+                                return;
+                            }
+
+                            cellList.push({
+                                store_id: store.store_id,
+                                startTime: defaultTime.startTime,
+                                endTime: defaultTime.endTime
+                            });
+
+                            sched.schedule = editSchedule;
+                            schedules[sched.id] = sched;
+                            pushHistoryState(schedules);
+                            renderCell(date, promoterId);
+                        };
+                    }
+
+                    // Time inputs listener
+                    const inputs = card.querySelectorAll('input');
+                    inputs.forEach(inp => {
+                        inp.oninput = (e) => {
+                            let val = e.target.value.replace(/[^0-9]/g, '');
+                            if (val.length > 4) val = val.slice(0, 4);
+                            if (val.length > 2) {
+                                val = val.slice(0, 2) + ':' + val.slice(2);
+                            }
+                            e.target.value = val;
+                        };
+
+                        inp.onblur = (e) => {
+                            const f = e.target.getAttribute('data-field');
+                            const val = e.target.value;
+                            const regex = /^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$/;
+
+                            if (!regex.test(val)) {
+                                const fallback = store[f] || (f === 'startTime' ? '09:00' : '17:00');
+                                e.target.value = fallback;
+                                window.oc.showAlert("Please enter a valid time in 24h format (HH:MM)", "warning");
+                            } else {
+                                if (store[f] !== val) {
+                                    const proposedStart = f === 'startTime' ? val : store.startTime;
+                                    const proposedEnd = f === 'endTime' ? val : store.endTime;
+
+                                    if (parseTimeToMin(proposedStart) >= parseTimeToMin(proposedEnd)) {
+                                        window.oc.showAlert("Start time must be before end time", "error");
+                                        e.target.value = store[f] || (f === 'startTime' ? '09:00' : '17:00');
+                                        return;
+                                    }
+
+                                    const checkResult = hasConflictAllSchedules(schedId, date, promoterId, idx, proposedStart, proposedEnd);
+                                    if (checkResult.conflict) {
+                                        const storeInfo = resolveStore(checkResult.storeId);
+                                        window.oc.showAlert(`Conflict: Shift overlaps with ${storeInfo.retailerName} ${storeInfo.storeName} (${checkResult.startTime} - ${checkResult.endTime}) in ${checkResult.scheduleName}. 1-hour buffer required.`, "error");
+                                        e.target.value = store[f] || (f === 'startTime' ? '09:00' : '17:00');
+                                    } else {
+                                        editSchedule[date][promoterId][idx][f] = val;
+                                        sched.schedule = editSchedule;
+                                        schedules[sched.id] = sched;
+                                        pushHistoryState(schedules);
+                                    }
+                                }
+                            }
+                        };
+                    });
+
+                    // Remove store click
+                    const rem = card.querySelector('.remove-btn');
+                    if (rem) {
+                        rem.onclick = () => {
+                            editSchedule[date][promoterId].splice(idx, 1);
+                            sched.schedule = editSchedule;
+                            schedules[sched.id] = sched;
+                            pushHistoryState(schedules);
+                            renderCell(date, promoterId);
+                        };
+                    }
+
+                    // Drag & Drop for cell cards (moving stores)
+                    if (!isBoardSaved) {
+                        card.setAttribute('draggable', 'true');
+                        card.ondragstart = (e) => {
+                            card.classList.add('dragging');
+                            e.dataTransfer.setData('text/plain', store.store_id);
+                            e.dataTransfer.setData('source-date', date);
+                            e.dataTransfer.setData('source-promoter-id', promoterId);
+                            e.dataTransfer.setData('source-index', idx);
+                        };
+                        card.ondragend = () => {
+                            card.classList.remove('dragging');
+                        };
+                    }
+
+                    dz.appendChild(card);
+                });
+            };
+
+            // Set up HTML5 Drag/Drop handlers for grid cells
+            const setupDragAndDrop = () => {
+                timelineDates.forEach(d => {
+                    promoters.forEach(p => {
+                        const dz = container.querySelector(`#dz-${schedId}-${d.isoString}-${p.id}`);
+                        if (!dz) return;
+
+                        // Render cell initial content
+                        renderCell(d.isoString, p.id);
+
+                        // Drag events
+                        dz.ondragover = (e) => {
+                            if (isBoardSaved) return;
+                            e.preventDefault();
+                            dz.classList.add('drag-over');
+                        };
+
+                        dz.ondragleave = () => {
+                            dz.classList.remove('drag-over');
+                        };
+
+                        dz.ondrop = (e) => {
+                            if (isBoardSaved) return;
+                            e.preventDefault();
+                            dz.classList.remove('drag-over');
+
+                            const storeId = e.dataTransfer.getData('text/plain');
+                            const store = matchingStores.find(s => String(s.id) === String(storeId));
+                            if (!store) return;
+
+                            if (!editSchedule[d.isoString]) editSchedule[d.isoString] = {};
+                            if (!editSchedule[d.isoString][p.id]) editSchedule[d.isoString][p.id] = [];
+
+                            const cellList = editSchedule[d.isoString][p.id];
+
+                            // Check if source is an existing cell card (moving) or sidebar (new assignment)
+                            const sourceDate = e.dataTransfer.getData('source-date');
+                            const sourcePromoterId = e.dataTransfer.getData('source-promoter-id');
+                            const sourceIndexStr = e.dataTransfer.getData('source-index');
+
+                            if (sourceDate && sourcePromoterId && sourceIndexStr !== '') {
+                                const sourceIndex = parseInt(sourceIndexStr);
+                                if (sourceDate === d.isoString && sourcePromoterId === p.id) {
+                                    return; // dropped back in the same cell
+                                }
+
+                                const sourceCellList = editSchedule[sourceDate]?.[sourcePromoterId] || [];
+                                const draggedItem = sourceCellList[sourceIndex];
+                                if (!draggedItem) return;
+
+                                // Validation: Max 4 stores per promoter per day at target cell
+                                if (cellList.length >= 4) {
+                                    window.oc.showAlert("Maximum 4 stores can be assigned per cell", "error");
+                                    return;
+                                }
+
+                                // Resolve non-conflicting times across all schedules on target day
+                                const dayExistingShifts = [];
+                                for (const sId in schedules) {
+                                    const sObj = schedules[sId];
+                                    const sShifts = sObj.schedule?.[d.isoString]?.[p.id] || [];
+                                    dayExistingShifts.push(...sShifts);
+                                }
+
+                                const defaultTime = getNonConflictingTime(dayExistingShifts);
+                                const checkResult = hasConflictAllSchedules(schedId, d.isoString, p.id, null, defaultTime.startTime, defaultTime.endTime);
+                                if (checkResult.conflict) {
+                                    const storeInfo = resolveStore(checkResult.storeId);
+                                    window.oc.showAlert(`Conflict: No free time slot on this day. Overlaps with ${storeInfo.retailerName} ${storeInfo.storeName} (${checkResult.startTime} - ${checkResult.endTime}) in ${checkResult.scheduleName}.`, "error");
+                                    return;
+                                }
+
+                                // Move: remove from source list and push to target list
+                                sourceCellList.splice(sourceIndex, 1);
+                                cellList.push({
+                                    store_id: draggedItem.store_id,
+                                    startTime: defaultTime.startTime,
+                                    endTime: defaultTime.endTime
+                                });
+
+                                sched.schedule = editSchedule;
+                                schedules[sched.id] = sched;
+                                pushHistoryState(schedules);
+
+                                renderCell(sourceDate, sourcePromoterId);
+                                renderCell(d.isoString, p.id);
+                            } else {
+                                // Dragging from the sidebar (new assignment)
+                                // Validation: Max 4 stores per promoter per day
+                                if (cellList.length >= 4) {
+                                    window.oc.showAlert("Maximum 4 stores can be assigned per cell", "error");
+                                    return;
+                                }
+
+                                // Resolve non-conflicting times across all schedules on this day
+                                const dayExistingShifts = [];
+                                for (const sId in schedules) {
+                                    const sObj = schedules[sId];
+                                    const sShifts = sObj.schedule?.[d.isoString]?.[p.id] || [];
+                                    dayExistingShifts.push(...sShifts);
+                                }
+
+                                const defaultTime = getNonConflictingTime(dayExistingShifts);
+                                const checkResult = hasConflictAllSchedules(schedId, d.isoString, p.id, null, defaultTime.startTime, defaultTime.endTime);
+                                if (checkResult.conflict) {
+                                    const storeInfo = resolveStore(checkResult.storeId);
+                                    window.oc.showAlert(`Conflict: No free time slot on this day. Overlaps with ${storeInfo.retailerName} ${storeInfo.storeName} (${checkResult.startTime} - ${checkResult.endTime}) in ${checkResult.scheduleName}.`, "error");
+                                    return;
+                                }
+
+                                // Add to working data copy
+                                cellList.push({
+                                    store_id: store.id,
+                                    startTime: defaultTime.startTime,
+                                    endTime: defaultTime.endTime
+                                });
+
+                                sched.schedule = editSchedule;
+                                schedules[sched.id] = sched;
+                                pushHistoryState(schedules);
+
+                                renderCell(d.isoString, p.id);
+                            }
+                        };
+                    });
+                });
+            };
+
+            // Switch to Saved or Edit visualization states
+            const toggleBoardState = (saved) => {
+                isBoardSaved = saved;
+
+                const tableWrapper = container.querySelector('.sched-table-wrapper');
+
+                // Add mode-shifting class for smooth cinematic blur transition
+                if (!isFirstRender) {
+                    tablePane.classList.add('mode-shifting');
+                }
+
+                // Slide in/out right sidebar
+                if (saved) {
+                    sidebarPane.classList.add('completely-hidden');
+                    saveBtn.style.display = 'none';
+                    editBtn.style.display = 'flex';
+                } else {
+                    sidebarPane.classList.remove('completely-hidden');
+                    saveBtn.style.display = 'flex';
+                    editBtn.style.display = 'none';
+                }
+
+                const updateContents = () => {
+                    if (tableWrapper) {
+                        tableWrapper.classList.toggle('saved-mode', saved);
+                    }
+
+                    // Re-render sidebar draggable properties
+                    renderSidebarStores();
+
+                    // Re-render all table cells
+                    timelineDates.forEach(d => {
+                        promoters.forEach(p => {
+                            renderCell(d.isoString, p.id);
+                        });
+                    });
+
+                    if (!isFirstRender) {
+                        setTimeout(() => {
+                            tablePane.classList.remove('mode-shifting');
+                        }, 50);
+                    }
+                    isFirstRender = false;
+                };
+
+                if (isFirstRender) {
+                    updateContents();
+                } else {
+                    setTimeout(updateContents, 150);
+                }
+            };
+
+            // Save Schedule to Sheets (via GAS)
+            saveBtn.onclick = async () => {
+                const confirmed = await showCustomConfirm("Are you sure to save it? You cannot undo after saving.", "Save Schedule", "Save", true);
+                if (!confirmed) return;
+
+                sched.schedule = editSchedule;
+
+                // Update local memory
+                schedules[sched.id] = sched;
+
+                // Reset undo/redo history stack upon save
+                const newHistory = {
+                    past: [JSON.parse(JSON.stringify(schedules))],
+                    future: []
+                };
+                saveHistory(newHistory);
+                updateUndoRedoUI();
+
+                // Sync immediately to local storage hsg_global_db cache
+                if (window.oc && window.oc.db) {
+                    const dbRows = Object.values(schedules).map(s => {
+                        const serialized = serializeScheduleObj(s);
+                        return {
+                            id: s.id,
+                            timestamp: new Date().toISOString(),
+                            json: btoa(unescape(encodeURIComponent(JSON.stringify(serialized))))
+                        };
+                    });
+                    window.oc.db.Promoter_Schedule = dbRows;
+                    localStorage.setItem('hsg_global_db', JSON.stringify(window.oc.db));
+                }
+
+                // Instantly update UI and show alert
+                toggleBoardState(true);
+                renderSchedulesGrid();
+                window.oc.showAlert("Schedule Saved Successfully", "success");
+
+                // Save in the background to Google Sheets (without any block loading/animations)
+                const serializedSched = serializeScheduleObj(sched);
+                const postData = {
+                    id: sched.id,
+                    timestamp: new Date().toISOString(),
+                    json: btoa(unescape(encodeURIComponent(JSON.stringify(serializedSched))))
+                };
+
+                const gasUrl = window.oc.CONFIG?.GAS_URL || 'https://script.google.com/macros/s/AKfycbxoCVpXe16PGEq441pz162kGOfeTRtSv-i06HLiv8uYg1jt_gTvgv9mN7ErwVqyVWo/exec';
+                fetch(gasUrl, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        type: 'save',
+                        table: 'Promoter_Schedule',
+                        data: postData
+                    })
+                })
+                    .then(res => res.json())
+                    .then(result => {
+                        if (result.status === 'success') {
+                            console.log("Background save succeeded for Promoter_Schedule:", sched.id);
+                        } else {
+                            console.warn("Background save failed:", result.message);
+                        }
+                    })
+                    .catch(err => {
+                        console.error("Background save network error:", err);
+                    });
+            };
+
+            // Edit Schedule button
+            editBtn.onclick = () => {
+                toggleBoardState(false);
+            };
+
+            // Setup filters listeners
+            zoneFilter.onchange = () => {
+                renderSidebarStores();
+            };
+            retailerFilter.onchange = () => {
+                renderSidebarStores();
+            };
+            sidebarSearch.oninput = () => {
+                renderSidebarStores();
+            };
+
+            // Main initialization calls
+            loadSidebarStores();
+            setupDragAndDrop();
+
+            // Bind remove promoter button clicks
+            container.querySelectorAll('.remove-promoter-btn').forEach(btn => {
+                btn.onclick = async () => {
+                    const pId = btn.getAttribute('data-promoter-id');
+                    const promName = resolvePromoter(pId).name;
+                    const confirmed = await showCustomConfirm("Are you sure to delete it?", "Delete Promoter");
+                    if (!confirmed) return;
+
+                    // Remove from sched.promoters
+                    sched.promoters = sched.promoters.filter(p => {
+                        const id = typeof p === 'object' && p !== null ? String(p.id) : String(p);
+                        return id !== String(pId);
+                    });
+
+                    // Clean up assigned shifts from editSchedule for this promoter
+                    Object.keys(editSchedule).forEach(date => {
+                        if (editSchedule[date] && editSchedule[date][pId]) {
+                            delete editSchedule[date][pId];
+                        }
+                    });
+
+                    // Update local copy and schedules grids
+                    sched.schedule = editSchedule;
+                    schedules[sched.id] = sched;
+
+                    pushHistoryState(schedules);
+
+                    // Re-render board!
+                    renderScheduleBoard(schedId, container, true);
+                };
+            });
+
+            // Bind add promoter dropdown trigger & menu clicks
+            if (hasMorePromoters) {
+                const addTrigger = container.querySelector(`#btn-add-promoter-trigger-${schedId}`);
+                const addMenu = container.querySelector(`#add-promoter-menu-${schedId}`);
+                if (addTrigger && addMenu) {
+                    addTrigger.onclick = (e) => {
+                        e.stopPropagation();
+                        addMenu.classList.toggle('hidden');
+                    };
+
+                    addMenu.innerHTML = availablePromoters.map(u => `
+                        <div class="px-4 py-2 hover:bg-slate-50 cursor-pointer text-xs font-semibold text-slate-700 border-b border-slate-100 last:border-0 add-promoter-option" data-promoter-id="${u.id}">
+                            ${u.name}
+                        </div>
+                    `).join('');
+
+                    addMenu.querySelectorAll('.add-promoter-option').forEach(item => {
+                        item.onclick = () => {
+                            const pId = item.getAttribute('data-promoter-id');
+                            // Add to sched.promoters
+                            if (!sched.promoters) sched.promoters = [];
+                            sched.promoters.push(pId);
+
+                            // Re-render
+                            schedules[sched.id] = sched;
+                            pushHistoryState(schedules);
+                            renderScheduleBoard(schedId, container, true);
+                        };
+                    });
+
+                    document.addEventListener('click', (e) => {
+                        if (!addMenu.contains(e.target) && e.target !== addTrigger && !addTrigger.contains(e.target)) {
+                            addMenu.classList.add('hidden');
+                        }
+                    });
+                }
+            }
+
+
+
+            // Listen for DB updates to refresh sidebar stores lists
+            const onDbUpdate = () => {
+                const el = document.getElementById(`tab-content-${schedId}`);
+                if (!el) {
+                    window.removeEventListener('hsg_db_updated', onDbUpdate);
+                    return;
+                }
+                loadSidebarStores();
+                renderSidebarStores();
+                // Also update the cells
+                timelineDates.forEach(d => {
+                    promoters.forEach(p => {
+                        renderCell(d.isoString, p.id);
+                    });
+                });
+            };
+            window.addEventListener('hsg_db_updated', onDbUpdate);
+
+            // Listen for scroll to toggle hidden columns indicator
+            const wrapper = container.querySelector('.sched-table-wrapper');
+            const pane = container.querySelector(`#board-table-pane-${schedId}`);
+            if (wrapper && pane) {
+                const checkScroll = () => {
+                    const firstPromoter = wrapper.querySelector('.sched-table th:not(:first-child):not(.add-promoter-th)');
+                    const threshold = firstPromoter ? firstPromoter.offsetWidth : 280;
+                    const hasHidden = wrapper.scrollLeft >= threshold;
+                    pane.classList.toggle('has-hidden-cols', hasHidden);
+                };
+                wrapper.addEventListener('scroll', checkScroll);
+                checkScroll();
+            }
+
+            // Check if schedule already has entries (determine initial view state)
+            const hasExistingData = Object.keys(editSchedule).length > 0;
+            const initialSaved = forceEditMode !== null ? !forceEditMode : hasExistingData;
+            toggleBoardState(initialSaved);
+        };
+
+        // --- Add Schedule Wizard Code ---
+        const setupWizardListeners = () => {
+            btnAddSchedule.onclick = () => {
+                openWizard();
+            };
+
+            wizardPrevBtn.onclick = () => {
+                navigateWizard(-1);
+            };
+
+            wizardNextBtn.onclick = () => {
+                navigateWizard(1);
+            };
+
+            // Select active days toggler
+            btnToggleDays.onclick = (e) => {
+                e.preventDefault();
+                const btns = weekdayContainer.querySelectorAll('.weekday-btn');
+                const allActive = activeWeekdays.length === 7;
+
+                if (allActive) {
+                    // Turn all off
+                    btns.forEach(b => b.classList.remove('active'));
+                    activeWeekdays = [];
+                    btnToggleDays.innerText = "Select All";
+                } else {
+                    // Turn all on
+                    btns.forEach(b => b.classList.add('active'));
+                    activeWeekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+                    btnToggleDays.innerText = "Deselect All";
+                }
+            };
+
+            weekdayContainer.onclick = (e) => {
+                const btn = e.target.closest('.weekday-btn');
+                if (!btn) return;
+
+                const day = btn.getAttribute('data-day');
+                const idx = activeWeekdays.indexOf(day);
+
+                if (idx > -1) {
+                    activeWeekdays.splice(idx, 1);
+                    btn.classList.remove('active');
+                } else {
+                    activeWeekdays.push(day);
+                    btn.classList.add('active');
+                }
+
+                btnToggleDays.innerText = activeWeekdays.length === 7 ? "Deselect All" : "Select All";
+            };
+
+            // Select All Promoters
+            const selectAllPromotersBtn = root.querySelector('#wizard-select-all-promoters');
+            if (selectAllPromotersBtn) {
+                selectAllPromotersBtn.onclick = (e) => {
+                    e.preventDefault();
+                    const all = window.oc.db.Promoter_Users || [];
+                    selectedPromoters = all.map(p => ({ id: String(p.id), name: p.name }));
+                    renderBadges(promoterBadges, selectedPromoters, (list) => { selectedPromoters = list; });
+                };
+            }
+
+            // Select All Products
+            const selectAllProductsBtn = root.querySelector('#wizard-select-all-products');
+            if (selectAllProductsBtn) {
+                selectAllProductsBtn.onclick = (e) => {
+                    e.preventDefault();
+                    const allProducts = window.oc.db.products_db || [];
+                    let filtered = allProducts;
+                    if (selectedBrands.length > 0) {
+                        const brandIds = selectedBrands.map(b => String(b.id));
+                        filtered = allProducts.filter(p => brandIds.includes(String(p.brand_id)));
+                    }
+                    selectedProducts = filtered.map(p => ({ id: String(p.sku), name: p.name }));
+                    renderBadges(productBadges, selectedProducts, (list) => { selectedProducts = list; });
+                };
+            }
+
+            // Autocomplete promoters search setup
+            setupAutocomplete(
+                promoterSearch,
+                promoterList,
+                promoterBadges,
+                () => window.oc.db.Promoter_Users || [],
+                (item) => item.name,
+                (item) => item.id,
+                selectedPromoters,
+                (list) => { selectedPromoters = list; }
+            );
+
+            // Autocomplete brands search setup (limit max 3)
+            setupAutocomplete(
+                brandSearch,
+                brandList,
+                brandBadges,
+                () => window.oc.db.brands_db || [],
+                (item) => item.name,
+                (item) => item.id,
+                selectedBrands,
+                (list) => {
+                    selectedBrands = list;
+                    brandLimitCounter.innerText = `${list.length}/3`;
+                    // When brands change, filter selected products that no longer match active brands
+                    filterMismatchedProducts();
+                },
+                3 // max limit
+            );
+
+            // Autocomplete products search setup (minimum 1 product, filtered by selected brands)
+            setupAutocomplete(
+                productSearch,
+                productList,
+                productBadges,
+                () => {
+                    const products = window.oc.db.products_db || [];
+                    if (selectedBrands.length === 0) return products;
+                    const brandIds = selectedBrands.map(b => String(b.id));
+                    return products.filter(p => brandIds.includes(String(p.brand_id)));
+                },
+                (item) => `${item.name} (${item.sku})`,
+                (item) => item.sku,
+                selectedProducts,
+                (list) => { selectedProducts = list; }
+            );
+        };
+
+        const filterMismatchedProducts = () => {
+            if (selectedBrands.length === 0) return;
+            const brandIds = selectedBrands.map(b => String(b.id));
+            selectedProducts = selectedProducts.filter(p => {
+                const prodObj = window.oc.db.products_db?.find(item => item.sku === p.id);
+                return prodObj && brandIds.includes(String(prodObj.brand_id));
+            });
+            renderBadges(productBadges, selectedProducts, (list) => { selectedProducts = list; });
+        };
+
+        // Shared searchable multi-select autocomplete engine
+        const setupAutocomplete = (input, listEl, badgesEl, getSourceData, getLabel, getId, selectedList, onUpdate, limit = null) => {
+
+            const renderList = (query) => {
+                const data = getSourceData();
+                const filtered = data.filter(item => {
+                    const label = getLabel(item).toLowerCase();
+                    const itemId = String(getId(item));
+                    // Check if already selected
+                    const isSelected = selectedList.some(s => String(s.id) === itemId);
+                    return label.includes(query) && !isSelected;
+                });
+
+                listEl.innerHTML = '';
+                if (filtered.length === 0) {
+                    listEl.classList.add('hidden');
+                    return;
+                }
+
+                filtered.slice(0, 10).forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = "autocomplete-item";
+                    div.textContent = getLabel(item);
+                    div.onclick = () => {
+                        if (limit && selectedList.length >= limit) {
+                            window.oc.showAlert(`Selection limited to maximum of ${limit} items`, "error");
+                            input.value = '';
+                            listEl.classList.add('hidden');
+                            return;
+                        }
+                        selectedList.push({
+                            id: String(getId(item)),
+                            name: getLabel(item)
+                        });
+                        onUpdate(selectedList);
+                        renderBadges(badgesEl, selectedList, onUpdate);
+                        input.value = '';
+                        listEl.classList.add('hidden');
+                    };
+                    listEl.appendChild(div);
+                });
+                listEl.classList.remove('hidden');
+            };
+
+            input.onfocus = () => {
+                renderList(input.value.toLowerCase().trim());
+            };
+
+            input.oninput = (e) => {
+                renderList(e.target.value.toLowerCase().trim());
+            };
+
+            // Close dropdown list on outer click
+            document.addEventListener('click', (e) => {
+                if (!input.contains(e.target) && !listEl.contains(e.target)) {
+                    listEl.classList.add('hidden');
+                }
+            });
+        };
+
+        const renderBadges = (badgesEl, selectedList, onUpdate) => {
+            badgesEl.innerHTML = selectedList.map((item, idx) => {
+                const displayName = item.name.length > 15 ? item.name.substring(0, 15) + '...' : item.name;
+                return `
+                    <div class="badge-item" title="${item.name}">
+                        <span>${displayName}</span>
+                        <span class="badge-remove" data-remove-idx="${idx}"><i class="fas fa-times-circle"></i></span>
+                    </div>
+                `;
+            }).join('');
+
+            badgesEl.querySelectorAll('.badge-remove').forEach(btn => {
+                btn.onclick = () => {
+                    const idx = parseInt(btn.getAttribute('data-remove-idx'));
+                    selectedList.splice(idx, 1);
+                    onUpdate(selectedList);
+                    renderBadges(badgesEl, selectedList, onUpdate);
+                };
+            });
+        };
+
+        const openWizard = () => {
+            currentStep = 1;
+            selectedPromoters = [];
+            selectedBrands = [];
+            selectedProducts = [];
+            activeWeekdays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+            // Inputs clean
+            root.querySelector('#wizard-name').value = '';
+            root.querySelector('#wizard-desc').value = '';
+            root.querySelector('#wizard-instruction').value = '';
+
+            // Set default date to today
+            const today = new Date().toISOString().split('T')[0];
+            const startInput = root.querySelector('#wizard-start-date');
+            const endInput = root.querySelector('#wizard-end-date');
+            startInput.value = today;
+            endInput.value = today;
+
+            // Clean autocomplete states
+            promoterSearch.value = '';
+            brandSearch.value = '';
+            productSearch.value = '';
+            promoterList.classList.add('hidden');
+            brandList.classList.add('hidden');
+            productList.classList.add('hidden');
+
+            renderBadges(promoterBadges, selectedPromoters, (list) => { selectedPromoters = list; });
+            renderBadges(brandBadges, selectedBrands, (list) => { selectedBrands = list; brandLimitCounter.innerText = `${list.length}/3`; });
+            renderBadges(productBadges, selectedProducts, (list) => { selectedProducts = list; });
+
+            // Weekday active styling reset
+            weekdayContainer.querySelectorAll('.weekday-btn').forEach(b => b.classList.add('active'));
+            btnToggleDays.innerText = "Deselect All";
+
+            showWizardStep(1);
+            wizardModal.classList.add('active');
+        };
+
+        window.closeWizard = () => {
+            wizardModal.classList.remove('active');
+        };
+
+        const showWizardStep = (step) => {
+            currentStep = step;
+            root.querySelectorAll('.wizard-step').forEach((el, idx) => {
+                el.classList.toggle('hidden', idx !== (step - 1));
+            });
+
+            wizardPrevBtn.disabled = step === 1;
+            wizardNextBtn.innerText = step === 4 ? "Create Schedule" : "Next Step";
+            wizardTitle.innerText = `New Schedule (Step ${step}/4)`;
+        };
+
+        const navigateWizard = (dir) => {
+            const nextStep = currentStep + dir;
+            if (nextStep < 1) return;
+
+            if (dir === 1) {
+                // Validation checks
+                if (currentStep === 1) {
+                    const name = root.querySelector('#wizard-name').value.trim();
+                    if (!name) {
+                        window.oc.showAlert("Schedule Name is required", "error");
+                        return;
+                    }
+                } else if (currentStep === 2) {
+                    const start = root.querySelector('#wizard-start-date').value;
+                    const end = root.querySelector('#wizard-end-date').value;
+                    if (!start || !end) {
+                        window.oc.showAlert("Please select timeline dates", "error");
+                        return;
+                    }
+                    if (new Date(start) > new Date(end)) {
+                        window.oc.showAlert("Start date cannot be after end date", "error");
+                        return;
+                    }
+                    if (activeWeekdays.length === 0) {
+                        window.oc.showAlert("Please select at least one active weekday", "error");
+                        return;
+                    }
+                    if (selectedPromoters.length === 0) {
+                        window.oc.showAlert("Please select at least one promoter", "error");
+                        return;
+                    }
+                } else if (currentStep === 3) {
+                    if (selectedProducts.length === 0) {
+                        window.oc.showAlert("Please select at least one target product", "error");
+                        return;
+                    }
+                }
+            }
+
+            if (nextStep === 4 && dir === 1) {
+                // Compile Summary Screen
+                root.querySelector('#summary-name').innerText = root.querySelector('#wizard-name').value;
+
+                const start = root.querySelector('#wizard-start-date').value;
+                const end = root.querySelector('#wizard-end-date').value;
+                root.querySelector('#summary-dates').innerText = `${formatHumanDate(start)} - ${formatHumanDate(end)}`;
+                root.querySelector('#summary-days').innerText = activeWeekdays.join(', ');
+                root.querySelector('#summary-promoters').innerText = selectedPromoters.map(p => p.name).join(', ');
+                root.querySelector('#summary-brands').innerText = selectedBrands.map(b => b.name).join(', ') || 'All Brands';
+                root.querySelector('#summary-products').innerText = selectedProducts.map(p => p.name).join(', ');
+            }
+
+            if (nextStep === 5 && dir === 1) {
+                // Create final schedule object structure
+                const name = root.querySelector('#wizard-name').value.trim();
+                const desc = root.querySelector('#wizard-desc').value.trim();
+                const instruction = root.querySelector('#wizard-instruction').value.trim();
+                const start = root.querySelector('#wizard-start-date').value;
+                const end = root.querySelector('#wizard-end-date').value;
+
+                const newSchedId = `prom_sched_${Date.now()}`;
+                const newSched = {
+                    id: newSchedId,
+                    name: name,
+                    description: desc,
+                    instruction: instruction,
+                    startDate: start,
+                    endDate: end,
+                    activeDays: activeWeekdays,
+                    promoters: selectedPromoters.map(p => p.id),
+                    brands: selectedBrands.map(b => b.id),
+                    products: selectedProducts.map(p => p.id || p.sku),
+                    schedule: {}
+                };
+
+                schedules[newSchedId] = newSched;
+                pushHistoryState(schedules);
+                renderSchedulesGrid();
+                closeWizard();
+
+                // Sync immediately to local storage hsg_global_db cache
+                if (window.oc && window.oc.db) {
+                    const dbRows = Object.values(schedules).map(s => {
+                        const serialized = serializeScheduleObj(s);
+                        return {
+                            id: s.id,
+                            timestamp: new Date().toISOString(),
+                            json: btoa(unescape(encodeURIComponent(JSON.stringify(serialized))))
+                        };
+                    });
+                    window.oc.db.Promoter_Schedule = dbRows;
+                    localStorage.setItem('hsg_global_db', JSON.stringify(window.oc.db));
+                }
+
+                // Save in the background to Google Sheets (without any block loading/animations)
+                const serializedSched = serializeScheduleObj(newSched);
+                const postData = {
+                    id: newSched.id,
+                    timestamp: new Date().toISOString(),
+                    json: btoa(unescape(encodeURIComponent(JSON.stringify(serializedSched))))
+                };
+
+                const gasUrl = window.oc.CONFIG?.GAS_URL || 'https://script.google.com/macros/s/AKfycbxoCVpXe16PGEq441pz162kGOfeTRtSv-i06HLiv8uYg1jt_gTvgv9mN7ErwVqyVWo/exec';
+                fetch(gasUrl, {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        type: 'save',
+                        table: 'Promoter_Schedule',
+                        data: postData
+                    })
+                })
+                    .then(res => res.json())
+                    .then(result => {
+                        if (result.status === 'success') {
+                            console.log("Background save succeeded for Promoter_Schedule:", newSched.id);
+                        } else {
+                            console.warn("Background save failed:", result.message);
+                        }
+                    })
+                    .catch(err => {
+                        console.error("Background save network error:", err);
+                    });
+
+                // Open newly created schedule tab immediately
+                openScheduleTab(newSchedId);
+                return;
+            }
+
+            showWizardStep(nextStep);
+        };
+
+        window.openDetailsModal = function (storeId) {
+            const dbStores = window.oc?.db?.stores_retailer_db || [];
+            const dbRetailers = window.oc?.db?.retailers_db || [];
+            const dbContacts = window.oc?.db?.contacts_store_retailer_db || [];
+            const dbBrands = window.oc?.db?.brands_db || [];
+            const dbProductLogs = window.oc?.db?.merch_visit_product_audit_logs || [];
+            const dbShelfLogs = window.oc?.db?.merch_visit_shelf_audit_logs || [];
+
+            const store = dbStores.find(s => String(s.id) === String(storeId));
+            if (!store) return;
+
+            const retailer = dbRetailers.find(r => String(r.id) === String(store.retailer_id));
+            const retailerName = retailer ? retailer.name : (store.retailer_id || 'Other');
+            const retailerLogo = retailer ? retailer.logo : null;
+
+            const modal = root.querySelector('#detailsModal');
+            const logoEl = root.querySelector('#modalRetailerLogo');
+            const retEl = root.querySelector('#modalRetailerName');
+            const nameEl = root.querySelector('#modalStoreName');
+            const mapEl = root.querySelector('#modalMapContainer');
+
+            retEl.innerText = retailerName;
+            nameEl.innerText = store.name || storeId;
+            logoEl.innerHTML = retailerLogo ?
+                `<img src="${retailerLogo}" class="w-full h-full object-cover">` :
+                `<span class="font-black text-hsg-primary text-xl">${retailerName.charAt(0)}</span>`;
+
+            const queryLocation = store.coords || store.address || store.name;
+            mapEl.innerHTML = `<iframe width="100%" height="100%" frameborder="0" style="border:0" src="https://maps.google.com/maps?q=${encodeURIComponent(queryLocation)}&t=&z=15&ie=UTF8&iwloc=&output=embed" allowfullscreen></iframe>`;
+
+            renderModalBrands(storeId, dbBrands, dbProductLogs, dbShelfLogs);
+            renderModalContacts(storeId, dbContacts);
+
+            modal.style.display = 'flex';
+            document.documentElement.classList.add('modal-locked');
+            document.body.classList.add('modal-locked');
+            switchModalTab('carried-brands');
+        };
+
+        window.closeDetailsModal = function () {
+            const modal = root.querySelector('#detailsModal');
+            if (modal) modal.style.display = 'none';
+            document.documentElement.classList.remove('modal-locked');
+            document.body.classList.remove('modal-locked');
+        };
+
+        window.switchModalTab = function (tabId) {
+            root.querySelectorAll('.modal-tab-btn').forEach(btn => btn.classList.remove('active'));
+            const activeBtn = root.querySelector(`#modal-tab-${tabId}`);
+            if (activeBtn) activeBtn.classList.add('active');
+
+            const tabCarried = root.querySelector('#modal-content-carried-brands');
+            const tabContacts = root.querySelector('#modal-content-contacts');
+
+            if (tabCarried) tabCarried.classList.toggle('hidden', tabId !== 'carried-brands');
+            if (tabContacts) tabContacts.classList.toggle('hidden', tabId !== 'contacts');
+        };
+
+        function renderModalBrands(storeId, dbBrands, dbProductLogs, dbShelfLogs) {
+            const container = root.querySelector('#modal-content-carried-brands');
+            if (!container) return;
+
+            const sortedLogs = [...dbProductLogs]
+                .filter(l => String(l.store_id) === String(storeId))
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+            const latestLog = sortedLogs[0];
+            if (!latestLog || !latestLog.audit_json) {
+                container.innerHTML = `
+                    <div class="py-20 text-center flex flex-col items-center justify-center">
+                        <i class="fas fa-box-open text-4xl text-slate-200 mb-4"></i>
+                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">No audit data recorded for this store</p>
+                    </div>`;
+                return;
+            }
+
+            let auditItems = [];
+            try {
+                if (typeof latestLog.audit_json === 'string') {
+                    auditItems = JSON.parse(latestLog.audit_json);
+                } else if (Array.isArray(latestLog.audit_json)) {
+                    auditItems = latestLog.audit_json;
+                }
+            } catch (e) { }
+
+            if (!Array.isArray(auditItems) || auditItems.length === 0) {
+                container.innerHTML = `
+                    <div class="py-20 text-center flex flex-col items-center justify-center">
+                        <i class="fas fa-box-open text-4xl text-slate-200 mb-4"></i>
+                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">No products in audit logs</p>
+                    </div>`;
+                return;
+            }
+
+            const brandMap = {};
+            dbBrands.forEach(b => { if (b.id) brandMap[String(b.id).toLowerCase()] = b.name; });
+
+            const shelfPhotos = {};
+            dbShelfLogs.filter(img => String(img.store_id).toLowerCase() === String(storeId).toLowerCase()).forEach(img => {
+                if (img.brand_id && img.image) {
+                    shelfPhotos[String(img.brand_id).toLowerCase()] = img.image;
+                }
+            });
+
+            const products = window.oc.db.products_db || [];
+            const grouped = {};
+
+            auditItems.forEach(item => {
+                const sku = item.sku || item.SKU || item.Sku || item.code || item.id;
+                const qty = parseInt(item.qty || item.QTY || item.Qty || 0);
+                if (qty <= 0) return;
+
+                const pObj = products.find(p => p.sku === sku);
+                const bId = pObj ? String(pObj.brand_id) : 'Other';
+                const bName = brandMap[bId.toLowerCase()] || bId;
+                const pName = pObj ? pObj.name : sku;
+
+                if (!grouped[bId]) {
+                    grouped[bId] = { name: bName, products: [] };
+                }
+                grouped[bId].products.push({ name: pName, qty: qty });
+            });
+
+            const keys = Object.keys(grouped);
+            if (keys.length === 0) {
+                container.innerHTML = `
+                    <div class="py-20 text-center flex flex-col items-center justify-center">
+                        <i class="fas fa-box-open text-4xl text-slate-200 mb-4"></i>
+                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">No stock found in latest audit</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = keys.map(bId => {
+                const brand = grouped[bId];
+                const photo = shelfPhotos[bId.toLowerCase()];
+                return `
+                    <div class="bg-white rounded-2xl border border-slate-150 overflow-hidden shadow-sm flex flex-col">
+                        <div class="px-6 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                            <h4 class="text-[11px] font-black text-slate-800 uppercase tracking-[0.2em]">${brand.name}</h4>
+                            <span class="text-[9px] font-black text-hsg-primary bg-hsg-primary/10 px-2.5 py-1 rounded-md">${brand.products.length} SKUs</span>
+                        </div>
+                        <div class="flex flex-col md:flex-row">
+                            <div class="flex-1 p-6 flex flex-col gap-3">
+                                ${brand.products.map(p => `
+                                    <div class="flex items-center justify-between text-xs border-b border-slate-50 pb-2 last:border-0 last:pb-0">
+                                        <span class="font-medium text-slate-500 uppercase tracking-wider">${p.name}</span>
+                                        <span class="font-bold text-hsg-primary">${p.qty}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            <div class="w-full md:w-48 border-t md:border-t-0 md:border-l border-slate-100 flex items-center justify-center bg-slate-50 relative shrink-0 aspect-[4/3] md:aspect-auto">
+                                ${photo ?
+                        `<img src="${photo}" class="w-full h-full object-cover cursor-zoom-in" onclick="window.open('${photo}', '_blank')">` :
+                        `<div class="flex flex-col items-center justify-center text-slate-350 p-4">
+                                        <i class="fas fa-camera text-lg mb-1"></i>
+                                        <span class="text-[8px] font-black uppercase tracking-wider">No Photo</span>
+                                    </div>`
+                    }
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function renderModalContacts(storeId, dbContacts) {
+            const container = root.querySelector('#modal-content-contacts');
+            if (!container) return;
+
+            const filtered = dbContacts.filter(c => String(c.store_id).toLowerCase() === String(storeId).toLowerCase());
+
+            if (filtered.length === 0) {
+                container.innerHTML = `
+                    <div class="py-20 text-center flex flex-col items-center justify-center">
+                        <i class="fas fa-id-card text-4xl text-slate-200 mb-4"></i>
+                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">No contact information available</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = filtered.map(c => `
+                <div class="bg-white p-6 rounded-2xl border border-slate-150 shadow-sm flex items-center justify-between">
+                    <div>
+                        <div class="text-[9px] font-black text-hsg-primary uppercase tracking-widest mb-1">${c.position || 'Staff'}</div>
+                        <div class="text-sm font-black text-slate-800 uppercase">${c.name}</div>
+                        <div class="text-[10px] text-slate-450 mt-1">${c.email || ''}</div>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        ${c.phone ? `<a href="tel:${c.phone}" class="w-10 h-10 flex items-center justify-center rounded-xl bg-hsg-primary/5 text-hsg-primary hover:bg-hsg-primary hover:text-white transition-all"><i class="fas fa-phone-alt"></i></a>` : ''}
+                        ${c.email ? `<a href="mailto:${c.email}" class="w-10 h-10 flex items-center justify-center rounded-xl bg-hsg-primary/5 text-hsg-primary hover:bg-hsg-primary hover:text-white transition-all"><i class="fas fa-envelope"></i></a>` : ''}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // --- SHIFT VALIDATION & BUFFER FUNCTIONALITY ---
+        const parseTimeToMin = (timeStr) => {
+            if (!timeStr) return 0;
+            const parts = timeStr.split(':');
+            const h = parseInt(parts[0] || 0);
+            const m = parseInt(parts[1] || 0);
+            return h * 60 + m;
+        };
+
+        const formatMinToTime = (min) => {
+            const h = Math.floor(min / 60) % 24;
+            const m = min % 60;
+            return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        };
+
+        const getNonConflictingTime = (existingShifts) => {
+            if (!existingShifts || existingShifts.length === 0) {
+                return { startTime: "09:00", endTime: "17:00" };
+            }
+
+            const sortedShifts = [...existingShifts].map(s => ({
+                start: parseTimeToMin(s.startTime),
+                end: parseTimeToMin(s.endTime)
+            })).sort((a, b) => a.start - b.start);
+
+            const lastShift = sortedShifts[sortedShifts.length - 1];
+            const proposedStart = lastShift.end + 60;
+            const proposedEnd = proposedStart + 120;
+
+            if (proposedEnd <= 24 * 60) {
+                return { startTime: formatMinToTime(proposedStart), endTime: formatMinToTime(proposedEnd) };
+            }
+
+            const firstShift = sortedShifts[0];
+            const proposedEndBefore = firstShift.start - 60;
+            const proposedStartBefore = proposedEndBefore - 120;
+
+            if (proposedStartBefore >= 0) {
+                return { startTime: formatMinToTime(proposedStartBefore), endTime: formatMinToTime(proposedEndBefore) };
+            }
+
+            for (let i = 0; i < sortedShifts.length - 1; i++) {
+                const currentEnd = sortedShifts[i].end;
+                const nextStart = sortedShifts[i + 1].start;
+                const gap = nextStart - currentEnd;
+                if (gap >= 240) {
+                    const gapStart = currentEnd + 60;
+                    const gapEnd = gapStart + 120;
+                    return { startTime: formatMinToTime(gapStart), endTime: formatMinToTime(gapEnd) };
+                }
+            }
+
+            return { startTime: "09:00", endTime: "11:00" };
+        };
+
+        const hasConflictAllSchedules = (currentScheduleId, dateStr, promoterId, excludeIndex, startStr, endStr) => {
+            const S2 = parseTimeToMin(startStr);
+            const E2 = parseTimeToMin(endStr);
+
+            for (const schedId in schedules) {
+                const sched = schedules[schedId];
+                const editSchedule = sched.schedule || {};
+                const dayShifts = editSchedule[dateStr]?.[promoterId] || [];
+
+                for (let idx = 0; idx < dayShifts.length; idx++) {
+                    if (schedId === currentScheduleId && excludeIndex !== null && idx === excludeIndex) continue;
+
+                    const s = dayShifts[idx];
+                    const S1 = parseTimeToMin(s.startTime);
+                    const E1 = parseTimeToMin(s.endTime);
+
+                    const isSafe = (S2 >= E1 + 60) || (E2 <= S1 - 60);
+                    if (!isSafe) {
+                        return {
+                            conflict: true,
+                            scheduleName: sched.name,
+                            storeId: s.store_id,
+                            startTime: s.startTime,
+                            endTime: s.endTime
+                        };
+                    }
+                }
+            }
+            return { conflict: false };
+        };
+
+        // --- PRINT MODULE FUNCTIONALITY ---
+        const resolveStore = (storeId) => {
+            const dbStores = window.oc?.db?.stores_retailer_db || [];
+            const dbRetailers = window.oc?.db?.retailers_db || [];
+            const store = dbStores.find(s => String(s.id) === String(storeId));
+            if (!store) return { storeName: `Store #${storeId}`, retailerName: '', address: '' };
+
+            const retailer = dbRetailers.find(r => String(r.id) === String(store.retailer_id));
+            const retailerName = retailer ? retailer.name : (store.retailer_id || '');
+            return {
+                id: store.id,
+                retailerName: retailerName,
+                storeName: store.name,
+                address: store.address || ''
+            };
+        };
+
+        const printContent = (htmlContent, orientation = 'portrait') => {
+            let printSection = document.getElementById('print-section');
+            if (printSection) printSection.remove();
+
+            printSection = document.createElement('div');
+            printSection.id = 'print-section';
+            printSection.innerHTML = htmlContent;
+            document.body.appendChild(printSection);
+
+            let styleEl = document.getElementById('print-orientation-style');
+            if (styleEl) styleEl.remove();
+
+            styleEl = document.createElement('style');
+            styleEl.id = 'print-orientation-style';
+            styleEl.innerHTML = `@media print { @page { size: ${orientation}; margin: 10mm; } }`;
+            document.head.appendChild(styleEl);
+
+            window.print();
+
+            setTimeout(() => {
+                if (printSection) printSection.remove();
+                if (styleEl) styleEl.remove();
+            }, 1000);
+        };
+
+        const printActiveSchedule = () => {
+            const sched = schedules[activeTab];
+            if (!sched) return;
+
+            const timelineDates = getDatesInRange(sched.startDate, sched.endDate, sched.activeDays || []);
+            const promoters = (sched.promoters || []).map(resolvePromoter);
+            const editSchedule = sched.schedule || {};
+            const activeBrandsList = (sched.brands || []).map(b => resolveBrand(b).name).join(', ') || 'All Brands';
+
+            let html = `
+                <div class="print-header">
+                    <h1>${sched.name} - Promoter Schedule</h1>
+                    <p>Timeline: ${formatHumanDate(sched.startDate)} to ${formatHumanDate(sched.endDate)} | Active Days: ${(sched.activeDays || []).join(', ')}</p>
+                    <p><strong>Brands to Promote:</strong> ${activeBrandsList}</p>
+                    ${sched.description ? `<p>Description: ${sched.description}</p>` : ''}
+                    ${sched.instruction ? `<p>Special Instructions: ${sched.instruction}</p>` : ''}
+                </div>
+                <table class="print-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 15%;">Day & Date</th>
+                            ${promoters.map(p => `<th style="width: ${85 / promoters.length}%; text-align: center;">${p.name}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            timelineDates.forEach(d => {
+                html += `
+                    <tr>
+                        <td style="font-weight: 700;">
+                            <div style="font-size: 8px; color: #64748b; text-transform: uppercase;">${d.dayLabel}</div>
+                            <div>${d.dateLabel}</div>
+                        </td>
+                `;
+
+                promoters.forEach(p => {
+                    const cellData = editSchedule[d.isoString]?.[p.id] || [];
+                    html += `<td>`;
+                    if (cellData.length === 0) {
+                        html += `<div class="print-resting">Resting Day</div>`;
+                    } else {
+                        cellData.forEach(store => {
+                            const storeInfo = resolveStore(store.store_id);
+                            html += `
+                                <div class="print-store-card">
+                                    <div class="print-store-retailer">${storeInfo.retailerName}</div>
+                                    <div class="print-store-name">${storeInfo.storeName}</div>
+                                    <div class="print-store-time">${store.startTime} - ${store.endTime}</div>
+                                    <div style="font-size: 8px; color: #64748b; font-weight: 600; margin-top: 3px; border-top: 1px dashed #cbd5e1; padding-top: 2px;">
+                                        Brands: ${activeBrandsList}
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    }
+                    html += `</td>`;
+                });
+
+                html += `</tr>`;
+            });
+
+            html += `
+                    </tbody>
+                </table>
+            `;
+
+            printContent(html, 'landscape');
+        };
+
+        // Print promoter modal open/close helpers
+        window.openPrintPromoterModal = () => {
+            const dbUsers = window.oc?.db?.Promoter_Users || [];
+            const dropdown = root.querySelector('#print-promoter-select-dropdown');
+            if (dropdown) {
+                dropdown.innerHTML = '';
+                const sortedUsers = [...dbUsers].sort((a, b) => a.name.localeCompare(b.name));
+                sortedUsers.forEach(u => {
+                    const opt = document.createElement('option');
+                    opt.value = u.id;
+                    opt.textContent = u.name;
+                    dropdown.appendChild(opt);
+                });
+            }
+
+            // Populate default date range limits based on existing schedule timelines
+            const allSchedulesList = Object.values(schedules);
+            let earliestDate = '';
+            let latestDate = '';
+            allSchedulesList.forEach(s => {
+                if (!earliestDate || s.startDate < earliestDate) earliestDate = s.startDate;
+                if (!latestDate || s.endDate > latestDate) latestDate = s.endDate;
+            });
+            const startInput = root.querySelector('#print-promoter-start-date');
+            const endInput = root.querySelector('#print-promoter-end-date');
+            if (startInput && earliestDate) startInput.value = earliestDate;
+            if (endInput && latestDate) endInput.value = latestDate;
+
+            const modal = root.querySelector('#print-promoter-select-modal');
+            if (modal) {
+                modal.classList.add('active');
+            }
+        };
+
+        window.closePrintPromoterModal = () => {
+            const modal = root.querySelector('#print-promoter-select-modal');
+            if (modal) {
+                modal.classList.remove('active');
+            }
+        };
+
+        window.openPrintMasterModal = () => {
+            const allSchedulesList = Object.values(schedules);
+            const dropdown = root.querySelector('#print-master-select-dropdown');
+            if (dropdown) {
+                dropdown.innerHTML = '';
+
+                // Collect unique months
+                const uniqueDatesMap = {};
+                allSchedulesList.forEach(sched => {
+                    const dates = getDatesInRange(sched.startDate, sched.endDate, sched.activeDays || []);
+                    dates.forEach(d => {
+                        uniqueDatesMap[d.isoString] = d;
+                    });
+                });
+                const sortedDates = Object.values(uniqueDatesMap).sort((a, b) => a.isoString.localeCompare(b.isoString));
+                const monthsSet = new Set();
+                sortedDates.forEach(d => {
+                    const ym = d.isoString.substring(0, 7);
+                    monthsSet.add(ym);
+                });
+                const sortedMonths = Array.from(monthsSet).sort();
+
+                const monthNames = [
+                    "January", "February", "March", "April", "May", "June",
+                    "July", "August", "September", "October", "November", "December"
+                ];
+
+                sortedMonths.forEach(ym => {
+                    const [yearStr, monthStr] = ym.split('-');
+                    const monthName = monthNames[parseInt(monthStr) - 1];
+                    const opt = document.createElement('option');
+                    opt.value = ym;
+                    opt.textContent = `${monthName} ${yearStr}`;
+                    dropdown.appendChild(opt);
+                });
+            }
+            const modal = root.querySelector('#print-master-select-modal');
+            if (modal) {
+                modal.classList.add('active');
+            }
+        };
+
+        window.closePrintMasterModal = () => {
+            const modal = root.querySelector('#print-master-select-modal');
+            if (modal) {
+                modal.classList.remove('active');
+            }
+        };
+
+        const printSelectedPromoterSchedule = (promoterId, startDateFilter = '', endDateFilter = '') => {
+            const promoterObj = resolvePromoter(promoterId);
+            const promoterName = promoterObj ? promoterObj.name : `Promoter #${promoterId}`;
+
+            const allSchedulesList = Object.values(schedules);
+            if (allSchedulesList.length === 0) {
+                window.oc.showAlert("No schedules available in the system", "warning");
+                return;
+            }
+
+            // Gather all active dates and shifts for this specific promoter across all schedules
+            const promoterDatesMap = {}; // dateStr -> { dateInfo, shifts }
+
+            allSchedulesList.forEach(sched => {
+                const editSchedule = sched.schedule || {};
+                const dates = getDatesInRange(sched.startDate, sched.endDate, sched.activeDays || []);
+                const schedBrandsStr = (sched.brands || []).map(b => resolveBrand(b).name).join(', ') || 'All Brands';
+
+                dates.forEach(d => {
+                    const dateStr = d.isoString;
+                    if (startDateFilter && dateStr < startDateFilter) return;
+                    if (endDateFilter && dateStr > endDateFilter) return;
+
+                    const shifts = editSchedule[dateStr]?.[promoterId] || [];
+
+                    if (shifts.length > 0) {
+                        if (!promoterDatesMap[dateStr]) {
+                            promoterDatesMap[dateStr] = {
+                                dateInfo: d,
+                                shifts: []
+                            };
+                        }
+                        // Merge shifts avoiding duplicate store IDs
+                        shifts.forEach(s => {
+                            const exists = promoterDatesMap[dateStr].shifts.some(existing => String(existing.store_id) === String(s.store_id));
+                            if (!exists) {
+                                promoterDatesMap[dateStr].shifts.push({
+                                    ...s,
+                                    brands: schedBrandsStr,
+                                    instruction: sched.instruction || ''
+                                });
+                            }
+                        });
+                    }
+                });
+            });
+
+            const sortedWorkingDates = Object.values(promoterDatesMap).sort((a, b) => a.dateInfo.isoString.localeCompare(b.dateInfo.isoString));
+
+            if (sortedWorkingDates.length === 0) {
+                window.oc.showAlert(`No schedule entries found for ${promoterName} in the selected period`, "warning");
+                return;
+            }
+
+            const periodStr = (startDateFilter && endDateFilter) 
+                ? `Period: ${formatHumanDate(startDateFilter)} to ${formatHumanDate(endDateFilter)}`
+                : "HSG Global Schedule for Promoter in all periods";
+
+            // Build Portrait HTML page representation
+            let html = `
+                <div class="print-header">
+                    <h1>Promoter Schedule: ${promoterName}</h1>
+                    <p>${periodStr}</p>
+                </div>
+                <table class="print-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 15%;">Day Date</th>
+                            <th style="width: 35%;">Assigned Store(s)</th>
+                            <th style="width: 25%;">Brand to Promote</th>
+                            <th style="width: 25%;">Special Instruction</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            sortedWorkingDates.forEach(workingDate => {
+                const d = workingDate.dateInfo;
+                const cellData = workingDate.shifts;
+
+                cellData.forEach((store, sIdx) => {
+                    const storeInfo = resolveStore(store.store_id);
+                    html += `
+                        <tr>
+                            ${sIdx === 0 ? `
+                                <td rowspan="${cellData.length}" style="font-weight: 700; vertical-align: middle;">
+                                    <div style="font-size: 8px; color: #64748b; text-transform: uppercase;">${d.dayLabel}</div>
+                                    <div>${d.dateLabel}</div>
+                                </td>
+                            ` : ''}
+                            <td>
+                                <div class="print-store-retailer" style="font-size: 10px;">${storeInfo.retailerName}</div>
+                                <div class="print-store-name" style="font-size: 11px; font-weight: 700;">${storeInfo.storeName}</div>
+                                <div style="font-size: 9px; color: #64748b; margin-top: 2px;">${storeInfo.address}</div>
+                                <div style="font-size: 9px; font-weight: 700; color: #1e293b; margin-top: 4px;">
+                                    Time: ${store.startTime} - ${store.endTime}
+                                </div>
+                            </td>
+                            <td style="font-size: 10px; font-weight: 600; color: #475569; vertical-align: middle;">
+                                ${store.brands || 'All Brands'}
+                            </td>
+                            <td style="font-size: 9px; color: #475569; vertical-align: middle; word-break: break-word;">
+                                ${store.instruction || '-'}
+                            </td>
+                        </tr>
+                    `;
+                });
+            });
+
+            html += `
+                    </tbody>
+                </table>
+            `;
+
+            printContent(html, 'portrait');
+        };
+
+        const printMasterCombinedCalendar = (filterMonthYear = 'all') => {
+            const allSchedulesList = Object.values(schedules);
+            if (allSchedulesList.length === 0) {
+                window.oc.showAlert("No schedules available to print", "warning");
+                return;
+            }
+
+            const uniqueDatesMap = {};
+            const uniquePromotersMap = {};
+
+            allSchedulesList.forEach(sched => {
+                const dates = getDatesInRange(sched.startDate, sched.endDate, sched.activeDays || []);
+                dates.forEach(d => {
+                    uniqueDatesMap[d.isoString] = d;
+                });
+
+                (sched.promoters || []).forEach(p => {
+                    const resolved = resolvePromoter(p);
+                    uniquePromotersMap[resolved.id] = resolved;
+                });
+            });
+
+            const sortedDates = Object.values(uniqueDatesMap).sort((a, b) => a.isoString.localeCompare(b.isoString));
+            const promotersList = Object.values(uniquePromotersMap);
+
+            if (sortedDates.length === 0 || promotersList.length === 0) {
+                window.oc.showAlert("No schedule data found to print", "warning");
+                return;
+            }
+
+            const mergedSchedule = {};
+
+            allSchedulesList.forEach(sched => {
+                const editSchedule = sched.schedule || {};
+                Object.keys(editSchedule).forEach(dateStr => {
+                    if (!mergedSchedule[dateStr]) {
+                        mergedSchedule[dateStr] = {};
+                    }
+
+                    const dayShifts = editSchedule[dateStr];
+                    Object.keys(dayShifts).forEach(pId => {
+                        if (!mergedSchedule[dateStr][pId]) {
+                            mergedSchedule[dateStr][pId] = [];
+                        }
+
+                        const schedBrandsStr = (sched.brands || []).map(b => resolveBrand(b).name).join(', ') || 'All Brands';
+                        dayShifts[pId].forEach(newShift => {
+                            const exists = mergedSchedule[dateStr][pId].some(existing => String(existing.store_id) === String(newShift.store_id));
+                            if (!exists) {
+                                mergedSchedule[dateStr][pId].push({
+                                    ...newShift,
+                                    brands: schedBrandsStr
+                                });
+                            }
+                        });
+                    });
+                });
+            });
+
+            // Group sortedDates into unique months (YYYY-MM)
+            const monthsSet = new Set();
+            sortedDates.forEach(d => {
+                const ym = d.isoString.substring(0, 7);
+                if (filterMonthYear === 'all' || ym === filterMonthYear) {
+                    monthsSet.add(ym);
+                }
+            });
+            const sortedMonths = Array.from(monthsSet).sort();
+
+            if (sortedMonths.length === 0) {
+                window.oc.showAlert("No schedule data found for the selected period", "warning");
+                return;
+            }
+
+            let html = `
+                <style>
+                    .calendar-print-container {
+                        box-sizing: border-box;
+                    }
+                    .calendar-print-table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        table-layout: fixed;
+                        margin-top: 10px;
+                    }
+                    .calendar-print-table th {
+                        width: 14.28%;
+                        text-align: center;
+                        padding: 4px !important;
+                        font-size: 9px !important;
+                        font-weight: 700;
+                        background-color: #f1f5f9 !important;
+                        border: 1px solid #cbd5e1 !important;
+                        color: #0f172a !important;
+                        text-transform: uppercase;
+                        letter-spacing: 0.05em;
+                    }
+                    .calendar-print-table td {
+                        height: 105px !important;
+                        vertical-align: top !important;
+                        padding: 4px !important;
+                        border: 1px solid #cbd5e1 !important;
+                        background-color: #ffffff !important;
+                    }
+                    .calendar-day-empty {
+                        background-color: #f8fafc !important;
+                    }
+                </style>
+            `;
+
+            const monthNames = [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"
+            ];
+
+            sortedMonths.forEach((ym, mIdx) => {
+                const [yearStr, monthStr] = ym.split('-');
+                const year = parseInt(yearStr);
+                const month = parseInt(monthStr);
+                const monthName = monthNames[month - 1];
+
+                const firstDay = new Date(year, month - 1, 1);
+                const firstDayOfWeek = firstDay.getDay();
+                const daysInMonth = new Date(year, month, 0).getDate();
+
+                const pageBreakStyle = (mIdx === sortedMonths.length - 1) ? "" : "page-break-after: always; break-after: page;";
+
+                html += `
+                    <div class="calendar-print-container" style="${pageBreakStyle}">
+                        <div class="print-header" style="text-align: center; margin-bottom: 12px; border-bottom: 2px solid #334155; padding-bottom: 8px;">
+                            <h1 style="font-size: 20px; text-transform: uppercase; letter-spacing: 0.08em; margin: 0; color: #0f172a;">${monthName} ${year}</h1>
+                            <p style="font-size: 10px; color: #64748b; margin: 3px 0 0 0;">HSG Global Schedule Promoters</p>
+                        </div>
+                        <table class="calendar-print-table">
+                            <thead>
+                                <tr>
+                                    <th>Sunday</th>
+                                    <th>Monday</th>
+                                    <th>Tuesday</th>
+                                    <th>Wednesday</th>
+                                    <th>Thursday</th>
+                                    <th>Friday</th>
+                                    <th>Saturday</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+
+                let dayCounter = 1;
+                for (let w = 0; w < 6; w++) {
+                    if (dayCounter > daysInMonth) {
+                        break;
+                    }
+
+                    html += `<tr>`;
+                    for (let d = 0; d < 7; d++) {
+                        const cellIndex = w * 7 + d;
+                        if (cellIndex < firstDayOfWeek || dayCounter > daysInMonth) {
+                            html += `<td class="calendar-day-empty"></td>`;
+                        } else {
+                            const currentDay = dayCounter;
+                            const isoDateStr = `${year}-${String(month).padStart(2, '0')}-${String(currentDay).padStart(2, '0')}`;
+
+                            const dayShifts = mergedSchedule[isoDateStr] || {};
+                            const dayAssignments = [];
+                            Object.keys(dayShifts).forEach(pId => {
+                                const promoterObj = resolvePromoter(pId);
+                                const promoterName = promoterObj ? promoterObj.name : `Promoter #${pId}`;
+                                dayShifts[pId].forEach(shift => {
+                                    const storeInfo = resolveStore(shift.store_id);
+                                    dayAssignments.push({
+                                        promoterName: promoterName,
+                                        retailerName: storeInfo.retailerName,
+                                        storeName: storeInfo.storeName,
+                                        address: storeInfo.address,
+                                        startTime: shift.startTime,
+                                        endTime: shift.endTime,
+                                        brands: shift.brands
+                                    });
+                                });
+                            });
+
+                            dayAssignments.sort((a, b) => {
+                                const timeComp = a.startTime.localeCompare(b.startTime);
+                                if (timeComp !== 0) return timeComp;
+                                return a.promoterName.localeCompare(b.promoterName);
+                            });
+
+                            let cellHtml = `
+                                <div style="display: flex; flex-direction: column; height: 100%;">
+                                    <div style="font-size: 8px; font-weight: 800; color: #475569; border-bottom: 1px solid #f1f5f9; padding-bottom: 2px; margin-bottom: 3px; display: flex; justify-content: space-between;">
+                                        <span>${currentDay}</span>
+                                    </div>
+                                    <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 3px; overflow: hidden;">
+                            `;
+
+                            if (dayAssignments.length > 0) {
+                                dayAssignments.forEach(assign => {
+                                    cellHtml += `
+                                        <div style="border-left: 2px solid #7351fb; padding-left: 3px; line-height: 1.1; overflow: hidden; margin-bottom: 2px;">
+                                            <div style="font-size: 6px; font-weight: normal; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; width: 100%;" title="${assign.promoterName} @ ${assign.retailerName}">
+                                                ${assign.promoterName} @ ${assign.retailerName}
+                                            </div>
+                                            <div style="font-size: 6px; font-weight: bold; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; width: 100%;" title="${assign.storeName}">
+                                                ${assign.storeName}
+                                            </div>
+                                            <div style="font-size: 5px; color: #64748b; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; line-height: 1.1; width: 100%;" title="${assign.address}">
+                                                ${assign.address}
+                                            </div>
+                                            <div style="font-size: 5px; color: #7351fb; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; width: 100%; margin-top: 1px;" title="${assign.brands || 'All Brands'}">
+                                                Brands: ${assign.brands || 'All Brands'}
+                                            </div>
+                                            <div style="font-size: 5px; color: #475569; font-weight: 600; margin-top: 1px;">
+                                                ${assign.startTime} - ${assign.endTime}
+                                            </div>
+                                        </div>
+                                    `;
+                                });
+                            }
+
+                            cellHtml += `
+                                    </div>
+                                </div>
+                            `;
+
+                            html += `<td>${cellHtml}</td>`;
+                            dayCounter++;
+                        }
+                    }
+                    html += `</tr>`;
+                }
+
+                html += `
+                            </tbody>
+                        </table>
+                    </div>
+                `;
+            });
+
+            printContent(html, 'landscape');
+        };
+
+        const setupPrintListeners = () => {
+            const printBtn = root.querySelector('#btn-print-dropdown');
+            const printMenu = root.querySelector('#print-dropdown-menu');
+
+            if (printBtn && printMenu) {
+                printBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    printMenu.classList.toggle('hidden');
+                };
+
+                document.addEventListener('click', (e) => {
+                    if (!printBtn.contains(e.target) && !printMenu.contains(e.target)) {
+                        printMenu.classList.add('hidden');
+                    }
+                });
+            }
+
+            const btnActive = root.querySelector('#btn-print-active-schedule');
+            const btnPromoter = root.querySelector('#btn-print-promoter-schedule');
+            const btnMaster = root.querySelector('#btn-print-master-combined');
+
+            if (btnActive) btnActive.onclick = () => { printMenu.classList.add('hidden'); printActiveSchedule(); };
+            if (btnPromoter) btnPromoter.onclick = () => { printMenu.classList.add('hidden'); openPrintPromoterModal(); };
+            if (btnMaster) btnMaster.onclick = () => { printMenu.classList.add('hidden'); openPrintMasterModal(); };
+
+            const submitPrintBtn = root.querySelector('#btn-submit-print-promoter');
+            const selectDropdown = root.querySelector('#print-promoter-select-dropdown');
+            const startInput = root.querySelector('#print-promoter-start-date');
+            const endInput = root.querySelector('#print-promoter-end-date');
+            if (submitPrintBtn && selectDropdown) {
+                submitPrintBtn.onclick = () => {
+                    const selectedId = selectDropdown.value;
+                    const startDate = startInput ? startInput.value : '';
+                    const endDate = endInput ? endInput.value : '';
+
+                    if (startDate && endDate && startDate > endDate) {
+                        window.oc.showAlert("Start date cannot be after end date", "error");
+                        return;
+                    }
+
+                    if (selectedId) {
+                        closePrintPromoterModal();
+                        printSelectedPromoterSchedule(selectedId, startDate, endDate);
+                    } else {
+                        window.oc.showAlert("Please select a promoter", "warning");
+                    }
+                };
+            }
+
+            const submitPrintMasterBtn = root.querySelector('#btn-submit-print-master');
+            const masterSelectDropdown = root.querySelector('#print-master-select-dropdown');
+            if (submitPrintMasterBtn && masterSelectDropdown) {
+                submitPrintMasterBtn.onclick = () => {
+                    const selectedMonthYear = masterSelectDropdown.value;
+                    closePrintMasterModal();
+                    printMasterCombinedCalendar(selectedMonthYear);
+                };
+            }
+        };
+
+        // Initialize script logic
+        init();
+    })();
+</script>

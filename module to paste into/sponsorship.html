@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sponsorship Management Portal</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        /* Custom scrollbar for tables */
+        .table-container {
+            overflow-x: auto;
+        }
+        .table-container::-webkit-scrollbar {
+            height: 8px;
+            width: 8px;
+        }
+        .table-container::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+            border-radius: 4px;
+        }
+        .table-container::-webkit-scrollbar-thumb {
+            background: #cbd5e1; 
+            border-radius: 4px;
+        }
+        .table-container::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8; 
+        }
+        @media print {
+            body * { visibility: hidden; }
+            #print-area, #print-area * { visibility: visible; }
+            #print-area {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                background: white;
+                color: black;
+                padding: 20px;
+            }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body class="text-gray-800 h-screen flex flex-col overflow-hidden bg-gray-50">
+
+    <div id="print-area" class="hidden"></div>
+    
+    <div id="claim-modal" class="hidden fixed inset-0 bg-slate-900 bg-opacity-60 z-50 flex items-center justify-center transition-opacity">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 border border-gray-100">
+            <h3 class="text-xl font-bold text-gray-800 mb-2">Generate Claim Report</h3>
+            <p class="text-sm text-gray-500 mb-6">Create a printable statement for the brand owner.</p>
+            
+            <div class="mb-6">
+                <label class="block mb-2 text-sm font-medium text-gray-900">Select Brand Owner</label>
+                <select id="claim-brand-select" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-3">
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+            <div class="flex justify-end gap-3 mt-4 pt-4 border-t border-gray-100">
+                <button onclick="closeClaimModal()" class="px-5 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 rounded-lg transition-colors">Cancel</button>
+                <button onclick="generateAndPrintClaim()" class="px-5 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 shadow-md hover:shadow-lg rounded-lg flex items-center transition-all">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+                    Print Report
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Navigation -->
+    <header class="bg-slate-900 text-white shadow-md z-30">
+        <div class="px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <!-- Branding -->
+                <div class="flex items-center">
+                    <svg class="w-8 h-8 mr-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                    <h1 class="text-xl font-bold tracking-wider">SPONSOR PRO</h1>
+                </div>
+                
+                <!-- Desktop Nav -->
+                <nav class="hidden md:flex space-x-2">
+                    <button onclick="switchTab('dashboard')" id="nav-dashboard" class="flex items-center px-4 py-2 rounded-lg transition-colors bg-blue-600 text-white">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path></svg>
+                        Dashboard
+                    </button>
+                    <button onclick="switchTab('transaction')" id="nav-transaction" class="flex items-center px-4 py-2 rounded-lg transition-colors text-slate-300 hover:bg-slate-800 hover:text-white">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                        Transaction
+                    </button>
+                    <button onclick="switchTab('sponsored')" id="nav-sponsored" class="flex items-center px-4 py-2 rounded-lg transition-colors text-slate-300 hover:bg-slate-800 hover:text-white">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+                        Sponsored By
+                    </button>
+                    <button onclick="switchTab('receiver')" id="nav-receiver" class="flex items-center px-4 py-2 rounded-lg transition-colors text-slate-300 hover:bg-slate-800 hover:text-white">
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                        Receiver
+                    </button>
+                </nav>
+
+                <!-- Mobile Menu Button -->
+                <div class="md:hidden flex items-center">
+                    <button onclick="toggleMobileMenu()" class="p-2 text-slate-300 hover:text-white">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Mobile Menu Overlay -->
+    <div id="mobile-menu" class="hidden absolute inset-0 bg-slate-900 text-white z-50 flex flex-col pt-16 px-6">
+        <button onclick="toggleMobileMenu()" class="absolute top-4 right-4 p-2">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+        <button onclick="switchTab('dashboard'); toggleMobileMenu()" class="text-2xl py-4 border-b border-slate-700 text-left">Dashboard</button>
+        <button onclick="switchTab('transaction'); toggleMobileMenu()" class="text-2xl py-4 border-b border-slate-700 text-left">Transaction</button>
+        <button onclick="switchTab('sponsored'); toggleMobileMenu()" class="text-2xl py-4 border-b border-slate-700 text-left">Sponsored By</button>
+        <button onclick="switchTab('receiver'); toggleMobileMenu()" class="text-2xl py-4 border-b border-slate-700 text-left">Receiver</button>
+    </div>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-y-auto p-4 md:p-8 relative">
+        
+        <!-- Dashboard Tab -->
+            <section id="tab-dashboard" class="tab-content active">
+                <div class="flex justify-between items-end mb-8">
+                    <div>
+                        <h2 class="text-3xl font-bold text-gray-800">Dashboard Insights</h2>
+                        <p class="text-gray-500 mt-1">Overview of sponsorship distribution.</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button onclick="openClaimModal()" class="flex items-center bg-white border border-gray-300 text-gray-700 hover:text-blue-700 hover:bg-gray-50 hover:border-blue-300 text-sm rounded-lg px-4 py-2.5 shadow-sm transition-all font-medium">
+                            <svg class="w-4 h-4 mr-2 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            Generate Claim
+                        </button>
+                        <select id="dashboard-filter" onchange="updateDashboard()" class="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2.5 shadow-sm">
+                            <option value="3">Last 3 Months</option>
+                            <option value="6">Last 6 Months</option>
+                            <option value="9">Last 9 Months</option>
+                            <option value="12">Last 12 Months</option>
+                            <option value="all">All Time</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Stats Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
+                    <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100 flex items-center">
+                        <div class="p-3 rounded-full bg-blue-100 text-blue-600 mr-4">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                        </div>
+                        <div>
+                            <p class="text-sm text-gray-500 font-medium">Total Cartons Distributed</p>
+                            <p class="text-2xl font-bold text-gray-800" id="dash-total-cartons">0</p>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100 flex items-center">
+                        <div class="p-3 rounded-full bg-green-100 text-green-600 mr-4">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path></svg>
+                        </div>
+                        <div>
+                            <p class="text-sm text-gray-500 font-medium">Total Transactions</p>
+                            <p class="text-2xl font-bold text-gray-800" id="dash-total-trans">0</p>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100 flex items-center">
+                        <div class="p-3 rounded-full bg-purple-100 text-purple-600 mr-4">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"></path></svg>
+                        </div>
+                        <div>
+                            <p class="text-sm text-gray-500 font-medium">Active Receivers</p>
+                            <p class="text-2xl font-bold text-gray-800" id="dash-active-receivers">0</p>
+                        </div>
+                    </div>
+                    <div class="bg-white rounded-xl p-6 shadow-sm border border-gray-100 flex items-center">
+                        <div class="p-3 rounded-full bg-yellow-100 text-yellow-600 mr-4">
+                            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        </div>
+                        <div>
+                            <p class="text-sm text-gray-500 font-medium">Est. Value (Cost)</p>
+                            <p class="text-2xl font-bold text-gray-800" id="dash-total-value">$0</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Activity Table -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div class="px-6 py-4 border-b border-gray-100 bg-gray-50">
+                        <h3 class="font-semibold text-gray-800">Recent Distribution Summary</h3>
+                    </div>
+                    <div class="p-0 table-container">
+                        <table class="w-full text-sm text-left text-gray-500">
+                            <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                                <tr>
+                                    <th class="px-6 py-3">Brand</th>
+                                    <th class="px-6 py-3">SKU</th>
+                                    <th class="px-6 py-3 text-right">Cartons Given (Filtered)</th>
+                                    <th class="px-6 py-3 text-right">Est. Value</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dash-summary-table-body" class="divide-y divide-gray-100">
+                                <!-- Populated by JS -->
+                            </tbody>
+                        </table>
+                        <div id="dash-empty-state" class="p-8 text-center text-gray-500 hidden">
+                            No data available for the selected period.
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Transaction Tab -->
+            <section id="tab-transaction" class="tab-content">
+                <div class="mb-8">
+                    <h2 class="text-3xl font-bold text-gray-800">Log Transaction</h2>
+                    <p class="text-gray-500 mt-1">Record physical output (by pieces). System converts to cartons automatically.</p>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Form -->
+                    <div class="lg:col-span-1 bg-white rounded-xl p-6 shadow-sm border border-gray-100 h-fit">
+                        <h3 class="font-semibold text-gray-800 mb-4 border-b pb-2">New Entry</h3>
+                        <form id="transaction-form" onsubmit="handleTransactionSubmit(event)">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Ref Number</label>
+                                    <input type="text" id="tx-ref" required class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="e.g. DOC-1234">
+                                </div>
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Date</label>
+                                    <input type="date" id="tx-date" required onchange="checkReceiverStatus()" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                                </div>
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Receiver Entity</label>
+                                    <select id="tx-receiver" required onchange="checkReceiverStatus()" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                                        <option value="" disabled selected>Select Receiver</option>
+                                        <!-- Populated by JS -->
+                                    </select>
+                                    <p id="tx-status-msg" class="text-xs mt-1 text-gray-500"></p>
+                                </div>
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Sponsored SKU</label>
+                                    <select id="tx-sku" required onchange="calculateCartonsPreview()" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                                        <option value="" disabled selected>Select Brand - SKU</option>
+                                        <!-- Populated by JS -->
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Output Qty (Pieces)</label>
+                                    <div class="relative">
+                                        <input type="number" id="tx-qty" required min="1" oninput="calculateCartonsPreview()" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5 pr-16" placeholder="Total pieces given">
+                                        <div class="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-xs text-gray-500">
+                                            pcs
+                                        </div>
+                                    </div>
+                                    <p id="tx-carton-preview" class="text-xs mt-1 text-blue-600 font-medium"></p>
+                                </div>
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Remark</label>
+                                    <input type="text" id="tx-remark" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="Reason or extra info">
+                                </div>
+                                <div class="flex gap-2 mt-4">
+                                    <button type="submit" id="tx-submit-btn" class="flex-1 text-white bg-blue-600 hover:bg-blue-700 focus:ring-4 focus:ring-blue-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center transition-colors">Record Transaction</button>
+                                    <button type="button" id="tx-cancel-btn" onclick="cancelEditTransaction()" class="hidden text-gray-700 bg-gray-200 hover:bg-gray-300 focus:ring-4 focus:ring-gray-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center transition-colors">Cancel</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- History Table -->
+                    <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col">
+                        <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-xl">
+                            <h3 class="font-semibold text-gray-800">Transaction History</h3>
+                            <span class="text-xs text-gray-500 bg-white px-2 py-1 rounded border">Showing all records</span>
+                        </div>
+                        <div class="flex-1 table-container p-0">
+                            <table class="w-full text-sm text-left text-gray-500">
+                                <thead class="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0">
+                                    <tr>
+                                        <th class="px-4 py-3">Date</th>
+                                        <th class="px-4 py-3">Ref No.</th>
+                                        <th class="px-4 py-3">Receiver</th>
+                                        <th class="px-4 py-3">SKU</th>
+                                        <th class="px-4 py-3 text-right">Qty (Pcs)</th>
+                                        <th class="px-4 py-3 text-right">Cartons</th>
+                                        <th class="px-4 py-3">Remark</th>
+                                        <th class="px-4 py-3 text-center">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="transaction-table-body" class="divide-y divide-gray-100">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                            <div id="tx-empty-state" class="p-8 text-center text-gray-500 hidden">
+                                No transactions logged yet.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Sponsored By Tab -->
+            <section id="tab-sponsored" class="tab-content">
+                <div class="mb-8">
+                    <h2 class="text-3xl font-bold text-gray-800">Sponsored Catalog</h2>
+                    <p class="text-gray-500 mt-1">Manage brand owners and their specific SKUs available for sponsorship.</p>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <!-- Form -->
+                    <div class="lg:col-span-1 bg-white rounded-xl p-6 shadow-sm border border-gray-100 h-fit">
+                        <h3 class="font-semibold text-gray-800 mb-4 border-b pb-2">Add New Product</h3>
+                        <form id="sku-form" onsubmit="handleSkuSubmit(event)">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Brand Owner</label>
+                                    <input type="text" id="sku-brand" required class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="e.g. SuperGulp">
+                                </div>
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">SKU Name / Flavor</label>
+                                    <input type="text" id="sku-name" required class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="e.g. Lemon Lime">
+                                </div>
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Description</label>
+                                    <input type="text" id="sku-desc" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="Optional details">
+                                </div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label class="block mb-1 text-sm font-medium text-gray-900">UOM (Pcs/Carton)</label>
+                                        <input type="number" id="sku-uom" required min="1" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="e.g. 24, 12">
+                                    </div>
+                                    <div>
+                                        <label class="block mb-1 text-sm font-medium text-gray-900">Cost per Carton</label>
+                                        <div class="relative">
+                                            <div class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-gray-500">$</div>
+                                            <input type="number" id="sku-cost" required min="0" step="0.01" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full pl-8 p-2.5" placeholder="0.00">
+                                        </div>
+                                    </div>
+                                </div>
+                                <button type="submit" class="w-full text-white bg-slate-800 hover:bg-slate-900 focus:ring-4 focus:ring-slate-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center mt-4 transition-colors">Add to Catalog</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Catalog Table -->
+                    <div class="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100">
+                        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 rounded-t-xl">
+                            <h3 class="font-semibold text-gray-800">Current Catalog</h3>
+                        </div>
+                        <div class="p-0 table-container">
+                            <table class="w-full text-sm text-left text-gray-500">
+                                <thead class="text-xs text-gray-700 uppercase bg-gray-50">
+                                    <tr>
+                                        <th class="px-4 py-3">Brand</th>
+                                        <th class="px-4 py-3">SKU</th>
+                                        <th class="px-4 py-3">Description</th>
+                                        <th class="px-4 py-3 text-center">UOM</th>
+                                        <th class="px-4 py-3 text-right">Cost/Ctn</th>
+                                        <th class="px-4 py-3 text-center">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="sku-table-body" class="divide-y divide-gray-100">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                            <div id="sku-empty-state" class="p-8 text-center text-gray-500 hidden">
+                                No products added to the catalog yet.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Receiver Tab -->
+            <section id="tab-receiver" class="tab-content">
+                <div class="mb-8">
+                    <h2 class="text-3xl font-bold text-gray-800">Receiver Registry</h2>
+                    <p class="text-gray-500 mt-1">Register entities and define their carton limits.</p>
+                </div>
+
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-8">
+                    <!-- Form -->
+                    <div class="xl:col-span-1 bg-white rounded-xl p-6 shadow-sm border border-gray-100 h-fit">
+                        <h3 class="font-semibold text-gray-800 mb-4 border-b pb-2">Register Entity</h3>
+                        <form id="receiver-form" onsubmit="handleReceiverSubmit(event)">
+                            <div class="space-y-4">
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Entity Name</label>
+                                    <input type="text" id="rec-name" required class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="e.g. Event Organizer A">
+                                </div>
+                                <div>
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Limit Type</label>
+                                    <select id="rec-type" required onchange="toggleLimitInput()" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5">
+                                        <option value="monthly">Monthly Limit</option>
+                                        <option value="onetime">One-Time Limit</option>
+                                        <option value="open">Open (No Limit)</option>
+                                    </select>
+                                </div>
+                                <div id="limit-container">
+                                    <label class="block mb-1 text-sm font-medium text-gray-900">Limit (in Cartons)</label>
+                                    <input type="number" id="rec-limit" required min="1" class="bg-gray-50 border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full p-2.5" placeholder="Number of cartons">
+                                    <p class="text-xs text-gray-500 mt-1">Transactions are logged in pieces, but limits are tracked in cartons (1 carton = 24 pcs).</p>
+                                </div>
+                                <button type="submit" class="w-full text-white bg-green-600 hover:bg-green-700 focus:ring-4 focus:ring-green-300 font-medium rounded-lg text-sm px-5 py-2.5 text-center mt-4 transition-colors">Register Entity</button>
+                            </div>
+                        </form>
+                    </div>
+
+                    <!-- Receivers Table -->
+                    <div class="xl:col-span-2 bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col">
+                        <div class="px-6 py-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center rounded-t-xl">
+                            <h3 class="font-semibold text-gray-800">Registered Entities & Status</h3>
+                            <button onclick="renderReceivers()" title="Refresh limits" class="text-gray-500 hover:text-blue-600">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+                            </button>
+                        </div>
+                        <div class="flex-1 table-container p-0">
+                            <table class="w-full text-sm text-left text-gray-500">
+                                <thead class="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0">
+                                    <tr>
+                                        <th class="px-4 py-3">Entity Name</th>
+                                        <th class="px-4 py-3">Limit Type</th>
+                                        <th class="px-4 py-3 text-right">Limit (Ctns)</th>
+                                        <th class="px-4 py-3 text-right">Given (Ctns)</th>
+                                        <th class="px-4 py-3 text-right">Balance</th>
+                                        <th class="px-4 py-3 text-center">Status</th>
+                                        <th class="px-4 py-3 text-center">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="receiver-table-body" class="divide-y divide-gray-100">
+                                    <!-- Populated by JS -->
+                                </tbody>
+                            </table>
+                            <div id="rec-empty-state" class="p-8 text-center text-gray-500 hidden">
+                                No receivers registered yet.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+        </div>
+    </main>
+
+    <!-- Application Logic -->
+    <script>
+        // State Management
+        let appData = {
+            skus: [],
+            receivers: [],
+            transactions: []
+        };
+        
+        let editingTxId = null;
+
+        // Helper to get past dates for mock data
+        function getPastDate(daysAgo) {
+            const date = new Date();
+            date.setDate(date.getDate() - daysAgo);
+            return date.toISOString().split('T')[0];
+        }
+
+        // Setup generic message box handler (replacing alert/confirm constraints)
+        function showMessage(msg, isError = false) {
+            // Very simple toast implementation
+            const toast = document.createElement('div');
+            toast.className = `fixed bottom-4 right-4 p-4 rounded-lg shadow-lg text-white ${isError ? 'bg-red-600' : 'bg-green-600'} transition-opacity duration-300 z-50`;
+            toast.innerText = msg;
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // UI Navigation
+        function switchTab(tabId) {
+            // Hide all contents
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            // Reset nav styles
+            document.querySelectorAll('nav button').forEach(el => {
+                el.classList.remove('bg-blue-600', 'text-white');
+                el.classList.add('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            });
+            
+            // Show target
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+            
+            // Highlight nav
+            const navBtn = document.getElementById(`nav-${tabId}`);
+            navBtn.classList.remove('text-slate-300', 'hover:bg-slate-800', 'hover:text-white');
+            navBtn.classList.add('bg-blue-600', 'text-white');
+
+            // Trigger specific tab renders if needed
+            if (tabId === 'transaction') {
+                populateTransactionDropdowns();
+                document.getElementById('tx-date').valueAsDate = new Date();
+            }
+            if (tabId === 'dashboard') {
+                updateDashboard();
+            }
+        }
+
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-menu');
+            menu.classList.toggle('hidden');
+        }
+
+        // --- SKU LOGIC ---
+        function renderSkus() {
+            const tbody = document.getElementById('sku-table-body');
+            const emptyState = document.getElementById('sku-empty-state');
+            tbody.innerHTML = '';
+
+            if (appData.skus.length === 0) {
+                emptyState.classList.remove('hidden');
+                return;
+            }
+            emptyState.classList.add('hidden');
+
+            appData.skus.forEach(sku => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-50';
+                tr.innerHTML = `
+                    <td class="px-4 py-3 font-medium text-gray-900">${sku.brand}</td>
+                    <td class="px-4 py-3">${sku.name}</td>
+                    <td class="px-4 py-3 truncate max-w-xs">${sku.desc}</td>
+                    <td class="px-4 py-3 text-center">${sku.uom}</td>
+                    <td class="px-4 py-3 text-right">$${sku.cost.toFixed(2)}</td>
+                    <td class="px-4 py-3 text-center">
+                        <button onclick="deleteSku('${sku.id}')" class="text-red-500 hover:text-red-700 p-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function handleSkuSubmit(e) {
+            e.preventDefault();
+            const brand = document.getElementById('sku-brand').value.trim();
+            const name = document.getElementById('sku-name').value.trim();
+            const desc = document.getElementById('sku-desc').value.trim();
+            const uom = parseInt(document.getElementById('sku-uom').value);
+            const cost = parseFloat(document.getElementById('sku-cost').value);
+
+            const newSku = {
+                id: 'sku_' + Date.now(),
+                brand,
+                name,
+                desc,
+                uom: uom, 
+                cost
+            };
+
+            appData.skus.push(newSku);
+            renderSkus();
+            populateTransactionDropdowns(); // Update dropdowns in other tabs
+            updateDashboard();
+            e.target.reset();
+            showMessage('Product added to catalog successfully.');
+        }
+
+        function deleteSku(id) {
+            // Basic check if used in tx
+            const isUsed = appData.transactions.some(tx => tx.skuId === id);
+            if (isUsed) {
+                showMessage('Cannot delete SKU. It is used in existing transactions.', true);
+                return;
+            }
+            appData.skus = appData.skus.filter(s => s.id !== id);
+            renderSkus();
+            populateTransactionDropdowns();
+            updateDashboard();
+            showMessage('Product deleted.');
+        }
+
+        // --- RECEIVER LOGIC ---
+        function toggleLimitInput() {
+            const type = document.getElementById('rec-type').value;
+            const limitInput = document.getElementById('rec-limit');
+            const limitContainer = document.getElementById('limit-container');
+            
+            if (type === 'open') {
+                limitInput.value = '';
+                limitInput.removeAttribute('required');
+                limitContainer.style.opacity = '0.5';
+                limitInput.disabled = true;
+            } else {
+                limitInput.setAttribute('required', 'true');
+                limitContainer.style.opacity = '1';
+                limitInput.disabled = false;
+            }
+        }
+
+        // Core calculation: How many cartons has an entity received based on their limit type?
+        function calculateGivenCartons(receiverId, limitType, targetDate = new Date()) {
+            const targetMonth = targetDate.getMonth();
+            const targetYear = targetDate.getFullYear();
+
+            let relevantTx = appData.transactions.filter(tx => tx.receiverId === receiverId);
+
+            // If monthly limit, only sum transactions from the target month
+            if (limitType === 'monthly') {
+                relevantTx = relevantTx.filter(tx => {
+                    const txDate = new Date(tx.date);
+                    return txDate.getMonth() === targetMonth && txDate.getFullYear() === targetYear;
+                });
+            }
+            // If onetime or open, sum all history
+
+            const totalCartons = relevantTx.reduce((sum, tx) => {
+                const sku = appData.skus.find(s => s.id === tx.skuId);
+                const uom = sku ? sku.uom : 1; 
+                return sum + (tx.qtyPcs / uom);
+            }, 0);
+            
+            return totalCartons;
+        }
+
+        function renderReceivers() {
+            const tbody = document.getElementById('receiver-table-body');
+            const emptyState = document.getElementById('rec-empty-state');
+            tbody.innerHTML = '';
+
+            if (appData.receivers.length === 0) {
+                emptyState.classList.remove('hidden');
+                return;
+            }
+            emptyState.classList.add('hidden');
+
+            appData.receivers.forEach(rec => {
+                const givenCartons = calculateGivenCartons(rec.id, rec.type);
+                let balanceStr = '-';
+                let statusBadge = '';
+                let isLimited = rec.type !== 'open';
+
+                if (isLimited) {
+                    const balance = rec.limit - givenCartons;
+                    balanceStr = balance.toFixed(1);
+                    
+                    if (balance <= 0) {
+                        statusBadge = '<span class="bg-red-100 text-red-800 text-xs font-medium px-2.5 py-0.5 rounded border border-red-200">Limit Reached</span>';
+                    } else if (balance <= (rec.limit * 0.2)) { // Warning at 20%
+                         statusBadge = '<span class="bg-yellow-100 text-yellow-800 text-xs font-medium px-2.5 py-0.5 rounded border border-yellow-200">Near Limit</span>';
+                    } else {
+                        statusBadge = '<span class="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded border border-green-200">Active</span>';
+                    }
+                } else {
+                    balanceStr = '∞';
+                    statusBadge = '<span class="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded border border-blue-200">Open</span>';
+                }
+
+                // Format type for display
+                const typeLabels = { 'monthly': 'Monthly', 'onetime': 'One-Time', 'open': 'Open' };
+
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-50';
+                tr.innerHTML = `
+                    <td class="px-4 py-3 font-medium text-gray-900">${rec.name}</td>
+                    <td class="px-4 py-3">
+                        <span class="text-xs uppercase text-gray-500 font-semibold tracking-wider">${typeLabels[rec.type]}</span>
+                    </td>
+                    <td class="px-4 py-3 text-right">${isLimited ? rec.limit : '∞'}</td>
+                    <td class="px-4 py-3 text-right font-medium">${givenCartons.toFixed(1)}</td>
+                    <td class="px-4 py-3 text-right font-bold ${isLimited && (rec.limit - givenCartons <= 0) ? 'text-red-600' : 'text-gray-900'}">${balanceStr}</td>
+                    <td class="px-4 py-3 text-center">${statusBadge}</td>
+                    <td class="px-4 py-3 text-center">
+                        <button onclick="deleteReceiver('${rec.id}')" class="text-red-500 hover:text-red-700 p-1">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function handleReceiverSubmit(e) {
+            e.preventDefault();
+            const name = document.getElementById('rec-name').value.trim();
+            const type = document.getElementById('rec-type').value;
+            let limit = null;
+            
+            if (type !== 'open') {
+                limit = parseFloat(document.getElementById('rec-limit').value);
+            }
+
+            const newRec = {
+                id: 'rec_' + Date.now(),
+                name,
+                type,
+                limit
+            };
+
+            appData.receivers.push(newRec);
+            renderReceivers();
+            populateTransactionDropdowns();
+            e.target.reset();
+            toggleLimitInput(); // Reset UI state
+            showMessage('Entity registered successfully.');
+        }
+
+        function deleteReceiver(id) {
+            const isUsed = appData.transactions.some(tx => tx.receiverId === id);
+            if (isUsed) {
+                showMessage('Cannot delete receiver. They have associated transactions.', true);
+                return;
+            }
+            appData.receivers = appData.receivers.filter(r => r.id !== id);
+            renderReceivers();
+            populateTransactionDropdowns();
+            showMessage('Entity removed.');
+        }
+
+        // --- TRANSACTION LOGIC ---
+        function populateTransactionDropdowns() {
+            // Receivers Dropdown
+            const recSelect = document.getElementById('tx-receiver');
+            recSelect.innerHTML = '<option value="" disabled selected>Select Receiver</option>';
+            appData.receivers.forEach(rec => {
+                const opt = document.createElement('option');
+                opt.value = rec.id;
+                opt.textContent = `${rec.name} (${rec.type})`;
+                recSelect.appendChild(opt);
+            });
+
+            // SKUs Dropdown
+            const skuSelect = document.getElementById('tx-sku');
+            skuSelect.innerHTML = '<option value="" disabled selected>Select Brand - SKU</option>';
+            appData.skus.forEach(sku => {
+                const opt = document.createElement('option');
+                opt.value = sku.id;
+                opt.textContent = `[${sku.brand}] ${sku.name}`;
+                skuSelect.appendChild(opt);
+            });
+        }
+
+        function calculateCartonsPreview() {
+            const pcs = parseInt(document.getElementById('tx-qty').value) || 0;
+            const preview = document.getElementById('tx-carton-preview');
+            const skuId = document.getElementById('tx-sku').value;
+            let uom = 24; 
+            if (skuId) {
+                const sku = appData.skus.find(s => s.id === skuId);
+                if (sku) uom = sku.uom;
+            }
+
+            if (pcs > 0 && skuId) {
+                const cartons = (pcs / uom).toFixed(2);
+                preview.textContent = `≈ ${cartons} Cartons`;
+            } else if (pcs > 0) {
+                preview.textContent = 'Select SKU to see carton preview';
+            } else {
+                preview.textContent = '';
+            }
+            // Recheck status if qty changes
+            checkReceiverStatus();
+        }
+
+        // Validates if the selected receiver can accept the inputted quantity
+        function checkReceiverStatus() {
+            const recId = document.getElementById('tx-receiver').value;
+            const skuId = document.getElementById('tx-sku').value;
+            const pcsInput = parseInt(document.getElementById('tx-qty').value) || 0;
+            const dateInput = document.getElementById('tx-date').value;
+            const msgEl = document.getElementById('tx-status-msg');
+            msgEl.textContent = '';
+            msgEl.className = 'text-xs mt-1';
+
+            if (!recId) return true;
+
+            const rec = appData.receivers.find(r => r.id === recId);
+            if (rec.type === 'open') {
+                msgEl.textContent = 'Status: Open - No limits apply.';
+                msgEl.classList.add('text-blue-600');
+                return true;
+            }
+
+            let uom = 1;
+            if (skuId) {
+                const sku = appData.skus.find(s => s.id === skuId);
+                if (sku) uom = sku.uom;
+            }
+
+            const targetDate = dateInput ? new Date(dateInput) : new Date();
+            let currentGivenCtns = calculateGivenCartons(recId, rec.type, targetDate);
+
+            // Adjust for editing: subtract the previous value of the transaction being edited
+            // so we don't double count it!
+            if (editingTxId) {
+                const editingTx = appData.transactions.find(t => t.id === editingTxId);
+                if (editingTx && editingTx.receiverId === recId) {
+                    let subtract = false;
+                    if (rec.type === 'onetime') subtract = true;
+                    if (rec.type === 'monthly') {
+                        const editTxDate = new Date(editingTx.date);
+                        if (editTxDate.getMonth() === targetDate.getMonth() && editTxDate.getFullYear() === targetDate.getFullYear()) {
+                            subtract = true;
+                        }
+                    }
+                    if (subtract) {
+                        let editUom = 1;
+                        const editSku = appData.skus.find(s => s.id === editingTx.skuId);
+                        if (editSku) editUom = editSku.uom;
+                        currentGivenCtns -= (editingTx.qtyPcs / editUom);
+                    }
+                }
+            }
+
+            const requestedCtns = skuId ? (pcsInput / uom) : 0;
+            const newTotal = currentGivenCtns + requestedCtns;
+            const remaining = rec.limit - currentGivenCtns;
+
+            if (remaining <= 0 && requestedCtns > 0) {
+                msgEl.textContent = `WARNING: Entity has already reached their ${rec.type} limit of ${rec.limit} cartons.`;
+                msgEl.classList.add('text-red-600', 'font-bold');
+                return false;
+            } else if (newTotal > rec.limit) {
+                msgEl.textContent = `WARNING: Request (${requestedCtns.toFixed(1)} ctn) exceeds remaining balance (${remaining.toFixed(1)} ctn).`;
+                msgEl.classList.add('text-orange-600', 'font-bold');
+                return false;
+            } else {
+                let timeFrame = rec.type === 'monthly' ? 'this month' : 'total';
+                msgEl.textContent = `Balance OK: ${remaining.toFixed(1)} cartons remaining ${timeFrame}.`;
+                msgEl.classList.add('text-green-600');
+                return true;
+            }
+        }
+
+        function renderTransactions() {
+            const tbody = document.getElementById('transaction-table-body');
+            const emptyState = document.getElementById('tx-empty-state');
+            tbody.innerHTML = '';
+
+            // Sort by date descending
+            const sortedTx = [...appData.transactions].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            if (sortedTx.length === 0) {
+                emptyState.classList.remove('hidden');
+                return;
+            }
+            emptyState.classList.add('hidden');
+
+            sortedTx.forEach(tx => {
+                const rec = appData.receivers.find(r => r.id === tx.receiverId) || { name: 'Unknown' };
+                const sku = appData.skus.find(s => s.id === tx.skuId) || { brand: 'Unknown', name: 'Unknown', uom: 1 };
+                const cartons = (tx.qtyPcs / sku.uom).toFixed(2);
+
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-gray-50';
+                tr.innerHTML = `
+                    <td class="px-4 py-3 whitespace-nowrap">${tx.date}</td>
+                    <td class="px-4 py-3 font-medium text-gray-900">${tx.ref}</td>
+                    <td class="px-4 py-3">${rec.name}</td>
+                    <td class="px-4 py-3">[${sku.brand}] ${sku.name}</td>
+                    <td class="px-4 py-3 text-right font-medium text-gray-900">${tx.qtyPcs}</td>
+                    <td class="px-4 py-3 text-right">${cartons}</td>
+                    <td class="px-4 py-3">${tx.remark || ''}</td>
+                    <td class="px-4 py-3 text-center flex justify-center gap-2">
+                        <button onclick="editTransaction('${tx.id}')" class="text-blue-500 hover:text-blue-700 p-1" title="Edit">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                        </button>
+                        <button onclick="deleteTransaction('${tx.id}')" class="text-red-500 hover:text-red-700 p-1" title="Delete">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function handleTransactionSubmit(e) {
+            e.preventDefault();
+            
+            // Soft validation - don't strictly block, but UI shows warning
+            const isOk = checkReceiverStatus();
+            if(!isOk) {
+                showMessage('Warning: This transaction exceeds limits. Logging anyway.', true);
+            }
+
+            const ref = document.getElementById('tx-ref').value.trim();
+            const date = document.getElementById('tx-date').value;
+            const receiverId = document.getElementById('tx-receiver').value;
+            const skuId = document.getElementById('tx-sku').value;
+            const qtyPcs = parseInt(document.getElementById('tx-qty').value);
+            const remark = document.getElementById('tx-remark').value.trim();
+
+            if (editingTxId) {
+                // Update existing transaction
+                const txIndex = appData.transactions.findIndex(t => t.id === editingTxId);
+                if (txIndex > -1) {
+                    appData.transactions[txIndex] = {
+                        ...appData.transactions[txIndex],
+                        ref, date, receiverId, skuId, qtyPcs, remark
+                    };
+                }
+                showMessage('Transaction updated successfully.');
+                cancelEditTransaction();
+            } else {
+                // Create new transaction
+                const newTx = {
+                    id: 'tx_' + Date.now(),
+                    ref,
+                    date,
+                    receiverId,
+                    skuId,
+                    qtyPcs,
+                    remark
+                };
+                appData.transactions.push(newTx);
+                showMessage('Transaction recorded successfully.');
+                
+                // Reset form but keep date
+                document.getElementById('tx-ref').value = '';
+                document.getElementById('tx-qty').value = '';
+                document.getElementById('tx-remark').value = '';
+                document.getElementById('tx-receiver').selectedIndex = 0;
+                document.getElementById('tx-sku').selectedIndex = 0;
+                document.getElementById('tx-carton-preview').textContent = '';
+                document.getElementById('tx-status-msg').textContent = '';
+            }
+
+            renderTransactions();
+            renderReceivers(); // Update receiver limits tab
+            updateDashboard(); // Update dashboard
+        }
+
+        function editTransaction(id) {
+            const tx = appData.transactions.find(t => t.id === id);
+            if (!tx) return;
+            
+            editingTxId = id;
+            document.getElementById('tx-ref').value = tx.ref;
+            document.getElementById('tx-date').value = tx.date;
+            document.getElementById('tx-receiver').value = tx.receiverId;
+            document.getElementById('tx-sku').value = tx.skuId;
+            document.getElementById('tx-qty').value = tx.qtyPcs;
+            document.getElementById('tx-remark').value = tx.remark || '';
+            
+            // Update UI buttons for Edit state
+            document.getElementById('tx-submit-btn').textContent = 'Update Transaction';
+            document.getElementById('tx-submit-btn').classList.remove('bg-blue-600', 'hover:bg-blue-700', 'focus:ring-blue-300');
+            document.getElementById('tx-submit-btn').classList.add('bg-orange-500', 'hover:bg-orange-600', 'focus:ring-orange-300');
+            document.getElementById('tx-cancel-btn').classList.remove('hidden');
+            
+            calculateCartonsPreview();
+            checkReceiverStatus();
+            
+            // Scroll form into view
+            document.getElementById('transaction-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function cancelEditTransaction() {
+            editingTxId = null;
+            document.getElementById('transaction-form').reset();
+            document.getElementById('tx-date').valueAsDate = new Date();
+            
+            // Revert UI buttons back to Create state
+            document.getElementById('tx-submit-btn').textContent = 'Record Transaction';
+            document.getElementById('tx-submit-btn').classList.remove('bg-orange-500', 'hover:bg-orange-600', 'focus:ring-orange-300');
+            document.getElementById('tx-submit-btn').classList.add('bg-blue-600', 'hover:bg-blue-700', 'focus:ring-blue-300');
+            document.getElementById('tx-cancel-btn').classList.add('hidden');
+        }
+
+        // --- DASHBOARD LOGIC ---
+        function updateDashboard() {
+            const months = document.getElementById('dashboard-filter').value;
+            const now = new Date();
+            const cutoff = new Date();
+            cutoff.setMonth(now.getMonth() - (months === 'all' ? 100 : parseInt(months)));
+
+            const filteredTx = appData.transactions.filter(tx => new Date(tx.date) >= cutoff);
+            
+            let totalCartons = 0;
+            let totalValue = 0;
+            
+            filteredTx.forEach(tx => {
+                const sku = appData.skus.find(s => s.id === tx.skuId);
+                if (sku) {
+                    const ctns = tx.qtyPcs / sku.uom;
+                    totalCartons += ctns;
+                    totalValue += (ctns * sku.cost);
+                }
+            });
+
+            document.getElementById('dash-total-cartons').textContent = Math.round(totalCartons);
+            document.getElementById('dash-total-trans').textContent = filteredTx.length;
+            document.getElementById('dash-active-receivers').textContent = appData.receivers.length;
+            document.getElementById('dash-total-value').textContent = '$' + totalValue.toFixed(2);
+
+            // Populate table
+            const tbody = document.getElementById('dash-summary-table-body');
+            tbody.innerHTML = '';
+            
+            // Group by brand
+            const summary = {};
+            filteredTx.forEach(tx => {
+                const sku = appData.skus.find(s => s.id === tx.skuId);
+                if (sku) {
+                    if (!summary[sku.brand]) summary[sku.brand] = {};
+                    if (!summary[sku.brand][sku.name]) summary[sku.brand][sku.name] = { ctns: 0, val: 0 };
+                    const ctns = tx.qtyPcs / sku.uom;
+                    summary[sku.brand][sku.name].ctns += ctns;
+                    summary[sku.brand][sku.name].val += (ctns * sku.cost);
+                }
+            });
+
+            if (Object.keys(summary).length === 0) {
+                document.getElementById('dash-empty-state').classList.remove('hidden');
+            } else {
+                document.getElementById('dash-empty-state').classList.add('hidden');
+                for (let brand in summary) {
+                    for (let sku in summary[brand]) {
+                        const row = document.createElement('tr');
+                        row.innerHTML = `<td class="px-6 py-4 font-medium">${brand}</td><td class="px-6 py-4">${sku}</td><td class="px-6 py-4 text-right">${summary[brand][sku].ctns.toFixed(2)}</td><td class="px-6 py-4 text-right">$${summary[brand][sku].val.toFixed(2)}</td>`;
+                        tbody.appendChild(row);
+                    }
+                }
+            }
+        }
+
+        // --- CLAIM REPORT LOGIC ---
+        function openClaimModal() {
+            const select = document.getElementById('claim-brand-select');
+            select.innerHTML = '<option value="" disabled selected>Select Brand</option>';
+            // Unique brands
+            const brands = [...new Set(appData.skus.map(s => s.brand))];
+            brands.forEach(b => {
+                const opt = document.createElement('option');
+                opt.value = b;
+                opt.textContent = b;
+                select.appendChild(opt);
+            });
+            document.getElementById('claim-modal').classList.remove('hidden');
+        }
+
+        function closeClaimModal() {
+            document.getElementById('claim-modal').classList.add('hidden');
+        }
+
+        function generateAndPrintClaim() {
+            const brand = document.getElementById('claim-brand-select').value;
+            if(!brand) return;
+
+            const relevantTx = appData.transactions.filter(tx => {
+                const sku = appData.skus.find(s => s.id === tx.skuId);
+                return sku && sku.brand === brand;
+            });
+
+            let html = `
+                <div class="p-8">
+                    <div class="flex justify-between border-b pb-4 mb-6">
+                        <div>
+                            <h2 class="text-2xl font-bold">Claim Statement</h2>
+                            <p class="text-sm text-gray-500">HSG Global Pte Ltd</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="font-bold">${brand}</p>
+                            <p class="text-sm text-gray-500">${new Date().toLocaleDateString()}</p>
+                        </div>
+                    </div>
+                    <table class="w-full text-left mb-6">
+                        <thead class="border-b">
+                            <tr><th class="py-2">Date</th><th class="py-2">Entity</th><th class="py-2">SKU</th><th class="py-2 text-right">Qty (Pcs)</th><th class="py-2 text-right">Cartons</th><th class="py-2 text-right">Amount</th></tr>
+                        </thead>
+                        <tbody>
+            `;
+
+            let total = 0;
+            relevantTx.forEach(tx => {
+                const sku = appData.skus.find(s => s.id === tx.skuId);
+                const ctns = tx.qtyPcs / sku.uom;
+                const cost = ctns * sku.cost;
+                total += cost;
+                const rec = appData.receivers.find(r => r.id === tx.receiverId);
+                html += `<tr>
+                    <td class="py-2">${tx.date}</td>
+                    <td class="py-2">${rec ? rec.name : 'N/A'}</td>
+                    <td class="py-2">${sku.name}</td>
+                    <td class="py-2 text-right">${tx.qtyPcs}</td>
+                    <td class="py-2 text-right">${ctns.toFixed(2)}</td>
+                    <td class="py-2 text-right">$${cost.toFixed(2)}</td>
+                </tr>`;
+            });
+
+            html += `</tbody></table>
+                <div class="text-right text-xl font-bold">Total Claim: $${total.toFixed(2)}</div>
+            </div>`;
+
+            document.getElementById('print-area').innerHTML = html;
+            closeClaimModal();
+            window.print();
+        }
+
+        // --- INITIALIZATION ---
+        window.onload = () => {
+            // Initially render
+            renderSkus();
+            renderReceivers();
+            renderTransactions();
+            updateDashboard();
+        }
+    </script>
+</body>
+</html>

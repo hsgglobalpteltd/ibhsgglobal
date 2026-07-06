@@ -1,0 +1,1465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snapshot Calculator Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js"></script>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+    input::-webkit-outer-spin-button,
+    input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    input[type=number] {
+      -moz-appearance: textfield;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800 flex flex-col">
+
+  <div id="toast-message" class="fixed top-4 right-4 z-50 transform translate-y-[-100px] opacity-0 transition-all duration-300 pointer-events-none flex items-center gap-3 px-5 py-4 rounded-xl shadow-lg border text-sm max-w-md bg-white border-blue-200 text-blue-800">
+    <div id="toast-icon-container" class="p-1 rounded-full bg-blue-50">
+      <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+    </div>
+    <span id="toast-message-text" class="font-medium">Notification message placeholder</span>
+  </div>
+
+  <header class="bg-slate-900 text-white shadow-md border-b border-slate-800 shrink-0">
+    <div class="max-w-7xl mx-auto px-4 py-4 sm:px-6 lg:px-8 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="bg-blue-600 p-2 rounded-xl text-white">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold leading-none tracking-tight">Snapshot Calculator</h1>
+          <p class="text-[10px] text-slate-400 mt-1 font-mono">Precision Pricing & Deal Registry</p>
+        </div>
+      </div>
+      <div class="flex gap-2">
+        <button id="btn-show-dashboard" class="px-4 py-2 text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg transition-all flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path></svg>
+          Dashboard
+        </button>
+        <button id="btn-create-deal-nav" class="px-4 py-2 text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-all shadow-sm shadow-blue-900/20 flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+          Create New Deal
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 lg:p-8 space-y-6 overflow-hidden flex flex-col justify-start">
+    
+    <!-- DASHBOARD VIEW -->
+    <div id="view-dashboard" class="space-y-6 flex flex-col w-full">
+      
+      <!-- Filtering & Controls Grid -->
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 flex-1">
+          <div class="relative">
+            <span class="absolute left-3 top-2.5 text-slate-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            </span>
+            <input type="text" id="search-term" class="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400" placeholder="Search Deal ID or Customer Name...">
+          </div>
+          <div class="relative">
+            <span class="absolute left-3 top-2.5 text-slate-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+            </span>
+            <input type="text" id="search-brand" class="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all placeholder:text-slate-400" placeholder="Filter by Brand...">
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="text-xs text-slate-500 font-medium shrink-0">Rows:</label>
+            <select id="pagination-size" class="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg outline-none bg-white focus:ring-2 focus:ring-blue-500/20 transition-all">
+              <option value="5" selected>5 Rows</option>
+              <option value="25">25 Rows</option>
+              <option value="50">50 Rows</option>
+              <option value="100">100 Rows</option>
+            </select>
+          </div>
+        </div>
+        <button id="btn-clear-search" class="px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-all shrink-0">
+          Reset Filter
+        </button>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden flex flex-col">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm border-collapse">
+            <thead class="bg-slate-50/75 border-b border-slate-200 text-slate-600 font-semibold text-xs tracking-wider uppercase">
+              <tr>
+                <th class="p-4">Deal ID</th>
+                <th class="p-4">Dealing with</th>
+                <th class="p-4">Deal Date</th>
+                <th class="p-4">Brands</th>
+                <th class="p-4">Last Update</th>
+                <th class="p-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="deals-table-body" class="divide-y divide-slate-100 text-slate-700">
+              <!-- Dynamically populated rows from LocalStorage -->
+            </tbody>
+          </table>
+        </div>
+        <!-- Pagination Dashboard Bar -->
+        <div class="bg-slate-50/50 px-4 py-3 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500 font-medium">
+          <div id="pagination-status">Showing 0 to 0 of 0 entries</div>
+          <div class="flex items-center gap-1.5">
+            <button id="btn-prev-page" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-50 disabled:hover:bg-white transition-all">Previous</button>
+            <span id="pagination-page-indicator" class="px-3 text-slate-700 font-bold">1</span>
+            <button id="btn-next-page" class="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 disabled:opacity-50 disabled:hover:bg-white transition-all">Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ACTIVE WORKSPACE VIEW -->
+    <div id="view-workspace" class="hidden space-y-6 flex flex-col w-full">
+      
+      <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/60 space-y-4">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+          <div class="flex items-center gap-2">
+            <span class="p-1 rounded-md bg-blue-50 text-blue-600 font-mono text-xs font-bold" id="workspace-id-badge">ID: NEW_DEAL</span>
+            <span class="text-slate-400 font-mono text-xs">| Interactive Workspace</span>
+          </div>
+          <button id="btn-back-dashboard" class="text-xs font-semibold text-slate-500 hover:text-slate-800 transition-colors flex items-center gap-1">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+            Save & Close Workspace
+          </button>
+        </div>
+
+        <!-- Metadata inputs (Dealing with - 70%, Deal Date - 30%) -->
+        <div class="grid grid-cols-1 md:grid-cols-10 gap-4">
+          <div class="md:col-span-7">
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Dealing With</label>
+            <input type="text" id="deal-with" class="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm placeholder:text-slate-400 font-medium" placeholder="Enter Company name or Client Contact">
+          </div>
+          <div class="md:col-span-3">
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Deal Date</label>
+            <input type="date" id="deal-date" class="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm font-semibold">
+          </div>
+          <div class="md:col-span-10">
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Deal Note</label>
+            <textarea id="deal-note" rows="2" class="w-full px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all text-sm placeholder:text-slate-400" placeholder="Type deal summary notes, logistics arrangements, or buyer terms..."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white p-2 rounded-xl shadow-sm border border-slate-200/60 max-w-sm mx-auto w-full">
+        <div class="bg-slate-50 border border-slate-200/60 p-1 rounded-xl flex gap-1">
+          <button id="tab-mode-margin" onclick="switchPricingMode('margin', true)" class="w-full text-[11px] font-bold py-2 rounded-lg transition-all bg-white text-blue-600 shadow-sm border border-slate-100">
+            Margin Calc
+          </button>
+          <button id="tab-mode-rsp_cap" onclick="switchPricingMode('rsp_cap', true)" class="w-full text-[11px] font-bold py-2 rounded-lg transition-all text-slate-500 hover:text-slate-800">
+            RSP Cap
+          </button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        
+        <!-- Calculator Inputs Form -->
+        <div class="lg:col-span-5 bg-white p-6 rounded-2xl shadow-sm border border-slate-200/60 space-y-4">
+          <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+            <h3 id="margins-segment-title" class="text-sm font-bold text-slate-700">Margins & Target Pricing (Margin Model)</h3>
+            <button id="btn-reset-form" class="text-slate-400 hover:text-slate-600 transition-colors" title="Reset Product Form">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 8H17"></path></svg>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Product Brand</label>
+              <input type="text" id="prod-brand" list="brand-datalist" class="w-full px-4 py-2 border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium" placeholder="Brand">
+              <datalist id="brand-datalist"></datalist>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Product Name</label>
+              <input type="text" id="prod-name" list="name-datalist" class="w-full px-4 py-2 border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-medium" placeholder="Name">
+              <datalist id="name-datalist"></datalist>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Cost Price ($)</label>
+            <div class="relative">
+              <span class="absolute left-3 top-2 text-slate-400 text-sm font-medium">$</span>
+              <input type="number" id="prod-cost" step="0.01" min="0" class="w-full pl-7 pr-4 py-2 border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-semibold" placeholder="0.00">
+            </div>
+          </div>
+
+          <!-- Collapsible Costs & Fees Segment -->
+          <div class="border-t border-slate-100 pt-4">
+            <button id="btn-toggle-costs" class="w-full flex justify-between items-center text-xs font-bold text-slate-500 uppercase tracking-wider hover:text-blue-600 transition-all">
+              <span class="flex items-center gap-2">
+                Costs & Fees (Ins, Duty, Freight)
+                <svg class="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+              </span>
+              <span id="toggle-costs-indicator">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+              </span>
+            </button>
+
+            <div id="collapsible-costs-section" class="hidden mt-3 grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-400 uppercase mb-1">Ins. & Freight (%)</label>
+                <input type="number" id="fee-if" step="0.01" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg outline-none font-semibold" value="4.50">
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-400 uppercase mb-1">Duty/Input GST (%)</label>
+                <input type="number" id="fee-duty" step="0.01" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg outline-none font-semibold" value="9.00">
+              </div>
+              <div class="col-span-2">
+                <label class="block text-[11px] font-semibold text-slate-400 uppercase mb-1">Other Costs (%) <span class="text-slate-300 capitalize">(Storage, Admin, Log.)</span></label>
+                <input type="number" id="fee-other" step="0.01" class="w-full px-3 py-1.5 text-xs border border-slate-200 rounded-lg outline-none font-semibold" value="12.00">
+              </div>
+            </div>
+          </div>
+
+          <div class="border-t border-slate-100 pt-4 space-y-4">
+            
+            <!-- Target RSP Input -->
+            <div id="container-target-rsp" class="hidden">
+              <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Target RSP ($) *</label>
+              <div class="relative">
+                <span class="absolute left-3 top-2 text-slate-400 text-sm font-semibold">$</span>
+                <input type="number" id="custom-rsp" step="0.01" min="0" class="w-full pl-7 pr-4 py-2 border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-semibold" placeholder="Set Price for Consumer.">
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label id="lbl-input-hsg" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">HSG Margin (%)</label>
+                <input type="number" id="margin-hsg" step="0.01" min="0" class="w-full px-3 py-2 border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-semibold" placeholder="0.00" value="0.00">
+              </div>
+              <div>
+                <label id="lbl-input-buyer" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">Buyer Margin (%)</label>
+                <input type="number" id="margin-buyer" step="0.01" min="0" class="w-full px-3 py-2 border border-slate-200 rounded-lg outline-none text-sm focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 transition-all font-semibold" placeholder="0.00" value="0.00">
+              </div>
+            </div>
+          </div>
+
+          <!-- Workspace interaction button -->
+          <button id="btn-snap-to-list" class="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white font-bold py-3 px-4 rounded-xl shadow-md shadow-blue-600/10 transition-all flex items-center justify-center gap-2 text-sm">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+            <span id="btn-snap-label">Snap Deal to List</span>
+          </button>
+        </div>
+
+        <div class="lg:col-span-7 space-y-6">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            
+            <!-- Realtime Costs Breakdown card -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/60 flex flex-col justify-between">
+              <div>
+                <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Cost Breakdown</h4>
+                <div class="space-y-2.5 text-xs text-slate-500 font-medium">
+                  <div class="flex justify-between">
+                    <span>Base Cost</span>
+                    <span id="metric-base-cost" class="text-slate-800 font-semibold">$0.00</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>Freight Cost</span>
+                    <span id="metric-freight-cost" class="text-slate-800 font-semibold">+$0.00</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>Duty Cost</span>
+                    <span id="metric-duty-cost" class="text-slate-800 font-semibold">+$0.00</span>
+                  </div>
+                  <div class="flex justify-between items-center py-2 border-y border-slate-100 bg-slate-50/50 -mx-5 px-5 text-slate-700">
+                    <span class="font-bold">Landcost</span>
+                    <span id="metric-landcost" class="font-bold text-slate-900">$0.00</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>Other Cost Pool</span>
+                    <span id="metric-other-cost" class="text-slate-800 font-semibold">+$0.00</span>
+                  </div>
+                </div>
+              </div>
+              <div class="pt-4 border-t border-slate-100 mt-4 flex items-center justify-between">
+                <span class="text-sm font-bold text-blue-600">Our Cost</span>
+                <span id="metric-our-cost" class="text-xl font-extrabold text-blue-600">$0.00</span>
+              </div>
+            </div>
+
+            <!-- Realtime Margins Breakdown card -->
+            <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200/60 flex flex-col justify-between">
+              <div>
+                <div class="flex items-center justify-between mb-3">
+                  <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Pricing Model Results</h4>
+                  <span id="output-mode-badge" class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono text-[9px] font-bold uppercase">Margin Mode</span>
+                </div>
+                <div class="space-y-2.5 text-xs text-slate-500 font-medium">
+                  <div class="flex justify-between">
+                    <span id="metric-label-hsg">HSG Profit</span>
+                    <span id="metric-hsg-profit-val" class="text-slate-800 font-semibold">+$0.00</span>
+                  </div>
+                  <div class="flex justify-between items-center py-2 border-y border-slate-100 bg-indigo-50/30 -mx-5 px-5 text-indigo-900">
+                    <span class="font-bold">Cost To Buyer</span>
+                    <span id="metric-cost-buyer" class="font-bold">$0.00</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span id="metric-label-buyer">Buyer Margin Amount</span>
+                    <span id="metric-buyer-margin-val" class="text-slate-800 font-semibold">+$0.00</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>Standard RSP</span>
+                    <span id="metric-std-rsp" class="text-slate-800 font-semibold">$0.00</span>
+                  </div>
+                  <div class="flex justify-between text-[10px] text-slate-400 font-mono italic">
+                    <span>Std RSP + 9% GST</span>
+                    <span id="metric-std-rsp-gst">$0.00</span>
+                  </div>
+                </div>
+              </div>
+              <div class="pt-4 border-t border-slate-100 mt-4 flex items-center justify-between">
+                <span class="text-sm font-bold text-emerald-600">Price Tag</span>
+                <span id="metric-active-rsp" class="text-xl font-extrabold text-emerald-600">$0.00</span>
+              </div>
+            </div>
+
+          </div>
+
+          <div class="bg-slate-900 text-white p-6 rounded-2xl shadow-lg relative overflow-hidden">
+            <div class="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+              <svg class="w-32 h-32" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.003 9.003 0 1020.945 13H11V3.055z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"></path></svg>
+            </div>
+            <h4 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4">Live Balance Sheet & GST Assessment</h4>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
+              <div>
+                <div class="text-slate-400 text-[11px] font-semibold uppercase tracking-wider mb-1">Gross Profit</div>
+                <div id="metric-gross-profit" class="text-2xl font-bold text-emerald-400">$0.00</div>
+                <div class="text-[10px] text-slate-400 mt-1">Cost To Buyer - Our Cost</div>
+              </div>
+              <div>
+                <div class="text-slate-400 text-[11px] font-semibold uppercase tracking-wider mb-1">Net Paid GST</div>
+                <div id="metric-paid-gst" class="text-2xl font-bold text-orange-400">$0.00</div>
+                <div class="text-[10px] text-slate-400 mt-1 leading-tight">
+                  Output collected - Input paid<br>
+                  <span id="metric-gst-breakdown" class="text-[9px] text-slate-500 font-mono font-medium">In: $0.00 | Out: $0.00</span>
+                </div>
+              </div>
+              <div class="md:border-l border-slate-800 md:pl-6">
+                <div class="text-slate-400 text-[11px] font-semibold uppercase tracking-wider mb-1">Net Profit</div>
+                <div id="metric-net-profit" class="text-3xl font-black text-white">$0.00</div>
+                <div class="text-[10px] text-emerald-500 font-semibold mt-1">Gross Profit - Net GST</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <div id="snapped-deals-block" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/60 space-y-6">
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div class="flex items-center gap-2">
+            <div class="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+            </div>
+            <h2 class="text-lg font-bold text-slate-800">Snap Deal List</h2>
+            <span id="snap-count-badge" class="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono text-[11px] font-bold">0 Items</span>
+          </div>
+          
+          <div class="flex gap-2.5 w-full sm:w-auto">
+            <button id="btn-print-us" class="w-full sm:w-auto px-4 py-2 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition-all flex items-center justify-center gap-2">
+              <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"></path></svg>
+              Print for Us
+            </button>
+            <button id="btn-print-buyer" class="w-full sm:w-auto px-4 py-2 text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-all flex items-center justify-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+              Print for Buyer
+            </button>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto rounded-xl border border-slate-200/60">
+          <table class="w-full text-left text-sm border-collapse whitespace-nowrap">
+            <thead class="bg-slate-50 text-slate-600 font-semibold text-xs tracking-wider uppercase border-b border-slate-200">
+              <tr>
+                <th class="p-4">Product Details</th>
+                <th class="p-4">Our Cost</th>
+                <th class="p-4">Gross Profit</th>
+                <th class="p-4">Cost To Buyer</th>
+                <th class="p-4">RSP</th>
+                <th class="p-4 text-center">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="snap-list-tbody" class="divide-y divide-slate-100 text-slate-700">
+              <!-- Dynamically populated snapped items in workspace -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <footer class="bg-slate-900 border-t border-slate-800 shrink-0 text-slate-500 py-4 text-center text-xs">
+    <div class="max-w-7xl mx-auto px-4">
+      &copy; 2026 Snapshot Calculator. All rights reserved. Built for professional balance sheet evaluation.
+    </div>
+  </footer>
+
+  <script>
+    // System core state tracking
+    const state = {
+      currentView: 'dashboard', // 'dashboard' or 'workspace'
+      currentDealId: null,      // active Deal ID PK
+      pricingMode: 'margin',    // 'margin', 'rsp_cap'
+      activeEditSnapId: null,   // snapshot item ID currently in edit mode (or null for new snap)
+      snapList: [],             // temporary storage for unsaved snaps inside active workspace
+      showCosts: false,         // costs dropdown visible state
+      
+      // Pagination state
+      pagination: {
+        currentPage: 1,
+        pageSize: 5,
+        totalItems: 0,
+        totalPages: 1
+      },
+      
+      // Filter values
+      filters: {
+        searchTerm: '',
+        searchBrand: ''
+      }
+    };
+
+    // Math.ceil helper to guarantee rounding up to 2 decimal places
+    function roundUpToTwoDecimals(num) {
+      return Math.ceil((num || 0) * 100) / 100;
+    }
+
+    function formatCurrency(val) {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
+    }
+
+    function generateNumericID(length) {
+      let result = '';
+      const chars = '0123456789';
+      for (let i = 0; i < length; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return result;
+    }
+
+    // Custom toast notification system
+    function triggerToast(msg, type = 'info') {
+      const el = document.getElementById('toast-message');
+      const textEl = document.getElementById('toast-message-text');
+      const iconContainer = document.getElementById('toast-icon-container');
+
+      textEl.innerText = msg;
+      
+      // Update UI theme colors depending on type
+      if (type === 'success') {
+        el.className = "fixed top-4 right-4 z-50 transform translate-y-0 opacity-100 transition-all duration-300 pointer-events-auto flex items-center gap-3 px-5 py-4 rounded-xl shadow-lg border text-sm max-w-md bg-emerald-50 border-emerald-200 text-emerald-800";
+        iconContainer.className = "p-1 rounded-full bg-emerald-100 text-emerald-600";
+        iconContainer.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
+      } else if (type === 'warning') {
+        el.className = "fixed top-4 right-4 z-50 transform translate-y-0 opacity-100 transition-all duration-300 pointer-events-auto flex items-center gap-3 px-5 py-4 rounded-xl shadow-lg border text-sm max-w-md bg-amber-50 border-amber-200 text-amber-800";
+        iconContainer.className = "p-1 rounded-full bg-amber-100 text-amber-600";
+        iconContainer.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>`;
+      } else {
+        el.className = "fixed top-4 right-4 z-50 transform translate-y-0 opacity-100 transition-all duration-300 pointer-events-auto flex items-center gap-3 px-5 py-4 rounded-xl shadow-lg border text-sm max-w-md bg-white border-blue-200 text-blue-800";
+        iconContainer.className = "p-1 rounded-full bg-blue-50 text-blue-600";
+        iconContainer.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>`;
+      }
+
+      setTimeout(() => {
+        el.classList.add('translate-y-[-100px]', 'opacity-0');
+        el.classList.remove('translate-y-0', 'opacity-100', 'pointer-events-auto');
+      }, 4000);
+    }
+
+    function balanceMargins(source) {
+      if (state.pricingMode !== 'rsp_cap') return;
+
+      const targetRsp = parseFloat(document.getElementById('custom-rsp').value) || 0;
+      if (targetRsp <= 0) return;
+
+      const cost = parseFloat(document.getElementById('prod-cost').value) || 0;
+      const ifPct = parseFloat(document.getElementById('fee-if').value) || 0;
+      const dutyPct = parseFloat(document.getElementById('fee-duty').value) || 0;
+      const otherPct = parseFloat(document.getElementById('fee-other').value) || 0;
+
+      // Extract precise live cost metrics
+      const ifCost = roundUpToTwoDecimals(cost * (ifPct / 100));
+      const dutyCost = roundUpToTwoDecimals(cost * (dutyPct / 100));
+      const totalA = roundUpToTwoDecimals(cost + ifCost + dutyCost);
+      const otherCost = roundUpToTwoDecimals(totalA * (otherPct / 100));
+      const totalB = roundUpToTwoDecimals(totalA + otherCost); // Our Cost
+
+      // Calculate the maximum pool percentage available for margin
+      const totalMarginPercent = ((targetRsp - totalB) / targetRsp) * 100;
+
+      if (source === 'buyer') {
+        const buyerVal = parseFloat(document.getElementById('margin-buyer').value) || 0;
+        const cappedBuyer = Math.min(Math.max(0, buyerVal), Math.max(0, totalMarginPercent));
+        const hsgVal = Math.max(0, totalMarginPercent - cappedBuyer);
+
+        document.getElementById('margin-buyer').value = cappedBuyer.toFixed(2);
+        document.getElementById('margin-hsg').value = hsgVal.toFixed(2);
+      } else if (source === 'hsg') {
+        const hsgVal = parseFloat(document.getElementById('margin-hsg').value) || 0;
+        const cappedHsg = Math.min(Math.max(0, hsgVal), Math.max(0, totalMarginPercent));
+        const buyerVal = Math.max(0, totalMarginPercent - cappedHsg);
+
+        document.getElementById('margin-hsg').value = cappedHsg.toFixed(2);
+        document.getElementById('margin-buyer').value = buyerVal.toFixed(2);
+      } else if (source === 'init' || source === 'rsp') {
+        // All default margin is assigned to HSG initially when target RSP is specified
+        document.getElementById('margin-buyer').value = "0.00";
+        document.getElementById('margin-hsg').value = Math.max(0, totalMarginPercent).toFixed(2);
+      }
+    }
+
+    // Initial LocalStorage Database Bootstrapper
+    function populateMockDatabaseSeeds() {
+      if (!localStorage.getItem('Deals_DB')) {
+        localStorage.setItem('Deals_DB', JSON.stringify([]));
+      }
+      if (!localStorage.getItem('Snapshots_Deal_DB')) {
+        localStorage.setItem('Snapshots_Deal_DB', JSON.stringify([]));
+      }
+    }
+
+    // Switch workspace layout views dynamically
+    function switchView(viewName) {
+      state.currentView = viewName;
+      const dash = document.getElementById('view-dashboard');
+      const work = document.getElementById('view-workspace');
+
+      if (viewName === 'dashboard') {
+        dash.classList.remove('hidden');
+        work.classList.add('hidden');
+        renderDealsDatabaseTable();
+      } else {
+        dash.classList.add('hidden');
+        work.classList.remove('hidden');
+        renderSnappedDealsList();
+      }
+    }
+
+    function runActiveCalculations() {
+      const cost = parseFloat(document.getElementById('prod-cost').value) || 0;
+      const ifPct = parseFloat(document.getElementById('fee-if').value) || 0;
+      const dutyPct = parseFloat(document.getElementById('fee-duty').value) || 0;
+      const otherPct = parseFloat(document.getElementById('fee-other').value) || 0;
+      const hsgVal = parseFloat(document.getElementById('margin-hsg').value) || 0;
+      const buyerVal = parseFloat(document.getElementById('margin-buyer').value) || 0;
+      const customRsp = parseFloat(document.getElementById('custom-rsp').value) || 0;
+
+      // Landcost (Total A)
+      const ifCost = roundUpToTwoDecimals(cost * (ifPct / 100));
+      const dutyCost = roundUpToTwoDecimals(cost * (dutyPct / 100));
+      const totalA = roundUpToTwoDecimals(cost + ifCost + dutyCost);
+
+      // Our/Product Cost (Our Cost)
+      const otherCost = roundUpToTwoDecimals(totalA * (otherPct / 100));
+      const totalB = roundUpToTwoDecimals(totalA + otherCost);
+
+      // Apply math constraints dependent on pricing mode
+      let totalC = 0; // Cost To Buyer
+      let rsp = 0;     // Standard RSP
+      let hsgProfit = 0;
+      let buyerProfitVal = 0;
+      let isFormulaValid = true;
+
+      if (state.pricingMode === 'margin') {
+        // HSG Margin
+        if (hsgVal >= 100) {
+          isFormulaValid = false;
+        } else {
+          totalC = roundUpToTwoDecimals(totalB / (1 - (hsgVal / 100)));
+        }
+
+        // Buyer Margin
+        if (buyerVal >= 100) {
+          isFormulaValid = false;
+        } else {
+          rsp = roundUpToTwoDecimals(totalC / (1 - (buyerVal / 100)));
+        }
+
+        hsgProfit = roundUpToTwoDecimals(totalC - totalB);
+        const activeRsp = rsp;
+        buyerProfitVal = roundUpToTwoDecimals(activeRsp - totalC);
+
+      } else if (state.pricingMode === 'rsp_cap') {
+        // Target RSP constraint backwards deduction
+        const activeRsp = customRsp; // target RSP input
+        if (activeRsp <= 0) {
+          isFormulaValid = false;
+        } else {
+          const buyerMarginAmt = roundUpToTwoDecimals(activeRsp * (buyerVal / 100));
+          const hsgMarginAmt = roundUpToTwoDecimals(activeRsp * (hsgVal / 100));
+
+          totalC = roundUpToTwoDecimals(activeRsp - buyerMarginAmt);
+          rsp = activeRsp;
+          hsgProfit = hsgMarginAmt;
+          buyerProfitVal = buyerMarginAmt;
+
+          // Check if overall costs exceed Cap Price constraints
+          if (roundUpToTwoDecimals(buyerMarginAmt + hsgMarginAmt) > activeRsp) {
+            isFormulaValid = false;
+          }
+        }
+      }
+
+      // Live GST Computations
+      const inputGST = roundUpToTwoDecimals(dutyCost + (otherCost * 0.09));
+      const outputGST = roundUpToTwoDecimals(totalC * 0.09);
+      const totalX = roundUpToTwoDecimals(outputGST - inputGST);
+
+      // Profit computations
+      const totalY = hsgProfit; // Gross Profit
+      const netProfit = roundUpToTwoDecimals(totalY - totalX);
+
+      // Update calculations UI Panel metrics
+      document.getElementById('metric-base-cost').innerText = formatCurrency(cost);
+      document.getElementById('metric-freight-cost').innerText = `+${formatCurrency(ifCost)}`;
+      document.getElementById('metric-duty-cost').innerText = `+${formatCurrency(dutyCost)}`;
+      document.getElementById('metric-landcost').innerText = formatCurrency(totalA);
+      document.getElementById('metric-other-cost').innerText = `+${formatCurrency(otherCost)}`;
+      document.getElementById('metric-our-cost').innerText = formatCurrency(totalB);
+
+      if (isFormulaValid) {
+        document.getElementById('metric-hsg-profit-val').innerText = `+${formatCurrency(hsgProfit)}`;
+        document.getElementById('metric-cost-buyer').innerText = formatCurrency(totalC);
+        document.getElementById('metric-buyer-margin-val').innerText = `+${formatCurrency(buyerProfitVal)}`;
+        document.getElementById('metric-std-rsp').innerText = formatCurrency(rsp);
+        document.getElementById('metric-std-rsp-gst').innerText = formatCurrency(roundUpToTwoDecimals(rsp * 1.09));
+        
+        const activeRspText = state.pricingMode === 'margin' ? rsp : customRsp;
+        document.getElementById('metric-active-rsp').innerText = formatCurrency(activeRspText);
+        document.getElementById('metric-gross-profit').innerText = formatCurrency(totalY);
+        document.getElementById('metric-paid-gst').innerText = formatCurrency(totalX);
+        document.getElementById('metric-gst-breakdown').innerText = `In: ${formatCurrency(inputGST)} | Out: ${formatCurrency(outputGST)}`;
+        document.getElementById('metric-net-profit').innerText = formatCurrency(netProfit);
+
+        // Enable inputs snap actions
+        document.getElementById('btn-snap-to-list').removeAttribute('disabled');
+        document.getElementById('btn-snap-label').innerText = state.activeEditSnapId ? "Update Snap Row" : "Snap Deal to List";
+      } else {
+        // Reset/Invalid State fallbacks
+        const na = "N/A";
+        document.getElementById('metric-hsg-profit-val').innerText = na;
+        document.getElementById('metric-cost-buyer').innerText = na;
+        document.getElementById('metric-buyer-margin-val').innerText = na;
+        document.getElementById('metric-std-rsp').innerText = na;
+        document.getElementById('metric-std-rsp-gst').innerText = na;
+        document.getElementById('metric-active-rsp').innerText = na;
+        document.getElementById('metric-gross-profit').innerText = na;
+        document.getElementById('metric-paid-gst').innerText = na;
+        document.getElementById('metric-net-profit').innerText = na;
+
+        // Display warn block state
+        document.getElementById('btn-snap-to-list').setAttribute('disabled', 'true');
+        document.getElementById('btn-snap-label').innerText = "Invalid Margin / Cap (< 100%)";
+      }
+    }
+
+    window.switchPricingMode = function(mode, isManual = false) {
+      state.pricingMode = mode;
+
+      const tabs = ['margin', 'rsp_cap'];
+      tabs.forEach(t => {
+        const el = document.getElementById(`tab-mode-${t}`);
+        if (t === mode) {
+          el.className = "w-full text-[11px] font-bold py-2 rounded-lg transition-all bg-white text-blue-600 shadow-sm border border-slate-100";
+        } else {
+          el.className = "w-full text-[11px] font-bold py-2 rounded-lg transition-all text-slate-500 hover:text-slate-800";
+        }
+      });
+
+      // Update Labels dynamically depending on pricing mode
+      const lblHsg = document.getElementById('lbl-input-hsg');
+      const lblBuyer = document.getElementById('lbl-input-buyer');
+      const containerTargetRsp = document.getElementById('container-target-rsp');
+      const segmentTitle = document.getElementById('margins-segment-title');
+      const outputModeBadge = document.getElementById('output-mode-badge');
+
+      if (mode === 'margin') {
+        lblHsg.innerText = "HSG Margin (%)";
+        lblBuyer.innerText = "Buyer Margin (%)";
+        containerTargetRsp.classList.add('hidden');
+        segmentTitle.innerText = "Margins & Target Pricing (Margin Model)";
+        outputModeBadge.innerText = "Margin Mode";
+      } else if (mode === 'rsp_cap') {
+        lblHsg.innerText = "HSG Margin from RSP (%)";
+        lblBuyer.innerText = "Buyer Margin from RSP (%)";
+        containerTargetRsp.classList.remove('hidden');
+        segmentTitle.innerText = "Backward Pricing Margins (RSP Cap Model)";
+        outputModeBadge.innerText = "RSP Cap Mode";
+        if (isManual) {
+          balanceMargins('init');
+        }
+      }
+
+      runActiveCalculations();
+    };
+
+    // Rebuild lists of datalist suggestions using unique brands/names in the DB
+    function rebuildDatalistSuggestions() {
+      try {
+        const snaps = JSON.parse(localStorage.getItem('Snapshots_Deal_DB')) || [];
+        const brands = new Set();
+        const names = new Set();
+
+        snaps.forEach(snap => {
+          if (snap.productDetails?.brand) brands.add(snap.productDetails.brand);
+          if (snap.productDetails?.name) names.add(snap.productDetails.name);
+        });
+
+        const brandDatalist = document.getElementById('brand-datalist');
+        brandDatalist.innerHTML = '';
+        brands.forEach(b => {
+          brandDatalist.innerHTML += `<option value="${b}">`;
+        });
+
+        const nameDatalist = document.getElementById('name-datalist');
+        nameDatalist.innerHTML = '';
+        names.forEach(n => {
+          nameDatalist.innerHTML += `<option value="${n}">`;
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // Prepare fresh workspace with auto-generated 12 Digit reference PK
+    function prepareFreshWorkspace() {
+      state.currentDealId = generateNumericID(12);
+      state.snapList = [];
+      state.activeEditSnapId = null;
+
+      document.getElementById('workspace-id-badge').innerText = `ID: ${state.currentDealId}`;
+      document.getElementById('deal-with').value = '';
+      document.getElementById('deal-date').value = new Date().toISOString().split('T')[0];
+      document.getElementById('deal-note').value = '';
+
+      resetProductCalculatorForm();
+      switchView('workspace');
+      triggerToast(`Started workspace session reference: ${state.currentDealId}`, "success");
+    }
+
+    function openExistingWorkspace(dealId) {
+      try {
+        const deals = JSON.parse(localStorage.getItem('Deals_DB')) || [];
+        const snapshots = JSON.parse(localStorage.getItem('Snapshots_Deal_DB')) || [];
+
+        const targetDeal = deals.find(d => d.dealId === dealId);
+        if (!targetDeal) {
+          triggerToast("Target database record not found.", "warning");
+          return;
+        }
+
+        state.currentDealId = targetDeal.dealId;
+        document.getElementById('workspace-id-badge').innerText = `ID: ${targetDeal.dealId}`;
+        document.getElementById('deal-with').value = targetDeal.dealDetails?.dealWith || '';
+        document.getElementById('deal-date').value = targetDeal.date ? new Date(targetDeal.date).toISOString().split('T')[0] : '';
+        document.getElementById('deal-note').value = targetDeal.dealDetails?.dealNote || '';
+
+        // Hydrate workspace snap registry
+        const matchedSnaps = snapshots.filter(snap => snap.dealId === dealId);
+        state.snapList = matchedSnaps.map(s => {
+          // Re-flatten metrics
+          return {
+            id: s.snapshotId,
+            brand: s.productDetails?.brand || '',
+            name: s.productDetails?.name || '',
+            costPrice: s.productDetails?.costPrice || 0,
+            ifPercent: s.productDetails?.ifPercent ?? 4.5,
+            dutyPercent: s.productDetails?.dutyPercent ?? 9.0,
+            otherPercent: s.productDetails?.otherPercent ?? 12.0,
+            hsgMargin: s.productDetails?.hsgMargin ?? 0,
+            buyerMargin: s.productDetails?.buyerMargin ?? 0,
+            customRsp: s.productDetails?.customRsp || '',
+
+            // Live calculations values
+            totalB: s.calculationDetails?.totalB || 0,
+            totalC: s.calculationDetails?.totalC || 0,
+            totalY: s.calculationDetails?.totalY || 0,
+            rsp: s.calculationDetails?.rsp || 0,
+            buyerProfit: s.calculationDetails?.buyerProfit || 0
+          };
+        });
+
+        resetProductCalculatorForm();
+        switchView('workspace');
+        triggerToast(`Loaded Deal: ${state.currentDealId} containing ${state.snapList.length} snap items.`, "success");
+      } catch (e) {
+        console.error(e);
+        triggerToast("Failed opening workspace data structures.", "warning");
+      }
+    }
+
+    // Snap product calculator state into current memory registry
+    function snapActiveFormToList() {
+      const brand = document.getElementById('prod-brand').value.trim();
+      const name = document.getElementById('prod-name').value.trim();
+      const cost = parseFloat(document.getElementById('prod-cost').value) || 0;
+
+      if (!name || cost <= 0) {
+        triggerToast("Product Name and Cost Price are required to snap.", "warning");
+        return;
+      }
+
+      // Read current variables from HTML form fields
+      const ifPct = parseFloat(document.getElementById('fee-if').value) || 0;
+      const dutyPct = parseFloat(document.getElementById('fee-duty').value) || 0;
+      const otherPct = parseFloat(document.getElementById('fee-other').value) || 0;
+      const hsgMargin = parseFloat(document.getElementById('margin-hsg').value) || 0;
+      const buyerMargin = parseFloat(document.getElementById('margin-buyer').value) || 0;
+      const customRspVal = parseFloat(document.getElementById('custom-rsp').value) || 0;
+
+      // Calculate matching variables
+      const ifCost = roundUpToTwoDecimals(cost * (ifPct / 100));
+      const dutyCost = roundUpToTwoDecimals(cost * (dutyPct / 100));
+      const totalA = roundUpToTwoDecimals(cost + ifCost + dutyCost);
+      const otherCost = roundUpToTwoDecimals(totalA * (otherPct / 100));
+      const totalB = roundUpToTwoDecimals(totalA + otherCost);
+
+      let totalC = 0;
+      let rsp = 0;
+      let hsgProfit = 0;
+      let buyerProfitVal = 0;
+
+      if (state.pricingMode === 'margin') {
+        totalC = roundUpToTwoDecimals(totalB / (1 - (hsgMargin / 100)));
+        rsp = roundUpToTwoDecimals(totalC / (1 - (buyerMargin / 100)));
+        hsgProfit = roundUpToTwoDecimals(totalC - totalB);
+        const activeRsp = rsp;
+        buyerProfitVal = roundUpToTwoDecimals(activeRsp - totalC);
+      } else if (state.pricingMode === 'rsp_cap') {
+        const activeRsp = customRspVal;
+        const buyerMarginAmt = roundUpToTwoDecimals(activeRsp * (buyerMargin / 100));
+        const hsgMarginAmt = roundUpToTwoDecimals(activeRsp * (hsgMargin / 100));
+        totalC = roundUpToTwoDecimals(activeRsp - buyerMarginAmt);
+        rsp = activeRsp;
+        hsgProfit = hsgMarginAmt;
+        buyerProfitVal = buyerMarginAmt;
+      }
+
+      const totalY = hsgProfit; // Gross Profit
+
+      const payload = {
+        brand,
+        name,
+        costPrice: cost,
+        ifPercent: ifPct,
+        dutyPercent: dutyPct,
+        otherPercent: otherPct,
+        hsgMargin: hsgMargin,
+        buyerMargin: buyerMargin,
+        customRsp: state.pricingMode === 'rsp_cap' ? customRspVal : '',
+        totalB,
+        totalC,
+        totalY,
+        rsp,
+        buyerProfit: buyerProfitVal
+      };
+
+      if (state.activeEditSnapId) {
+        // Mode: Modifying an existing snapshot line
+        const idx = state.snapList.findIndex(s => s.id === state.activeEditSnapId);
+        if (idx > -1) {
+          state.snapList[idx] = { ...payload, id: state.activeEditSnapId };
+          triggerToast("Successfully updated snapped item registry.", "success");
+        }
+        state.activeEditSnapId = null;
+      } else {
+        // Mode: Appending a brand new product config snapshot
+        payload.id = generateNumericID(20);
+        state.snapList.push(payload);
+        triggerToast("Product variables snapped and appended.", "success");
+      }
+
+      resetProductCalculatorForm();
+      renderSnappedDealsList();
+      saveActiveDealStateToDB(); // auto-save intermediate snapshots
+    }
+
+    function editSnapRow(snapId) {
+      const snap = state.snapList.find(s => s.id === snapId);
+      if (!snap) return;
+
+      state.activeEditSnapId = snap.id;
+
+      document.getElementById('prod-brand').value = snap.brand || '';
+      document.getElementById('prod-name').value = snap.name || '';
+      document.getElementById('prod-cost').value = snap.costPrice || '';
+      document.getElementById('fee-if').value = snap.ifPercent ?? 4.5;
+      document.getElementById('fee-duty').value = snap.dutyPercent ?? 9.0;
+      document.getElementById('fee-other').value = snap.otherPercent ?? 12.0;
+      document.getElementById('margin-hsg').value = snap.hsgMargin ?? 0;
+      document.getElementById('margin-buyer').value = snap.buyerMargin ?? 0;
+      document.getElementById('custom-rsp').value = snap.customRsp || '';
+
+      if (snap.customRsp > 0) {
+        switchPricingMode('rsp_cap', false);
+      } else {
+        switchPricingMode('margin', false);
+      }
+
+      runActiveCalculations();
+      triggerToast("Form loaded into edit mode. Modify fields and click 'Update Snap Row' to finalize.", "info");
+    }
+
+    // Copy snapped data parameters into a fresh template without locking record references
+    function copySnapRow(snapId) {
+      const snap = state.snapList.find(s => s.id === snapId);
+      if (!snap) return;
+
+      state.activeEditSnapId = null; // Fresh template item
+
+      document.getElementById('prod-brand').value = snap.brand || '';
+      document.getElementById('prod-name').value = snap.name || '';
+      document.getElementById('prod-cost').value = snap.costPrice || '';
+      document.getElementById('fee-if').value = snap.ifPercent ?? 4.5;
+      document.getElementById('fee-duty').value = snap.dutyPercent ?? 9.0;
+      document.getElementById('fee-other').value = snap.otherPercent ?? 12.0;
+      document.getElementById('margin-hsg').value = snap.hsgMargin ?? 0;
+      document.getElementById('margin-buyer').value = snap.buyerMargin ?? 0;
+      document.getElementById('custom-rsp').value = snap.customRsp || '';
+
+      if (snap.customRsp > 0) {
+        switchPricingMode('rsp_cap', false);
+      } else {
+        switchPricingMode('margin', false);
+      }
+
+      runActiveCalculations();
+      triggerToast("Item parameters cloned as template into configuration inputs.", "success");
+    }
+
+    // Delete snap item from current workspace memory list
+    function deleteSnapRow(snapId) {
+      state.snapList = state.snapList.filter(s => s.id !== snapId);
+      if (state.activeEditSnapId === snapId) {
+        state.activeEditSnapId = null;
+        resetProductCalculatorForm();
+      }
+      renderSnappedDealsList();
+      saveActiveDealStateToDB(); // auto-save intermediate deletion
+      triggerToast("Snapshot row removed from workspace.", "info");
+    }
+
+    function saveActiveDealStateToDB() {
+      try {
+        const deals = JSON.parse(localStorage.getItem('Deals_DB')) || [];
+        const snapshots = JSON.parse(localStorage.getItem('Snapshots_Deal_DB')) || [];
+
+        // Save metadata payload
+        const dealPayload = {
+          dealId: state.currentDealId,
+          dealDetails: {
+            dealWith: document.getElementById('deal-with').value.trim() || 'Unknown Client',
+            dealNote: document.getElementById('deal-note').value.trim() || ''
+          },
+          date: new Date(document.getElementById('deal-date').value).getTime() || Date.now()
+        };
+
+        const existingDealIdx = deals.findIndex(d => d.dealId === state.currentDealId);
+        if (existingDealIdx > -1) {
+          deals[existingDealIdx] = dealPayload;
+        } else {
+          deals.push(dealPayload);
+        }
+
+        // Purge existing snapshot foreign key bindings
+        const cleanedSnaps = snapshots.filter(snap => snap.dealId !== state.currentDealId);
+
+        // Map workspace snaps structure into Snaps schema payload
+        const mappedSnaps = state.snapList.map(snap => {
+          return {
+            snapshotId: snap.id,
+            dealId: state.currentDealId,
+            productDetails: {
+              brand: snap.brand,
+              name: snap.name,
+              costPrice: snap.costPrice,
+              ifPercent: snap.ifPercent,
+              dutyPercent: snap.dutyPercent,
+              otherPercent: snap.otherPercent,
+              hsgMargin: snap.hsgMargin,
+              buyerMargin: snap.buyerMargin,
+              customRsp: snap.customRsp
+            },
+            calculationDetails: {
+              totalB: snap.totalB,
+              totalC: snap.totalC,
+              totalY: snap.totalY,
+              rsp: snap.rsp,
+              buyerProfit: snap.buyerProfit
+            }
+          };
+        });
+
+        // Write both tables back to LocalStorage
+        localStorage.setItem('Deals_DB', JSON.stringify(deals));
+        localStorage.setItem('Snapshots_Deal_DB', JSON.stringify([...cleanedSnaps, ...mappedSnaps]));
+
+        rebuildDatalistSuggestions();
+      } catch (e) {
+        console.error(e);
+        triggerToast("Failed writing snapshot values to DB.", "warning");
+      }
+    }
+
+    // Purge record keys cascade actions on workspace deletions
+    function deleteDealRecordCascade(dealId) {
+      try {
+        const deals = JSON.parse(localStorage.getItem('Deals_DB')) || [];
+        const snapshots = JSON.parse(localStorage.getItem('Snapshots_Deal_DB')) || [];
+
+        const filteredDeals = deals.filter(d => d.dealId !== dealId);
+        const filteredSnaps = snapshots.filter(s => s.dealId !== dealId);
+
+        localStorage.setItem('Deals_DB', JSON.stringify(filteredDeals));
+        localStorage.setItem('Snapshots_Deal_DB', JSON.stringify(filteredSnaps));
+
+        renderDealsDatabaseTable();
+        triggerToast(`Deal Reference ${dealId} removed cascade-wise from storage keys.`, "info");
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    // Reset Calculator inputs
+    function resetProductCalculatorForm() {
+      state.activeEditSnapId = null;
+      document.getElementById('prod-brand').value = '';
+      document.getElementById('prod-name').value = '';
+      document.getElementById('prod-cost').value = '';
+      document.getElementById('custom-rsp').value = '';
+      document.getElementById('margin-hsg').value = '0.00';
+      document.getElementById('margin-buyer').value = '0.00';
+
+      runActiveCalculations();
+    }
+
+    function renderDealsDatabaseTable() {
+      try {
+        const deals = JSON.parse(localStorage.getItem('Deals_DB')) || [];
+        const snapshots = JSON.parse(localStorage.getItem('Snapshots_Deal_DB')) || [];
+
+        // Sort newest modifications first
+        deals.sort((a, b) => b.date - a.date);
+
+        // Apply Search Term Filter
+        const query = state.filters.searchTerm.toLowerCase();
+        const brandQuery = state.filters.searchBrand.toLowerCase();
+
+        const filtered = deals.filter(deal => {
+          const matchedDealInfo = (deal.dealId.toLowerCase().includes(query) ||
+                                  (deal.dealDetails?.dealWith || '').toLowerCase().includes(query));
+          
+          // Get unique brands associated with this dealId
+          const associatedSnaps = snapshots.filter(s => s.dealId === deal.dealId);
+          const brandsStr = associatedSnaps.map(s => s.productDetails?.brand || '').join(', ').toLowerCase();
+          
+          const matchedBrand = !brandQuery || brandsStr.includes(brandQuery);
+
+          return matchedDealInfo && matchedBrand;
+        });
+
+        state.pagination.totalItems = filtered.length;
+        state.pagination.totalPages = Math.max(1, Math.ceil(filtered.length / state.pagination.pageSize));
+
+        // Clamping current page selection boundaries
+        if (state.pagination.currentPage > state.pagination.totalPages) {
+          state.pagination.currentPage = state.pagination.totalPages;
+        }
+
+        const startIdx = (state.pagination.currentPage - 1) * state.pagination.pageSize;
+        const endIdx = startIdx + state.pagination.pageSize;
+        const pageItems = filtered.slice(startIdx, endIdx);
+
+        // Update Pagination Controls UI
+        document.getElementById('pagination-page-indicator').innerText = state.pagination.currentPage;
+        document.getElementById('btn-prev-page').disabled = state.pagination.currentPage === 1;
+        document.getElementById('btn-next-page').disabled = state.pagination.currentPage === state.pagination.totalPages;
+        
+        const countStart = filtered.length === 0 ? 0 : startIdx + 1;
+        const countEnd = Math.min(filtered.length, endIdx);
+        document.getElementById('pagination-status').innerText = `Showing ${countStart} to ${countEnd} of ${filtered.length} entries`;
+
+        const tbody = document.getElementById('deals-table-body');
+        tbody.innerHTML = '';
+
+        if (pageItems.length === 0) {
+          tbody.innerHTML = `
+            <tr>
+              <td colspan="6" class="p-8 text-center text-slate-400 font-medium">
+                No active records found. Create a new deal workspace to start registering products.
+              </td>
+            </tr>
+          `;
+          return;
+        }
+
+        pageItems.forEach(deal => {
+          const associatedSnaps = snapshots.filter(s => s.dealId === deal.dealId);
+          const uniqueBrandsArr = [...new Set(associatedSnaps.map(s => s.productDetails?.brand).filter(Boolean))];
+          const brandsDisplay = uniqueBrandsArr.length > 0 ? uniqueBrandsArr.join(', ') : 'No Brand';
+
+          const formattedDate = new Date(deal.date).toLocaleDateString('en-GB'); // DD/MM/YYYY
+          const formattedLastUpdate = new Date(deal.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+
+          tbody.innerHTML += `
+            <tr class="hover:bg-slate-50/80 transition-all font-medium border-b border-slate-100 last:border-0">
+              <td class="p-4 font-mono text-xs font-bold text-slate-900">${deal.dealId}</td>
+              <td class="p-4 text-slate-900 font-semibold">${deal.dealDetails?.dealWith || 'Unknown Client'}</td>
+              <td class="p-4 text-slate-500 text-xs">${formattedDate}</td>
+              <td class="p-4 text-xs max-w-[150px] truncate text-slate-500" title="${brandsDisplay}">${brandsDisplay}</td>
+              <td class="p-4 text-slate-500 text-xs">${formattedDate} <span class="text-slate-300 mx-0.5">@</span> ${formattedLastUpdate}</td>
+              <td class="p-4 text-right">
+                <div class="flex items-center justify-end gap-1.5">
+                  <button onclick="openExistingWorkspace('${deal.dealId}')" class="px-3 py-1.5 text-xs font-bold bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition-all">Open Deal</button>
+                  <button onclick="directPrintRegistry('${deal.dealId}', 'us')" class="p-1.5 text-xs text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-lg transition-all" title="Print for Us">Us</button>
+                  <button onclick="directPrintRegistry('${deal.dealId}', 'buyer')" class="p-1.5 text-xs text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 rounded-lg transition-all" title="Print for Buyer">Buyer</button>
+                  <button onclick="deleteDealRecordCascade('${deal.dealId}')" class="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all" title="Delete record cascade">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+        });
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function renderSnappedDealsList() {
+      const tbody = document.getElementById('snap-list-tbody');
+      tbody.innerHTML = '';
+
+      document.getElementById('snap-count-badge').innerText = `${state.snapList.length} Items`;
+
+      if (state.snapList.length === 0) {
+        tbody.innerHTML = `
+          <tr>
+            <td colspan="6" class="p-8 text-center text-slate-400 font-medium">
+              Snap List Empty. Configure pricing fields and click "Snap Deal to List".
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      state.snapList.forEach((item) => {
+        const gpPct = item.totalC > 0 ? ((item.totalY / item.totalC) * 100).toFixed(2) : '0.00';
+        const formattedRsp = formatCurrency(item.rsp);
+
+        tbody.innerHTML += `
+          <tr class="hover:bg-slate-50/50 transition-all font-medium border-b border-slate-100 last:border-0 text-slate-700">
+            <td class="p-4">
+              <div class="font-semibold text-slate-900">${item.name}</div>
+              <div class="text-[10px] text-slate-400 font-mono">${item.brand || 'No Brand'}</div>
+            </td>
+            <td class="p-4 text-slate-900 font-semibold">${formatCurrency(item.totalB)}</td>
+            <td class="p-4 text-emerald-600 font-semibold">${formatCurrency(item.totalY)} <span class="text-[10px] text-slate-400 font-medium font-mono">(${gpPct}%)</span></td>
+            <td class="p-4 text-indigo-700 font-semibold">${formatCurrency(item.totalC)}</td>
+            <td class="p-4 text-slate-600">${formattedRsp}</td>
+            <td class="p-4 text-center">
+              <div class="flex items-center justify-center gap-1">
+                <!-- Action Column: Edit Pen Icon -->
+                <button onclick="editSnapRow('${item.id}')" class="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-all" title="Edit row variables">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg>
+                </button>
+                <!-- Action Column: Copy Icon -->
+                <button onclick="copySnapRow('${item.id}')" class="p-1.5 text-slate-500 hover:bg-slate-100 rounded-lg transition-all" title="Copy form variables template">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"></path></svg>
+                </button>
+                <!-- Action Column: Trash Icon -->
+                <button onclick="deleteSnapRow('${item.id}')" class="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all" title="Remove row from list">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+        `;
+      });
+    }
+
+    function handlePrintTrigger(type) {
+      if (state.snapList.length === 0) {
+        triggerToast("Snap List is empty. Snap products before printing.", "warning");
+        return;
+      }
+      exportPDFRegistry(type, state.currentDealId, state.snapList, {
+        dealWith: document.getElementById('deal-with').value.trim(),
+        dealNote: document.getElementById('deal-note').value.trim(),
+        dealDate: document.getElementById('deal-date').value
+      });
+    }
+
+    // Unified helper logic to print records directly from Dashboard or Workspace actions
+    function directPrintRegistry(dealId, type) {
+      try {
+        const deals = JSON.parse(localStorage.getItem('Deals_DB')) || [];
+        const snapshots = JSON.parse(localStorage.getItem('Snapshots_Deal_DB')) || [];
+
+        const deal = deals.find(d => d.dealId === dealId);
+        if (!deal) return;
+
+        const matchedSnaps = snapshots.filter(s => s.dealId === dealId).map(s => {
+          return {
+            brand: s.productDetails?.brand || '',
+            name: s.productDetails?.name || '',
+            costPrice: s.productDetails?.costPrice || 0,
+            ifPercent: s.productDetails?.ifPercent ?? 4.5,
+            dutyPercent: s.productDetails?.dutyPercent ?? 9.0,
+            otherPercent: s.productDetails?.otherPercent ?? 12.0,
+            hsgMargin: s.productDetails?.hsgMargin ?? 0,
+            buyerMargin: s.productDetails?.buyerMargin ?? 0,
+            customRsp: s.productDetails?.customRsp || '',
+
+            totalB: s.calculationDetails?.totalB || 0,
+            totalC: s.calculationDetails?.totalC || 0,
+            totalY: s.calculationDetails?.totalY || 0,
+            rsp: s.calculationDetails?.rsp || 0,
+            buyerProfit: s.calculationDetails?.buyerProfit || 0
+          };
+        });
+
+        if (matchedSnaps.length === 0) {
+          triggerToast("Selected Deal Registry has no snapped products.", "warning");
+          return;
+        }
+
+        exportPDFRegistry(type, dealId, matchedSnaps, {
+          dealWith: deal.dealDetails?.dealWith || '',
+          dealNote: deal.dealDetails?.dealNote || '',
+          dealDate: deal.date ? new Date(deal.date).toISOString().split('T')[0] : ''
+        });
+
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function exportPDFRegistry(type, dealId, snaps, meta) {
+      if (!window.jspdf) {
+        triggerToast("PDF Module is loading. Wait a moment and click again.", "warning");
+        return;
+      }
+
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF();
+
+      // Centered Paper Header Block
+      doc.setFontSize(18);
+      doc.setFont("helvetica", "bold");
+      doc.text("HSG Global Deal Summary", 105, 20, { align: "center" });
+
+      // Dynamic Right Top details
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Reference : ${dealId}`, 196, 30, { align: "right" });
+      
+      const parts = (meta.dealDate || '').split('-');
+      const formattedDate = parts.length === 3 ? `${parts[2]}/${parts[1]}/${parts[0]}` : meta.dealDate;
+      doc.text(`Date : ${formattedDate}`, 196, 35, { align: "right" });
+
+      // Left Side details
+      doc.setFontSize(10);
+      doc.text(`Dealing with : ${meta.dealWith || 'N/A'}`, 14, 30);
+      const splitNote = doc.splitTextToSize(`Note : ${meta.dealNote || 'N/A'}`, 110);
+      doc.text(splitNote, 14, 35);
+
+      const computedNoteHeight = splitNote.length * 5;
+      let startY = Math.max(35 + computedNoteHeight, 46) + 4;
+
+      let head = [];
+      let body = [];
+
+      if (type === 'us') {
+        head = [['Product Details', 'Our Cost', 'Gross Profit', 'Cost To Buyer', 'RSP']];
+        body = snaps.map(item => {
+          const gpPct = item.totalC > 0 ? ((item.totalY / item.totalC) * 100).toFixed(2) : '0.00';
+          const gpText = `${formatCurrency(item.totalY)} (${gpPct}%)`;
+          const rspText = formatCurrency(item.rsp);
+
+          return [
+            `${item.brand ? item.brand + ' - ' : ''}${item.name}`,
+            formatCurrency(item.totalB),
+            gpText,
+            formatCurrency(item.totalC),
+            rspText
+          ];
+        });
+      } else {
+        head = [['Product Details', 'Cost To Buyer', 'RSP', 'Buyer Profit']];
+        body = snaps.map(item => {
+          const rspText = formatCurrency(item.rsp);
+
+          return [
+            `${item.brand ? item.brand + ' - ' : ''}${item.name}`,
+            formatCurrency(item.totalC),
+            rspText,
+            formatCurrency(item.buyerProfit)
+          ];
+        });
+      }
+
+      doc.autoTable({
+        startY: startY,
+        head: head,
+        body: body,
+        theme: 'grid',
+        headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
+        styles: { fontSize: 8.5 }
+      });
+
+      const pdfBlob = doc.output('blob');
+      const pdfUrl = URL.createObjectURL(pdfBlob);
+      window.open(pdfUrl, '_blank');
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      populateMockDatabaseSeeds();
+      rebuildDatalistSuggestions();
+      renderDealsDatabaseTable();
+
+      // Navigation Actions
+      document.getElementById('btn-show-dashboard').addEventListener('click', () => switchView('dashboard'));
+      document.getElementById('btn-create-deal-nav').addEventListener('click', prepareFreshWorkspace);
+      document.getElementById('btn-back-dashboard').addEventListener('click', () => {
+        saveActiveDealStateToDB();
+        switchView('dashboard');
+      });
+
+      // Search and Filter Events
+      document.getElementById('search-term').addEventListener('input', (e) => {
+        state.filters.searchTerm = e.target.value;
+        state.pagination.currentPage = 1;
+        renderDealsDatabaseTable();
+      });
+
+      document.getElementById('search-brand').addEventListener('input', (e) => {
+        state.filters.searchBrand = e.target.value;
+        state.pagination.currentPage = 1;
+        renderDealsDatabaseTable();
+      });
+
+      document.getElementById('pagination-size').addEventListener('change', (e) => {
+        state.pagination.pageSize = parseInt(e.target.value) || 5;
+        state.pagination.currentPage = 1;
+        renderDealsDatabaseTable();
+      });
+
+      document.getElementById('btn-clear-search').addEventListener('click', () => {
+        document.getElementById('search-term').value = '';
+        document.getElementById('search-brand').value = '';
+        state.filters.searchTerm = '';
+        state.filters.searchBrand = '';
+        state.pagination.currentPage = 1;
+        renderDealsDatabaseTable();
+      });
+
+      // Pagination Navigation Events
+      document.getElementById('btn-prev-page').addEventListener('click', () => {
+        if (state.pagination.currentPage > 1) {
+          state.pagination.currentPage--;
+          renderDealsDatabaseTable();
+        }
+      });
+
+      document.getElementById('btn-next-page').addEventListener('click', () => {
+        if (state.pagination.currentPage < state.pagination.totalPages) {
+          state.pagination.currentPage++;
+          renderDealsDatabaseTable();
+        }
+      });
+
+      // Real-time calculation inputs (triggers live sheet recalculation instantly as you type)
+      const instantInputs = [
+        'prod-brand', 'prod-name', 'prod-cost', 'fee-if', 'fee-duty',
+        'fee-other', 'margin-hsg', 'margin-buyer', 'custom-rsp'
+      ];
+      
+      instantInputs.forEach(id => {
+        document.getElementById(id).addEventListener('input', () => {
+          runActiveCalculations();
+        });
+      });
+
+      // Committed inputs (triggers balance margin calculations and value formatting only when typing completes)
+      const committedInputs = ['margin-hsg', 'margin-buyer', 'custom-rsp'];
+      committedInputs.forEach(id => {
+        document.getElementById(id).addEventListener('blur', () => {
+          if (state.pricingMode === 'rsp_cap') {
+            if (id === 'custom-rsp') {
+              balanceMargins('rsp');
+            } else if (id === 'margin-hsg') {
+              balanceMargins('hsg');
+            } else if (id === 'margin-buyer') {
+              balanceMargins('buyer');
+            }
+          }
+          runActiveCalculations();
+        });
+
+        // Also trigger on pressing 'Enter' key
+        document.getElementById(id).addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            document.getElementById(id).blur();
+          }
+        });
+      });
+
+      // If cost-related fields are updated, balance on blur to hold standard buyer margins constant
+      const costFields = ['prod-cost', 'fee-if', 'fee-duty', 'fee-other'];
+      costFields.forEach(id => {
+        document.getElementById(id).addEventListener('blur', () => {
+          if (state.pricingMode === 'rsp_cap') {
+            balanceMargins('buyer'); // Hold standard buyer targets constant, adjust hsg
+          }
+          runActiveCalculations();
+        });
+      });
+
+      // Collapsible Segment toggler
+      document.getElementById('btn-toggle-costs').addEventListener('click', () => {
+        state.showCosts = !state.showCosts;
+        const panel = document.getElementById('collapsible-costs-section');
+        const indicator = document.getElementById('toggle-costs-indicator');
+
+        if (state.showCosts) {
+          panel.classList.remove('hidden');
+          indicator.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>`;
+        } else {
+          panel.classList.add('hidden');
+          indicator.innerHTML = `<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>`;
+        }
+      });
+
+      document.getElementById('btn-reset-form').addEventListener('click', resetProductCalculatorForm);
+      document.getElementById('btn-snap-to-list').addEventListener('click', snapActiveFormToList);
+
+      // Print PDF triggers
+      document.getElementById('btn-print-us').addEventListener('click', () => handlePrintTrigger('us'));
+      document.getElementById('btn-print-buyer').addEventListener('click', () => handlePrintTrigger('buyer'));
+
+      // Metadata autosave binding
+      document.getElementById('deal-with').addEventListener('change', saveActiveDealStateToDB);
+      document.getElementById('deal-date').addEventListener('change', saveActiveDealStateToDB);
+      document.getElementById('deal-note').addEventListener('change', saveActiveDealStateToDB);
+
+      // Initialize defaults on startup
+      switchPricingMode('margin', false);
+    });
+  </script>
+</body>
+</html>
