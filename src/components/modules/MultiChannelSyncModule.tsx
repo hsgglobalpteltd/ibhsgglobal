@@ -1,15 +1,8 @@
 "use client";
 
 import * as React from "react";
+import { FeatureComingSoon } from "../FeatureComingSoon";
 
 export function MultiChannelSyncModule() {
-  return (
-    <div className="flex flex-col gap-4 font-primary">
-      <div className="bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 flex items-center justify-center h-48 shadow-sm">
-        <span className="text-zinc-500 text-sm font-semibold italic">
-          Multi-Channel Sync Module Workspace
-        </span>
-      </div>
-    </div>
-  );
+  return <FeatureComingSoon title="Multi-Channel Sync" />;
 }
