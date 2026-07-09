@@ -21,11 +21,11 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     modules: [
       {
         title: "Promoter",
-        description: "Manage promoter schedules, performance tracking, sales reporting, and location check-ins.",
+        description: "Manage promoter schedules, campaigns, attendance, and activity assignments.",
       },
       {
         title: "Merchandiser",
-        description: "Monitor store layout compliance, shelf visibility audits, stock level reports, and visual displays.",
+        description: "Manage merchandiser routes, tasks, deployment settings, reports, and performance monitoring.",
       },
       {
         title: "Task",
@@ -43,15 +43,15 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     modules: [
       {
         title: "Products Database",
-        description: "Manage core item catalogs, inventory logs, prices, variants, and vendor details.",
+        description: "Manage brands, SKUs, pricing, variants, product details, and catalogs.",
       },
       {
         title: "Stores Database",
-        description: "Track physical outlet registries, contact logs, active hours, and terminal statuses.",
+        description: "Manage retailers, store registrations, locations, and contact information.",
       },
       {
         title: "Retailer SKU's",
-        description: "Manage retailer-specific product catalogs, pricing tiers, and active status mappings."
+        description: "Manage retailer pricing tiers, promotions, product listings, and registrations."
       }
     ]
   },
@@ -73,7 +73,7 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       },
       {
         title: "Snap Deals",
-        description: "Configure instant flash promotions, short-duration sales campaigns, and real-time deal triggers.",
+        description: "Calculate deal costs, pricing, profits, and retailer business agreements.",
       },
       {
         title: "Stores Visibility",
@@ -91,15 +91,15 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     modules: [
       {
         title: "Invoice Barcode Generator",
-        description: "Generate GS1-compliant barcodes for inventory mapping, shipping documents, and billing records.",
+        description: "Generate invoice barcodes for retailers requiring barcode-enabled invoices.",
       },
       {
         title: "Claim Form Generator",
-        description: "Quickly format field claims, expense files, promoter commissions, and merchandise audits.",
+        description: "Upload receipts, scan data, and generate printable claim forms instantly.",
       },
       {
         title: "Delivery Label Generator",
-        description: "Produce standards-compliant shipping labels with routing barcodes, return details, and weights.",
+        description: "Generate editable A6 delivery labels for quick printing and dispatch.",
       }
     ]
   },
@@ -109,7 +109,7 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     modules: [
       {
         title: "Asset Library",
-        description: "Manage digital brand assets, product photo archives, campaign banners, and guidelines.",
+        description: "Store, organize, and manage photos, documents, and marketing assets securely.",
       },
       {
         title: "TikTok & Storyboard Briefs",

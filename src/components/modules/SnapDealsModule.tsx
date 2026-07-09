@@ -438,6 +438,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
         backgroundColor: "#ffffff",
         width: breakdownRef.current.offsetWidth,
         height: breakdownRef.current.offsetHeight,
+        skipFonts: true,
       });
 
       if (blob) {
@@ -904,7 +905,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             <button
               onClick={() => triggerPrint(deal, "external")}
               className="p-1 rounded bg-zinc-150 hover:bg-zinc-250 border border-zinc-300 text-zinc-750 hover:text-zinc-950 transition-colors cursor-pointer"
-              title="Print Buyer Invoice"
+              title="Print Contract"
             >
               <Printer size={12} className="text-emerald-700" />
             </button>
@@ -973,7 +974,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
               <div className="mb-6 text-xs bg-white space-y-0.5">
                 <h2 className="text-[8px] uppercase font-bold text-zinc-400 tracking-wider">Client Details</h2>
                 <p className="text-sm font-bold text-zinc-950">{printDeal.dealing_with}</p>
-                {printDeal.notes && printDeal.notes.trim() && (
+                {printType === "internal" && printDeal.notes && printDeal.notes.trim() && (
                   <p className="text-xs text-zinc-550 whitespace-pre-wrap leading-relaxed mt-0.5">{printDeal.notes}</p>
                 )}
               </div>
@@ -1385,14 +1386,14 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                     </div>
 
                     {/* Our Net Profit Container */}
-                    <div className={`mt-auto w-full h-[96px] rounded-lg border text-center flex flex-col items-center justify-center gap-0.5 shadow-sm p-3 shrink-0 ${
-                      calculations.loss ? "bg-red-50 border-red-200" : "bg-emerald-50/40 border-emerald-100"
+                    <div className={`mt-auto w-full h-[96px] rounded border text-center flex flex-col items-center justify-center gap-0.5 shadow-sm p-3 shrink-0 ${
+                      calculations.loss ? "bg-red-50 border-red-200" : "bg-[#E8F0FE] border-[#D2E3FC]"
                     }`}>
-                      <span className="text-[8.5px] font-bold text-zinc-500 uppercase tracking-wider">Our Net Profit</span>
-                      <span className={`text-2xl font-black font-mono leading-none ${calculations.loss ? "text-red-600" : "text-emerald-700"}`}>
+                      <span className="text-[8.5px] font-bold text-[#0B57D0] uppercase tracking-wider">OUR NET PROFIT</span>
+                      <span className={`text-2xl font-black font-mono leading-none ${calculations.loss ? "text-red-600" : "text-[#0B57D0]"}`}>
                         {formatCurrency(calculations.netProfit)}
                       </span>
-                      <div className="text-[8px] text-zinc-400 font-semibold italic mt-1.5">
+                      <div className="text-[8px] text-zinc-500 font-medium italic mt-1.5">
                         Gross ({formatCurrency(calculations.hsgProfit)}) - Net GST ({formatCurrency(calculations.netGST)})
                       </div>
                     </div>
@@ -1432,7 +1433,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                       <span className="text-[8.5px] font-bold text-[#0B57D0] uppercase tracking-wider">
                         Price Tag (Standard RSP)
                       </span>
-                      <span className={`text-2xl font-black font-mono leading-none tracking-tight ${calculations.loss ? "text-[#C5221F]" : "text-[#137333]"}`}>
+                      <span className={`text-2xl font-black font-mono leading-none tracking-tight ${calculations.loss ? "text-[#C5221F]" : "text-[#0B57D0]"}`}>
                         {formatCurrency(calculations.priceTag)}
                       </span>
                       <span className="text-[9px] text-zinc-500 font-bold uppercase mt-1">
@@ -1449,7 +1450,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 {/* 1. Open Deal drawer panel */}
                 <button
                   onClick={() => setDealDrawerOpen(true)}
-                  className="w-9 h-9 bg-white hover:bg-slate-50 text-zinc-700 rounded-full flex items-center justify-center shadow-md border border-slate-200 transition-all cursor-pointer"
+                  className="w-9 h-9 aspect-square shrink-0 bg-white hover:bg-slate-50 text-zinc-700 rounded-full flex items-center justify-center shadow-md border border-slate-200 transition-all cursor-pointer"
                   title="Open Deal Builder Panel"
                 >
                   <FileText size={15} />
@@ -1459,7 +1460,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 {editingDealId && (
                   <button
                     onClick={handleCancelEdit}
-                    className="w-9 h-9 bg-[#FCE8E6] hover:bg-[#FAD2CF] text-[#C5221F] rounded-full flex items-center justify-center shadow-md border border-[#FAD2CF] transition-all cursor-pointer"
+                    className="w-9 h-9 aspect-square shrink-0 bg-[#FCE8E6] hover:bg-[#FAD2CF] text-[#C5221F] rounded-full flex items-center justify-center shadow-md border border-[#FAD2CF] transition-all cursor-pointer"
                     title="Cancel active edit"
                   >
                     <X size={15} />
@@ -1470,7 +1471,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 <button
                   onClick={handleCapture}
                   disabled={copying}
-                  className="w-9 h-9 bg-white hover:bg-slate-50 text-zinc-700 rounded-full flex items-center justify-center shadow-md border border-slate-200 transition-all cursor-pointer disabled:opacity-50"
+                  className="w-9 h-9 aspect-square shrink-0 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-full flex items-center justify-center shadow-md border border-transparent transition-all cursor-pointer disabled:opacity-50"
                   title="Download Image Snapshot"
                 >
                   <Camera size={15} className={copying ? "animate-pulse" : ""} />
@@ -1847,7 +1848,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 }}
                 className="w-1/2 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-bold shadow flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
               >
-                <Printer size={12} className="text-emerald-400" />
+                <Printer size={12} className="text-white" />
                 <span>Print Contract</span>
               </button>
             </div>

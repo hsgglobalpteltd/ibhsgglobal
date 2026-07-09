@@ -205,7 +205,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         setRetailers(rt);
         setBrands(br);
         setSyncStatus("synced");
-        showToast("Database cache refreshed from Google Sheets!", "success");
+        showToast("Database cache refreshed!", "success");
       } catch (err: any) {
         showToast("Failed to refresh database: " + err.message, "error");
       } finally {
@@ -346,15 +346,14 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             const sku = String(auditItem.sku).toLowerCase();
             if (brandSkus.includes(sku)) {
               const qty = Number(auditItem.qty) || 0;
-              const prodDetail = brandProducts.find(p => String(p.SKU).toLowerCase() === sku);
-              const prodName = prodDetail ? prodDetail["Display Name"] : auditItem.sku;
-              
-              carriedProductsList.push({
-                name: prodName,
-                qty
-              });
-
               if (qty > 0) {
+                const prodDetail = brandProducts.find(p => String(p.SKU).toLowerCase() === sku);
+                const prodName = prodDetail ? prodDetail["Display Name"] : auditItem.sku;
+                
+                carriedProductsList.push({
+                  name: prodName,
+                  qty
+                });
                 carriesBrand = true;
               }
             }
@@ -389,11 +388,14 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         };
       });
 
-      // Filter based on includeNotCarry tick
+      // Filter based on includeNotCarry option
       const filteredResults = results.filter(item => {
         if (!item) return false;
-        if (includeNotCarry) return true;
-        // If not checked, only include stores that have visits carrying the brand's products
+        if (includeNotCarry) {
+          // "Not Carry" option selected: only display stores that do NOT carry the brand
+          return !item.carriesBrand;
+        }
+        // "Carry" option selected: only display stores that carry the brand
         return item.carriesBrand;
       });
 
@@ -456,13 +458,13 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         }
       `}} />
       {/* Sticky Header Wrapper */}
-      <div className={`sticky-header-module bg-[#EEEEEE] z-20 pt-6 pb-2.5 flex flex-col gap-2.5 transition-all duration-500 print:relative print:top-auto print:bg-transparent print:pt-0 print:pb-0 ${
+      <div className={`sticky-header-module bg-[#F8F9FC] z-20 pt-6 pb-2.5 flex flex-col gap-2.5 transition-all duration-500 print:relative print:top-auto print:bg-transparent print:pt-0 print:pb-0 ${
         isScrolled ? "shadow-xs border-b border-zinc-300/80 mb-2" : "border-b border-zinc-300/40"
       }`}>
         {/* Row 1: Title, Filters, Print Button */}
         <div className="flex items-center justify-between gap-4 w-full">
           {/* Left: Title */}
-          <h2 className="text-lg font-black text-zinc-950 uppercase tracking-wide flex-shrink-0 select-none">
+          <h2 className="text-lg font-bold text-zinc-950 uppercase tracking-wide flex-shrink-0 select-none">
             Stores Visibility
           </h2>
           
@@ -479,7 +481,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                 <select
                   value={selectedRetailer}
                   onChange={(e) => setSelectedRetailer(e.target.value)}
-                  className="w-full bg-[#EEEEEE] border border-zinc-300 rounded-lg px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 select-none cursor-pointer"
+                  className="w-full bg-white border border-zinc-300 rounded px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 select-none cursor-pointer"
                 >
                   <option value="" disabled>Select Retailer...</option>
                   {retailers.map((r) => (
@@ -498,7 +500,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                 <select
                   value={selectedBrand}
                   onChange={(e) => setSelectedBrand(e.target.value)}
-                  className="w-full bg-[#EEEEEE] border border-zinc-300 rounded-lg px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 select-none cursor-pointer"
+                  className="w-full bg-white border border-zinc-300 rounded px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 select-none cursor-pointer"
                 >
                   <option value="" disabled>Select Brand...</option>
                   {brands.map((b) => (
@@ -518,7 +520,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full bg-[#EEEEEE] border border-zinc-300 rounded-lg px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 cursor-pointer"
+                  className="w-full bg-white border border-zinc-300 rounded px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 cursor-pointer"
                 />
               </div>
 
@@ -531,23 +533,39 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full bg-[#EEEEEE] border border-zinc-300 rounded-lg px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 cursor-pointer"
+                  className="w-full bg-white border border-zinc-300 rounded px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 cursor-pointer"
                 />
               </div>
 
-              {/* Tick Checkbox */}
-              <div className="flex items-center h-8 mt-3.5">
-                <label className="inline-flex items-center gap-1.5 select-none cursor-pointer group">
-                  <input
-                    type="checkbox"
-                    checked={includeNotCarry}
-                    onChange={(e) => setIncludeNotCarry(e.target.checked)}
-                    className="rounded border-zinc-300 text-zinc-800 focus:ring-zinc-500 focus:ring-offset-[#EEEEEE] h-3.5 w-3.5 bg-transparent cursor-pointer"
-                  />
-                  <span className="text-[10px] font-bold text-zinc-600 group-hover:text-zinc-800 transition-colors">
-                    Not Carry
-                  </span>
+              {/* Status Radio Selector */}
+              <div className="flex flex-col gap-1 w-36">
+                <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1 select-none">
+                  <Filter size={9} /> Status
                 </label>
+                <div className="flex items-center bg-white border border-zinc-300 rounded p-0.5 h-7">
+                  <button
+                    type="button"
+                    onClick={() => setIncludeNotCarry(false)}
+                    className={`flex-1 h-full flex items-center justify-center text-[10px] font-bold transition-all duration-200 cursor-pointer rounded-sm select-none ${
+                      !includeNotCarry
+                        ? "bg-[#E8F0FE] text-[#0B57D0] shadow-3xs"
+                        : "text-zinc-500 hover:text-zinc-800"
+                    }`}
+                  >
+                    Carry
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIncludeNotCarry(true)}
+                    className={`flex-1 h-full flex items-center justify-center text-[10px] font-bold transition-all duration-200 cursor-pointer rounded-sm select-none ${
+                      includeNotCarry
+                        ? "bg-[#E8F0FE] text-[#0B57D0] shadow-3xs"
+                        : "text-zinc-500 hover:text-zinc-800"
+                    }`}
+                  >
+                    Not Carry
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -567,37 +585,37 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         {selectedRetailer && selectedBrand && stores.length > 0 && extractedStores.length > 0 && (
           <div className="flex flex-col gap-2">
             {/* Filter Summary Bar */}
-            <div className="flex items-center justify-between bg-zinc-100/60 border border-zinc-300/80 rounded-lg px-4 py-1.5 text-xs font-semibold text-zinc-600 shadow-2xs">
+            <div className="flex items-center justify-between bg-[#E8F0FE]/40 border border-[#D2E3FC]/60 rounded px-4 py-1.5 text-xs font-semibold text-[#0B57D0] shadow-2xs">
               <div className="flex flex-wrap items-center gap-1.5">
                 <span>Filter Summary:</span>
-                <span className="bg-zinc-200 text-zinc-800 rounded px-1.5 py-0.5">{activeRetailerName}</span>
+                <span className="bg-[#E8F0FE] text-[#0B57D0] border border-[#D2E3FC] rounded px-1.5 py-0.5">{activeRetailerName}</span>
                 <span>/</span>
-                <span className="bg-zinc-200 text-zinc-800 rounded px-1.5 py-0.5">{activeBrandName}</span>
+                <span className="bg-[#E8F0FE] text-[#0B57D0] border border-[#D2E3FC] rounded px-1.5 py-0.5">{activeBrandName}</span>
                 <span>/</span>
-                <span className="bg-zinc-200 text-zinc-800 rounded px-1.5 py-0.5">
+                <span className="bg-[#E8F0FE] text-[#0B57D0] border border-[#D2E3FC] rounded px-1.5 py-0.5">
                   {formatDate(startDate)} - {formatDate(endDate)}
                 </span>
               </div>
               <div>
-                <span>Found: <strong className="text-zinc-800">{extractedStores.length}</strong> outlets</span>
+                <span>Found: <strong className="text-[#0B57D0] font-extrabold">{extractedStores.length}</strong> outlets</span>
               </div>
             </div>
             
             {/* Mimicked Column Header (hidden on print) */}
-            <div className="w-full bg-zinc-200 border border-zinc-300 rounded-lg flex text-[10px] font-black text-zinc-600 uppercase tracking-wider select-none print:hidden">
-              <div className="px-4 py-2.5 border-r border-zinc-300" style={{ width: "20%" }}>Store Details</div>
-              <div className="px-4 py-2.5 border-r border-zinc-300" style={{ width: "40%" }}>Recent Visit</div>
-              <div className="px-4 py-2.5 border-r border-zinc-300" style={{ width: "20%" }}>Products</div>
+            <div className="w-full bg-[#F0F4F9] border border-slate-200 rounded flex text-[10px] font-bold text-[#474747] uppercase tracking-wider select-none print:hidden">
+              <div className="px-4 py-2.5 border-r border-slate-200" style={{ width: "20%" }}>Store Details</div>
+              <div className="px-4 py-2.5 border-r border-slate-200" style={{ width: "40%" }}>Recent Visit</div>
+              <div className="px-4 py-2.5 border-r border-slate-200" style={{ width: "20%" }}>Products</div>
               <div className="px-4 py-2.5" style={{ width: "20%" }}>Shelf Visibility</div>
             </div>
           </div>
         )}
       </div>
-
+ 
       {/* Report Display Container */}
       <div className="w-full">
         {!selectedRetailer || !selectedBrand ? (
-          <div className="bg-[#E5E5E5]/40 border border-dashed border-zinc-300 rounded-lg p-10 flex flex-col items-center justify-center text-center h-64 print:hidden">
+          <div className="bg-[#E5E5E5]/40 border border-dashed border-zinc-300 rounded p-10 flex flex-col items-center justify-center text-center h-64 print:hidden">
             <Filter size={32} className="text-zinc-400 mb-2.5" />
             <p className="text-sm font-semibold text-zinc-500">
               Please select a Retailer and Brand
@@ -607,20 +625,20 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             </p>
           </div>
         ) : (fetching && stores.length === 0) ? (
-          <div className="bg-[#E5E5E5]/40 border border-dashed border-zinc-300 rounded-lg p-10 flex flex-col items-center justify-center text-center h-64 print:hidden">
-            <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4" />
+          <div className="bg-[#E5E5E5]/40 border border-dashed border-zinc-300 rounded p-10 flex flex-col items-center justify-center text-center h-64 print:hidden">
+            <div className="w-8 h-8 border-4 border-[#0B57D0] border-t-transparent rounded-full animate-spin mb-4" />
             <p className="text-sm font-semibold text-zinc-500">
               Loading visibility database...
             </p>
           </div>
         ) : (
           <div className={`flex flex-col gap-4 animate-tableFadeInOnly transition-opacity duration-200 ${extracting ? "opacity-60" : "opacity-100"}`}>
-
+ 
             {/* Visual summary bar removed (rendered in sticky header) */}
-
+ 
             {/* Result Table */}
             {extractedStores.length === 0 ? (
-              <div className="bg-[#E5E5E5]/40 border border-dashed border-zinc-300 rounded-lg p-10 flex flex-col items-center justify-center text-center h-48">
+              <div className="bg-[#E5E5E5]/40 border border-dashed border-zinc-300 rounded p-10 flex flex-col items-center justify-center text-center h-48">
                 <HelpCircle size={28} className="text-zinc-400 mb-2" />
                 <p className="text-sm font-semibold text-zinc-500">
                   No stores match the current filters.
@@ -630,24 +648,24 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                 </p>
               </div>
             ) : (
-              <div className="w-full border border-zinc-300 rounded-lg bg-zinc-50 overflow-hidden shadow-2xs print:border-zinc-400">
-                <table className="w-full text-left border-collapse table-fixed border border-zinc-300">
+              <div className="w-full border border-slate-200 rounded bg-white overflow-hidden shadow-2xs print:border-zinc-400">
+                <table className="w-full text-left border-collapse table-fixed border border-slate-200">
                   <thead className="hidden print:table-header-group">
-                    <tr className="bg-zinc-200 border-b border-zinc-300 text-[10px] font-black text-zinc-600 uppercase tracking-wider select-none print:bg-zinc-100 print:border-zinc-400">
-                      <th className="px-4 py-3 border-r border-zinc-300" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>Store Details</th>
-                      <th className="px-4 py-3 border-r border-zinc-300" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>Recent Visit</th>
-                      <th className="px-4 py-3 border-r border-zinc-300" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>Products</th>
+                    <tr className="bg-[#F0F4F9] border-b border-slate-200 text-[10px] font-bold text-[#474747] uppercase tracking-wider select-none print:bg-zinc-100 print:border-zinc-400">
+                      <th className="px-4 py-3 border-r border-slate-200" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>Store Details</th>
+                      <th className="px-4 py-3 border-r border-slate-200" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>Recent Visit</th>
+                      <th className="px-4 py-3 border-r border-slate-200" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>Products</th>
                       <th className="px-4 py-3" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>Shelf Visibility</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-200 print:divide-zinc-300">
+                  <tbody className="divide-y divide-slate-100 print:divide-zinc-300">
                     {extractedStores.map((item) => (
                       <tr 
                         key={item.id} 
                         className="hover:bg-zinc-100/50 transition-colors align-top print:hover:bg-transparent"
                       >
                         {/* Store Details (Fixed 20% width) */}
-                        <td className="px-4 py-3.5 border-r border-zinc-200 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
+                        <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
                           <div className="w-full overflow-hidden">
                             <div className="font-bold text-zinc-950 whitespace-normal break-words">
                               {item.storeName}
@@ -659,7 +677,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                         </td>
 
                         {/* Recent Visit (Fixed 40% width) */}
-                        <td className="px-4 py-3.5 border-r border-zinc-200 text-xs" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>
+                        <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>
                           <div className="w-full overflow-hidden">
                             {item.activities.length === 0 ? (
                               <span className="text-zinc-400 italic">
@@ -678,11 +696,11 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                                     )}
                                     
                                     {/* Timeline Dot */}
-                                    <div className="absolute left-0.5 top-1.5 h-2.5 w-2.5 rounded-full bg-indigo-600 border border-white shadow-3xs" />
+                                    <div className="absolute left-0.5 top-1.5 h-2.5 w-2.5 rounded-full bg-[#0B57D0] border border-white shadow-3xs" />
                                     
                                     {/* Date Badge */}
                                     <div className="flex items-center select-none">
-                                      <span className="inline-flex items-center bg-indigo-50 border border-indigo-100 text-indigo-700 text-[10px] font-extrabold px-1.5 py-0.5 rounded tracking-wide leading-none">
+                                      <span className="inline-flex items-center bg-[#E8F0FE] border border-[#D2E3FC] text-[#0B57D0] text-[10px] font-extrabold px-1.5 py-0.5 rounded tracking-wide leading-none">
                                         {visit.date}
                                       </span>
                                     </div>
@@ -701,7 +719,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                         </td>
 
                         {/* Products (Fixed 20% width) */}
-                        <td className="px-4 py-3.5 border-r border-zinc-200 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
+                        <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
                           <div className="w-full overflow-hidden">
                             {item.products.length === 0 ? (
                               <span className="text-zinc-400 italic">
@@ -733,7 +751,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                             {item.shelfImage ? (
                               <div 
                                 onClick={() => setSelectedImage(item.shelfImage)}
-                                className="relative aspect-[4/5] w-24 border border-zinc-300 rounded overflow-hidden bg-zinc-100 cursor-zoom-in group shadow-3xs hover:shadow-2xs select-none"
+                                className="relative aspect-[4/5] w-24 border border-slate-200 rounded overflow-hidden bg-zinc-100 cursor-zoom-in group shadow-3xs hover:shadow-2xs select-none"
                               >
                                 <img 
                                   src={item.shelfImage} 
@@ -766,7 +784,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           onClick={() => setSelectedImage(null)}
         >
           <div 
-            className="relative max-w-3xl w-full bg-[#EEEEEE] border border-zinc-300 rounded-lg shadow-xl overflow-hidden flex flex-col animate-modalSlideUp"
+            className="relative max-w-3xl w-full bg-[#EEEEEE] border border-zinc-300 rounded shadow-xl overflow-hidden flex flex-col animate-modalSlideUp"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
@@ -869,37 +887,45 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
 
           th, td {
             border: 1px solid #d4d4d8 !important; /* zinc-300 */
-          }
-
-          /* Exact background color printing */
+          }          /* Exact background color printing */
           .bg-zinc-200 {
-            background-color: #e4e4e7 !important; /* zinc-200 */
+            background-color: #F0F4F9 !important;
           }
-          .bg-zinc-100\\/60 {
-            background-color: #f4f4f5 !important; /* zinc-100 */
+          .bg-\[\#F0F4F9\] {
+            background-color: #F0F4F9 !important;
+          }
+          .bg-zinc-100\/60 {
+            background-color: #E8F0FE !important;
           }
           .bg-zinc-50 {
-            background-color: #fafafa !important; /* zinc-50 */
-          }
-          .bg-indigo-50 {
-            background-color: #e0e7ff !important; /* indigo-50 */
-          }
-          .bg-indigo-600 {
-            background-color: #4f46e5 !important; /* indigo-600 */
-          }
-
-          .text-indigo-700 {
-            color: #4338ca !important; /* indigo-700 */
-          }
-          .text-indigo-600 {
-            color: #4f46e5 !important; /* indigo-600 */
+            background-color: #ffffff !important;
           }
           
-          .border-indigo-100 {
-            border-color: #c7d2fe !important;
+          /* Google Blue Branding print support */
+          .bg-\[\#E8F0FE\] {
+            background-color: #E8F0FE !important;
+          }
+          .bg-\[\#0B57D0\] {
+            background-color: #0B57D0 !important;
+          }
+          .text-\[\#0B57D0\] {
+            color: #0B57D0 !important;
+          }
+          .border-\[\#D2E3FC\] {
+            border-color: #D2E3FC !important;
+          }
+
+          .border-slate-200 {
+            border-color: #e2e8f0 !important;
+          }
+          .border-slate-200\/60 {
+            border-color: rgba(226, 232, 240, 0.6) !important;
           }
           .border-zinc-300 {
             border-color: #d4d4d8 !important;
+          }
+          .border-zinc-250 {
+            border-color: #e4e4e7 !important;
           }
           .border-zinc-200 {
             border-color: #e4e4e7 !important;

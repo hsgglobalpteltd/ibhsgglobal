@@ -248,7 +248,7 @@ export default function Home() {
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
-      showToast(err.message || "Google sign-in failed", "error");
+      showToast(err.message || "Sign-in failed", "error");
     }
   };
 
@@ -444,7 +444,7 @@ export default function Home() {
               onNavigateBreadcrumb={handleNavigateBreadcrumb}
             />
             <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
-              <div className="max-w-[1400px] mx-auto w-full">
+              <div className="w-full">
                 {renderActivePage()}
               </div>
             </main>

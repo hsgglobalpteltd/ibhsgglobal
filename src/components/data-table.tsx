@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowUp, ArrowDown, ArrowUpDown, Filter, X, Search, FileSpreadsheet, FileText, Pencil, Trash2, Check, Plus, Image as ImageIcon, Ban } from "lucide-react";
+import { ArrowUp, ArrowDown, ArrowUpDown, Filter, X, Search, FileSpreadsheet, FileText, Pencil, Trash2, Check, Plus, Image as ImageIcon, Ban, Lock, Printer } from "lucide-react";
 import { jsPDF } from "jspdf";
 import { CustomButton } from "./custom-button";
 import { ConfirmDialog } from "./confirm-dialog";
@@ -61,6 +61,7 @@ interface DataTableProps {
   onBlockRow?: (row: any) => void;
   onEditModeChange?: (isEditMode: boolean) => void;
   onEditRow?: (row: any) => void;
+  onPrintRow?: (row: any) => void;
   onAddNew?: () => void;
   addNewText?: string;
   fetching?: boolean;
@@ -78,6 +79,7 @@ export function DataTable({
   onBlockRow,
   onEditModeChange,
   onEditRow,
+  onPrintRow,
   onAddNew,
   addNewText,
   fetching = false,
@@ -624,7 +626,7 @@ export function DataTable({
 
       {/* Table Area (Scrollable body, sticky headers) */}
       <div className="flex-1 overflow-auto bg-white custom-scrollbar">
-        <table className="w-full text-left border-collapse table-auto min-w-max">
+        <table className="w-full text-left border-collapse table-auto min-w-full">
           <thead>
             <tr className="border-b border-slate-200">
               {isEditMode && (
@@ -757,8 +759,32 @@ export function DataTable({
                                 <X size={13} />
                               </button>
                             </>
+                          ) : (row as any).isLocked ? (
+                            <div className="flex items-center justify-center gap-1 p-1">
+                              {onPrintRow && (
+                                <button
+                                  onClick={() => onPrintRow(row)}
+                                  className="p-1 rounded bg-[#EEEEEE] hover:bg-blue-50 text-blue-600 hover:text-blue-700 border border-zinc-300/80 shadow-sm transition-colors cursor-pointer"
+                                  title="Print Claim Statement"
+                                >
+                                  <Printer size={13} />
+                                </button>
+                              )}
+                              <div title="This record is locked because a claim has been made for this date range.">
+                                <Lock size={13} className="text-zinc-400" />
+                              </div>
+                            </div>
                           ) : (
                             <>
+                              {onPrintRow && (
+                                <button
+                                  onClick={() => onPrintRow(row)}
+                                  className="p-1 rounded bg-[#EEEEEE] hover:bg-blue-50 text-blue-600 hover:text-blue-700 border border-zinc-300/80 shadow-sm transition-colors cursor-pointer mr-0.5"
+                                  title="Print Claim Statement"
+                                >
+                                  <Printer size={13} />
+                                </button>
+                              )}
                               <button
                                 onClick={() => {
                                   if (onEditRow) {

@@ -108,7 +108,16 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
           accessor: key
         };
       });
-      setColumns(cols);
+
+      // Filter out duplicate columns by ID to prevent duplicate key console errors in DataTable
+      const seen = new Set<string>();
+      const uniqueCols = cols.filter((col) => {
+        if (seen.has(col.id)) return false;
+        seen.add(col.id);
+        return true;
+      });
+
+      setColumns(uniqueCols);
     } else {
       setColumns(activeTab === "retailers" ? defaultRetailerColumns : defaultStoreColumns);
     }
@@ -176,7 +185,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     const handleDbRefresh = async () => {
       const sheet = activeTab === "retailers" ? "retailers_DB" : "Store_Retailer_DB";
       await fetchFreshData(sheet, true);
-      showToast("Database cache refreshed from Google Sheets!", "success");
+      showToast("Database cache refreshed!", "success");
     };
 
     window.addEventListener("db-refresh", handleDbRefresh);
@@ -302,7 +311,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
 
         // Silent refresh of D1 cache from server in background
         fetchFreshData(sheet, false);
-        showToast("Changes synced successfully to Google Sheets!", "success");
+        showToast("Changes synced successfully!", "success");
       } catch (err: any) {
         showToast("Background sync failed: " + err.message + ". Reverting changes...", "error");
         // Revert to previous state
@@ -322,7 +331,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     );
     if (!targetItem) return;
 
-    showToast("Deleting record from Google Sheets...", "info");
+    showToast("Deleting record from database...", "info");
 
     try {
       const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
@@ -351,7 +360,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
       // Pull fresh data in background
       fetchFreshData(sheet, false);
 
-      showToast("Record deleted successfully from Google Sheets!", "success");
+      showToast("Record deleted successfully!", "success");
     } catch (err: any) {
       showToast("Delete failed: " + err.message, "error");
     }

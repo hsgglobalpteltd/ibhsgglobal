@@ -51,6 +51,19 @@ interface Transaction {
   remark: string;
 }
 
+interface ClaimRecord {
+  id: string;
+  invoiceNumber: string;
+  sponsorName: string;
+  date: number; // Unix epoch ms
+  claimStartDate: number; // Unix epoch ms
+  claimEndDate: number; // Unix epoch ms
+  amountByRecord: number;
+  amountInInvoice: number;
+  totalAfterGst: number;
+  invoicePdfUrl?: string;
+}
+
 // --- CUSTOM SEARCHABLE SELECT FILTER COMPONENT ---
 interface SearchableSelectProps {
   options: Array<{ value: string; label: string }>;
@@ -148,7 +161,8 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     { id: "dashboard", label: "Dashboard", desc: "Overview of sponsorship distribution." },
     { id: "transaction", label: "Transaction", desc: "Record and manage distribution outputs." },
     { id: "sponsored", label: "Sponsored By", desc: "Configure brand owners and sponsored product SKUs." },
-    { id: "receiver", label: "Receiver", desc: "Manage receiving entities and limits." }
+    { id: "receiver", label: "Receiver", desc: "Manage receiving entities and limits." },
+    { id: "claims", label: "Claim Record", desc: "Track and manage claims made." }
   ];
 
   const [activeTab, setActiveTab] = React.useState<string>("dashboard");
@@ -162,6 +176,21 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   const [catalog, setCatalog] = React.useState<SkuLink[]>([]);
   const [receivers, setReceivers] = React.useState<Receiver[]>([]);
   const [transactions, setTransactions] = React.useState<Transaction[]>([]);
+  const [claims, setClaims] = React.useState<ClaimRecord[]>([]);
+
+  // Claim form states
+  const [claimId, setClaimId] = React.useState<string | null>(null);
+  const [claimInvoiceNumber, setClaimInvoiceNumber] = React.useState<string>("");
+  const [claimSponsorName, setClaimSponsorName] = React.useState<string>("");
+  const [claimDate, setClaimDate] = React.useState<string>("");
+  const [claimStartDate, setClaimStartDate] = React.useState<string>("");
+  const [claimEndDate, setClaimEndDate] = React.useState<string>("");
+  const [claimAmountByRecord, setClaimAmountByRecord] = React.useState<string>("");
+  const [claimAmountInInvoice, setClaimAmountInInvoice] = React.useState<string>("");
+  const [claimTotalAfterGst, setClaimTotalAfterGst] = React.useState<string>("");
+  const [claimInvoicePdfUrl, setClaimInvoicePdfUrl] = React.useState<string>("");
+  const [uploadingPdf, setUploadingPdf] = React.useState<boolean>(false);
+  const [isClaimFormOpen, setIsClaimFormOpen] = React.useState<boolean>(false);
 
   // Transaction form states
   const [txId, setTxId] = React.useState<string | null>(null);
@@ -209,9 +238,26 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       const cachedCatalog = localStorage.getItem("sponsorship_catalog_data");
       const cachedReceivers = localStorage.getItem("sponsorship_receivers_data");
       const cachedTx = localStorage.getItem("sponsorship_transactions_data");
+      const cachedClaims = localStorage.getItem("sponsorship_claims_data");
 
       if (cachedBrands) setBrandsList(JSON.parse(cachedBrands));
       if (cachedProducts) setProductsList(JSON.parse(cachedProducts));
+
+      if (cachedClaims) {
+        const items = JSON.parse(cachedClaims);
+        setClaims(items.map((item: any) => ({
+          id: item.ID || item.id,
+          invoiceNumber: item.Invoice_Number || item.invoiceNumber || "",
+          sponsorName: item.Sponsor_Name || item.sponsorName || "",
+          date: parseInt(item.Date || item.date) || Date.now(),
+          claimStartDate: parseInt(item.Claim_Start_Date || item.claimStartDate) || Date.now(),
+          claimEndDate: parseInt(item.Claim_End_Date || item.claimEndDate) || Date.now(),
+          amountByRecord: parseFloat(item.Amount_By_Record || item.amountByRecord) || 0,
+          amountInInvoice: parseFloat(item.Amount_In_Invoice || item.amountInInvoice) || 0,
+          totalAfterGst: parseFloat(item.Total_After_Gst || item.totalAfterGst) || 0,
+          invoicePdfUrl: item.Invoice_Pdf_Url || item.invoicePdfUrl || ""
+        })));
+      }
 
       if (cachedCatalog) {
         const items = JSON.parse(cachedCatalog);
@@ -277,16 +323,17 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   const fetchAllFreshData = async (forceSync = false) => {
     setFetching(true);
     try {
-      const sheets: Array<"brands_DB" | "products_DB" | "sponsorship_catalog" | "sponsorship_receivers" | "sponsorship_transactions"> = [
+      const sheets: Array<"brands_DB" | "products_DB" | "sponsorship_catalog" | "sponsorship_receivers" | "sponsorship_transactions" | "sponsorship_claims"> = [
         "brands_DB",
         "products_DB",
         "sponsorship_catalog",
         "sponsorship_receivers",
-        "sponsorship_transactions"
+        "sponsorship_transactions",
+        "sponsorship_claims"
       ];
 
       if (forceSync) {
-        showToast("Updating database caches from Google Sheets...", "info");
+        showToast("Updating database caches...", "info");
         await Promise.all(
           sheets.map(sheet => 
             fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheet}`, { method: "POST" })
@@ -294,7 +341,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
         );
       }
 
-      const [brands, products, catalogData, receiversData, transactionsData] = await Promise.all(
+      const [brands, products, catalogData, receiversData, transactionsData, claimsData] = await Promise.all(
         sheets.map(async sheet => {
           const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheet}`);
           if (!res.ok) return [];
@@ -341,6 +388,23 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       setTransactions(newTransactions);
       localStorage.setItem("sponsorship_transactions_data", JSON.stringify(transactionsData));
 
+      if (claimsData) {
+        const newClaims = claimsData.map((item: any) => ({
+          id: item.ID || item.id,
+          invoiceNumber: item.Invoice_Number || item.invoiceNumber || "",
+          sponsorName: item.Sponsor_Name || item.sponsorName || "",
+          date: parseInt(item.Date || item.date) || Date.now(),
+          claimStartDate: parseInt(item.Claim_Start_Date || item.claimStartDate) || Date.now(),
+          claimEndDate: parseInt(item.Claim_End_Date || item.claimEndDate) || Date.now(),
+          amountByRecord: parseFloat(item.Amount_By_Record || item.amountByRecord) || 0,
+          amountInInvoice: parseFloat(item.Amount_In_Invoice || item.amountInInvoice) || 0,
+          totalAfterGst: parseFloat(item.Total_After_Gst || item.totalAfterGst) || 0,
+          invoicePdfUrl: item.Invoice_Pdf_Url || item.invoicePdfUrl || ""
+        }));
+        setClaims(newClaims);
+        localStorage.setItem("sponsorship_claims_data", JSON.stringify(claimsData));
+      }
+
       if (forceSync) {
         showToast("Database updated successfully!", "success");
       }
@@ -380,6 +444,19 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       return "-";
     }
   };
+
+  const isDashboardPrintDisabled = React.useMemo(() => {
+    if (dashSponsorFilter === "all" || !dashStartDate || !dashEndDate) {
+      return false;
+    }
+    const startVal = dateToEpoch(dashStartDate);
+    const endVal = dateToEpoch(dashEndDate);
+    
+    return claims.some(c => {
+      if (c.sponsorName.trim().toLowerCase() !== dashSponsorFilter.trim().toLowerCase()) return false;
+      return startVal >= c.claimStartDate && endVal <= c.claimEndDate;
+    });
+  }, [dashSponsorFilter, dashStartDate, dashEndDate, claims]);
 
   // --- CATALOG (SPONSORED BY) LOGIC ---
   const filteredProductsSelect = React.useMemo(() => {
@@ -779,6 +856,21 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const epochMs = dateToEpoch(txDate);
     const isEdit = !!txId;
 
+    // Validate that none of the SKUs being logged/edited fall within a closed claim range for their respective sponsor
+    for (const item of txItems) {
+      const link = catalog.find(c => c.id === item.skuId);
+      if (link && link.sponsoredBy) {
+        const isLocked = claims.some(c => {
+          if (c.sponsorName.trim().toLowerCase() !== link.sponsoredBy.trim().toLowerCase()) return false;
+          return epochMs >= c.claimStartDate && epochMs <= c.claimEndDate;
+        });
+        if (isLocked) {
+          showToast(`Cannot save transaction: Date falls within a closed claim range for sponsor "${link.sponsoredBy}".`, "error");
+          return;
+        }
+      }
+    }
+
     const rec = receivers.find(r => r.id === txReceiverId);
     if (rec && rec.type !== "open") {
       const given = calculateGivenCartons(rec.id, rec.type, epochMs);
@@ -884,6 +976,19 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const tx = transactions.find(t => t.id === id);
     if (!tx) return;
 
+    // Check if locked by an active claim record
+    const link = catalog.find(c => c.id === tx.skuId);
+    if (link && link.sponsoredBy) {
+      const isLocked = claims.some(c => {
+        if (c.sponsorName.trim().toLowerCase() !== link.sponsoredBy.trim().toLowerCase()) return false;
+        return tx.date >= c.claimStartDate && tx.date <= c.claimEndDate;
+      });
+      if (isLocked) {
+        showToast(`Cannot edit transaction: Date falls within a closed claim range for sponsor "${link.sponsoredBy}".`, "error");
+        return;
+      }
+    }
+
     setTxId(tx.id);
     setTxRef(tx.ref);
     setTxDate(epochToInputVal(tx.date));
@@ -891,7 +996,6 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     setTxRemark(tx.remark);
     
     setTxItems([{ skuId: tx.skuId, qtyPcs: tx.qtyPcs }]);
-    const link = catalog.find(c => c.id === tx.skuId);
     if (link) {
       setTxSponsoredBy(link.sponsoredBy || "");
     }
@@ -904,6 +1008,21 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       showToast("Access Denied: Only Admins can delete transactions.", "error");
       return;
     }
+    const tx = transactions.find(t => t.id === id);
+    if (tx) {
+      const link = catalog.find(c => c.id === tx.skuId);
+      if (link && link.sponsoredBy) {
+        const isLocked = claims.some(c => {
+          if (c.sponsorName.trim().toLowerCase() !== link.sponsoredBy.trim().toLowerCase()) return false;
+          return tx.date >= c.claimStartDate && tx.date <= c.claimEndDate;
+        });
+        if (isLocked) {
+          showToast(`Cannot delete transaction: It falls within a closed claim range for sponsor "${link.sponsoredBy}".`, "error");
+          return;
+        }
+      }
+    }
+
     // --- INSTANT FRONTEND UPDATE ---
     const updated = transactions.filter(t => t.id !== id);
     setTransactions(updated);
@@ -1278,6 +1397,514 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     }
   };
 
+  const handleViewClaimStatement = (claim: any) => {
+    const startEpoch = claim.claimStartDate;
+    const endEpoch = claim.claimEndDate + 86399999; // Include the end date fully (end of day)
+    const sponsorName = claim.sponsorName;
+
+    const relevantTx = transactions.filter(t => {
+      const link = catalog.find(c => c.id === t.skuId);
+      if (!link || !link.sponsoredBy) return false;
+      if (link.sponsoredBy.trim().toLowerCase() !== sponsorName.trim().toLowerCase()) return false;
+      if (t.date < startEpoch) return false;
+      if (t.date > endEpoch) return false;
+      return true;
+    });
+
+    const periodText = `${formatEpochToDDMMYYYY(claim.claimStartDate)} - ${formatEpochToDDMMYYYY(claim.claimEndDate)}`;
+
+    // helper to format cartons and loose pieces
+    const formatCartonAndLoose = (totalPcs: number, uom: number): string => {
+      const cartons = Math.floor(totalPcs / uom);
+      const loose = totalPcs % uom;
+      if (cartons > 0 && loose > 0) {
+        return `${cartons} ctn, ${loose} pcs`;
+      } else if (cartons > 0) {
+        return `${cartons} ctn`;
+      } else {
+        return `${loose} pcs`;
+      }
+    };
+
+    // SECTION 1: Product Summary grouped by Brands
+    const brandGroups: Record<string, Array<{ productDisplay: string; totalPcs: number; cost: number; uom: number }>> = {};
+    relevantTx.forEach(t => {
+      const link = catalog.find(c => c.id === t.skuId);
+      if (!link) return;
+      const brand = link.brandName;
+      if (!brandGroups[brand]) {
+        brandGroups[brand] = [];
+      }
+      const productDisplay = `[${link.sku}] ${link.productName}`;
+      const lineCost = t.qtyPcs * link.cost;
+
+      let existing = brandGroups[brand].find(item => item.productDisplay === productDisplay);
+      if (!existing) {
+        existing = {
+          productDisplay,
+          totalPcs: 0,
+          cost: 0,
+          uom: link.uom
+        };
+        brandGroups[brand].push(existing);
+      }
+      existing.totalPcs += t.qtyPcs;
+      existing.cost += lineCost;
+    });
+
+    let section1RowsHtml = "";
+    let totalClaim = 0;
+
+    Object.entries(brandGroups).forEach(([brandName, items]) => {
+      section1RowsHtml += `
+        <tr style="background-color: #f1f5f9; font-weight: bold;">
+          <td colspan="4" style="padding: 10px; font-size: 12px; color: #0f172a; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1;">
+            Brand: ${brandName}
+          </td>
+        </tr>
+      `;
+
+      let brandTotal = 0;
+      items.forEach(item => {
+        brandTotal += item.cost;
+        totalClaim += item.cost;
+        const cartonLooseStr = formatCartonAndLoose(item.totalPcs, item.uom);
+        section1RowsHtml += `
+          <tr style="border-bottom: 1px solid #e2e8f0;">
+            <td style="padding: 8px 10px; font-size: 11px; color: #64748b; font-style: italic;">${brandName}</td>
+            <td style="padding: 8px 10px; font-size: 12px; font-weight: 500;">${item.productDisplay}</td>
+            <td style="padding: 8px 10px; font-size: 12px; text-align: right; font-weight: 600;">${cartonLooseStr}</td>
+            <td style="padding: 8px 10px; font-size: 12px; text-align: right; font-weight: 500;">$${item.cost.toFixed(2)}</td>
+          </tr>
+        `;
+      });
+
+      section1RowsHtml += `
+        <tr style="font-weight: bold; background-color: #f8fafc;">
+          <td colspan="3" style="padding: 8px 10px; font-size: 11px; text-align: right; color: #475569;">${brandName} Subtotal:</td>
+          <td style="padding: 8px 10px; font-size: 12px; text-align: right; color: #0f172a;">$${brandTotal.toFixed(2)}</td>
+        </tr>
+      `;
+    });
+
+    // SECTION 2: Particular details grouped by Doc (Ref) Number
+    const docGroups: Record<string, { ref: string; date: number; receiverName: string; remark: string; items: Array<{ productDisplay: string; qtyPcs: number; cost: number }> }> = {};
+    relevantTx.forEach(t => {
+      const link = catalog.find(c => c.id === t.skuId);
+      if (!link) return;
+      const rec = receivers.find(r => r.id === t.receiverId);
+      const receiverName = rec ? rec.name : "N/A";
+      const productDisplay = `[${link.sku}] ${link.productName}`;
+      const lineCost = t.qtyPcs * link.cost;
+
+      if (!docGroups[t.ref]) {
+        docGroups[t.ref] = {
+          ref: t.ref,
+          date: t.date,
+          receiverName,
+          remark: t.remark || "-",
+          items: []
+        };
+      }
+      docGroups[t.ref].items.push({
+        productDisplay,
+        qtyPcs: t.qtyPcs,
+        cost: lineCost
+      });
+    });
+
+    const sortedDocGroups = Object.values(docGroups).sort((a, b) => a.date - b.date);
+
+    let section2RowsHtml = "";
+    sortedDocGroups.forEach(group => {
+      group.items.forEach((item, index) => {
+        const isFirst = index === 0;
+        section2RowsHtml += `
+          <tr style="border-bottom: 1px solid #f1f5f9; font-size: 6px; font-family: monospace;">
+            <td style="padding: 2px 4px; vertical-align: top; border-right: 1px solid #f1f5f9;">
+              ${isFirst ? `<strong>${group.ref}</strong><br/><span style="color: #64748b;">${formatEpochToDDMMYYYY(group.date)}</span>` : ""}
+            </td>
+            <td style="padding: 2px 4px; vertical-align: top; border-right: 1px solid #f1f5f9; word-break: break-all; max-width: 150px;">
+              ${isFirst ? `<strong>${group.receiverName}</strong><br/><span style="color: #64748b; font-style: italic;">${group.remark}</span>` : ""}
+            </td>
+            <td style="padding: 2px 4px; vertical-align: top; border-right: 1px solid #f1f5f9;">
+              ${item.productDisplay}
+            </td>
+            <td style="padding: 2px 4px; vertical-align: top; text-align: right;">
+              ${item.qtyPcs} pcs
+            </td>
+          </tr>
+        `;
+      });
+    });
+
+    const printHtml = `
+      <html>
+        <head>
+          <title>Claim Statement - ${claim.invoiceNumber}</title>
+          <style>
+            body { font-family: 'Inter', sans-serif; color: #1e293b; background-color: #f8fafc; margin: 0; padding: 40px 20px; display: flex; justify-content: center; min-height: 100vh; }
+            .page-container { width: 210mm; min-height: 297mm; background-color: #ffffff; padding: 20mm; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08); border-radius: 8px; box-sizing: border-box; }
+            table { width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 25px; }
+            th { background-color: #f1f5f9; padding: 10px 8px; font-size: 11px; font-weight: bold; text-transform: uppercase; text-align: left; }
+            .section2-th { font-size: 8px; padding: 4px 6px; }
+            .header-flex { display: flex; justify-content: space-between; border-bottom: 2px solid #e2e8f0; padding-bottom: 15px; }
+            .total-box { text-align: right; font-size: 18px; font-weight: bold; margin-top: 15px; border-top: 2px solid #e2e8f0; padding-top: 10px; }
+            .section-title { font-size: 14px; font-weight: 800; border-left: 4px solid #3b82f6; padding-left: 10px; margin-top: 30px; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+            .subtext { font-size: 11px; color: #64748b; margin-top: 4px; }
+            @media print {
+              body { background-color: #ffffff; padding: 0; }
+              .page-container { width: 100%; min-height: auto; padding: 0; box-shadow: none; border-radius: 0; }
+              .page-break { page-break-before: always; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="page-container">
+            <div class="header-flex">
+              <div>
+                <h2 style="margin: 0; font-size: 22px; font-weight: 800; color: #0f172a;">CLAIM STATEMENT</h2>
+                <p style="margin: 4px 0 0 0; font-size: 14px; color: #64748b;">HSG Global Pte Ltd</p>
+              </div>
+              <div style="text-align: right;">
+                <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #3b82f6;">${sponsorName}</h3>
+                <p class="subtext">Invoice No: <strong>${claim.invoiceNumber}</strong></p>
+                <p class="subtext">Period: ${periodText}</p>
+                <p class="subtext">Print Date: ${new Date().toLocaleDateString("en-GB")}</p>
+              </div>
+            </div>
+
+            <!-- SECTION 1: Product Summary -->
+            <div class="section-title">Product Summary</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Brands</th>
+                  <th>Products</th>
+                  <th style="text-align: right;">Given</th>
+                  <th style="text-align: right;">Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${section1RowsHtml}
+              </tbody>
+            </table>
+
+            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 4px; margin-top: 15px; border-top: 2px solid #e2e8f0; padding-top: 10px;">
+              <div style="font-size: 13px; color: #64748b; font-weight: 600;">
+                Amount by Record: <span style="color: #0f172a; font-weight: bold; margin-left: 10px;">$${claim.amountByRecord.toFixed(2)}</span>
+              </div>
+              <div style="font-size: 13px; color: #64748b; font-weight: 600;">
+                Amount in Invoice: <span style="color: #0f172a; font-weight: bold; margin-left: 10px;">$${claim.amountInInvoice.toFixed(2)}</span>
+              </div>
+              <div class="total-box" style="border-top: none; padding-top: 0; margin-top: 5px;">
+                Total after GST: <span style="color: #3563e9;">$${claim.totalAfterGst.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <!-- Section 2 on new page -->
+            <div class="page-break"></div>
+
+            <!-- SECTION 2: Particular details -->
+            <div class="section-title" style="margin-top: 20px;">Particular Claim Details</div>
+            <p style="font-size: 8px; color: #64748b; margin-bottom: 8px;">Detailed audit logs of transactions grouped by Doc Number (Ref).</p>
+            <table style="border: 1px solid #e2e8f0; width: 100%;">
+              <thead>
+                <tr style="background-color: #f8fafc;">
+                  <th class="section2-th" style="width: 25%;">Register Doc</th>
+                  <th class="section2-th" style="width: 30%;">Receiver</th>
+                  <th class="section2-th" style="width: 35%;">Products</th>
+                  <th class="section2-th" style="text-align: right; width: 10%;">Qty</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${section2RowsHtml}
+              </tbody>
+            </table>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const blob = new Blob([printHtml], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank");
+  };
+
+  const claimColumns: Column[] = [
+    { id: "invoiceNumber", header: "Invoice Number", accessor: "invoiceNumber" },
+    { id: "pdfLink", header: "Ref Document", accessor: "pdfLink" },
+    { id: "dateStr", header: "Claim Date", accessor: "dateStr" },
+    { id: "particularClaim", header: "Particular Claim", accessor: "particularClaim" },
+    { id: "invoiceVal", header: "Invoice", accessor: "invoiceVal" }
+  ];
+
+  const claimsTableData = React.useMemo(() => {
+    return claims.map(c => ({
+      id: c.id,
+      invoiceNumber: c.invoiceNumber,
+      sponsorName: c.sponsorName,
+      dateStr: formatEpochToDDMMYYYY(c.date),
+      pdfLink: (
+        <div className="flex items-center gap-1 text-[11px] font-semibold text-blue-600">
+          {c.invoicePdfUrl ? (
+            <>
+              <a 
+                href={c.invoicePdfUrl} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
+              >
+                <FileText size={11} className="text-blue-500" />
+                <span>View Invoice</span>
+              </a>
+              <span className="text-zinc-300 mx-1">|</span>
+            </>
+          ) : null}
+          <button 
+            type="button"
+            onClick={() => handleViewClaimStatement(c)}
+            className="hover:text-blue-800 hover:underline inline-flex items-center gap-0.5 font-bold cursor-pointer text-blue-600 bg-transparent border-0 p-0 focus:outline-none"
+          >
+            <FileText size={11} className="text-blue-500" />
+            <span>View Claim Statement</span>
+          </button>
+        </div>
+      ),
+      particularClaim: (
+        <div className="flex flex-col gap-0.5 text-left font-semibold">
+          <span className="font-bold text-zinc-950">{c.sponsorName}</span>
+          <span className="text-zinc-500 text-[10px]">{formatEpochToDDMMYYYY(c.claimStartDate)} - {formatEpochToDDMMYYYY(c.claimEndDate)}</span>
+          <span className="text-blue-600 font-bold text-[10px]">Record: ${c.amountByRecord.toFixed(2)}</span>
+        </div>
+      ),
+      particularClaim_raw: c.sponsorName,
+      invoiceVal: (
+        <div className="flex flex-col gap-0.5 text-left font-semibold">
+          <span className="text-zinc-500 text-[10px]">Excl. GST: ${c.amountInInvoice.toFixed(2)}</span>
+          <span className="text-zinc-950 font-bold">Total: ${c.totalAfterGst.toFixed(2)}</span>
+        </div>
+      ),
+      invoiceVal_raw: c.totalAfterGst,
+      // raw fields for editing
+      date: c.date,
+      claimStartDate: c.claimStartDate,
+      claimEndDate: c.claimEndDate,
+      amountByRecord: c.amountByRecord,
+      amountInInvoice: c.amountInInvoice,
+      totalAfterGst: c.totalAfterGst,
+      invoicePdfUrl: c.invoicePdfUrl || ""
+    }));
+  }, [claims]);
+
+  // Auto-calculate "Amount by Record" when Sponsor Name, Start Date, or End Date changes
+  React.useEffect(() => {
+    if (!claimSponsorName.trim() || !claimStartDate || !claimEndDate) {
+      return;
+    }
+
+    const startVal = dateToEpoch(claimStartDate);
+    const endVal = dateToEpoch(claimEndDate) + 86399999; // Include the end date fully (end of day)
+
+    let totalRecordCost = 0;
+    transactions.forEach(t => {
+      if (t.date >= startVal && t.date <= endVal) {
+        const link = catalog.find(c => c.id === t.skuId);
+        if (link && link.sponsoredBy && link.sponsoredBy.trim().toLowerCase() === claimSponsorName.trim().toLowerCase()) {
+          totalRecordCost += (t.qtyPcs * link.cost);
+        }
+      }
+    });
+
+    setClaimAmountByRecord(totalRecordCost.toFixed(2));
+  }, [claimSponsorName, claimStartDate, claimEndDate, transactions, catalog]);
+
+  const handlePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== "application/pdf") {
+      showToast("Only PDF files are supported.", "error");
+      return;
+    }
+
+    setUploadingPdf(true);
+    showToast("Uploading PDF invoice to Secure Storage...", "info");
+
+    try {
+      const fileName = `sponsorship_claims/invoice_${Date.now()}_${file.name.replace(/\s+/g, "_")}`;
+      const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": file.type || "application/pdf"
+        },
+        body: file
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error(`Upload failed. Status ${uploadRes.status}`);
+      }
+
+      const uploadData = await uploadRes.json() as { success: boolean; url: string };
+      if (!uploadData.success || !uploadData.url) {
+        throw new Error("Upload response did not contain file URL.");
+      }
+
+      setClaimInvoicePdfUrl(uploadData.url);
+      showToast("PDF invoice uploaded successfully!", "success");
+    } catch (err: any) {
+      console.error(err);
+      showToast("Failed to upload PDF invoice: " + err.message, "error");
+    } finally {
+      setUploadingPdf(false);
+    }
+  };
+
+  const handleEditClaim = (item: any) => {
+    if (userRole === "viewer") {
+      showToast("Access Denied: Viewers cannot edit claims.", "error");
+      return;
+    }
+    setClaimId(item.id);
+    setClaimInvoiceNumber(item.invoiceNumber);
+    setClaimSponsorName(item.sponsorName);
+    
+    setClaimDate(epochToInputVal(item.date));
+    setClaimStartDate(epochToInputVal(item.claimStartDate));
+    setClaimEndDate(epochToInputVal(item.claimEndDate));
+    
+    setClaimAmountByRecord(String(item.amountByRecord));
+    setClaimAmountInInvoice(String(item.amountInInvoice));
+    setClaimTotalAfterGst(String(item.totalAfterGst));
+    setClaimInvoicePdfUrl(item.invoicePdfUrl || "");
+    
+    setIsClaimFormOpen(true);
+    showToast("Editing claim record...", "info");
+  };
+
+  const handleCancelClaimEdit = () => {
+    setClaimId(null);
+    setClaimInvoiceNumber("");
+    setClaimSponsorName("");
+    setClaimDate("");
+    setClaimStartDate("");
+    setClaimEndDate("");
+    setClaimAmountByRecord("");
+    setClaimAmountInInvoice("");
+    setClaimTotalAfterGst("");
+    setClaimInvoicePdfUrl("");
+    setIsClaimFormOpen(false);
+  };
+
+  const handleAddClaim = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (userRole === "viewer") {
+      showToast("Access Denied: Viewers cannot add claims.", "error");
+      return;
+    }
+    if (!claimInvoiceNumber.trim() || !claimSponsorName.trim() || !claimDate || !claimStartDate || !claimEndDate || !claimAmountByRecord || !claimAmountInInvoice || !claimTotalAfterGst) {
+      showToast("Please fill in all fields.", "error");
+      return;
+    }
+
+    const isEdit = !!claimId;
+    const targetId = isEdit ? claimId : "claim_" + Date.now();
+    const action = isEdit ? "update" : "insert";
+
+    const dateVal = dateToEpoch(claimDate);
+    const startVal = dateToEpoch(claimStartDate);
+    const endVal = dateToEpoch(claimEndDate);
+    const amtRecord = parseFloat(claimAmountByRecord) || 0;
+    const amtInvoice = parseFloat(claimAmountInInvoice) || 0;
+    const totalGst = parseFloat(claimTotalAfterGst) || 0;
+
+    const newClaimData = {
+      ID: targetId,
+      Invoice_Number: claimInvoiceNumber.trim(),
+      Sponsor_Name: claimSponsorName.trim(),
+      Date: dateVal,
+      Claim_Start_Date: startVal,
+      Claim_End_Date: endVal,
+      Amount_By_Record: amtRecord,
+      Amount_In_Invoice: amtInvoice,
+      Total_After_Gst: totalGst,
+      Invoice_Pdf_Url: claimInvoicePdfUrl
+    };
+
+    // --- INSTANT FRONTEND UPDATE ---
+    let updated = [...claims];
+    const newClaimRecord: ClaimRecord = {
+      id: targetId,
+      invoiceNumber: claimInvoiceNumber.trim(),
+      sponsorName: claimSponsorName.trim(),
+      date: dateVal,
+      claimStartDate: startVal,
+      claimEndDate: endVal,
+      amountByRecord: amtRecord,
+      amountInInvoice: amtInvoice,
+      totalAfterGst: totalGst,
+      invoicePdfUrl: claimInvoicePdfUrl
+    };
+
+    if (isEdit) {
+      updated = updated.map(c => c.id === targetId ? newClaimRecord : c);
+    } else {
+      updated.push(newClaimRecord);
+    }
+
+    setClaims(updated);
+    localStorage.setItem("sponsorship_claims_data", JSON.stringify(updated.map(c => ({
+      ID: c.id,
+      Invoice_Number: c.invoiceNumber,
+      Sponsor_Name: c.sponsorName,
+      Date: c.date,
+      Claim_Start_Date: c.claimStartDate,
+      Claim_End_Date: c.claimEndDate,
+      Amount_By_Record: c.amountByRecord,
+      Amount_In_Invoice: c.amountInInvoice,
+      Total_After_Gst: c.totalAfterGst,
+      Invoice_Pdf_Url: c.invoicePdfUrl || ""
+    }))));
+
+    handleCancelClaimEdit();
+    showToast(isEdit ? "Claim record updated." : "Claim record created.", "success");
+
+    // --- SILENT BACKGROUND SAVE ---
+    writeToDatabase("sponsorship_claims", action, newClaimData)
+      .catch((err) => {
+        showToast("Background sync failed for claim record: " + err.message, "warning");
+      });
+  };
+
+  const handleDeleteClaim = (id: string) => {
+    if (userRole !== "admin") {
+      showToast("Access Denied: Only Admins can delete claim records.", "error");
+      return;
+    }
+
+    const updated = claims.filter(c => c.id !== id);
+    setClaims(updated);
+    localStorage.setItem("sponsorship_claims_data", JSON.stringify(updated.map(c => ({
+      ID: c.id,
+      Invoice_Number: c.invoiceNumber,
+      Sponsor_Name: c.sponsorName,
+      Date: c.date,
+      Claim_Start_Date: c.claimStartDate,
+      Claim_End_Date: c.claimEndDate,
+      Amount_By_Record: c.amountByRecord,
+      Amount_In_Invoice: c.amountInInvoice,
+      Total_After_Gst: c.totalAfterGst,
+      Invoice_Pdf_Url: c.invoicePdfUrl || ""
+    }))));
+
+    showToast("Claim record deleted.", "info");
+
+    writeToDatabase("sponsorship_claims", "delete", { ID: id })
+      .catch((err) => {
+        showToast("Background sync failed for claim deletion: " + err.message, "warning");
+      });
+  };
+
   const uniqueCatalogBrands = React.useMemo(() => {
     return Array.from(new Set(catalog.map(c => c.brandName)));
   }, [catalog]);
@@ -1340,6 +1967,10 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
         const rec = receivers.find(r => r.id === tx.receiverId) || { name: "Unknown" };
         const link = catalog.find(c => c.id === tx.skuId) || { brandName: "Unknown", sku: "N/A", uom: 1, cost: 0, sponsoredBy: "" };
         const totalAmount = tx.qtyPcs * link.cost;
+        const isLocked = link.sponsoredBy ? claims.some(c => {
+          if (c.sponsorName.trim().toLowerCase() !== link.sponsoredBy.trim().toLowerCase()) return false;
+          return tx.date >= c.claimStartDate && tx.date <= c.claimEndDate;
+        }) : false;
         return {
           ...tx,
           id: tx.id,
@@ -1354,10 +1985,20 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
           qtyPcs: tx.qtyPcs,
           totalAmount: `$${totalAmount.toFixed(2)}`,
           totalAmount_raw: totalAmount, // for sorting
-          remark: tx.remark || "-"
+          remark: tx.remark || "-",
+          isLocked: isLocked
         };
       });
-  }, [transactions, receivers, catalog]);
+  }, [transactions, receivers, catalog, claims]);
+
+  const isFormTransactionLocked = React.useMemo(() => {
+    if (!txDate || !txSponsoredBy) return false;
+    const epochMs = dateToEpoch(txDate);
+    return claims.some(c => {
+      if (c.sponsorName.trim().toLowerCase() !== txSponsoredBy.trim().toLowerCase()) return false;
+      return epochMs >= c.claimStartDate && epochMs <= c.claimEndDate;
+    });
+  }, [txDate, txSponsoredBy, claims]);
 
   const dashboardColumns: Column[] = React.useMemo(() => [
     { id: "sponsoredBy", header: "Sponsored By", accessor: "sponsoredBy" },
@@ -1532,7 +2173,9 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
               </div>
               <CustomButton 
                 onClick={handlePrintClaim}
+                disabled={isDashboardPrintDisabled}
                 variant="default"
+                title={isDashboardPrintDisabled ? "Selected sponsor & date range is already closed/claimed" : undefined}
               >
                 <Printer size={13} className="text-zinc-500" />
                 Print Claim
@@ -1778,10 +2421,15 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
                       className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold resize-none text-xs"
                     />
                   </div>
+                  {isFormTransactionLocked && (
+                    <div className="p-2.5 bg-red-50 border border-red-200 rounded text-red-700 font-bold text-[10px] uppercase tracking-wide leading-normal text-center mt-1">
+                      Date falls within a closed claim range for sponsor "{txSponsoredBy}". Entry is disabled.
+                    </div>
+                  )}
                   <div className="flex gap-2 mt-2">
                     <CustomButton 
                       type="submit"
-                      disabled={txItems.length === 0 || userRole === "viewer"}
+                      disabled={txItems.length === 0 || userRole === "viewer" || isFormTransactionLocked}
                       variant={txId ? "secondary" : "dark"}
                       className="flex-1 h-10"
                     >
@@ -2025,7 +2673,211 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
         </div>
       )}
 
+      {/* 5. CLAIM RECORD TAB */}
+      {activeTab === "claims" && (
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-tableFadeInOnly">
+            {/* Table col (left side) */}
+            <div className={`${isClaimFormOpen ? "lg:col-span-2" : "lg:col-span-3"} overflow-hidden flex flex-col`}>
+              <DataTable
+                columns={claimColumns}
+                data={claimsTableData}
+                userRole={userRole}
+                title="Sponsorship Claim Records"
+                fetching={fetching}
+                onEditRow={(row) => handleEditClaim(row)}
+                onDeleteRow={(id) => handleDeleteClaim(id)}
+                height="h-[calc(100vh-240px)]"
+                headerActions={
+                  <CustomButton
+                    variant={isClaimFormOpen ? "dark" : "default"}
+                    onClick={() => setIsClaimFormOpen(!isClaimFormOpen)}
+                  >
+                    {isClaimFormOpen ? "Hide Panel" : "Add New Claim"}
+                  </CustomButton>
+                }
+              />
+            </div>
 
+            {/* Form col (right side, collapsible) */}
+            {isClaimFormOpen && (
+              <div className="lg:col-span-1 bg-white border border-zinc-300/40 p-5 rounded-xl shadow-sm h-fit">
+                <h3 className="font-bold text-zinc-900 border-b pb-2 text-sm uppercase tracking-wider">
+                  {claimId ? "Edit Claim Record" : "Add Claim Record"}
+                </h3>
+                <form onSubmit={handleAddClaim} className="flex flex-col gap-4 mt-4 text-xs font-primary">
+                  <div>
+                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Invoice Number *</label>
+                    <input 
+                      type="text" 
+                      value={claimInvoiceNumber}
+                      onChange={(e) => setClaimInvoiceNumber(e.target.value)}
+                      placeholder="e.g. INV-10029"
+                      required
+                      disabled={userRole === "viewer"}
+                      className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Sponsor Name *</label>
+                    <input
+                      type="text"
+                      list="sponsor-names-list"
+                      value={claimSponsorName}
+                      onChange={(e) => setClaimSponsorName(e.target.value)}
+                      placeholder="Enter or select sponsor name"
+                      required
+                      disabled={userRole === "viewer"}
+                      className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                    />
+                    <datalist id="sponsor-names-list">
+                      {uniqueCatalogSponsors.map(s => (
+                        <option key={s} value={s} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div>
+                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Date of Claim *</label>
+                    <input 
+                      type="date" 
+                      value={claimDate}
+                      onChange={(e) => setClaimDate(e.target.value)}
+                      required
+                      disabled={userRole === "viewer"}
+                      className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[10px]">Claim Range Start *</label>
+                      <input 
+                        type="date" 
+                        value={claimStartDate}
+                        onChange={(e) => setClaimStartDate(e.target.value)}
+                        required
+                        disabled={userRole === "viewer"}
+                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[10px]">Claim Range End *</label>
+                      <input 
+                        type="date" 
+                        value={claimEndDate}
+                        onChange={(e) => setClaimEndDate(e.target.value)}
+                        required
+                        disabled={userRole === "viewer"}
+                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[9px]">Amt by Record (Auto) *</label>
+                      <input 
+                        type="number"
+                        step="0.01"
+                        value={claimAmountByRecord}
+                        placeholder="0.00"
+                        required
+                        readOnly
+                        disabled={userRole === "viewer"}
+                        className="w-full bg-slate-200 border border-slate-300 rounded p-2.5 text-zinc-900 focus:outline-none font-bold text-center cursor-not-allowed"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[9px]">Amt in Inv *</label>
+                      <input 
+                        type="number"
+                        step="0.01"
+                        value={claimAmountInInvoice}
+                        onChange={(e) => setClaimAmountInInvoice(e.target.value)}
+                        placeholder="0.00"
+                        required
+                        min={0}
+                        disabled={userRole === "viewer"}
+                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-950 focus:outline-none focus:border-blue-400 font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[9px]">Total (GST) *</label>
+                      <input 
+                        type="number"
+                        step="0.01"
+                        value={claimTotalAfterGst}
+                        onChange={(e) => setClaimTotalAfterGst(e.target.value)}
+                        placeholder="0.00"
+                        required
+                        min={0}
+                        disabled={userRole === "viewer"}
+                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-950 focus:outline-none focus:border-blue-400 font-semibold"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Invoice PDF (R2 Secure Storage)</label>
+                    {claimInvoicePdfUrl ? (
+                      <div className="flex items-center justify-between p-2 border border-green-250 bg-green-50 rounded text-zinc-800">
+                        <div className="flex items-center gap-1.5 overflow-hidden">
+                          <FileText size={14} className="text-green-600 flex-shrink-0" />
+                          <a 
+                            href={claimInvoicePdfUrl} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="underline font-bold text-xs truncate"
+                          >
+                            View Uploaded Invoice PDF
+                          </a>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setClaimInvoicePdfUrl("")}
+                          className="text-red-500 hover:text-red-700 font-bold ml-2 cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5">
+                        <input
+                          type="file"
+                          accept="application/pdf"
+                          onChange={handlePdfUpload}
+                          disabled={uploadingPdf || userRole === "viewer"}
+                          className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2 text-zinc-950 focus:outline-none focus:border-blue-400 text-xs font-semibold cursor-pointer file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-zinc-800 file:text-white file:hover:bg-zinc-700 disabled:opacity-50"
+                        />
+                        {uploadingPdf && (
+                          <p className="text-[10px] text-blue-600 font-bold animate-pulse">Uploading file... Please wait.</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2 mt-2">
+                    <CustomButton 
+                      type="submit"
+                      disabled={userRole === "viewer"}
+                      variant={claimId ? "secondary" : "dark"}
+                      className="flex-1 h-10"
+                    >
+                      {userRole === "viewer" ? "View Only" : claimId ? "Update Claim" : "Save Claim"}
+                    </CustomButton>
+                    {claimId && (
+                      <CustomButton 
+                        type="button" 
+                        onClick={handleCancelClaimEdit}
+                        variant="default"
+                        className="h-10"
+                      >
+                        Cancel
+                      </CustomButton>
+                    )}
+                  </div>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
     </div>
   );

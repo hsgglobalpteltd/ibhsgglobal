@@ -727,7 +727,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
       setSettings(newSettings);
       localStorage.setItem("Merch_Visit_Setting_data", JSON.stringify(newSettings));
       
-      showToast("Settings deployed successfully to Google Sheets!", "success");
+      showToast("Settings deployed successfully to the database!", "success");
       fetchFreshData("Merch_Visit_Setting", false);
     } catch (e: any) {
       showToast("Deploy failed: " + e.message, "error");

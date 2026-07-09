@@ -38,7 +38,7 @@ interface TrackOrderDraft {
   doNumber: string;
   refNumber: string;
   mark: string; // A, B, C, D
-  type: "Normal" | "Urgent" | "Appointment";
+  type: "Normal" | "Urgent" | "Appointment" | "Return";
   deliverTo: string;
   poscode: string;
   items: SKUItem[];
@@ -87,6 +87,7 @@ interface DbOrder {
   Driver?: string;
   Invoice_Number?: string;
   Credit_Note_Number?: string;
+  Invoice_Amount?: string;
 }
 
 interface TrackOrderModuleProps {
@@ -367,20 +368,20 @@ function SlidePanel({ isOpen, onClose, title, children, footer }: SlidePanelProp
 const getOrderEditsRemark = (oldOrder: DbOrder, newFields: Partial<DbOrder>): string => {
   const changes: string[] = [];
 
-  if (newFields.Mark !== undefined && newFields.Mark !== oldOrder.Mark) {
-    changes.push(`Mark "${oldOrder.Mark}" -> "${newFields.Mark}"`);
+  if (newFields.Mark !== undefined && String(newFields.Mark || "").trim() !== String(oldOrder.Mark || "").trim()) {
+    changes.push(`Mark "${String(oldOrder.Mark || "").trim()}" -> "${String(newFields.Mark || "").trim()}"`);
   }
-  if (newFields.Poscode !== undefined && newFields.Poscode !== oldOrder.Poscode) {
-    changes.push(`Poscode "${oldOrder.Poscode}" -> "${newFields.Poscode}"`);
+  if (newFields.Poscode !== undefined && String(newFields.Poscode || "").trim() !== String(oldOrder.Poscode || "").trim()) {
+    changes.push(`Poscode "${String(oldOrder.Poscode || "").trim()}" -> "${String(newFields.Poscode || "").trim()}"`);
   }
-  if (newFields.Deliver_To !== undefined && newFields.Deliver_To !== oldOrder.Deliver_To) {
+  if (newFields.Deliver_To !== undefined && String(newFields.Deliver_To || "").trim() !== String(oldOrder.Deliver_To || "").trim()) {
     changes.push(`Address changed`);
   }
-  if (newFields.Deliver_Method !== undefined && newFields.Deliver_Method !== oldOrder.Deliver_Method) {
-    changes.push(`Method "${oldOrder.Deliver_Method}" -> "${newFields.Deliver_Method}"`);
+  if (newFields.Deliver_Method !== undefined && String(newFields.Deliver_Method || "").trim() !== String(oldOrder.Deliver_Method || "").trim()) {
+    changes.push(`Method "${String(oldOrder.Deliver_Method || "").trim()}" -> "${String(newFields.Deliver_Method || "").trim()}"`);
   }
-  if (newFields.Type !== undefined && newFields.Type !== oldOrder.Type) {
-    changes.push(`Type "${oldOrder.Type}" -> "${newFields.Type}"`);
+  if (newFields.Type !== undefined && String(newFields.Type || "").trim() !== String(oldOrder.Type || "").trim()) {
+    changes.push(`Type "${String(oldOrder.Type || "").trim()}" -> "${String(newFields.Type || "").trim()}"`);
   }
 
   if (newFields.Items !== undefined) {
@@ -425,6 +426,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [drafts, setDrafts] = React.useState<TrackOrderDraft[]>([]);
   const [dbOrders, setDbOrders] = React.useState<DbOrder[]>([]);
   const [pdfLoading, setPdfLoading] = React.useState<boolean>(false);
+  const [sendingDraftIds, setSendingDraftIds] = React.useState<Record<string, boolean>>({});
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Detail panel / Drawer states
@@ -487,6 +489,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [pendingCompleteOrder, setPendingCompleteOrder] = React.useState<DbOrder | null>(null);
   const [invoiceNumberInput, setInvoiceNumberInput] = React.useState<string>("");
   const [creditNoteInput, setCreditNoteInput] = React.useState<string>("");
+  const [invoiceAmountInput, setInvoiceAmountInput] = React.useState<string>("");
+
+  // Edit Completed Invoice Modal States
+  const [isEditInvoiceModalOpen, setIsEditInvoiceModalOpen] = React.useState<boolean>(false);
+  const [editInvoiceOrder, setEditInvoiceOrder] = React.useState<DbOrder | null>(null);
+  const [editInvoiceNum, setEditInvoiceNum] = React.useState<string>("");
+  const [editInvoiceAmount, setEditInvoiceAmount] = React.useState<string>("");
+
+  // Revoke Complete Confirmation States
+  const [isRevokeCompleteConfirmOpen, setIsRevokeCompleteConfirmOpen] = React.useState<boolean>(false);
+  const [pendingRevokeCompleteOrder, setPendingRevokeCompleteOrder] = React.useState<DbOrder | null>(null);
 
   // Lightbox modal state for viewing images in full size
   const [activeLightboxImage, setActiveLightboxImage] = React.useState<string | null>(null);
@@ -512,6 +525,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Map Panel Open state
   const [isMapOpen, setIsMapOpen] = React.useState<boolean>(false);
+  const [mapFilter, setMapFilter] = React.useState<"pending" | "complete">("pending");
 
   // OneMap API settings from Setting_API
   const [oneMapToken, setOneMapToken] = React.useState<string>("");
@@ -781,7 +795,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         Type: createType,
         Deliver_To: createDeliverTo,
         Deliver_Method: createDeliverMethod,
-        Poscode: createPoscode.trim(),
+        Poscode: String(createPoscode || "").trim(),
         Items: JSON.stringify(parsedItems),
         Deadline: deadlineVal
       };
@@ -875,22 +889,34 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     );
   }, [dbOrders]);
 
-  const qtyDoneToday = React.useMemo(() => {
-    let totalQty = 0;
+  const tasksDoneToday = React.useMemo(() => {
+    let count = 0;
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const startOfTodayMs = startOfToday.getTime();
 
     dbOrders.forEach((o) => {
-      if ((String(o.Completed) === "true" || o.Completed === true) && o.Type !== "Return") {
+      // Check if this order is delivered, collected, or complete
+      const isDelivered = o.Type !== "Return" && (o.Status === "Delivered" || String(o.Completed) === "true" || o.Completed === true);
+      const isCollected = o.Type === "Return" && (o.Status === "Collected" || o.Status === "Return Collected" || String(o.Completed) === "true" || o.Completed === true);
+
+      if (isDelivered || isCollected) {
         let completedToday = false;
         try {
           const logs = typeof o.Logs === "string" ? JSON.parse(o.Logs) : o.Logs;
           if (Array.isArray(logs)) {
-            const compLog = logs.find((l: any) => l.action?.includes("Completed"));
+            // Find any log entry of delivery (Delivered/Completed) or collection (Collected/Return Collected/Completed) that happened today
+            const compLog = logs.find((l: any) => {
+              const act = String(l.action || "").toLowerCase();
+              return (act.includes("delivered") || act.includes("collected") || act.includes("completed") || act.includes("complete"));
+            });
             if (compLog && Number(compLog.timestamp) >= startOfTodayMs) {
               completedToday = true;
             } else if (!compLog && o.Timestamp && Number(o.Timestamp) >= startOfTodayMs) {
+              completedToday = true;
+            }
+          } else {
+            if (o.Timestamp && Number(o.Timestamp) >= startOfTodayMs) {
               completedToday = true;
             }
           }
@@ -901,16 +927,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         }
 
         if (completedToday) {
-          try {
-            const items = typeof o.Items === "string" ? JSON.parse(o.Items) : o.Items;
-            if (Array.isArray(items)) {
-              totalQty += items.reduce((sum: number, item: any) => sum + (Number(item.qty) || 0), 0);
-            }
-          } catch (_) {}
+          count++;
         }
       }
     });
-    return totalQty;
+    return count;
   }, [dbOrders]);
 
   // Return Orders filtered lists
@@ -918,9 +939,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     return dbOrders.filter((o) => {
       if (o.Type !== "Return") return false;
       if (activeReturnTab === "complete") {
-        return o.Status === "Complete";
+        return String(o.Completed) === "true" || o.Completed === true;
       } else {
-        return o.Status !== "Complete";
+        return String(o.Completed) !== "true" && o.Completed !== true;
       }
     });
   }, [dbOrders, activeReturnTab]);
@@ -937,8 +958,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     if (!storeSearchQuery.trim()) return [];
     const q = storeSearchQuery.toLowerCase();
     return stores.filter(s => 
-      String(s.ID).toLowerCase().includes(q) || 
-      String(s["Display Name"]).toLowerCase().includes(q)
+      String(s.ID || "").toLowerCase().includes(q) || 
+      String(s["Display Name"] || "").toLowerCase().includes(q) ||
+      String(s.Address || "").toLowerCase().includes(q)
     ).slice(0, 10);
   }, [storeSearchQuery, stores]);
 
@@ -970,7 +992,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   };
 
-  const handleCompleteReturnOrder = async (order: DbOrder, creditNoteNum?: string) => {
+  const handleCompleteReturnOrder = async (order: DbOrder, creditNoteNum?: string, invoiceAmount?: number | string) => {
     let currentLogs: LogEntry[] = [];
     try {
       currentLogs = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
@@ -981,7 +1003,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       {
         action: "Completed by Admin",
         actionBy: currentUser,
-        remark: creditNoteNum ? `Return marked as Complete (Credit Note: ${creditNoteNum})` : "Return marked as Complete",
+        remark: creditNoteNum 
+          ? `Return marked as Complete (Credit Note: ${creditNoteNum}, Amount: ${invoiceAmount || "0"})` 
+          : `Return marked as Complete (Amount: ${invoiceAmount || "0"})`,
         timestamp: Date.now()
       }
     ];
@@ -990,7 +1014,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     setDbOrders((prev) =>
       prev.map((o) =>
         o.ID === order.ID
-          ? { ...o, Status: "Complete", Credit_Note_Number: creditNoteNum || "", Logs: JSON.stringify(updatedLogs) }
+          ? { 
+              ...o, 
+              Completed: "true", 
+              Credit_Note_Number: creditNoteNum || "", 
+              Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+              Logs: JSON.stringify(updatedLogs) 
+            }
           : o
       )
     );
@@ -1002,8 +1032,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       action: "update",
       data: {
         ID: order.ID,
-        Status: "Complete",
+        Completed: "true",
         Credit_Note_Number: creditNoteNum || "",
+        Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
         Logs: JSON.stringify(updatedLogs)
       }
     };
@@ -1031,7 +1062,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     setReturnLocation("");
     setReturnPoscode("");
     setReturnCollectBeforeDate("");
-    setReturnMark("");
+    setReturnMark(getNextAvailableReturnMark(drafts, dbOrders));
     setReturnItems([]);
     setReturnCollectMethod("Company Vehicle");
     setIsReturnPanelOpen(true);
@@ -1039,9 +1070,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   const openEditReturnPanel = (order: DbOrder) => {
     setEditingReturn(order);
-    setReturnRefNumber(order.Ref_Number || order.DO_Number || "");
-    setReturnLocation(order.Deliver_To || "");
-    setReturnPoscode(order.Poscode || "");
+    setReturnRefNumber(String(order.Ref_Number || order.DO_Number || ""));
+    setReturnLocation(String(order.Deliver_To || ""));
+    setReturnPoscode(String(order.Poscode || ""));
     
     if (order.Deadline) {
       const d = new Date(Number(order.Deadline));
@@ -1053,7 +1084,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       setReturnCollectBeforeDate("");
     }
     
-    const markVal = order.Mark || "";
+    const markVal = String(order.Mark || "");
     setReturnMark(markVal.startsWith("R") ? markVal.substring(1) : markVal);
     
     let itemsList: SKUItem[] = [];
@@ -1067,11 +1098,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   const openEditOrderPanel = (order: DbOrder) => {
     setEditingOrder(order);
-    setCreateDoNumber(order.DO_Number);
-    setCreateRefNumber(order.Ref_Number || "");
-    setCreateMark(order.Mark);
+    setCreateDoNumber(String(order.DO_Number || ""));
+    setCreateRefNumber(String(order.Ref_Number || ""));
+    setCreateMark(String(order.Mark || ""));
     
-    const typeStr = order.Type || "Normal";
+    const typeStr = String(order.Type || "Normal");
     let parsedType: "Normal" | "Urgent" | "Appointment" = "Normal";
     if (typeStr.startsWith("Appointment")) {
       parsedType = "Appointment";
@@ -1080,9 +1111,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
     setCreateType(parsedType);
     
-    setCreateDeliverTo(order.Deliver_To);
-    setCreatePoscode(order.Poscode || "");
-    setCreateDeliverMethod(order.Deliver_Method || "Company Delivery");
+    setCreateDeliverTo(String(order.Deliver_To || ""));
+    setCreatePoscode(String(order.Poscode || ""));
+    setCreateDeliverMethod(String(order.Deliver_Method || "Company Delivery"));
     
     let parsedItems: SKUItem[] = [];
     try {
@@ -1158,8 +1189,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const isMarkActive = dbOrders.some(o => 
       o.Type === "Return" && 
       o.Status !== "Complete" && 
+      String(o.Completed) !== "true" &&
+      o.Completed !== true &&
       String(o.Mark).toUpperCase() === finalMark.toUpperCase() &&
       (!isEdit || o.ID !== editingReturn.ID)
+    ) || drafts.some(d =>
+      d.type === "Return" &&
+      String(d.mark).toUpperCase() === finalMark.toUpperCase()
     );
     
     if (isMarkActive) {
@@ -1207,44 +1243,58 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         remark: remarkText,
         timestamp: Date.now()
       });
-    }
 
-    const payloadData = {
-      ...payloadDataTemp,
-      Logs: JSON.stringify(initialLogs)
-    };
+      const payloadData = {
+        ...payloadDataTemp,
+        Logs: JSON.stringify(initialLogs)
+      };
 
-    const previousDbOrders = [...dbOrders];
-    
-    if (isEdit) {
+      const previousDbOrders = [...dbOrders];
       setDbOrders(prev => prev.map(o => o.ID === orderId ? { ...o, ...payloadData } as DbOrder : o));
-    } else {
-      setDbOrders(prev => [...prev, payloadData as DbOrder]);
-    }
+      setIsReturnPanelOpen(false);
+      showToast(`Return order ${returnRefNumber} updated.`, "success");
 
-    setIsReturnPanelOpen(false);
-    showToast(isEdit ? `Return order ${returnRefNumber} updated.` : `Return order ${returnRefNumber} created.`, "success");
+      const payload = {
+        sheet: "Track_Orders",
+        action: "update",
+        data: payloadData
+      };
 
-    const payload = {
-      sheet: "Track_Orders",
-      action: isEdit ? "update" : "insert",
-      data: payloadData
-    };
-
-    try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        fetchDatabaseOrders(true);
-      } else {
-        throw new Error();
+      try {
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          fetchDatabaseOrders(true);
+        } else {
+          throw new Error();
+        }
+      } catch (_) {
+        setDbOrders(previousDbOrders);
+        showToast("Failed to save return order.", "error");
       }
-    } catch (_) {
-      setDbOrders(previousDbOrders);
-      showToast("Failed to save return order.", "error");
+    } else {
+      // Create Return Order -> Add to Drafts first
+      const newDraft: TrackOrderDraft = {
+        id: orderId,
+        doNumber: returnRefNumber,
+        refNumber: returnRefNumber,
+        mark: finalMark,
+        type: "Return",
+        deliverTo: returnLocation,
+        poscode: returnPoscode.trim(),
+        items: returnItems.filter(i => i.sku.trim() !== ""),
+        deadline: epochDate,
+        deliverMethod: returnCollectMethod,
+        latitude: lat,
+        longitude: lng
+      };
+
+      saveDraftsToStorage([...drafts, newDraft]);
+      setIsReturnPanelOpen(false);
+      showToast(`Return order draft created.`, "success");
     }
   };
 
@@ -1371,6 +1421,32 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     return "";
   };
 
+  const getNextAvailableReturnMark = (currentDrafts: TrackOrderDraft[], currentDbOrders: DbOrder[]): string => {
+    const usedMarks = new Set<string>();
+    
+    currentDbOrders.forEach((o) => {
+      if (o.Mark) {
+        usedMarks.add(String(o.Mark).trim().toUpperCase());
+      }
+    });
+
+    currentDrafts.forEach((d) => {
+      if (d.mark) {
+        usedMarks.add(String(d.mark).trim().toUpperCase());
+      }
+    });
+
+    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    for (let i = 0; i < alphabet.length; i++) {
+      const char = alphabet[i];
+      const candidate = `R${char}`;
+      if (!usedMarks.has(candidate)) {
+        return char;
+      }
+    }
+    return "";
+  };
+
   // Get Singapore Zone based on 6-digit postcode (first 2 digits)
   const getZoneFromPostcode = (postcode: string | number): string => {
     if (!postcode) return "Unknown";
@@ -1454,7 +1530,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Singapore Map Pin Construction
   const activePins = React.useMemo(() => {
-    const deliveryPins = pendingOrders
+    // 1. Deliveries (Type !== "Return")
+    const targetDeliveries = dbOrders.filter((o) => {
+      if (o.Type === "Return") return false;
+      if (String(o.Completed) === "true" || o.Completed === true) return false;
+      
+      if (mapFilter === "pending") {
+        return o.Status !== "Delivered";
+      } else {
+        return o.Status === "Delivered";
+      }
+    });
+
+    const deliveryPins = targetDeliveries
       .filter((o) => o.Poscode && validatePoscode(o.Poscode))
       .map((o) => {
         let lat = Number(o.Latitude);
@@ -1506,8 +1594,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         };
       });
 
-    const activeReturns = dbOrders.filter((o) => o.Type === "Return" && o.Status !== "Complete");
-    const returnPins = activeReturns
+    // 2. Returns (Type === "Return")
+    const targetReturns = dbOrders.filter((o) => {
+      if (o.Type !== "Return") return false;
+      if (String(o.Completed) === "true" || o.Completed === true) return false;
+      if (o.Status === "Complete") return false; // Exclude complete status as requested
+
+      if (mapFilter === "pending") {
+        return o.Status !== "Collected" && o.Status !== "Return Collected";
+      } else {
+        return o.Status === "Collected" || o.Status === "Return Collected";
+      }
+    });
+
+    const returnPins = targetReturns
       .filter((o) => o.Poscode)
       .map((o) => {
         let lat = Number(o.Latitude);
@@ -1534,18 +1634,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         let textColor = "#FFFFFF";
         let displayStatus = "Driver Deliver or Collect Goods";
 
-        if (o.Status === "Collected") {
+        if (o.Status === "Collected" || o.Status === "Return Collected") {
           color = "#14532D"; // Deep Forest Green
           textColor = "#FFFFFF";
           displayStatus = "Complete Job";
-        } else if (o.Status === "Pending") {
+        } else {
           color = "#007A87"; // Teal Blue
           textColor = "#FFFFFF";
           displayStatus = "Driver Deliver or Collect Goods";
-        } else if (o.Status === "Complete") {
-          color = "#14532D"; // Deep Forest Green
-          textColor = "#FFFFFF";
-          displayStatus = "Complete Job";
         }
 
         return {
@@ -1565,7 +1661,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       });
 
     return [...deliveryPins, ...returnPins];
-  }, [pendingOrders, dbOrders, stores]);
+  }, [dbOrders, stores, mapFilter]);
+
+  // View Logs Dialog
+  const handleOpenLogs = React.useCallback((order: DbOrder) => {
+    let list: LogEntry[] = [];
+    try {
+      list = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+    } catch (_) {}
+    setLogsList(list);
+    setSelectedOrderMark(order.Mark || "-");
+    setSelectedOrderId(order.ID || "-");
+    setSelectedOrder(order);
+    setIsLogsModalOpen(true);
+  }, []);
 
   // 1. Initialize and cleanup Leaflet Map instance
   React.useEffect(() => {
@@ -1625,49 +1734,64 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     L.marker([1.3197, 103.8962], { icon: warehouseIcon })
       .addTo(markersGroup);
 
-    // Add Active Order Pins with circular jittering for duplicate locations
-    const coordinatesCount: Record<string, number> = {};
-
-    activePins.forEach((pin) => {
-      const key = `${pin.lat.toFixed(4)}_${pin.lng.toFixed(4)}`;
-      let finalLat = pin.lat;
-      let finalLng = pin.lng;
-
-      if (coordinatesCount[key] !== undefined) {
-        const count = coordinatesCount[key];
-        coordinatesCount[key] = count + 1;
-
-        // Spiral/circular distribution around the base coordinate
-        const angle = (count * 2 * Math.PI) / 8; // 8 directions
-        const radius = 0.00015 * Math.ceil(count / 8); // shift radius outwards slightly as count increases
-        
-        finalLat = pin.lat + radius * Math.cos(angle);
-        finalLng = pin.lng + radius * Math.sin(angle);
-      } else {
-        coordinatesCount[key] = 1;
+    // Register global window logs click callback
+    (window as any).openOrderLogs = (orderId: string) => {
+      const foundOrder = dbOrders.find(o => o.ID === orderId);
+      if (foundOrder) {
+        handleOpenLogs(foundOrder);
       }
+    };
 
-      const customIcon = L.divIcon({
-        html: `<div style="background-color: ${pin.color}; border: 1.5px solid white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-family: var(--font-primary, sans-serif); font-size: 10px; font-weight: 900; color: ${pin.textColor}; box-shadow: 0 2px 4px rgba(0,0,0,0.35); line-height: 22px; text-align: center;">${pin.mark}</div>`,
-        className: "",
-        iconSize: [24, 24],
-        iconAnchor: [12, 12],
-        popupAnchor: [0, -10]
-      });
+    // Group pins by coordinates (rounded to 5 decimals for exact matches)
+    const pinsByLocation: Record<string, typeof activePins> = {};
+    activePins.forEach((pin) => {
+      const key = `${pin.lat.toFixed(5)}_${pin.lng.toFixed(5)}`;
+      if (!pinsByLocation[key]) {
+        pinsByLocation[key] = [];
+      }
+      pinsByLocation[key].push(pin);
+    });
 
-      L.marker([finalLat, finalLng], { icon: customIcon })
-        .bindPopup(`
-          <div style="font-family: sans-serif; font-size: 11px; line-height: 1.4; color: #18181B; font-weight: 500; min-width: 160px; padding: 2px;">
-            <div style="font-size: 12px; font-weight: bold; border-bottom: 1px solid #E5E5E5; padding-bottom: 3px; margin-bottom: 4px;">
-              ${pin.mark} - ${pin.typeDisplay}
+    // Render markers side-by-side
+    Object.values(pinsByLocation).forEach((pinsAtLoc) => {
+      const N = pinsAtLoc.length;
+      pinsAtLoc.forEach((pin, index) => {
+        // Calculate offset for side-by-side placement
+        const gap = 4;
+        const pinWidth = 24;
+        const offset = (index - (N - 1) / 2) * (pinWidth + gap);
+
+        const customIcon = L.divIcon({
+          html: `<div style="background-color: ${pin.color}; border: 1.5px solid white; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-family: var(--font-primary, sans-serif); font-size: 10px; font-weight: 900; color: ${pin.textColor}; box-shadow: 0 2px 4px rgba(0,0,0,0.35); line-height: 22px; text-align: center; white-space: nowrap;">${pin.mark}</div>`,
+          className: "",
+          iconSize: [24, 24],
+          iconAnchor: [12 - offset, 12],
+          popupAnchor: [offset, -10]
+        });
+
+        const popupHtml = `
+          <div style="font-family: sans-serif; font-size: 11px; line-height: 1.4; color: #18181B; font-weight: 500; min-width: 180px; padding: 2px;">
+            <div style="font-size: 11px; font-weight: bold; border-bottom: 1px solid #E5E5E5; padding-bottom: 3.5px; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; gap: 8px;">
+              <span>Mark ${pin.mark} (${pin.typeDisplay})</span>
+              <button onclick="window.openOrderLogs('${pin.id}')" style="color: #0B57D0; font-weight: bold; cursor: pointer; border: none; background: none; font-size: 10px; text-decoration: underline; padding: 0;">Logs</button>
             </div>
-            <div style="margin-bottom: 3px; font-weight: 600;">${pin.deliverTo}</div>
+            <div style="margin-top: 5px; margin-bottom: 3.5px; font-weight: 600; color: #000;">${pin.deliverTo}</div>
             <div style="color: #4B5563;">${pin.poscode} | ${pin.deliverMethod}</div>
           </div>
-        `)
-        .addTo(markersGroup);
+        `;
+
+        L.marker([pin.lat, pin.lng], { icon: customIcon })
+          .bindPopup(popupHtml)
+          .addTo(markersGroup)
+          .on('click', () => {
+            const foundOrder = dbOrders.find(o => o.ID === pin.id);
+            if (foundOrder) {
+              handleOpenLogs(foundOrder);
+            }
+          });
+      });
     });
-  }, [leafletLoaded, activeTab, activePins]);
+  }, [leafletLoaded, activeTab, activePins, dbOrders, handleOpenLogs]);
 
   // Save drafts helper
   const saveDraftsToStorage = (updatedDrafts: TrackOrderDraft[]) => {
@@ -1873,7 +1997,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Send Order to Database
   const handleSendOrder = async (index: number) => {
     const order = drafts[index];
-    
+    if (!order) return;
+
+    if (sendingDraftIds[order.id]) {
+      return;
+    }
+
     if (!order.mark) {
       showToast("Please assign a Mark (A, B, C, D) before sending.", "error");
       return;
@@ -1889,70 +2018,39 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       return;
     }
 
-    // Validation: "if mark A still pending, can't use, and all same"
-    const isMarkActive = pendingOrders.some(
-      (o) => String(o.Mark).toUpperCase() === order.mark.toUpperCase()
-    );
+    const isReturn = order.type === "Return";
+
+    // Validation: check if the mark is currently active
+    const isMarkActive = isReturn
+      ? dbOrders.some(
+          (o) =>
+            o.Type === "Return" &&
+            o.Status !== "Complete" &&
+            String(o.Completed) !== "true" &&
+            o.Completed !== true &&
+            String(o.Mark).toUpperCase() === order.mark.toUpperCase()
+        )
+      : pendingOrders.some(
+          (o) => String(o.Mark).toUpperCase() === order.mark.toUpperCase()
+        );
 
     if (isMarkActive) {
       showToast(`Cannot send. Mark "${order.mark}" is currently active in another pending order.`, "error");
       return;
     }
 
-    // Fetch exact coordinates from OneMap API in background before sending
-    let lat: number | string = order.latitude || "";
-    let lng: number | string = order.longitude || "";
-    try {
-      const coords = await fetchPostcodeCoordinates(order.poscode, oneMapUrl, oneMapToken);
-      if (coords) {
-        lat = coords.lat;
-        lng = coords.lng;
-      }
-    } catch (_) {}
+    // Prevent duplicate sending by tracking the draft ID
+    setSendingDraftIds((prev) => ({ ...prev, [order.id]: true }));
 
-    // Upload draft's PDF images to R2 under Track_Orders/DO_Paper/
-    let photoDoPaperUrl = "";
-    if (order.pdfImages && order.pdfImages.length > 0) {
-      showToast(`Uploading DO Paper proof (${order.pdfImages.length} page(s))...`, "info");
-      const uploadedUrls: string[] = [];
-      for (let i = 0; i < order.pdfImages.length; i++) {
-        try {
-          const base64Data = order.pdfImages[i].split(",")[1] || order.pdfImages[i];
-          const byteCharacters = atob(base64Data);
-          const byteNumbers = new Array(byteCharacters.length);
-          for (let j = 0; j < byteCharacters.length; j++) {
-            byteNumbers[j] = byteCharacters.charCodeAt(j);
-          }
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: "image/jpeg" });
-          
-          const filename = `Track_Orders/DO_Paper/${order.doNumber}_page_${i + 1}_${Date.now()}.jpg`;
-          const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
-            method: "POST",
-            headers: { "Content-Type": "image/jpeg" },
-            body: blob
-          });
-          if (uploadRes.ok) {
-            const uploadResData = await uploadRes.json();
-            if (uploadResData.success) {
-              uploadedUrls.push(uploadResData.url);
-            }
-          }
-        } catch (uploadErr) {
-          console.error("Failed to upload DO Paper page:", uploadErr);
-        }
-      }
-      if (uploadedUrls.length > 0) {
-        photoDoPaperUrl = JSON.stringify(uploadedUrls);
-      }
-    }
+    // Capture previous states for rollback
+    const previousDbOrders = [...dbOrders];
+    const previousDrafts = [...drafts];
 
-    // --- INSTANT UPDATE (OPTIMISTIC UI) ---
     const initialLogs: LogEntry[] = [
       {
-        action: "Created & Sent",
+        action: isReturn ? "Created Return" : "Created & Sent",
         actionBy: currentUser,
-        remark: "Initial creation",
+        remark: isReturn ? "Initial return creation" : "Initial creation",
         timestamp: Date.now()
       }
     ];
@@ -1964,10 +2062,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
 
     let deadlineVal = order.deadline;
-    if (order.type === "Urgent" && (!deadlineVal || deadlineVal <= 0)) {
+    if (!isReturn && order.type === "Urgent" && (!deadlineVal || deadlineVal <= 0)) {
       deadlineVal = getUrgentDeadline();
     }
 
+    const defaultMethod = isReturn ? "Company Vehicle" : "Company Delivery";
+    const initialStatus = isReturn ? "Pending" : "Ready to Pick";
+
+    // --- INSTANT UPDATE (OPTIMISTIC UI) ---
+    // Start with local/temporary coordinates/images and let it instantly display
     const newDbOrder: DbOrder = {
       ID: order.id,
       DO_Number: order.doNumber,
@@ -1977,24 +2080,21 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       Deliver_To: order.deliverTo,
       Poscode: order.poscode,
       Items: JSON.stringify(order.items),
-      Status: "Ready to Pick",
+      Status: initialStatus,
       Logs: JSON.stringify(initialLogs),
       Timestamp: Date.now(),
       Delivered_At: "",
       Completed: "false",
       Deadline: deadlineVal || "",
-      Deliver_Method: order.deliverMethod || "Company Delivery",
-      Latitude: lat,
-      Longitude: lng,
-      Photo_DO_Paper: photoDoPaperUrl,
+      Deliver_Method: order.deliverMethod || defaultMethod,
+      Latitude: order.latitude || "",
+      Longitude: order.longitude || "",
+      Photo_DO_Paper: "",
       Photo_DO_Paper_Signed: "",
       Photo_Delivered_Proof: "",
       Photo_Handover_Proof: "",
       Photo_Picker_Proof: ""
     };
-
-    const previousDbOrders = [...dbOrders];
-    const previousDrafts = [...drafts];
 
     // Update state instantly
     setDbOrders((prev) => [...prev, newDbOrder]);
@@ -2004,53 +2104,116 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     showToast(`Order ${order.doNumber} sent.`, "info");
 
     // --- SILENT BACKGROUND UPDATE ---
-    const payload = {
-      sheet: "Track_Orders",
-      action: "insert",
-      data: {
-        ID: order.id,
-        DO_Number: order.doNumber,
-        Ref_Number: order.refNumber || "",
-        Mark: order.mark,
-        Type: finalType,
-        Deliver_To: order.deliverTo,
-        Poscode: order.poscode,
-        Items: JSON.stringify(order.items),
-        Status: "Ready to Pick",
-        Logs: JSON.stringify(initialLogs),
-        Timestamp: Date.now(),
-        Delivered_At: "",
-        Completed: "false",
-        Deadline: deadlineVal || "",
-        Deliver_Method: order.deliverMethod || "Company Delivery",
-        Latitude: lat,
-        Longitude: lng,
-        Photo_DO_Paper: photoDoPaperUrl,
-        Photo_DO_Paper_Signed: "",
-        Photo_Delivered_Proof: "",
-        Photo_Handover_Proof: "",
-        Photo_Picker_Proof: ""
-      }
-    };
+    (async () => {
+      // Fetch exact coordinates from OneMap API in background
+      let lat: number | string = order.latitude || "";
+      let lng: number | string = order.longitude || "";
+      try {
+        const coords = await fetchPostcodeCoordinates(order.poscode, oneMapUrl, oneMapToken);
+        if (coords) {
+          lat = coords.lat;
+          lng = coords.lng;
+        }
+      } catch (_) {}
 
-    fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    })
-      .then(async (res) => {
+      // Upload draft's PDF images to R2 under Track_Orders/DO_Paper/ in background
+      let photoDoPaperUrl = "";
+      if (order.pdfImages && order.pdfImages.length > 0) {
+        showToast(`Uploading DO Paper proof (${order.pdfImages.length} page(s))...`, "info");
+        const uploadedUrls: string[] = [];
+        for (let i = 0; i < order.pdfImages.length; i++) {
+          try {
+            const base64Data = order.pdfImages[i].split(",")[1] || order.pdfImages[i];
+            const byteCharacters = atob(base64Data);
+            const byteNumbers = new Array(byteCharacters.length);
+            for (let j = 0; j < byteCharacters.length; j++) {
+              byteNumbers[j] = byteCharacters.charCodeAt(j);
+            }
+            const byteArray = new Uint8Array(byteNumbers);
+            const blob = new Blob([byteArray], { type: "image/jpeg" });
+            
+            const filename = `Track_Orders/DO_Paper/${order.doNumber}_page_${i + 1}_${Date.now()}.jpg`;
+            const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
+              method: "POST",
+              headers: { "Content-Type": "image/jpeg" },
+              body: blob
+            });
+            if (uploadRes.ok) {
+              const uploadResData = await uploadRes.json();
+              if (uploadResData.success) {
+                uploadedUrls.push(uploadResData.url);
+              }
+            }
+          } catch (uploadErr) {
+            console.error("Failed to upload DO Paper page:", uploadErr);
+          }
+        }
+        if (uploadedUrls.length > 0) {
+          photoDoPaperUrl = JSON.stringify(uploadedUrls);
+        }
+      }
+
+      // Sync payload to database via Cloudflare Worker
+      const payload = {
+        sheet: "Track_Orders",
+        action: "insert",
+        data: {
+          ID: order.id,
+          DO_Number: order.doNumber,
+          Ref_Number: order.refNumber || "",
+          Mark: order.mark,
+          Type: finalType,
+          Deliver_To: order.deliverTo,
+          Poscode: order.poscode,
+          Items: JSON.stringify(order.items),
+          Status: initialStatus,
+          Logs: JSON.stringify(initialLogs),
+          Timestamp: Date.now(),
+          Delivered_At: "",
+          Completed: "false",
+          Deadline: deadlineVal || "",
+          Deliver_Method: order.deliverMethod || defaultMethod,
+          Latitude: lat,
+          Longitude: lng,
+          Photo_DO_Paper: photoDoPaperUrl,
+          Photo_DO_Paper_Signed: "",
+          Photo_Delivered_Proof: "",
+          Photo_Handover_Proof: "",
+          Photo_Picker_Proof: ""
+        }
+      };
+
+      try {
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
         if (!res.ok) throw new Error(`Server returned status ${res.status}`);
         const result = await res.json();
-        if (!result.success) throw new Error(result.error || "Failed to update spreadsheet");
+        if (!result.success) throw new Error(result.error || "Failed to update database");
 
-        fetchDatabaseOrders(); // refresh cache quietly
-      })
-      .catch((err) => {
-        // Rollback states on failure
+        // Clear sending status
+        setSendingDraftIds((prev) => {
+          const next = { ...prev };
+          delete next[order.id];
+          return next;
+        });
+
+        // Quieter database refresh to align coordinates/images in state
+        fetchDatabaseOrders();
+      } catch (err: any) {
+        // Rollback state if synchronization fails
         setDbOrders(previousDbOrders);
         saveDraftsToStorage(previousDrafts);
+        setSendingDraftIds((prev) => {
+          const next = { ...prev };
+          delete next[order.id];
+          return next;
+        });
         showToast("Sync failed: " + err.message + ". Reverted changes.", "error");
-      });
+      }
+    })();
   };
 
   // Revoke Action: Deletes from Sheets and moves back to drafts
@@ -2113,7 +2276,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   };
 
   // Complete Action: marks Completed = true
-  const handleCompleteOrder = async (order: DbOrder, invoiceNum?: string) => {
+  const handleCompleteOrder = async (order: DbOrder, invoiceNum?: string, invoiceAmount?: number | string) => {
     // --- INSTANT UPDATE (OPTIMISTIC UI) ---
     let currentLogs: LogEntry[] = [];
     try {
@@ -2125,7 +2288,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       {
         action: "Completed by Admin",
         actionBy: currentUser,
-        remark: invoiceNum ? `Archived & Verified (Invoice: ${invoiceNum})` : "Archived & Verified",
+        remark: invoiceNum 
+          ? `Archived & Verified (Invoice: ${invoiceNum}, Amount: ${invoiceAmount || "0"})` 
+          : `Archived & Verified (Amount: ${invoiceAmount || "0"})`,
         timestamp: Date.now()
       }
     ];
@@ -2136,7 +2301,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     setDbOrders((prev) =>
       prev.map((o) =>
         o.ID === order.ID
-          ? { ...o, Completed: "true", Invoice_Number: invoiceNum || "", Logs: JSON.stringify(updatedLogs) }
+          ? { 
+              ...o, 
+              Completed: "true", 
+              Invoice_Number: invoiceNum || "", 
+              Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+              Logs: JSON.stringify(updatedLogs) 
+            }
           : o
       )
     );
@@ -2151,6 +2322,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         ID: order.ID,
         Completed: "true",
         Invoice_Number: invoiceNum || "",
+        Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
         Logs: JSON.stringify(updatedLogs)
       }
     };
@@ -2172,6 +2344,237 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         setDbOrders(previousDbOrders);
         showToast("Archive failed: " + err.message + ". Reverted changes.", "error");
       });
+  };
+
+  const handleRevokeCompleteOrder = async (order: DbOrder) => {
+    let currentLogs: LogEntry[] = [];
+    try {
+      currentLogs = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+    } catch (_) {}
+
+    const updatedLogs = [
+      ...currentLogs,
+      {
+        action: "Revoked Complete by Admin",
+        actionBy: currentUser,
+        remark: "Order reverted back to active deliveries",
+        timestamp: Date.now()
+      }
+    ];
+
+    const previousDbOrders = [...dbOrders];
+
+    // Update state instantly (Optimistic UI)
+    setDbOrders((prev) =>
+      prev.map((o) =>
+        o.ID === order.ID
+          ? { 
+              ...o, 
+              Completed: "false", 
+              Logs: JSON.stringify(updatedLogs) 
+            }
+          : o
+      )
+    );
+
+    showToast(`Order ${order.DO_Number} reverted to active deliveries.`, "info");
+
+    const payload = {
+      sheet: "Track_Orders",
+      action: "update",
+      data: {
+        ID: order.ID,
+        Completed: "false",
+        Logs: JSON.stringify(updatedLogs)
+      }
+    };
+
+    try {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        fetchDatabaseOrders(true);
+      } else {
+        throw new Error("Worker responded with error");
+      }
+    } catch (err: any) {
+      setDbOrders(previousDbOrders);
+      showToast("Revoke failed: " + err.message, "error");
+    }
+  };
+
+  const handleRevokeCompleteReturnOrder = async (order: DbOrder) => {
+    let currentLogs: LogEntry[] = [];
+    try {
+      currentLogs = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+    } catch (_) {}
+
+    const updatedLogs = [
+      ...currentLogs,
+      {
+        action: "Revoked Complete by Admin",
+        actionBy: currentUser,
+        remark: "Return reverted back to active returns",
+        timestamp: Date.now()
+      }
+    ];
+
+    const previousDbOrders = [...dbOrders];
+
+    // Update state instantly (Optimistic UI)
+    setDbOrders((prev) =>
+      prev.map((o) =>
+        o.ID === order.ID
+          ? { 
+              ...o, 
+              Completed: "false", 
+              Logs: JSON.stringify(updatedLogs) 
+            }
+          : o
+      )
+    );
+
+    showToast(`Return order ${order.DO_Number} reverted to active returns.`, "info");
+
+    const payload = {
+      sheet: "Track_Orders",
+      action: "update",
+      data: {
+        ID: order.ID,
+        Completed: "false",
+        Logs: JSON.stringify(updatedLogs)
+      }
+    };
+
+    try {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        fetchDatabaseOrders(true);
+      } else {
+        throw new Error("Worker responded with error");
+      }
+    } catch (err: any) {
+      setDbOrders(previousDbOrders);
+      showToast("Revoke failed: " + err.message, "error");
+    }
+  };
+
+  const handleTriggerRevokeComplete = (order: DbOrder) => {
+    setPendingRevokeCompleteOrder(order);
+    setIsRevokeCompleteConfirmOpen(true);
+  };
+
+  const handleConfirmRevokeComplete = async () => {
+    if (!pendingRevokeCompleteOrder) return;
+    setIsRevokeCompleteConfirmOpen(false);
+    const order = pendingRevokeCompleteOrder;
+    setPendingRevokeCompleteOrder(null);
+
+    if (order.Type === "Return") {
+      await handleRevokeCompleteReturnOrder(order);
+    } else {
+      await handleRevokeCompleteOrder(order);
+    }
+  };
+
+  const handleOpenEditInvoice = (order: DbOrder) => {
+    setEditInvoiceOrder(order);
+    const isReturn = order.Type === "Return";
+    const num = isReturn ? order.Credit_Note_Number : order.Invoice_Number;
+    setEditInvoiceNum(num !== undefined && num !== null ? String(num) : "");
+    setEditInvoiceAmount(order.Invoice_Amount !== undefined && order.Invoice_Amount !== null ? String(order.Invoice_Amount) : "");
+    setIsEditInvoiceModalOpen(true);
+  };
+
+  const handleSaveEditInvoice = async () => {
+    if (!editInvoiceOrder) return;
+    setIsEditInvoiceModalOpen(false);
+
+    let currentLogs: LogEntry[] = [];
+    try {
+      currentLogs = typeof editInvoiceOrder.Logs === "string" ? JSON.parse(editInvoiceOrder.Logs) : editInvoiceOrder.Logs;
+    } catch (_) {}
+
+    const isReturn = editInvoiceOrder.Type === "Return";
+
+    const updatedLogs = [
+      ...currentLogs,
+      {
+        action: isReturn ? "Credit Note Edited by Admin" : "Invoice Edited by Admin",
+        actionBy: currentUser,
+        remark: isReturn 
+          ? `Credit Note updated: ${editInvoiceNum} (Amount: ${editInvoiceAmount})`
+          : `Invoice updated: ${editInvoiceNum} (Amount: ${editInvoiceAmount})`,
+        timestamp: Date.now()
+      }
+    ];
+
+    const previousDbOrders = [...dbOrders];
+
+    // Optimistic UI update
+    setDbOrders((prev) =>
+      prev.map((o) => {
+        if (o.ID === editInvoiceOrder.ID) {
+          if (isReturn) {
+            return { 
+              ...o, 
+              Credit_Note_Number: editInvoiceNum.trim(),
+              Invoice_Amount: editInvoiceAmount.trim(),
+              Logs: JSON.stringify(updatedLogs) 
+            };
+          } else {
+            return { 
+              ...o, 
+              Invoice_Number: editInvoiceNum.trim(),
+              Invoice_Amount: editInvoiceAmount.trim(),
+              Logs: JSON.stringify(updatedLogs) 
+            };
+          }
+        }
+        return o;
+      })
+    );
+
+    showToast(isReturn ? `Credit Note updated for ${editInvoiceOrder.DO_Number}` : `Invoice updated for ${editInvoiceOrder.DO_Number}`, "success");
+
+    const payload = {
+      sheet: "Track_Orders",
+      action: "update",
+      data: isReturn 
+        ? {
+            ID: editInvoiceOrder.ID,
+            Credit_Note_Number: editInvoiceNum.trim(),
+            Invoice_Amount: editInvoiceAmount.trim(),
+            Logs: JSON.stringify(updatedLogs)
+          }
+        : {
+            ID: editInvoiceOrder.ID,
+            Invoice_Number: editInvoiceNum.trim(),
+            Invoice_Amount: editInvoiceAmount.trim(),
+            Logs: JSON.stringify(updatedLogs)
+          }
+    };
+
+    try {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        fetchDatabaseOrders(true);
+      }
+    } catch (err: any) {
+      setDbOrders(previousDbOrders);
+      showToast("Update failed: " + err.message, "error");
+    }
   };
 
   const handleTriggerChangeStatus = (order: DbOrder) => {
@@ -2271,25 +2674,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const handleTriggerCompleteOrder = (order: DbOrder) => {
     setPendingCompleteOrder(order);
     setInvoiceNumberInput("");
+    setInvoiceAmountInput("");
     setIsCompleteConfirmOpen(true);
   };
 
   const handleTriggerCompleteReturnOrder = (order: DbOrder) => {
     setPendingCompleteOrder(order);
     setCreditNoteInput("");
+    setInvoiceAmountInput("");
     setIsCompleteConfirmOpen(true);
-  };
-
-  const handleSkipComplete = () => {
-    if (!pendingCompleteOrder) return;
-    setIsCompleteConfirmOpen(false);
-    
-    if (pendingCompleteOrder.Type === "Return") {
-      handleCompleteReturnOrder(pendingCompleteOrder, "");
-    } else {
-      handleCompleteOrder(pendingCompleteOrder, "");
-    }
-    setPendingCompleteOrder(null);
   };
 
   const handleContinueComplete = () => {
@@ -2297,9 +2690,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     setIsCompleteConfirmOpen(false);
     
     if (pendingCompleteOrder.Type === "Return") {
-      handleCompleteReturnOrder(pendingCompleteOrder, creditNoteInput.trim());
+      handleCompleteReturnOrder(pendingCompleteOrder, creditNoteInput.trim(), invoiceAmountInput.trim());
     } else {
-      handleCompleteOrder(pendingCompleteOrder, invoiceNumberInput.trim());
+      handleCompleteOrder(pendingCompleteOrder, invoiceNumberInput.trim(), invoiceAmountInput.trim());
     }
     setPendingCompleteOrder(null);
   };
@@ -2343,19 +2736,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   const handleDeletePanelItemRow = (idx: number) => {
     setPanelItems(panelItems.filter((_, index) => index !== idx));
-  };
-
-  // View Logs Dialog
-  const handleOpenLogs = (order: DbOrder) => {
-    let list: LogEntry[] = [];
-    try {
-      list = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
-    } catch (_) {}
-    setLogsList(list);
-    setSelectedOrderMark(order.Mark || "-");
-    setSelectedOrderId(order.ID || "-");
-    setSelectedOrder(order);
-    setIsLogsModalOpen(true);
   };
 
 
@@ -2416,19 +2796,21 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Delivery</span>
-                <span className="text-3xl font-black text-zinc-950 mt-1">{pendingOrders.length}</span>
+                <span className="text-3xl font-bold text-zinc-950 mt-1">
+                  {pendingOrders.filter((o) => o.Status !== "Delivered").length}
+                </span>
               </div>
               <div className="h-10 w-10 bg-[#E8F0FE] rounded flex items-center justify-center text-[#0B57D0]">
                 <Calendar size={18} className="stroke-[2.5]" />
               </div>
             </div>
 
-            {/* Card 2: Pending Return Delivery */}
+            {/* Card 2: Pending Return */}
             <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Return</span>
-                <span className="text-3xl font-black text-zinc-950 mt-1">
-                  {dbOrders.filter((o) => o.Type === "Return" && o.Status !== "Complete").length}
+                <span className="text-3xl font-bold text-zinc-950 mt-1">
+                  {dbOrders.filter((o) => o.Type === "Return" && String(o.Completed) !== "true" && o.Completed !== true && o.Status !== "Collected" && o.Status !== "Return Collected").length}
                 </span>
               </div>
               <div className="h-10 w-10 bg-[#FCE8E6] rounded flex items-center justify-center text-[#C5221F]">
@@ -2436,20 +2818,46 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               </div>
             </div>
 
-            {/* Card 3: Qty Done Today */}
+            {/* Card 3: Task Done */}
             <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
               <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Qty Done Today</span>
-                <span className="text-3xl font-black text-zinc-950 mt-1">{qtyDoneToday}</span>
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Task Done</span>
+                <span className="text-3xl font-bold text-zinc-950 mt-1">{tasksDoneToday}</span>
               </div>
               <div className="h-10 w-10 bg-[#E6F4EA] rounded flex items-center justify-center text-[#137333]">
-                <BarChart3 size={18} className="stroke-[2.5]" />
+                <CheckCircle size={18} className="stroke-[2.5]" />
               </div>
             </div>
           </div>
 
           {/* Full Width & Height Map Container */}
           <div className="w-full h-[520px] rounded border border-slate-200 overflow-hidden relative shadow-sm bg-white">
+            {/* Map Filter Toggle Button Overlay */}
+            <div className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur-xs border border-slate-200 rounded shadow-md p-1 flex gap-1">
+              <button
+                type="button"
+                onClick={() => setMapFilter("pending")}
+                className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-all select-none ${
+                  mapFilter === "pending"
+                    ? "bg-[#0B57D0] text-white"
+                    : "bg-transparent text-zinc-600 hover:bg-slate-100 hover:text-zinc-950"
+                }`}
+              >
+                Pending
+              </button>
+              <button
+                type="button"
+                onClick={() => setMapFilter("complete")}
+                className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-all select-none ${
+                  mapFilter === "complete"
+                    ? "bg-[#0B57D0] text-white"
+                    : "bg-transparent text-zinc-600 hover:bg-slate-100 hover:text-zinc-950"
+                }`}
+              >
+                Complete
+              </button>
+            </div>
+
             <div id="leaflet-map" className="w-full h-full z-10" />
             {!leafletLoaded && (
               <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-20">
@@ -2514,9 +2922,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10"></th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Mark</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">DO & Ref Number</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Reference Number</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Type</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Deliver To</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Address</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Poscode</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Method</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Items</th>
@@ -2608,8 +3016,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             <td className="p-3 w-36 align-middle border-b border-zinc-200">
                               {renderTypeCell(order)}
                             </td>
-                            <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200" title={order.Deliver_To}>
-                              {truncateCharacters(order.Deliver_To)}
+                            <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
+                              {order.Deliver_To}
                             </td>
                             <td className="p-3 w-28 text-center text-zinc-500 align-middle border-b border-zinc-200">
                               {renderPoscodeCell(order.Poscode)}
@@ -2658,13 +3066,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   <table className="w-full text-left font-primary text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
-                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Delivered (date time)</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-24 align-middle z-10"></th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Delivered</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Deliver by</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Mark</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">DO & Ref Number</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Deliver To</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Poscode</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-44 align-middle z-10">Reference Number</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Address</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Method</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Invoice</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Amount</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Items</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Logs</th>
                       </tr>
@@ -2698,29 +3108,56 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
                             } hover:bg-slate-50`}
                           >
+                            <td className="p-3 w-24 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                              <button
+                                type="button"
+                                onClick={() => handleTriggerRevokeComplete(order)}
+                                title="Revoke Complete (Send back to Pending)"
+                                className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                              >
+                                <Undo size={12} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditInvoice(order)}
+                                title="Edit Invoice Details"
+                                className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                              >
+                                <Pencil size={12} />
+                              </button>
+                            </td>
                             <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
                               {formatTimestamp(deliveredTs)}
                             </td>
+                            <td className="p-3 w-36 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                              {order.Driver || "-"}
+                            </td>
                             <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                              <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-emerald-50 text-emerald-700 border-emerald-200">
-                                Delivered
-                              </span>
+                              {order.Invoice_Number ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
+                                  Invoiced
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-700 border-amber-200">
+                                  Pending Invoice
+                                </span>
+                              )}
                             </td>
-                            <td className="p-3 w-20 text-center font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                              {order.Mark}
-                            </td>
-                            <td className="p-3 w-56 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
+                            <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
                               {order.DO_Number}
                               {order.Ref_Number ? `_${order.Ref_Number}` : ""}
                             </td>
-                            <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200" title={order.Deliver_To}>
-                              {truncateCharacters(order.Deliver_To)}
-                            </td>
-                            <td className="p-3 w-28 text-center text-zinc-500 align-middle border-b border-zinc-200">
-                              {renderPoscodeCell(order.Poscode)}
+                            <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
+                              {order.Deliver_To}
                             </td>
                             <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
                               {order.Deliver_Method || "Company Delivery"}
+                            </td>
+                            <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                              {order.Invoice_Number || "-"}
+                            </td>
+                            <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                              {order.Invoice_Amount ? `$${Number(order.Invoice_Amount).toFixed(2)}` : "-"}
                             </td>
                             <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                               <button
@@ -2729,16 +3166,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
                               >
                                 <Boxes size={12} className="text-zinc-500" />
-                                <span>{itemsCount}</span>
+                                <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
                               </button>
                             </td>
                             <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
                               <button
                                 type="button"
                                 onClick={() => handleOpenLogs(order)}
-                                className="p-1 rounded hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-all cursor-pointer"
+                                className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 cursor-pointer transition-all outline-none mx-auto"
                               >
-                                <History size={16} />
+                                <FileText size={12} />
                               </button>
                             </td>
                           </tr>
@@ -2791,8 +3228,132 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                 <Boxes size={40} className="text-zinc-400 mb-3" />
                 <span className="font-primary text-sm text-zinc-500 font-medium">
-                  No return orders found. Click Create Return from the Create Order tab.
+                  {activeReturnTab === "complete"
+                    ? "No completed returns. Complete returns from the Pending tab."
+                    : "No return orders found. Click Create Return from the Create Order tab."}
                 </span>
+              </div>
+            ) : activeReturnTab === "complete" ? (
+              <div className="h-full overflow-auto border border-slate-200 rounded bg-white">
+                <table className="w-full text-left font-primary text-xs border-collapse">
+                  <thead>
+                    <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
+                      <th className="sticky top-0 bg-slate-50 p-3 w-24 align-middle z-10"></th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Collected</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Collected by</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-44 align-middle z-10">Reference</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Return Collect from</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Method</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Credit Note</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Amount</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Items</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Logs</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200">
+                    {sortedReturnOrders.map((order, idx) => {
+                      let itemsCount = 0;
+                      let parsedItems: SKUItem[] = [];
+                      try {
+                        parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+                        itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
+                      } catch (_) {}
+
+                      let deliveredTs = order.Delivered_At;
+                      if (!deliveredTs) {
+                        let logsArr: LogEntry[] = [];
+                        try {
+                          logsArr = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+                          const match = logsArr.find((l) => l.action.toLowerCase() === "completed" || l.action.includes("Completed") || l.action.toLowerCase() === "complete" || l.action.includes("Complete"));
+                          if (match) deliveredTs = match.timestamp;
+                        } catch (_) {}
+                      }
+                      if (!deliveredTs) {
+                        deliveredTs = order.Timestamp; 
+                      }
+
+                      return (
+                        <tr 
+                          key={order.ID} 
+                          className={`transition-all h-14 ${
+                            idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
+                          } hover:bg-slate-50`}
+                        >
+                          <td className="p-3 w-24 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                            <button
+                              type="button"
+                              onClick={() => handleTriggerRevokeComplete(order)}
+                              title="Revoke Complete (Send back to Pending)"
+                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                            >
+                              <Undo size={12} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditInvoice(order)}
+                              title="Edit Credit Note Details"
+                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                            >
+                              <Pencil size={12} />
+                            </button>
+                          </td>
+                          <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                            {formatTimestamp(deliveredTs)}
+                          </td>
+                          <td className="p-3 w-36 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                            {order.Driver || "-"}
+                          </td>
+                          <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                            {order.Credit_Note_Number ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
+                                Credit Noted
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-700 border-amber-200">
+                                Pending CN
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
+                            {order.Ref_Number || order.DO_Number}
+                          </td>
+                          <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
+                            {order.Deliver_To}
+                          </td>
+                          <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
+                            {order.Deliver_Method || "Company Vehicle"}
+                          </td>
+                          <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                            {order.Credit_Note_Number || "-"}
+                          </td>
+                          <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                            {order.Invoice_Amount ? `$${Number(order.Invoice_Amount).toFixed(2)}` : "-"}
+                          </td>
+                          <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
+                            <button
+                              type="button"
+                              onClick={() => openItemsPanel("view", order.ID, parsedItems)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
+                            >
+                              <Boxes size={12} className="text-zinc-500" />
+                              <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
+                            </button>
+                          </td>
+                          <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenLogs(order)}
+                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 cursor-pointer transition-all outline-none mx-auto"
+                            >
+                              <FileText size={12} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             ) : (
               <div className="h-full overflow-auto border border-slate-200 rounded bg-white">
@@ -2822,7 +3383,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       let statusBadge = "bg-zinc-100 text-zinc-700 border-zinc-300";
                       if (order.Status === "Pending") {
                         statusBadge = "bg-amber-50 text-amber-700 border-amber-200";
-                      } else if (order.Status === "Collected") {
+                      } else if (order.Status === "Collected" || order.Status === "Return Collected") {
                         statusBadge = "bg-blue-50 text-blue-700 border-blue-200";
                       } else if (order.Status === "Complete") {
                         statusBadge = "bg-emerald-50 text-emerald-700 border-emerald-200";
@@ -2849,7 +3410,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               type="button"
                               onClick={() => handleDeleteReturnOrder(order)}
                               title="Delete Return"
-                              className="w-7 h-7 flex items-center justify-center rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 cursor-pointer transition-all outline-none"
+                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 cursor-pointer transition-all outline-none"
                             >
                               <Trash2 size={12} />
                             </button>
@@ -2857,7 +3418,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               type="button"
                               onClick={() => openEditReturnPanel(order)}
                               title="Edit Return"
-                              className="w-7 h-7 flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
                             >
                               <Pencil size={12} />
                             </button>
@@ -2865,17 +3426,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               type="button"
                               onClick={() => handleTriggerChangeStatus(order)}
                               title="Change Status (Overwrite)"
-                              className="w-7 h-7 flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
                             >
                               <History size={12} />
                             </button>
                             <button
                               type="button"
                               onClick={() => handleTriggerCompleteReturnOrder(order)}
-                              disabled={order.Status !== "Return Collected"}
-                              title={order.Status !== "Return Collected" ? "Cannot complete until status is Return Collected" : "Mark as Complete"}
-                              className={`w-7 h-7 flex items-center justify-center rounded border transition-all outline-none ${
-                                order.Status !== "Return Collected" 
+                              disabled={order.Status !== "Collected" && order.Status !== "Return Collected"}
+                              title={order.Status !== "Collected" && order.Status !== "Return Collected" ? "Cannot complete until status is Collected" : "Mark as Complete"}
+                              className={`w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border transition-all outline-none ${
+                                order.Status !== "Collected" && order.Status !== "Return Collected" 
                                   ? "border-zinc-200 bg-zinc-50 text-zinc-400 cursor-not-allowed opacity-50"
                                   : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 cursor-pointer"
                               }`}
@@ -2894,8 +3455,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           <td className="p-3 w-44 font-semibold text-zinc-850 align-middle border-b border-zinc-200">
                             {order.Ref_Number || order.DO_Number}
                           </td>
-                          <td className="p-3 w-56 text-zinc-700 font-semibold align-middle border-b border-zinc-200" title={order.Deliver_To}>
-                            {truncateCharacters(order.Deliver_To, 12)}
+                          <td className="p-3 w-56 text-zinc-700 font-semibold align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
+                            {order.Deliver_To}
                           </td>
                           <td className="p-3 w-36 text-zinc-700 font-semibold align-middle border-b border-zinc-200" title={order.Deliver_Method}>
                             {order.Deliver_Method || "—"}
@@ -2988,7 +3549,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
           <div className="flex justify-between items-center px-1">
             <h3 className="font-primary text-base font-bold text-zinc-800">
-              Draft Delivery Orders
+              Draft Orders
             </h3>
             <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-zinc-600">
               {drafts.length} Drafts
@@ -3008,11 +3569,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 <table className="w-full text-left font-primary text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
+                      <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Category</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-20 align-middle z-10"></th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Mark</th>
-                      <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">DO & Ref Number</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Reference Number</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Type</th>
-                      <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Deliver To</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Address</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Poscode</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Method</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Items</th>
@@ -3026,11 +3588,21 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
                         } hover:bg-slate-50`}
                       >
+                        <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
+                          <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${
+                            draft.type === "Return"
+                              ? "bg-amber-100 text-amber-800"
+                              : "bg-blue-100 text-blue-800"
+                          }`}>
+                            {draft.type === "Return" ? "Return" : "Deliver"}
+                          </span>
+                        </td>
                         <td className="p-3 w-20 align-middle flex items-center gap-1.5 border-b border-zinc-200">
                           <CustomButton
                             variant="secondary"
                             onClick={() => handleSendOrder(idx)}
-                            title="Send to Sheets"
+                            disabled={!!sendingDraftIds[draft.id]}
+                            title="Send Order"
                             className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
                           >
                             <Send size={12} className="text-emerald-600" />
@@ -3038,6 +3610,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           <CustomButton
                             variant="danger"
                             onClick={() => handleDeleteDraft(idx)}
+                            disabled={!!sendingDraftIds[draft.id]}
                             title="Delete Draft"
                             className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
                           >
@@ -3068,6 +3641,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               <option value="Normal">Normal</option>
                               <option value="Urgent">Urgent</option>
                               <option value="Appointment">Appointment</option>
+                              <option value="Return">Return</option>
                             </select>
                             {draft.type === "Appointment" && (
                               <div className="flex flex-col gap-1 mt-1">
@@ -3087,8 +3661,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             )}
                           </div>
                         </td>
-                        <td className="p-3 w-40 text-zinc-500 align-middle border-b border-zinc-200" title={draft.deliverTo}>
-                          {truncateCharacters(draft.deliverTo)}
+                        <td className="p-3 w-40 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={draft.deliverTo}>
+                          {draft.deliverTo}
                         </td>
                         <td className="p-3 w-28 align-middle border-b border-zinc-200">
                           <input
@@ -3605,6 +4179,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             <label className="font-bold text-zinc-700">Ref Number (ID) *</label>
             <input
               type="text"
+              maxLength={25}
               placeholder="e.g. REF-20260629-01"
               value={returnRefNumber}
               onChange={(e) => setReturnRefNumber(e.target.value)}
@@ -3658,7 +4233,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     key={i}
                     type="button"
                     className="w-full text-left px-3 py-2 hover:bg-zinc-100 text-xs font-semibold text-zinc-700 border-b border-zinc-100 last:border-0 cursor-pointer"
-                    onClick={() => {
+                    onMouseDown={(e) => {
+                      e.preventDefault();
                       const retailerId = store["Retailers ID"] !== undefined ? store["Retailers ID"] : store["Retailer ID"];
                       const retailer = retailers.find(r => String(r.ID) === String(retailerId));
                       const retailerName = retailer ? (retailer["Display Name"] || "") : "";
@@ -3943,7 +4519,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       {/* CONFIRM ORDER COMPLETE MODAL */}
       {isCompleteConfirmOpen && pendingCompleteOrder && (
         <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/50 backdrop-blur-xs font-primary p-4">
-          <div className="bg-white rounded-xl shadow-lg border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
             <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <span className="font-bold text-sm text-zinc-800">
                 {pendingCompleteOrder.Type === "Return" ? "Complete Return Order" : "Complete Delivery Order"}
@@ -3962,27 +4538,42 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   : `Are you sure you want to archive and complete order ${pendingCompleteOrder.DO_Number}?`}
               </p>
               
-              <div className="flex flex-col gap-1.5 mt-2">
-                <label className="font-bold text-zinc-700">
-                  {pendingCompleteOrder.Type === "Return" ? "Insert Credit Note Number (Optional)" : "Insert Invoice Number (Optional)"}
-                </label>
-                {pendingCompleteOrder.Type === "Return" ? (
+              <div className="flex flex-col gap-3 mt-1">
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-bold text-zinc-700">
+                    {pendingCompleteOrder.Type === "Return" ? "Credit Note Number *" : "Invoice Number *"}
+                  </label>
+                  {pendingCompleteOrder.Type === "Return" ? (
+                    <input
+                      type="text"
+                      placeholder="e.g. CN-98765"
+                      value={creditNoteInput}
+                      onChange={(e) => setCreditNoteInput(e.target.value)}
+                      className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                    />
+                  ) : (
+                    <input
+                      type="text"
+                      placeholder="e.g. INV-12345"
+                      value={invoiceNumberInput}
+                      onChange={(e) => setInvoiceNumberInput(e.target.value)}
+                      className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                    />
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-bold text-zinc-700">Total Amount *</label>
                   <input
-                    type="text"
-                    placeholder="e.g. CN-98765"
-                    value={creditNoteInput}
-                    onChange={(e) => setCreditNoteInput(e.target.value)}
-                    className="h-9 px-2.5 rounded-lg border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="e.g. 150.00"
+                    value={invoiceAmountInput}
+                    onChange={(e) => setInvoiceAmountInput(e.target.value)}
+                    className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
                   />
-                ) : (
-                  <input
-                    type="text"
-                    placeholder="e.g. INV-12345"
-                    value={invoiceNumberInput}
-                    onChange={(e) => setInvoiceNumberInput(e.target.value)}
-                    className="h-9 px-2.5 rounded-lg border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
-                  />
-                )}
+                </div>
               </div>
             </div>
             
@@ -3994,21 +4585,114 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 Cancel
               </CustomButton>
               
-              <div className="flex gap-2">
-                <CustomButton 
-                  variant="secondary" 
-                  onClick={handleSkipComplete}
-                >
-                  Skip
-                </CustomButton>
-                <CustomButton 
-                  variant="dark" 
-                  onClick={handleContinueComplete}
-                  disabled={pendingCompleteOrder.Type === "Return" ? !creditNoteInput.trim() : !invoiceNumberInput.trim()}
-                >
-                  Continue
-                </CustomButton>
+              <CustomButton 
+                variant="dark" 
+                onClick={handleContinueComplete}
+                disabled={
+                  pendingCompleteOrder.Type === "Return" 
+                    ? (!creditNoteInput.trim() || !invoiceAmountInput.trim()) 
+                    : (!invoiceNumberInput.trim() || !invoiceAmountInput.trim())
+                }
+              >
+                Continue
+              </CustomButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* EDIT COMPLETED INVOICE MODAL */}
+      {isEditInvoiceModalOpen && editInvoiceOrder && (
+        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/50 backdrop-blur-xs font-primary p-4">
+          <div className="bg-white rounded border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <span className="font-bold text-sm text-zinc-800">
+                Edit Completed Order Details
+              </span>
+              <button 
+                onClick={() => setIsEditInvoiceModalOpen(false)}
+                className="text-zinc-400 hover:text-zinc-600 focus:outline-none cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 flex flex-col gap-4 text-xs">
+              <div className="flex flex-col gap-1.5">
+                <label className="font-bold text-zinc-700">Invoice / Credit Note Number *</label>
+                <input
+                  type="text"
+                  placeholder="e.g. INV-12345"
+                  value={editInvoiceNum}
+                  onChange={(e) => setEditInvoiceNum(e.target.value)}
+                  className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                />
               </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="font-bold text-zinc-700">Total Amount *</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  placeholder="e.g. 150.00"
+                  value={editInvoiceAmount}
+                  onChange={(e) => setEditInvoiceAmount(e.target.value)}
+                  className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                />
+              </div>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
+              <CustomButton 
+                variant="secondary" 
+                onClick={() => setIsEditInvoiceModalOpen(false)}
+              >
+                Cancel
+              </CustomButton>
+              <CustomButton 
+                variant="dark" 
+                onClick={handleSaveEditInvoice}
+                disabled={!String(editInvoiceNum || "").trim() || !String(editInvoiceAmount || "").trim()}
+              >
+                Save
+              </CustomButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REVOKE COMPLETE CONFIRMATION MODAL */}
+      {isRevokeCompleteConfirmOpen && pendingRevokeCompleteOrder && (
+        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/50 backdrop-blur-xs font-primary p-4">
+          <div className="bg-white rounded border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
+            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <span className="font-bold text-sm text-zinc-800">
+                Confirm Revoke Archive
+              </span>
+              <button 
+                onClick={() => setIsRevokeCompleteConfirmOpen(false)}
+                className="text-zinc-400 hover:text-zinc-600 focus:outline-none cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 flex flex-col gap-3 text-xs">
+              <p className="text-zinc-600 font-medium leading-relaxed">
+                Are you sure you want to revoke completion for order <strong>{pendingRevokeCompleteOrder.DO_Number}</strong>? 
+                This will move the order back to active/pending status.
+              </p>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
+              <CustomButton 
+                variant="secondary" 
+                onClick={() => setIsRevokeCompleteConfirmOpen(false)}
+              >
+                Cancel
+              </CustomButton>
+              <CustomButton 
+                variant="dark" 
+                onClick={handleConfirmRevokeComplete}
+              >
+                Confirm Revoke
+              </CustomButton>
             </div>
           </div>
         </div>

@@ -533,7 +533,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
               <span 
                 key={idx} 
                 title={getProductName(lnk)}
-                className="bg-zinc-200 text-zinc-700 border border-zinc-300 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold cursor-help"
+                className="bg-[#E8F0FE] text-[#0B57D0] border border-[#AECBFA]/60 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold cursor-help"
               >
                 {lnk}
               </span>
@@ -713,7 +713,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-200 p-6 flex-shrink-0">
               <div className="flex items-center gap-2">
-                <History size={16} className="text-zinc-700" />
+                <History size={16} className="text-[#0B57D0]" />
                 <h3 className="font-bold text-sm text-zinc-800 uppercase tracking-wider">
                   {viewingLogType === "cost" ? "Cost Price Log History" : viewingLogType === "rsp" ? "RSP Log History" : "Promotion Log History"}
                 </h3>
@@ -727,27 +727,27 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
             </div>
 
             {/* Context Info */}
-            <div className="mx-6 my-4 flex flex-col gap-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-zinc-700 flex-shrink-0">
-              <span className="font-bold text-zinc-800">
+            <div className="mx-6 my-4 flex flex-col gap-1 bg-[#E8F0FE]/40 border border-[#AECBFA]/40 rounded-lg p-3 text-xs text-zinc-700 flex-shrink-0">
+              <span className="font-bold text-[#041E49]">
                 SKU: {activeLogRecord["SKU Number"]} - {activeLogRecord["SKU Name"]}
               </span>
             </div>
 
             {/* Timeline scroll items */}
             <div className="flex-1 overflow-y-auto px-6 pr-4 pb-6 flex flex-col gap-5 relative pl-10">
-              <div className="absolute left-[33px] top-2 bottom-6 w-0.5 bg-slate-200" />
+              <div className="absolute left-[33px] top-2 bottom-6 w-0.5 bg-[#AECBFA]/50" />
 
               {timelineLogItems.length > 0 ? (
                 timelineLogItems.map((log: any, idx: number) => {
                   return (
                     <div key={idx} className="relative flex gap-4 text-xs font-primary">
                       {/* Timeline dot */}
-                      <div className="relative z-10 w-5 h-5 rounded-full flex items-center justify-center border bg-zinc-800 text-white border-zinc-950 font-black text-[8px] flex-shrink-0 shadow-2xs">
+                      <div className="relative z-10 w-5 h-5 rounded-full flex items-center justify-center border bg-[#0B57D0] text-white border-[#0842A0] font-black text-[8px] flex-shrink-0 shadow-2xs">
                         {idx + 1}
                       </div>
 
                       {/* Log details card */}
-                      <div className="flex flex-col gap-2 bg-slate-50 border border-slate-200 rounded-xl p-3 w-full shadow-2xs hover:bg-slate-100/50 transition-colors">
+                      <div className="flex flex-col gap-2 bg-[#E8F0FE]/10 border border-[#AECBFA]/30 rounded-xl p-3 w-full shadow-2xs hover:bg-[#E8F0FE]/20 hover:border-[#AECBFA]/50 transition-colors">
                         <div className="flex items-center justify-between flex-wrap gap-1">
                           <span className="text-[9px] text-zinc-400 font-mono">
                             {log.Timestamp || "Unknown Date"}
@@ -764,7 +764,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
                         {viewingLogType === "rsp" && Array.isArray(log.Tiers) && (
                           <div className="flex flex-col gap-1">
                             {log.Tiers.map((tier: any, tIdx: number) => (
-                              <div key={tIdx} className="bg-zinc-200/50 p-1.5 rounded border border-zinc-300/35 flex flex-col gap-0.5 text-[10px]">
+                              <div key={tIdx} className="bg-[#E8F0FE]/30 p-1.5 rounded border border-[#AECBFA]/40 flex flex-col gap-0.5 text-[10px]">
                                 <div className="flex justify-between font-bold text-zinc-700">
                                   <span>{tier.Tier}</span>
                                   <span className="underline">${Number(tier.Price).toFixed(2)}</span>
@@ -780,7 +780,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
                         {viewingLogType === "promo" && Array.isArray(log.Promos) && (
                           <div className="flex flex-col gap-1">
                             {log.Promos.map((promo: any, pIdx: number) => (
-                              <div key={pIdx} className="bg-zinc-200/50 p-1.5 rounded border border-zinc-300/35 flex flex-col gap-0.5 text-[10px]">
+                              <div key={pIdx} className="bg-[#E8F0FE]/30 p-1.5 rounded border border-[#AECBFA]/40 flex flex-col gap-0.5 text-[10px]">
                                 <div className="flex justify-between font-bold text-zinc-700">
                                   <span>{promo["Promo Name"]}</span>
                                   <span className="underline">${Number(promo.Price).toFixed(2)}</span>
@@ -811,8 +811,9 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
             {/* Bottom Actions */}
             <div className="border-t border-slate-200 p-6 bg-slate-50/50 flex items-center justify-center flex-shrink-0">
               <CustomButton
+                variant="dark"
                 onClick={() => { setViewingLogType(null); setActiveLogRecord(null); }}
-                className="bg-zinc-900 text-white hover:bg-black text-xs font-bold w-full flex justify-center py-2 rounded"
+                className="w-full"
               >
                 Close View
               </CustomButton>

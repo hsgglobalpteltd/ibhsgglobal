@@ -286,7 +286,7 @@ export function ClaimFormGeneratorModule() {
       showToast("Receipt data parsed successfully!", "success");
     } catch (err: any) {
       console.error("AI scanning OCR failed:", err);
-      showToast("Please check Gemini API in GoogleAI", "error");
+      showToast("OCR Scanner failed. Please check System Settings.", "error");
     } finally {
       setIsScanningIndex(null);
     }

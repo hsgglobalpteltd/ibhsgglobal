@@ -184,7 +184,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     const handleDbRefresh = async () => {
       const sheet = activeTab === "brands" ? "brands_DB" : "products_DB";
       await fetchFreshData(sheet, true);
-      showToast("Database cache refreshed from Google Sheets!", "success");
+      showToast("Database cache refreshed!", "success");
     };
 
     window.addEventListener("db-refresh", handleDbRefresh);
@@ -313,7 +313,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
 
         // Silent refresh of D1 cache from server in background
         fetchFreshData(sheet, false);
-        showToast("Changes synced successfully to Google Sheets!", "success");
+        showToast("Changes synced successfully!", "success");
       } catch (err: any) {
         showToast("Background sync failed: " + err.message + ". Reverting changes...", "error");
         // Revert to previous state
@@ -333,7 +333,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     );
     if (!targetItem) return;
 
-    showToast("Deleting record from Google Sheets...", "info");
+    showToast("Deleting record from database...", "info");
 
     try {
       const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
@@ -362,7 +362,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
       // Pull fresh data in background
       fetchFreshData(sheet, false);
 
-      showToast("Record deleted successfully from Google Sheets!", "success");
+      showToast("Record deleted successfully!", "success");
     } catch (err: any) {
       showToast("Delete failed: " + err.message, "error");
     }

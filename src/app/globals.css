@@ -134,6 +134,36 @@
     outline: none !important;
     box-shadow: none !important;
   }
+
+  /* Desktop Component Scaling Constraints (Project 1) */
+
+  /* Buttons: Set to fit content or give them a strict max-width (e.g., max-width: 200px) */
+  main button:not([class*="w-"]):not([class*="aspect-square"]) {
+    width: max-content !important;
+    max-width: 200px !important;
+  }
+
+  /* Form Inputs: Clamp them to a readable size (e.g., max-width: 450px) */
+  main input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="button"]),
+  main select,
+  main textarea {
+    max-width: 450px !important;
+  }
+
+  /* Tables: Ensure columns have controlled widths so they don't stretch into massive, unreadable lines across the screen */
+  main table.table-auto {
+    width: max-content !important;
+    min-width: 100% !important;
+    table-layout: auto !important;
+  }
+
+  main table.table-auto th,
+  main table.table-auto td {
+    max-width: 240px !important;
+    text-overflow: ellipsis !important;
+    overflow: hidden !important;
+    white-space: nowrap !important;
+  }
 }
 
 @keyframes progress-slide {
