@@ -74,9 +74,9 @@ export function FrontlinePage({ profile }: FrontlinePageProps) {
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px]">
       {!activeSubModule && (
-        <div className="flex flex-col gap-1 px-1 border-b border-zinc-300/40 pb-4">
+        <div className="content-header flex flex-col gap-1 px-1 border-b border-zinc-300/40 pb-4">
           <h2 className="font-primary text-2xl font-bold text-zinc-950">
             Frontline Management
           </h2>
@@ -86,28 +86,30 @@ export function FrontlinePage({ profile }: FrontlinePageProps) {
         </div>
       )}
 
-      <div className="w-full">
-        {activeSubModule ? (
-          renderActiveSubModule()
-        ) : visibleModules.length === 0 ? (
-          <div className="flex items-center justify-center h-48 bg-[#F0F4F9] border border-dashed border-slate-200 rounded select-none">
-            <span className="font-primary text-sm text-zinc-500 italic">
-              No modules assigned. Please contact your administrator.
-            </span>
-          </div>
-        ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
-            {visibleModules.map((mod) => (
-              <FeatureCard
-                key={mod.title}
-                title={mod.title}
-                description={mod.description}
-                onClick={() => handleSubModuleSelect(mod.title)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {activeSubModule ? (
+        renderActiveSubModule()
+      ) : (
+        <div className="content-body flex-1 w-full overflow-y-auto">
+          {visibleModules.length === 0 ? (
+            <div className="flex items-center justify-center h-48 bg-[#F0F4F9] border border-dashed border-slate-200 rounded select-none">
+              <span className="font-primary text-sm text-zinc-500 italic">
+                No modules assigned. Please contact your administrator.
+              </span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
+              {visibleModules.map((mod) => (
+                <FeatureCard
+                  key={mod.title}
+                  title={mod.title}
+                  description={mod.description}
+                  onClick={() => handleSubModuleSelect(mod.title)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

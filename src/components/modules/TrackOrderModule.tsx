@@ -2765,10 +2765,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   };
 
   return (
-    <div className="flex flex-col gap-6 relative min-h-[600px]">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] relative">
       
       {/* Top Banner and Tabs */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-px">
+      <div className="content-header flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-px">
         <div className="flex items-center gap-1">
           {tabs.map((tab) => (
             <button
@@ -2787,8 +2787,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         </div>
       </div>
 
-      {/* TAB CONTENT: DASHBOARD */}
-      {activeTab === "dashboard" && (
+      <div className="content-body flex-1 w-full overflow-y-auto">
+        {/* TAB CONTENT: DASHBOARD */}
+        {activeTab === "dashboard" && (
         <div className="flex flex-col gap-6 animate-tableFadeInOnly">
           {/* Dashboard Metrics Row */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -2831,7 +2832,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
 
           {/* Full Width & Height Map Container */}
-          <div className="w-full h-[520px] rounded border border-slate-200 overflow-hidden relative shadow-sm bg-white">
+          <div className="w-full h-[calc(100vh-280px)] min-h-[450px] rounded border border-slate-200 overflow-hidden relative shadow-sm bg-white">
             {/* Map Filter Toggle Button Overlay */}
             <div className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur-xs border border-slate-200 rounded shadow-md p-1 flex gap-1">
               <button
@@ -2906,7 +2907,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
 
           {activeDeliveryTab === "pending" ? (
-            <div className="h-[500px] w-full relative">
+            <div className="h-[calc(100vh-280px)] min-h-[400px] w-full relative">
               {sortedPendingOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                   <Boxes size={40} className="text-zinc-400 mb-3" />
@@ -3053,7 +3054,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               )}
             </div>
           ) : (
-            <div className="h-[500px] w-full relative">
+            <div className="h-[calc(100vh-280px)] min-h-[400px] w-full relative">
               {completedOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                   <CheckCircle size={40} className="text-zinc-400 mb-3" />
@@ -3223,7 +3224,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             </span>
           </div>
 
-          <div className="h-[500px] w-full relative">
+          <div className="h-[calc(100vh-280px)] min-h-[400px] w-full relative">
             {sortedReturnOrders.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                 <Boxes size={40} className="text-zinc-400 mb-3" />
@@ -3556,7 +3557,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             </span>
           </div>
 
-          <div className="h-[500px] w-full relative">
+          <div className="h-[calc(100vh-280px)] min-h-[400px] w-full relative">
             {drafts.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                 <FileText size={40} className="text-zinc-400 mb-3" />
@@ -3723,6 +3724,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
         </div>
       )}
+      </div>
 
       {/* RIGHT SLIDE-IN PANEL (Drawer) */}
       <SlidePanel

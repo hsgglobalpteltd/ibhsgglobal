@@ -245,7 +245,7 @@ export function InvoiceBarcodeGeneratorModule() {
 
   if (!scriptsReady) {
     return (
-      <div className="flex h-[calc(100vh-135px)] items-center justify-center p-6 font-primary">
+      <div className="flex flex-1 h-full items-center justify-center p-6 font-primary">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-8 h-8 text-zinc-600 animate-spin" />
           <span className="text-zinc-500 text-sm font-semibold italic">
@@ -259,8 +259,9 @@ export function InvoiceBarcodeGeneratorModule() {
   const isFormValid = currentPdfData && invoiceNumber.length === 9 && !isScanning;
 
   return (
-    <div className="h-[calc(100vh-135px)] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none] flex flex-col font-primary pt-6 px-6 pb-2">
-      <div className="max-w-md mx-auto w-full my-auto flex flex-col gap-6">
+    <div className="flex flex-col flex-1 h-full overflow-hidden relative">
+      <div className="content-body flex-1 w-full overflow-y-auto pr-1 pb-4 flex items-center justify-center">
+        <div className="max-w-md w-full flex flex-col gap-6">
         {/* Upload Zone */}
         <div
           onDragOver={handleDragOver}
@@ -366,6 +367,7 @@ export function InvoiceBarcodeGeneratorModule() {
             </CustomButton>
           </div>
         )}
+      </div>
       </div>
 
       {/* Hidden Canvas for JsBarcode generation */}

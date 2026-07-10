@@ -59,9 +59,9 @@ export function AdministratorPage({ profile, idToken }: AdministratorPageProps) 
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px]">
       {activeSubModule !== "Users" && activeSubModule !== "Setting" && (
-        <div className="flex flex-col gap-1 px-1 border-b border-zinc-300/40 pb-4">
+        <div className="content-header flex flex-col gap-1 px-1 border-b border-zinc-300/40 pb-4">
           <h2 className="font-primary text-2xl font-bold text-zinc-950">
             {activeSubModule ? `Administrator / ${activeSubModule}` : "Administrator Controls"}
           </h2>
@@ -73,10 +73,10 @@ export function AdministratorPage({ profile, idToken }: AdministratorPageProps) 
         </div>
       )}
 
-      <div className="w-full">
-        {activeSubModule ? (
-          renderActiveSubModule()
-        ) : (
+      {activeSubModule ? (
+        renderActiveSubModule()
+      ) : (
+        <div className="content-body flex-1 w-full overflow-y-auto">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
             {subModules.map((mod) => (
               <FeatureCard
@@ -87,8 +87,8 @@ export function AdministratorPage({ profile, idToken }: AdministratorPageProps) 
               />
             ))}
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

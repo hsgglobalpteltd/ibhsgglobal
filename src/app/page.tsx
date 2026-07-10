@@ -437,16 +437,14 @@ export default function Home() {
             profile={profile}
             onLogout={handleLogout}
           />
-          <div className="flex flex-col flex-1 h-screen overflow-hidden">
+          <div className="workspace-wrapper flex flex-col flex-1 h-screen overflow-hidden">
             <TopBar 
               breadcrumbPath={breadcrumbPath} 
               onBack={handleBack} 
               onNavigateBreadcrumb={handleNavigateBreadcrumb}
             />
-            <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
-              <div className="w-full">
-                {renderActivePage()}
-              </div>
+            <main className="main-content flex flex-col flex-1 p-[20px] overflow-hidden">
+              {renderActivePage()}
             </main>
           </div>
         </div>

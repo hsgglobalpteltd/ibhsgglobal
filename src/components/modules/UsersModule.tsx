@@ -157,17 +157,19 @@ export function UsersModule({ idToken = "simulated-id-token", profile }: UsersMo
   ];
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px]">
       {/* Reusable Sub-Navigation NavigationTabs Component */}
-      <NavigationTabs 
-        tabs={tabs}
-        activeTabId={activeTab}
-        onTabSelect={(tabId) => setActiveTab(tabId as any)}
-        titleSuffix="Registry"
-      />
+      <div className="content-header">
+        <NavigationTabs 
+          tabs={tabs}
+          activeTabId={activeTab}
+          onTabSelect={(tabId) => setActiveTab(tabId as any)}
+          titleSuffix="Registry"
+        />
+      </div>
 
       {/* Data Table */}
-      <div className="w-full">
+      <div className="content-body flex-1 w-full overflow-hidden">
         <DataTable
           columns={columns}
           data={filteredUsers}
@@ -177,7 +179,7 @@ export function UsersModule({ idToken = "simulated-id-token", profile }: UsersMo
           onEditRow={(row) => setEditingUser(row)}
           onDeleteRow={activeTab === "Block" ? handleDeleteUser : undefined}
           onBlockRow={activeTab === "Users" ? handleBlockUser : undefined}
-          height="h-[calc(100vh-220px)]"
+          height="h-full"
         />
       </div>
 

@@ -622,60 +622,68 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
   }, [activeLogRecord, viewingLogType]);
 
   return (
-    <div className="flex flex-col gap-5 font-primary h-full relative">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative">
       
       {/* Top Bar Filter Dropdown */}
-      <div className="flex items-center gap-3.5 bg-white border border-slate-200 rounded-xl p-4 shadow-xs w-fit font-primary">
-        <label className="text-xs font-extrabold text-zinc-700 uppercase tracking-wider whitespace-nowrap">Select Retailer:</label>
-        <select
-          value={selectedRetailerId}
-          onChange={(e) => {
-            setSelectedRetailerId(e.target.value);
-            setIsEditMode(false);
-          }}
-          className="bg-slate-50 border border-slate-200 hover:bg-slate-100/50 hover:border-slate-350 rounded-lg px-3 py-1.5 text-xs font-bold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 cursor-pointer min-w-[200px] transition-all duration-150"
-        >
-          <option value="">-- Choose Retailer --</option>
-          {retailers.map((r) => (
-            <option key={r.ID} value={r.ID}>
-              {r["Display Name"] || r.ID}
-            </option>
-          ))}
-        </select>
+      <div className="content-header">
+        <div className="flex items-center gap-3.5 bg-white border border-slate-200 rounded-xl p-4 shadow-xs w-fit font-primary">
+          <label className="text-xs font-extrabold text-zinc-700 uppercase tracking-wider whitespace-nowrap">Select Retailer:</label>
+          <select
+            value={selectedRetailerId}
+            onChange={(e) => {
+              setSelectedRetailerId(e.target.value);
+              setIsEditMode(false);
+            }}
+            className="bg-slate-50 border border-slate-200 hover:bg-slate-100/50 hover:border-slate-350 rounded-lg px-3 py-1.5 text-xs font-bold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 cursor-pointer min-w-[200px] transition-all duration-150"
+          >
+            <option value="">-- Choose Retailer --</option>
+            {retailers.map((r) => (
+              <option key={r.ID} value={r.ID}>
+                {r["Display Name"] || r.ID}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {!selectedRetailerId ? (
-        <div className="flex flex-col items-center justify-center h-64 bg-slate-50/50 border border-dashed border-slate-200 rounded-xl select-none p-6 text-center">
-          <Tag className="w-8 h-8 text-zinc-400 mb-3 stroke-[1.5]" />
-          <span className="font-primary text-xs font-semibold text-zinc-500 max-w-xs leading-relaxed">
-            Please select a retailer from the dropdown above to view the SKU registry.
-          </span>
+        <div className="content-body flex-1 overflow-y-auto">
+          <div className="flex flex-col items-center justify-center h-64 bg-slate-50/50 border border-dashed border-slate-200 rounded-xl select-none p-6 text-center">
+            <Tag className="w-8 h-8 text-zinc-400 mb-3 stroke-[1.5]" />
+            <span className="font-primary text-xs font-semibold text-zinc-500 max-w-xs leading-relaxed">
+              Please select a retailer from the dropdown above to view the SKU registry.
+            </span>
+          </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-4">
-          <NavigationTabs
-            tabs={tabs}
-            activeTabId={activeTab}
-            onTabSelect={(id: any) => {
-              setActiveTab(id);
-              setIsEditMode(false);
-            }}
-            titleSuffix="Listings"
-          />
+        <div className="content-body flex-1 flex flex-col overflow-hidden gap-4">
+          <div>
+            <NavigationTabs
+              tabs={tabs}
+              activeTabId={activeTab}
+              onTabSelect={(id: any) => {
+                setActiveTab(id);
+                setIsEditMode(false);
+              }}
+              titleSuffix="Listings"
+            />
+          </div>
 
-          <DataTable
-            columns={defaultColumns}
-            data={rows}
-            userRole={userRole}
-            title="Retailer SKU Catalog Bridge"
-            fetching={fetching}
-            onEditModeChange={handleEditModeChange}
-            onEditRow={handleEditRow}
-            onAddNew={handleAddNew}
-            onDeleteRow={handleDeleteRecord}
-            addNewText="Add SKU Row"
-            height="h-[calc(100vh-320px)]"
-          />
+          <div className="flex-1 overflow-hidden">
+            <DataTable
+              columns={defaultColumns}
+              data={rows}
+              userRole={userRole}
+              title="Retailer SKU Catalog Bridge"
+              fetching={fetching}
+              onEditModeChange={handleEditModeChange}
+              onEditRow={handleEditRow}
+              onAddNew={handleAddNew}
+              onDeleteRow={handleDeleteRecord}
+              addNewText="Add SKU Row"
+              height="h-full"
+            />
+          </div>
         </div>
       )}
 

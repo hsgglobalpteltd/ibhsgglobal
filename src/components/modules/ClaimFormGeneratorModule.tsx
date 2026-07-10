@@ -432,13 +432,13 @@ export function ClaimFormGeneratorModule() {
     claimRows.every((row) => row.desc.trim() !== "" && parseFloat(row.amt) > 0);
 
   return (
-    <div className="h-[calc(100vh-135px)] flex flex-col font-primary pt-6 px-6 pb-2">
+    <div className="flex flex-col flex-1 h-full overflow-hidden relative">
       {/* Scrollable Content Container */}
-      <div className="flex-grow overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none] pb-4">
-        <div className="grid grid-cols-1 lg:grid-cols-10 gap-6 items-start">
+      <div className="content-body flex-1 w-full overflow-hidden pr-1 pb-4">
+        <div className="grid grid-cols-1 lg:grid-cols-10 gap-6 items-stretch h-full">
           
           {/* Left Side: Claim Details Panel (col-span-3) */}
-          <div className="lg:col-span-3 flex flex-col gap-5 border-r border-zinc-300/40 pr-6">
+          <div className="lg:col-span-3 flex flex-col gap-5 border-r border-zinc-300/40 pr-6 h-full overflow-y-auto">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-bold text-zinc-800 uppercase tracking-widest pl-1">
                 Claim Details
@@ -576,7 +576,7 @@ export function ClaimFormGeneratorModule() {
           </div>
 
           {/* Right Side: Claim Particulars Table (col-span-7) */}
-          <div className="lg:col-span-7 flex flex-col gap-4 pl-2">
+          <div className="lg:col-span-7 flex flex-col gap-4 pl-2 h-full flex-1">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-xs font-bold text-zinc-800 uppercase tracking-widest">
@@ -599,7 +599,7 @@ export function ClaimFormGeneratorModule() {
             </div>
 
             {/* Custom Input Table (Styled like DataTable component) */}
-            <div className="border border-zinc-300 rounded-lg bg-white shadow-xs max-h-[425px] overflow-y-auto">
+            <div className="border border-zinc-300 rounded-lg bg-white shadow-xs flex-1 h-full min-h-0 overflow-y-auto">
               <table className="w-full border-collapse">
                 <thead className="bg-zinc-50 border-b border-zinc-300 text-left sticky top-0 z-10">
                   <tr>
@@ -690,7 +690,7 @@ export function ClaimFormGeneratorModule() {
       </div>
 
       {/* Sticky Bottom Footer */}
-      <div className="border-t border-slate-200 pt-4 mt-auto flex flex-col sm:flex-row justify-between items-center bg-white gap-4 z-10">
+      <div className="border-t border-slate-200 pt-3 pb-1 flex flex-col sm:flex-row justify-between items-center bg-transparent gap-4 z-10 flex-shrink-0">
         <div className="flex items-center gap-3 w-full sm:w-auto">
           <CustomButton
             onClick={handleGeneratePDF}

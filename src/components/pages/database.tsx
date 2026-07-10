@@ -69,9 +69,9 @@ export function DatabasePage({ profile }: DatabasePageProps) {
   };
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px]">
       {!activeSubDb && (
-        <div className="flex flex-col gap-1 px-1 border-b border-zinc-300/40 pb-4">
+        <div className="content-header flex flex-col gap-1 px-1 border-b border-zinc-300/40 pb-4">
           <h2 className="font-primary text-2xl font-bold text-zinc-950">
             Database Portal
           </h2>
@@ -81,28 +81,30 @@ export function DatabasePage({ profile }: DatabasePageProps) {
         </div>
       )}
 
-      <div className="w-full">
-        {activeSubDb ? (
-          renderActiveSubModule()
-        ) : visibleModules.length === 0 ? (
-          <div className="flex items-center justify-center h-48 bg-[#F0F4F9] border border-dashed border-slate-200 rounded select-none">
-            <span className="font-primary text-sm text-zinc-500 italic">
-              No modules assigned. Please contact your administrator.
-            </span>
-          </div>
-        ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
-            {visibleModules.map((db) => (
-              <FeatureCard
-                key={db.title}
-                title={db.title}
-                description={db.description}
-                onClick={() => handleSubDbSelect(db.title)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+      {activeSubDb ? (
+        renderActiveSubModule()
+      ) : (
+        <div className="content-body flex-1 w-full overflow-y-auto">
+          {visibleModules.length === 0 ? (
+            <div className="flex items-center justify-center h-48 bg-[#F0F4F9] border border-dashed border-slate-200 rounded select-none">
+              <span className="font-primary text-sm text-zinc-500 italic">
+                No modules assigned. Please contact your administrator.
+              </span>
+            </div>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
+              {visibleModules.map((db) => (
+                <FeatureCard
+                  key={db.title}
+                  title={db.title}
+                  description={db.description}
+                  onClick={() => handleSubDbSelect(db.title)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -264,14 +264,14 @@ export function AssetLibraryModule({ profile, idToken }: AssetLibraryModuleProps
 
   return (
     <div 
-      className="flex flex-col gap-5 font-primary w-full select-none h-[calc(100vh-100px)] sm:h-[calc(100vh-120px)] lg:h-[calc(100vh-140px)]"
+      className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary w-full select-none"
       onDragEnter={handleDrag}
       onClick={handleModuleClick}
     >
       {/* Action Bar */}
       <div 
         onClick={(e) => e.stopPropagation()}
-        className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white border border-slate-200 rounded-lg p-4 shadow-xs"
+        className="content-header flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white border border-slate-200 rounded-lg p-4 shadow-xs"
       >
         {/* Breadcrumbs Navigation */}
         <div className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-zinc-800">
@@ -324,7 +324,7 @@ export function AssetLibraryModule({ profile, idToken }: AssetLibraryModuleProps
 
       {/* Main Files Display & Drag-Drop overlay */}
       <div 
-        className="relative bg-white border border-slate-200 rounded-lg p-6 shadow-xs flex-1 overflow-y-auto custom-scrollbar flex flex-col min-h-0"
+        className="content-body relative bg-white border border-slate-200 rounded-lg p-6 shadow-xs flex-1 overflow-y-auto custom-scrollbar flex flex-col min-h-0"
         onDragEnter={handleDrag}
         onDragOver={handleDrag}
         onDragLeave={handleDrag}

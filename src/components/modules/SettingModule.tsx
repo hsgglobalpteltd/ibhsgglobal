@@ -286,18 +286,20 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
   }
 
   return (
-    <div className="flex flex-col gap-6 font-primary">
-      <NavigationTabs
-        tabs={tabs}
-        activeTabId={activeTab}
-        onTabSelect={(tabId) => {
-          setActiveTab(tabId as any);
-          setIsEditMode(false);
-        }}
-        titleSuffix="Control"
-      />
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary">
+      <div className="content-header">
+        <NavigationTabs
+          tabs={tabs}
+          activeTabId={activeTab}
+          onTabSelect={(tabId) => {
+            setActiveTab(tabId as any);
+            setIsEditMode(false);
+          }}
+          titleSuffix="Control"
+        />
+      </div>
 
-      <div className="w-full">
+      <div className="content-body flex-1 w-full overflow-y-auto">
         {activeTab === "configuration" ? (
           <div className="flex flex-col gap-6 bg-white border border-slate-200 rounded-lg p-6 shadow-xs">
             <div className="flex flex-col gap-1 border-b border-slate-200 pb-4">
@@ -367,7 +369,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
             onAddNew={handleAddNew}
             onDeleteRow={handleDeleteRow}
             addNewText="Add API Key"
-            height="h-[calc(100vh-220px)]"
+            height="h-full"
           />
         )}
       </div>

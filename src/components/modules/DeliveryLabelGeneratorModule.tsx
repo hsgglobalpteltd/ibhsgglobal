@@ -228,7 +228,7 @@ export function DeliveryLabelGeneratorModule() {
 
   if (!scriptsReady) {
     return (
-      <div className="flex h-[calc(100vh-135px)] items-center justify-center p-6 font-primary">
+      <div className="flex flex-1 h-full items-center justify-center p-6 font-primary">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="w-8 h-8 text-zinc-600 animate-spin" />
           <span className="text-zinc-500 text-sm font-semibold italic">
@@ -242,11 +242,11 @@ export function DeliveryLabelGeneratorModule() {
   const isFormValid = receiverName.trim() !== "" && receiverAddress.trim() !== "";
 
   return (
-    <div className="h-[calc(100vh-135px)] overflow-y-auto [&::-webkit-scrollbar]:hidden [scrollbar-width:none] flex flex-col font-primary pt-6 px-6 pb-2">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 h-full items-start">
+    <div className="flex flex-col flex-1 h-full overflow-hidden relative">
+      <div className="content-body flex-1 w-full overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-8 h-full items-stretch">
         
         {/* Left Side - Settings & Form inputs */}
-        <div className="lg:col-span-7 flex flex-col gap-5 w-full">
+        <div className="lg:col-span-7 flex flex-col gap-5 w-full h-full overflow-y-auto pr-1 pb-4">
           
           {/* Orientation Selector */}
           <div className="bg-[#EEEEEE]/40 border border-zinc-300/60 rounded-lg p-1 flex w-full">
@@ -433,7 +433,7 @@ export function DeliveryLabelGeneratorModule() {
         </div>
 
         {/* Right Side - Real time Preview sticker */}
-        <div className="lg:col-span-5 flex flex-col items-center justify-center w-full sticky top-0 py-2">
+        <div className="lg:col-span-5 flex flex-col items-center justify-center w-full py-2">
           <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3">
             Real-Time Sticker Preview
           </span>

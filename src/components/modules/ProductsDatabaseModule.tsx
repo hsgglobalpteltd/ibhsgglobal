@@ -369,20 +369,22 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
   };
 
   return (
-    <div className="flex flex-col gap-5 font-primary h-full relative">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative">
       {/* Reusable Sub-Navigation NavigationTabs Component */}
-      <NavigationTabs 
-        tabs={tabs}
-        activeTabId={activeTab}
-        onTabSelect={(tabId) => {
-          setActiveTab(tabId as any);
-          setIsEditMode(false);
-        }}
-        titleSuffix="Record"
-      />
+      <div className="content-header">
+        <NavigationTabs 
+          tabs={tabs}
+          activeTabId={activeTab}
+          onTabSelect={(tabId) => {
+            setActiveTab(tabId as any);
+            setIsEditMode(false);
+          }}
+          titleSuffix="Record"
+        />
+      </div>
 
       {/* Data Table */}
-      <div className="w-full flex-1">
+      <div className="content-body flex-1 w-full overflow-hidden">
         <DataTable
           columns={columns}
           data={processedData}
@@ -395,7 +397,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
           onDeleteRow={handleDeleteRow}
           onAddNew={handleAddNew}
           addNewText={activeTab === "brands" ? "Add Brand" : "Add Product"}
-          height="h-[calc(100vh-220px)]"
+          height="h-full"
         />
       </div>
 

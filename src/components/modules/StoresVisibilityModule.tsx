@@ -648,7 +648,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                 </p>
               </div>
             ) : (
-              <div className="w-full border border-slate-200 rounded bg-white overflow-hidden shadow-2xs print:border-zinc-400">
+              <div className="w-full border border-slate-200 rounded bg-white overflow-y-auto h-[calc(100vh-240px)] shadow-2xs print:border-zinc-400 print:h-auto">
                 <table className="w-full text-left border-collapse table-fixed border border-slate-200">
                   <thead className="hidden print:table-header-group">
                     <tr className="bg-[#F0F4F9] border-b border-slate-200 text-[10px] font-bold text-[#474747] uppercase tracking-wider select-none print:bg-zinc-100 print:border-zinc-400">

@@ -143,13 +143,6 @@
     max-width: 200px !important;
   }
 
-  /* Form Inputs: Clamp them to a readable size (e.g., max-width: 450px) */
-  main input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="button"]),
-  main select,
-  main textarea {
-    max-width: 450px !important;
-  }
-
   /* Tables: Ensure columns have controlled widths so they don't stretch into massive, unreadable lines across the screen */
   main table.table-auto {
     width: max-content !important;
@@ -219,4 +212,16 @@
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #A3A3A3;
+}
+
+/* Overrides for Snap Deals tables to support flex badge wrapping and custom column widths */
+main .snap-deals-table td {
+  max-width: none !important;
+  text-overflow: clip !important;
+  overflow: visible !important;
+  white-space: normal !important;
+}
+
+main .snap-deals-table th {
+  white-space: nowrap !important;
 }

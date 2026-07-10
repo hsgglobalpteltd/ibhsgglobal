@@ -89,7 +89,7 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
   }, [startRedTimer, handleRefresh]);
 
   return (
-    <header className="flex h-9 w-full items-center bg-[#F0F4F9] px-6 border-b border-slate-200 select-none relative z-40">
+    <header className="top-bar flex h-9 w-full items-center bg-[#F0F4F9] px-6 border-b border-slate-200 select-none relative z-40">
       {/* Left: Breadcrumbs only (vertically centered in h-9) */}
       <div className="flex items-center gap-2">
         {breadcrumbPath.map((segment, idx) => (
