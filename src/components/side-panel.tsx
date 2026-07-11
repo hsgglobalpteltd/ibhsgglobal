@@ -25,9 +25,21 @@ export function SidePanel({ activeItem, onSelectMenu, user, profile, onLogout }:
   const [isCollapsed, setIsCollapsed] = React.useState(false);
 
   React.useEffect(() => {
-    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+    if (typeof window !== "undefined" && window.innerWidth < 1280) {
       setIsCollapsed(true);
     }
+  }, []);
+
+  React.useEffect(() => {
+    const handleCollapse = () => {
+      if (typeof window !== "undefined" && window.innerWidth < 1280) {
+        setIsCollapsed(true);
+      }
+    };
+    window.addEventListener("collapse-sidepanel", handleCollapse);
+    return () => {
+      window.removeEventListener("collapse-sidepanel", handleCollapse);
+    };
   }, []);
 
   const pagesAccess = profile?.pages_access || [];
@@ -44,7 +56,7 @@ export function SidePanel({ activeItem, onSelectMenu, user, profile, onLogout }:
   });
 
   return (
-    <aside className={`side-panel relative flex h-screen flex-col justify-between bg-[#F0F4F9] p-6 shadow-[inset_-1px_0_0_0_rgba(0,0,0,0.05)] select-none transition-all duration-300 ease-in-out ${isCollapsed ? "w-20 px-3" : "w-72"}`}>
+    <aside className={`side-panel relative flex h-screen flex-col justify-between bg-[#F0F4F9] p-6 shadow-[inset_-1px_0_0_0_rgba(0,0,0,0.05)] select-none transition-all duration-300 ease-in-out ${isCollapsed ? "w-[72px] px-3" : "w-64"}`}>
       <div className="flex flex-col gap-8">
         {/* Header Section */}
         <div className={`flex flex-col gap-1.5 ${isCollapsed ? "items-center px-0" : "px-2"}`}>

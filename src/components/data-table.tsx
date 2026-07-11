@@ -887,8 +887,8 @@ export function DataTable({
       </div>
 
       {/* Fixed Sticky Footer */}
-      <div className="flex items-center justify-between bg-[#F0F4F9] px-5 py-1.5 border-t border-slate-200 select-none z-10 flex-shrink-0">
-        <span className="font-primary font-bold text-zinc-700 tracking-tight" style={{ fontSize: '6px' }}>
+      <div className="flex items-center justify-between bg-[#F0F4F9] px-5 py-2 border-t border-slate-200 select-none z-10 flex-shrink-0">
+        <span className="font-primary font-bold text-zinc-700 tracking-tight text-[10px]">
           Total {filteredData.length} records
         </span>
         <div className="flex items-center gap-1.5">
@@ -896,18 +896,18 @@ export function DataTable({
             variant="default"
             onClick={exportCSV}
             title="Export data as CSV spreadsheet"
-            style={{ fontSize: '6px', height: '16px', paddingLeft: '5px', paddingRight: '5px', gap: '2px' }}
+            className="!h-6 !text-[10px] !px-2.5 !gap-1"
           >
-            <FileSpreadsheet size={8} />
+            <FileSpreadsheet size={11} />
             Export to CSV
           </CustomButton>
           <CustomButton
             variant="default"
             onClick={exportPDF}
             title="Export data as printable PDF report"
-            style={{ fontSize: '6px', height: '16px', paddingLeft: '5px', paddingRight: '5px', gap: '2px' }}
+            className="!h-6 !text-[10px] !px-2.5 !gap-1"
           >
-            <FileText size={8} />
+            <FileText size={11} />
             Export to PDF
           </CustomButton>
         </div>

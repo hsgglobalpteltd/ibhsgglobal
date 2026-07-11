@@ -56,6 +56,7 @@ export function SalesChannelsPage({ profile }: SalesChannelsPageProps) {
   const handleSubModuleSelect = (title: string) => {
     setActiveSubModule(title);
     window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Sales & Channels", title] }));
+    window.dispatchEvent(new CustomEvent("collapse-sidepanel"));
   };
 
   const renderActiveSubModule = () => {

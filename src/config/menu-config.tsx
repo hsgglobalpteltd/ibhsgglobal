@@ -1,9 +1,10 @@
 import * as React from "react";
-import { LayoutDashboard, Users, Database, TrendingUp, Briefcase, Megaphone, Shield } from "lucide-react";
+import { LayoutDashboard, Users, Database, TrendingUp, Package, Briefcase, Megaphone, Shield } from "lucide-react";
 import { DashboardPage } from "@/components/pages/dashboard";
 import { FrontlinePage } from "@/components/pages/frontline";
 import { DatabasePage } from "@/components/pages/database";
 import { SalesChannelsPage } from "@/components/pages/sales-channels";
+import { StockPage } from "@/components/pages/stock";
 import { OfficeToolsPage } from "@/components/pages/office-tools";
 import { MarketingContentPage } from "@/components/pages/marketing-content";
 import { AdministratorPage } from "@/components/pages/administrator";
@@ -39,6 +40,12 @@ export const menuConfig: MenuItem[] = [
     label: "Sales & Channels",
     icon: <TrendingUp size={18} />,
     component: <SalesChannelsPage />,
+  },
+  {
+    id: "Stock",
+    label: "Stock",
+    icon: <Package size={18} />,
+    component: <StockPage />,
   },
   {
     id: "Office Tools",

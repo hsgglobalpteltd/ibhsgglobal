@@ -246,194 +246,205 @@ export function DeliveryLabelGeneratorModule() {
       <div className="content-body flex-1 w-full overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-8 h-full items-stretch">
         
         {/* Left Side - Settings & Form inputs */}
-        <div className="lg:col-span-7 flex flex-col gap-5 w-full h-full overflow-y-auto pr-1 pb-4">
+        <div className="lg:col-span-7 flex flex-col h-full overflow-hidden w-full">
           
-          {/* Orientation Selector */}
-          <div className="bg-[#EEEEEE]/40 border border-zinc-300/60 rounded-lg p-1 flex w-full">
-            <button
-              onClick={() => setOrientation("p")}
-              className={`flex-1 py-2 text-xs font-bold rounded-md transition-all cursor-pointer ${
-                orientation === "p"
-                  ? "bg-zinc-800 text-[#EEEEEE] shadow-sm"
-                  : "text-zinc-500 hover:text-zinc-950"
-              }`}
-            >
-              Portrait Label
-            </button>
-            <button
-              onClick={() => setOrientation("l")}
-              className={`flex-1 py-2 text-xs font-bold rounded-md transition-all cursor-pointer ${
-                orientation === "l"
-                  ? "bg-zinc-800 text-[#EEEEEE] shadow-sm"
-                  : "text-zinc-500 hover:text-zinc-950"
-              }`}
-            >
-              Landscape Label
-            </button>
-          </div>
-
-          {/* Receiver Inputs */}
-          <div className="bg-white border border-zinc-300/50 rounded-lg p-5 flex flex-col gap-4 shadow-xs">
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
-                Receiver Name
-              </label>
-              <input
-                type="text"
-                value={receiverName}
-                onChange={(e) => setReceiverName(e.target.value)}
-                placeholder="Enter name"
-                className="h-10 w-full px-4 border border-zinc-300 rounded-lg font-bold text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-[#EEEEEE]/10"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
-                Delivery Address
-              </label>
-              <textarea
-                value={receiverAddress}
-                onChange={(e) => setReceiverAddress(e.target.value)}
-                placeholder="Delivery address details..."
-                rows={3}
-                className="w-full p-4 border border-zinc-300 rounded-lg font-medium text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-[#EEEEEE]/10 resize-none leading-normal"
-              />
-            </div>
-          </div>
-
-          {/* Sender Options & Sender edit */}
-          <div className="bg-white border border-zinc-300/50 rounded-lg p-5 flex flex-col gap-4 shadow-xs">
-            <div className="flex items-center justify-between">
-              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          {/* Scrollable Form Body */}
+          <div className="flex-1 overflow-y-auto pr-1 pb-4 flex flex-col gap-5 custom-scrollbar">
+            
+            {/* Receiver Inputs */}
+            <div className="bg-white border border-zinc-300/50 rounded-lg p-5 flex flex-col gap-4 shadow-xs">
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
+                  Receiver Name
+                </label>
                 <input
-                  type="checkbox"
-                  checked={showFrom}
-                  onChange={(e) => setShowFrom(e.target.checked)}
-                  className="rounded border-zinc-300 text-zinc-800 focus:ring-zinc-400 h-4 w-4 accent-zinc-800"
+                  type="text"
+                  value={receiverName}
+                  onChange={(e) => setReceiverName(e.target.value)}
+                  placeholder="Enter name"
+                  className="h-10 w-full px-4 border border-zinc-300 rounded-lg font-bold text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-[#EEEEEE]/10"
                 />
-                <span className="text-xs font-bold text-zinc-700">Display Sender Details</span>
-              </label>
+              </div>
 
-              {showFrom && (
-                <button
-                  onClick={() => setEditSender(!editSender)}
-                  className="text-xs font-bold text-zinc-500 hover:text-zinc-900 transition-colors"
-                >
-                  {editSender ? "Hide Sender Info" : "Edit Sender Info"}
-                </button>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
+                  Delivery Address
+                </label>
+                <textarea
+                  value={receiverAddress}
+                  onChange={(e) => setReceiverAddress(e.target.value)}
+                  placeholder="Delivery address details..."
+                  rows={3}
+                  className="w-full p-4 border border-zinc-300 rounded-lg font-medium text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-[#EEEEEE]/10 resize-none leading-normal"
+                />
+              </div>
+            </div>
+
+            {/* Sender Options & Sender edit */}
+            <div className="bg-white border border-zinc-300/50 rounded-lg p-5 flex flex-col gap-4 shadow-xs">
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={showFrom}
+                    onChange={(e) => setShowFrom(e.target.checked)}
+                    className="rounded border-zinc-300 text-zinc-800 focus:ring-zinc-400 h-4 w-4 accent-zinc-800"
+                  />
+                  <span className="text-xs font-bold text-zinc-700">Display Sender Details</span>
+                </label>
+
+                {showFrom && (
+                  <button
+                    type="button"
+                    onClick={() => setEditSender(!editSender)}
+                    className="text-xs font-bold text-zinc-500 hover:text-zinc-900 transition-colors"
+                  >
+                    {editSender ? "Hide Sender Info" : "Edit Sender Info"}
+                  </button>
+                )}
+              </div>
+
+              {showFrom && editSender && (
+                <div className="border-t border-zinc-200 pt-4 flex flex-col gap-4 animate-fade-in">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
+                      Sender Name
+                    </label>
+                    <input
+                      type="text"
+                      value={senderName}
+                      onChange={(e) => setSenderName(e.target.value)}
+                      placeholder="Sender Name"
+                      className="h-9 w-full px-3 border border-zinc-300 rounded-lg text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-[#EEEEEE]/10"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
+                      Sender Address
+                    </label>
+                    <textarea
+                      value={senderAddress}
+                      onChange={(e) => setSenderAddress(e.target.value)}
+                      placeholder="Sender Address"
+                      rows={2}
+                      className="w-full p-3 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-[#EEEEEE]/10 resize-none leading-normal"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="border-t border-zinc-100 pt-4 flex items-center">
+                <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={showPackingList}
+                    onChange={(e) => setShowPackingList(e.target.checked)}
+                    className="rounded border-zinc-300 text-zinc-800 focus:ring-zinc-400 h-4 w-4 accent-zinc-800"
+                  />
+                  <span className="text-xs font-bold text-zinc-700">Display Packing List</span>
+                </label>
+              </div>
+
+              {showPackingList && (
+                <div className="border-t border-zinc-200 pt-4 flex flex-col gap-3 animate-fade-in">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
+                    Packing List Items (Max 7)
+                  </span>
+
+                  <div className="flex flex-col gap-2">
+                    {packingItems.map((item, idx) => (
+                      <div key={idx} className="flex gap-2 items-center">
+                        <input
+                          type="text"
+                          placeholder="Item name"
+                          value={item.desc}
+                          onChange={(e) => handleItemChange(idx, "desc", e.target.value)}
+                          className="h-8 flex-1 px-3 border border-zinc-300 rounded-lg text-xs font-medium focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-white"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Qty"
+                          value={item.qty}
+                          onChange={(e) => handleItemChange(idx, "qty", e.target.value)}
+                          className="h-8 w-20 px-2 border border-zinc-300 rounded-lg text-xs font-bold text-center focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveItem(idx)}
+                          className="p-1 text-zinc-400 hover:text-red-500 transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <CustomButton
+                    variant="secondary"
+                    onClick={handleAddItem}
+                    disabled={packingItems.length >= 7}
+                    className="h-8 w-full border-dashed"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Packing Item
+                  </CustomButton>
+                </div>
               )}
             </div>
-
-            {showFrom && editSender && (
-              <div className="border-t border-zinc-200 pt-4 flex flex-col gap-4 animate-fade-in">
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
-                    Sender Name
-                  </label>
-                  <input
-                    type="text"
-                    value={senderName}
-                    onChange={(e) => setSenderName(e.target.value)}
-                    placeholder="Sender Name"
-                    className="h-9 w-full px-3 border border-zinc-300 rounded-lg text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-[#EEEEEE]/10"
-                  />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
-                    Sender Address
-                  </label>
-                  <textarea
-                    value={senderAddress}
-                    onChange={(e) => setSenderAddress(e.target.value)}
-                    placeholder="Sender Address"
-                    rows={2}
-                    className="w-full p-3 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-[#EEEEEE]/10 resize-none leading-normal"
-                  />
-                </div>
-              </div>
-            )}
-
-            <div className="border-t border-zinc-100 pt-4 flex items-center">
-              <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={showPackingList}
-                  onChange={(e) => setShowPackingList(e.target.checked)}
-                  className="rounded border-zinc-300 text-zinc-800 focus:ring-zinc-400 h-4 w-4 accent-zinc-800"
-                />
-                <span className="text-xs font-bold text-zinc-700">Display Packing List</span>
-              </label>
-            </div>
-
-            {showPackingList && (
-              <div className="border-t border-zinc-200 pt-4 flex flex-col gap-3 animate-fade-in">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
-                  Packing List Items (Max 7)
-                </span>
-
-                <div className="flex flex-col gap-2">
-                  {packingItems.map((item, idx) => (
-                    <div key={idx} className="flex gap-2 items-center">
-                      <input
-                        type="text"
-                        placeholder="Item name"
-                        value={item.desc}
-                        onChange={(e) => handleItemChange(idx, "desc", e.target.value)}
-                        className="h-8 flex-1 px-3 border border-zinc-300 rounded-lg text-xs font-medium focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-white"
-                      />
-                      <input
-                        type="text"
-                        placeholder="Qty"
-                        value={item.qty}
-                        onChange={(e) => handleItemChange(idx, "qty", e.target.value)}
-                        className="h-8 w-20 px-2 border border-zinc-300 rounded-lg text-xs font-bold text-center focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-white"
-                      />
-                      <button
-                        onClick={() => handleRemoveItem(idx)}
-                        className="p-1 text-zinc-400 hover:text-red-500 transition-colors"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                <CustomButton
-                  variant="secondary"
-                  onClick={handleAddItem}
-                  disabled={packingItems.length >= 7}
-                  className="h-8 w-full border-dashed"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add Packing Item
-                </CustomButton>
-              </div>
-            )}
           </div>
 
-          {/* Action Trigger */}
-          <CustomButton
-            onClick={handleGenerateLabel}
-            variant="dark"
-            disabled={!isFormValid || isGenerating}
-            className="w-full h-10 text-xs font-bold uppercase tracking-wider shadow-md"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Generating Label...
-              </>
-            ) : (
-              <>
-                <FileText className="w-4 h-4" />
-                Generate Label
-              </>
-            )}
-          </CustomButton>
+          {/* Action Trigger - Pinned to bottom */}
+          <div className="pt-4 border-t border-slate-200/60 flex-shrink-0">
+            <CustomButton
+              onClick={handleGenerateLabel}
+              variant="dark"
+              disabled={!isFormValid || isGenerating}
+              className="w-full h-10 text-xs font-bold uppercase tracking-wider shadow-sm"
+            >
+              {isGenerating ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating Label...
+                </>
+              ) : (
+                <>
+                  <FileText className="w-4 h-4" />
+                  Generate Label
+                </>
+              )}
+            </CustomButton>
+          </div>
         </div>
 
         {/* Right Side - Real time Preview sticker */}
-        <div className="lg:col-span-5 flex flex-col items-center justify-center w-full py-2">
+        <div className="lg:col-span-5 flex flex-col items-center justify-start w-full py-2">
+          
+          {/* Orientation Selector (Centered, not full-width) */}
+          <div className="w-[240px] bg-slate-100 border border-slate-200/80 rounded-lg p-0.5 flex mb-5 select-none flex-shrink-0">
+            <button
+              type="button"
+              onClick={() => setOrientation("p")}
+              className={`flex-1 py-1 text-xs font-bold rounded transition-all cursor-pointer ${
+                orientation === "p"
+                  ? "bg-white text-zinc-950 shadow-xs border border-slate-200/80"
+                  : "text-zinc-500 hover:text-zinc-800 hover:bg-slate-200/40"
+              }`}
+            >
+              Portrait
+            </button>
+            <button
+              type="button"
+              onClick={() => setOrientation("l")}
+              className={`flex-1 py-1 text-xs font-bold rounded transition-all cursor-pointer ${
+                orientation === "l"
+                  ? "bg-white text-zinc-950 shadow-xs border border-slate-200/80"
+                  : "text-zinc-500 hover:text-zinc-800 hover:bg-slate-200/40"
+              }`}
+            >
+              Landscape
+            </button>
+          </div>
+
           <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-3">
             Real-Time Sticker Preview
           </span>

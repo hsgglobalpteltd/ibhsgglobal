@@ -2768,24 +2768,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] relative">
       
       {/* Top Banner and Tabs */}
-      <div className="content-header flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-px">
-        <div className="flex items-center gap-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-2.5 font-primary text-sm font-bold border-b-2 transition-all duration-200 cursor-pointer ${
-                activeTab === tab.id
-                  ? "border-[#0B57D0] text-[#0B57D0]"
-                  : "border-transparent text-zinc-400 hover:text-zinc-700"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <NavigationTabs
+        tabs={tabs}
+        activeTabId={activeTab}
+        onTabSelect={setActiveTab}
+      />
 
       <div className="content-body flex-1 w-full overflow-y-auto">
         {/* TAB CONTENT: DASHBOARD */}

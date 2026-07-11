@@ -30,6 +30,7 @@ import { toBlob } from "html-to-image";
 import { DataTable, Column } from "../data-table";
 import { ConfirmDialog } from "../confirm-dialog";
 import { jsPDF } from "jspdf";
+import { cn } from "@/lib/utils";
 import { 
   fetchSnapDeals, 
   saveSnapDeal, 
@@ -84,11 +85,12 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   const centerColRef = React.useRef<HTMLDivElement>(null);
   const rightColRef = React.useRef<HTMLDivElement>(null);
   const [copying, setCopying] = React.useState(false);
+  const [isSnapping, setIsSnapping] = React.useState(false);
 
   // New Deal Builder States
   const [editingDealId, setEditingDealId] = React.useState<string | null>(null);
-  const [brandName, setBrandName] = React.useState<string>("");
-  const [productName, setProductName] = React.useState<string>("");
+  const [itemName, setItemName] = React.useState<string>("");
+  const [itemDescription, setItemDescription] = React.useState<string>("");
   const [editingItemId, setEditingItemId] = React.useState<string | null>(null);
   const [itemList, setItemList] = React.useState<any[]>([]);
 
@@ -119,7 +121,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   const [loadingViewLogs, setLoadingViewLogs] = React.useState<boolean>(false);
 
   // Print Configuration States
-  const [showMarketPriceInPrint, setShowMarketPriceInPrint] = React.useState<boolean>(true);
+  const [showMarketPriceInPrint, setShowMarketPriceInPrint] = React.useState<boolean>(false);
 
   // Load Dropdown States
   const [loadSearchQuery, setLoadSearchQuery] = React.useState<string>("");
@@ -175,8 +177,8 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
   const tabs = React.useMemo(() => [
     { id: "calculator2", label: "Calculator" },
-    { id: "draft", label: "Draft" },
-    { id: "active", label: "Active Deals" },
+    { id: "draft", label: "Proposal" },
+    { id: "active", label: "Accepted Deals" },
     { id: "archive", label: "Archive" }
   ], []);
 
@@ -405,8 +407,8 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     setLocalMarginHsg("0.00");
     setLocalMarginBuyer("0.00");
     setCustomRsp("");
-    setBrandName("");
-    setProductName("");
+    setItemName("");
+    setItemDescription("");
     setEditingItemId(null);
   };
 
@@ -485,13 +487,21 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   };
 
   const handleCapture = async () => {
+    if (!itemName.trim() || !itemDescription.trim()) {
+      showToast("Item Name and Description are required to snap deal.", "error");
+      return;
+    }
     if (!breakdownRef.current) return;
     setCopying(true);
+    setIsSnapping(true);
 
     const centerCol = centerColRef.current;
     const rightCol = rightColRef.current;
     if (centerCol) centerCol.style.overflow = "hidden";
     if (rightCol) rightCol.style.overflow = "hidden";
+
+    // Give browser a moment to repaint
+    await new Promise((resolve) => setTimeout(resolve, 80));
 
     try {
       const blob = await toBlob(breakdownRef.current, {
@@ -499,14 +509,15 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
         backgroundColor: "#ffffff",
         width: breakdownRef.current.offsetWidth,
         height: breakdownRef.current.offsetHeight,
-        skipFonts: true,
       });
 
       if (blob) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `snap-deal-${brandName || "calculator"}.png`;
+        const cleanItem = (itemName || "item").trim().replace(/\s+/g, "_");
+        const cleanDesc = (itemDescription || "description").trim().replace(/\s+/g, "_");
+        a.download = `snapshot_cal_${cleanItem}_${cleanDesc}.png`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -521,14 +532,15 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     } finally {
       if (centerCol) centerCol.style.overflow = "";
       if (rightCol) rightCol.style.overflow = "";
+      setIsSnapping(false);
       setCopying(false);
     }
   };
 
   // Add item from calculator to current list
   const handleAddItemToList = () => {
-    if (!brandName.trim() || !productName.trim()) {
-      showToast("Please enter Brand and Product Name", "error");
+    if (!itemName.trim() || !itemDescription.trim()) {
+      showToast("Item Name and Description are required", "error");
       return;
     }
     if (parsedCost <= 0) {
@@ -542,8 +554,10 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
     const newItem = {
       id: editingItemId || `item_${Date.now()}`,
-      brand: brandName.trim(),
-      product: productName.trim(),
+      itemName: itemName.trim(),
+      itemDescription: itemDescription.trim(),
+      brand: itemName.trim(), // Keep brand/product for backward compatibility
+      product: itemDescription.trim(),
       cost: parsedCost,
       feeIf: parsedIf,
       feeDuty: parsedDuty,
@@ -563,10 +577,10 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
     if (editingItemId) {
       setItemList((prev) => prev.map((item) => (item.id === editingItemId ? newItem : item)));
-      showToast("Product updated in list!", "success");
+      showToast("Item updated in list!", "success");
     } else {
       setItemList((prev) => [...prev, newItem]);
-      showToast("Product added to list!", "success");
+      showToast("Item added to list!", "success");
     }
 
     handleReset();
@@ -574,8 +588,8 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
   const handleEditListItem = (item: any) => {
     setEditingItemId(item.id);
-    setBrandName(item.brand);
-    setProductName(item.product);
+    setItemName(item.itemName || item.brand || "");
+    setItemDescription(item.itemDescription || item.product || "");
     setCost(item.cost.toString());
     setFeeIf(item.feeIf.toString());
     setFeeDuty(item.feeDuty.toString());
@@ -718,22 +732,30 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   };
 
   const handleCapture2 = async () => {
+    if (!itemName.trim() || !itemDescription.trim()) {
+      showToast("Item Name and Description are required to snap deal.", "error");
+      return;
+    }
     if (!calculator2BreakdownRef.current) return;
     setCopying(true);
+    setIsSnapping(true);
+    // Give browser a moment to repaint
+    await new Promise((resolve) => setTimeout(resolve, 80));
     try {
       const blob = await toBlob(calculator2BreakdownRef.current, {
         cacheBust: true,
         backgroundColor: "#ffffff",
         width: calculator2BreakdownRef.current.offsetWidth,
         height: calculator2BreakdownRef.current.offsetHeight,
-        skipFonts: true,
       });
 
       if (blob) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `snap-deal-calc2-${brandName || "calculator"}.png`;
+        const cleanItem = (itemName || "item").trim().replace(/\s+/g, "_");
+        const cleanDesc = (itemDescription || "description").trim().replace(/\s+/g, "_");
+        a.download = `snapshot_cal_${cleanItem}_${cleanDesc}.png`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -746,6 +768,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       console.error("Capture failed:", err);
       showToast("Screenshot failed.", "error");
     } finally {
+      setIsSnapping(false);
       setCopying(false);
     }
   };
@@ -786,7 +809,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       onConfirm: () => {
         // Optimistic UI Update: Revert deal status to Draft immediately in the UI
         setDeals(prev => prev.map(d => d.id === dealId ? { ...d, status: "Draft", signed_proof_url: undefined } : d));
-        showToast("Deal unlocked and reverted to active draft status!", "success");
+        showToast("Deal unlocked and reverted to active proposal status!", "success");
 
         // Silently update database in background
         revokeSnapDeal(
@@ -811,7 +834,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   const handleArchiveDeal = async (dealId: string) => {
     showConfirm({
       title: "Archive Deal",
-      description: "Are you sure you want to archive this deal? It will be removed from Active Deals and stored in the Archive.",
+      description: "Are you sure you want to archive this deal? It will be removed from Accepted Deals and stored in the Archive.",
       confirmText: "Archive",
       onConfirm: () => {
         // Optimistic UI Update: Change status to Archived immediately in the UI
@@ -841,7 +864,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   const handleRestoreDeal = async (dealId: string) => {
     // Optimistic UI Update: Change status back to Active immediately in the UI
     setDeals(prev => prev.map(d => d.id === dealId ? { ...d, status: "Active" } : d));
-    showToast("Deal restored to Active Deals!", "success");
+    showToast("Deal restored to Accepted Deals!", "success");
 
     // Silently restore in database in background
     restoreSnapDeal(
@@ -1374,15 +1397,24 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
         
         {/* TAB 1.5: CALCULATOR 2 TAB */}
         {activeTab === "calculator2" && (
-          <div className="w-full h-full flex gap-4 p-2 overflow-hidden select-none">
+          <div className="w-full h-full flex flex-wrap gap-4 p-2 overflow-y-auto select-none custom-scrollbar">
             
             {/* LEFT COLUMN: Pricing Inputs & Calculations */}
-            <div 
-              ref={calculator2BreakdownRef}
-              className="w-[58%] bg-white border border-zinc-200 rounded p-5 flex flex-col justify-between overflow-hidden shadow-sm h-full"
-            >
-              {/* Scrollable Content Container */}
-              <div className="flex-grow flex flex-col gap-4 overflow-y-auto pr-1">
+            <div className="flex-[58] min-w-[560px] bg-white border border-zinc-200 rounded p-5 flex flex-col justify-between overflow-hidden shadow-sm h-full">
+              
+              {/* Inner Snappable Content Container */}
+              <div
+                ref={calculator2BreakdownRef}
+                className={cn(
+                  "flex-grow flex flex-col justify-between overflow-hidden bg-white",
+                  isSnapping ? "p-5" : ""
+                )}
+              >
+                {/* Scrollable Content Container */}
+                <div className={cn(
+                  "flex-grow flex flex-col gap-4 pr-1",
+                  isSnapping ? "overflow-hidden" : "overflow-y-auto"
+                )}>
                 {/* Top Inputs: Item, Description, Cost Price */}
                 <div className="flex gap-3 bg-zinc-50 p-3 rounded border border-zinc-250/60 items-end w-full">
                   <div className="flex flex-col gap-1 flex-[3] min-w-0">
@@ -1391,10 +1423,15 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                     </label>
                     <input
                       type="text"
-                      value={brandName}
-                      onChange={(e) => setBrandName(e.target.value)}
-                      placeholder="e.g. Brand A"
-                      className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs"
+                      value={itemName}
+                      onChange={(e) => setItemName(e.target.value)}
+                      placeholder={isSnapping ? "" : "e.g. Brand A"}
+                      className={cn(
+                        "w-full px-2.5 py-1.5 text-xs font-semibold text-zinc-800 outline-none transition-all",
+                        isSnapping
+                          ? "bg-transparent border-transparent shadow-none pointer-events-none px-1.5"
+                          : "bg-white border border-zinc-200 rounded focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 shadow-xs"
+                      )}
                     />
                   </div>
                   <div className="flex flex-col gap-1 flex-[7] min-w-0">
@@ -1403,26 +1440,42 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                     </label>
                     <input
                       type="text"
-                      value={productName}
-                      onChange={(e) => setProductName(e.target.value)}
-                      placeholder="e.g. Description"
-                      className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs"
+                      value={itemDescription}
+                      onChange={(e) => setItemDescription(e.target.value)}
+                      placeholder={isSnapping ? "" : "e.g. Description"}
+                      className={cn(
+                        "w-full px-2.5 py-1.5 text-xs font-semibold text-zinc-800 outline-none transition-all",
+                        isSnapping
+                          ? "bg-transparent border-transparent shadow-none pointer-events-none px-1.5"
+                          : "bg-white border border-zinc-200 rounded focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 shadow-xs"
+                      )}
                     />
                   </div>
                   <div className="flex flex-col gap-1 shrink-0 w-24">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
                       Cost Price
                     </label>
-                    <div className="relative flex items-center w-24">
-                      <span className="absolute left-2.5 text-zinc-400 text-xs font-semibold select-none">$</span>
+                    <div className={cn(
+                      "relative flex items-center w-24 transition-all",
+                      isSnapping ? "bg-transparent border-transparent" : ""
+                    )}>
+                      <span className={cn(
+                        "absolute text-xs font-semibold select-none transition-all",
+                        isSnapping ? "left-1 text-zinc-800 font-bold" : "left-2.5 text-zinc-400"
+                      )}>$</span>
                       <input
                         type="number"
                         step="0.01"
                         min="0"
                         value={cost}
                         onChange={(e) => handleCostChange(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full pl-5 pr-2 py-1.5 bg-white border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs placeholder:text-zinc-300"
+                        placeholder={isSnapping ? "" : "0.00"}
+                        className={cn(
+                          "w-full py-1.5 text-xs font-bold text-zinc-800 outline-none transition-all",
+                          isSnapping
+                            ? "bg-transparent border-transparent shadow-none pl-3.5 pr-0 pointer-events-none"
+                            : "pl-5 pr-2 bg-white border border-zinc-200 rounded focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 shadow-xs placeholder:text-zinc-300"
+                        )}
                       />
                     </div>
                   </div>
@@ -1441,52 +1494,70 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                     {/* Freight & Duty Inline */}
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5 whitespace-nowrap">
                           Freight
                         </span>
-                        <div className="relative flex items-center w-24">
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={feeIf}
-                            onChange={(e) => handleIfChange(e.target.value)}
-                            className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right"
-                          />
-                          <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
-                        </div>
+                        {isSnapping ? (
+                          <div className="w-24 px-1.5 py-1 text-xs font-bold text-zinc-800 min-h-[24px] flex items-center justify-end">
+                            {feeIf || "0.00"}%
+                          </div>
+                        ) : (
+                          <div className="relative flex items-center w-24">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={feeIf}
+                              onChange={(e) => handleIfChange(e.target.value)}
+                              className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right"
+                            />
+                            <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                        <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5 whitespace-nowrap">
                           Duty
                         </span>
-                        <div className="relative flex items-center w-24">
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={feeDuty}
-                            onChange={(e) => handleDutyChange(e.target.value)}
-                            className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right"
-                          />
-                          <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
-                        </div>
+                        {isSnapping ? (
+                          <div className="w-24 px-1.5 py-1 text-xs font-bold text-zinc-800 min-h-[24px] flex items-center justify-end">
+                            {feeDuty || "0.00"}%
+                          </div>
+                        ) : (
+                          <div className="relative flex items-center w-24">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={feeDuty}
+                              onChange={(e) => handleDutyChange(e.target.value)}
+                              className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right"
+                            />
+                            <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     {/* Overhead */}
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5 whitespace-nowrap">
                         Overhead (Logistic, Admin etc.)
                       </span>
-                      <div className="relative flex items-center w-24">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={feeOther}
-                          onChange={(e) => handleOtherChange(e.target.value)}
-                          className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right"
-                        />
-                        <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
-                      </div>
+                      {isSnapping ? (
+                        <div className="w-24 px-1.5 py-1 text-xs font-bold text-zinc-800 min-h-[24px] flex items-center justify-end">
+                          {feeOther || "0.00"}%
+                        </div>
+                      ) : (
+                        <div className="relative flex items-center w-24">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={feeOther}
+                            onChange={(e) => handleOtherChange(e.target.value)}
+                            className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right"
+                          />
+                          <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Freight, Duty, Overhead helper text */}
@@ -1496,23 +1567,29 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
                     {/* Set Our Margin */}
                     <div className="flex items-center justify-between gap-2 mt-1">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5 whitespace-nowrap">
                         Set Our Margin
                       </span>
-                      <div className="relative flex items-center w-24">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={localMarginHsg}
-                          onChange={(e) => handleHsgMarginChange(e.target.value)}
-                          onBlur={handleHsgMarginBlur}
-                          onKeyDown={handleKeyDown}
-                          disabled={pricingMode === "rsp_cap" && parsedCustomRsp <= 0}
-                          placeholder={pricingMode === "rsp_cap" && parsedCustomRsp <= 0 ? "Enter RSP" : "0.00"}
-                          className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right disabled:opacity-50"
-                        />
-                        <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
-                      </div>
+                      {isSnapping ? (
+                        <div className="w-24 px-1.5 py-1 text-xs font-bold text-zinc-800 min-h-[24px] flex items-center justify-end">
+                          {localMarginHsg || "0.00"}%
+                        </div>
+                      ) : (
+                        <div className="relative flex items-center w-24">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={localMarginHsg}
+                            onChange={(e) => handleHsgMarginChange(e.target.value)}
+                            onBlur={handleHsgMarginBlur}
+                            onKeyDown={handleKeyDown}
+                            disabled={pricingMode === "rsp_cap" && parsedCustomRsp <= 0}
+                            placeholder={pricingMode === "rsp_cap" && parsedCustomRsp <= 0 ? "Enter RSP" : "0.00"}
+                            className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right disabled:opacity-50"
+                          />
+                          <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Set Our Margin helper text */}
@@ -1522,23 +1599,29 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
                     {/* Set Buyer Margin */}
                     <div className="flex items-center justify-between gap-2 mt-1">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5 whitespace-nowrap">
                         Set Buyer Margin
                       </span>
-                      <div className="relative flex items-center w-24">
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={localMarginBuyer}
-                          onChange={(e) => handleBuyerMarginChange(e.target.value)}
-                          onBlur={handleBuyerMarginBlur}
-                          onKeyDown={handleKeyDown}
-                          disabled={pricingMode === "rsp_cap" && parsedCustomRsp <= 0}
-                          placeholder={pricingMode === "rsp_cap" && parsedCustomRsp <= 0 ? "Enter RSP" : "0.00"}
-                          className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right disabled:opacity-50"
-                        />
-                        <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
-                      </div>
+                      {isSnapping ? (
+                        <div className="w-24 px-1.5 py-1 text-xs font-bold text-zinc-800 min-h-[24px] flex items-center justify-end">
+                          {localMarginBuyer || "0.00"}%
+                        </div>
+                      ) : (
+                        <div className="relative flex items-center w-24">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={localMarginBuyer}
+                            onChange={(e) => handleBuyerMarginChange(e.target.value)}
+                            onBlur={handleBuyerMarginBlur}
+                            onKeyDown={handleKeyDown}
+                            disabled={pricingMode === "rsp_cap" && parsedCustomRsp <= 0}
+                            placeholder={pricingMode === "rsp_cap" && parsedCustomRsp <= 0 ? "Enter RSP" : "0.00"}
+                            className="w-full pl-2 pr-5 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right disabled:opacity-50"
+                          />
+                          <span className="absolute right-1.5 text-zinc-400 text-[10px] font-bold select-none">%</span>
+                        </div>
+                      )}
                     </div>
 
                     {/* Set Buyer Margin helper text */}
@@ -1548,20 +1631,26 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
                     {/* Set Market Cap */}
                     <div className="flex items-center justify-between gap-2 mt-1">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5 whitespace-nowrap">
                         Set Market Cap
                       </span>
-                      <div className="relative flex items-center w-24">
-                        <span className="absolute left-2.5 text-zinc-450 text-[10px] font-semibold select-none">$</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={customRsp}
-                          onChange={(e) => handleRspChange(e.target.value)}
-                          placeholder="0.00"
-                          className="w-full pl-5 pr-2 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right"
-                        />
-                      </div>
+                      {isSnapping ? (
+                        <div className="w-24 px-1.5 py-1 text-xs font-bold text-zinc-800 min-h-[24px] flex items-center justify-end">
+                          ${Number(customRsp || 0).toFixed(2)}
+                        </div>
+                      ) : (
+                        <div className="relative flex items-center w-24">
+                          <span className="absolute left-2.5 text-zinc-450 text-[10px] font-semibold select-none">$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={customRsp}
+                            onChange={(e) => handleRspChange(e.target.value)}
+                            placeholder="0.00"
+                            className="w-full pl-5 pr-2 py-1 bg-zinc-50 border border-zinc-200 rounded text-xs font-bold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all text-right"
+                          />
+                        </div>
+                      )}
                     </div>
 
                     {/* Set Market Cap helper text */}
@@ -1674,28 +1763,31 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                     </div>
 
                     {/* Pricing Mode Badge / Info */}
-                    <div className="mt-auto pt-4 flex flex-col gap-1.5">
-                      <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 uppercase bg-zinc-50 p-2 rounded border border-zinc-200">
-                        <span className="w-2 h-2 rounded-full bg-[#0B57D0] animate-pulse" />
-                        <span>Pricing Mode: {pricingMode === "rsp_cap" ? "Price Tag Cap" : "Margin Formula"}</span>
-                      </div>
-                      
-                      {calculations.loss && calculations.priceTag > 0 && (
-                        <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded p-2 text-red-755">
-                          <ShieldAlert size={12} className="shrink-0 text-red-655 animate-bounce" />
-                          <span className="text-[9px] font-bold leading-normal">Warning: Our Margin results in a net loss.</span>
+                    {!isSnapping && (
+                      <div className="mt-auto pt-4 flex flex-col gap-1.5">
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-500 uppercase bg-zinc-50 p-2 rounded border border-zinc-200">
+                          <span className="w-2 h-2 rounded-full bg-[#0B57D0] animate-pulse" />
+                          <span className="whitespace-nowrap">Pricing Mode: {pricingMode === "rsp_cap" ? "Market Cap" : "Margin Formula"}</span>
                         </div>
-                      )}
-                    </div>
+                        
+                        {calculations.loss && calculations.priceTag > 0 && (
+                          <div className="flex items-center gap-1.5 bg-red-50 border border-red-200 rounded p-2 text-red-755">
+                            <ShieldAlert size={12} className="shrink-0 text-red-655 animate-bounce" />
+                            <span className="text-[9px] font-bold leading-normal">Warning: Our Margin results in a net loss.</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                   </div>
                 </div>
-
+              </div>
               </div>
 
               {/* Action Buttons: Reset, Snap, Add (Sticky at bottom, matches right card) */}
               <div className="flex gap-2.5 mt-5 border-t border-zinc-150 pt-4 shrink-0">
                 <button
+                  type="button"
                   onClick={handleReset}
                   className="w-[20%] h-9 px-3 text-xs font-bold text-white bg-[#F5A623] hover:bg-[#E09612] rounded transition-all shadow-xs uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer select-none"
                   title="Reset inputs"
@@ -1705,6 +1797,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 </button>
 
                 <button
+                  type="button"
                   onClick={handleCapture2}
                   disabled={copying}
                   className="w-[30%] h-9 px-3 text-xs font-bold text-white bg-[#2EC4B6] hover:bg-[#20A396] rounded transition-all shadow-xs uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 select-none"
@@ -1715,6 +1808,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 </button>
 
                 <button
+                  type="button"
                   onClick={handleAddItemToList}
                   className="w-[50%] h-9 px-4 text-xs font-bold text-white bg-[#0B57D0] hover:bg-[#0842A0] rounded transition-all shadow-xs uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer select-none"
                 >
@@ -1726,13 +1820,36 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             </div>
 
             {/* RIGHT COLUMN: Client Info, Items list table, Load/Save Deal */}
-            <div className="w-[42%] bg-white border border-zinc-200 rounded p-5 flex flex-col justify-between overflow-hidden shadow-sm h-full">
+            <div className="flex-[42] min-w-[420px] bg-white border border-zinc-200 rounded p-5 flex flex-col justify-between overflow-hidden shadow-sm h-full">
               {/* Scrollable Content Container */}
               <div className="flex-grow flex flex-col gap-4 overflow-y-auto pr-1">
                 {/* Section Header: Client Particulars */}
-                <div className="flex items-center gap-1.5 border-b border-zinc-150 pb-2">
-                  <FileText size={15} className="text-zinc-600" />
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-950">Deal Particulars</h3>
+                <div className="flex items-center justify-between border-b border-zinc-150 pb-2">
+                  <div className="flex items-center gap-1.5">
+                    <FileText size={15} className="text-zinc-600" />
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-950">Deal Particulars</h3>
+                  </div>
+                  {editingDealId && (
+                    <span className="flex items-center gap-1.5 text-[9px] font-black text-amber-700 bg-amber-50 pl-2 pr-1.5 py-0.5 rounded border border-amber-200 uppercase">
+                      <span>Editing Deal: {editingDealId}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          handleReset();
+                          setEditingDealId(null);
+                          setDealingWith("");
+                          setNotes("");
+                          setItemList([]);
+                          setLoadDealIdInput("");
+                          showToast("Edit cancelled. Ready to create a new deal.", "info");
+                        }}
+                        className="p-0.5 hover:bg-amber-100 rounded text-amber-800 transition-colors cursor-pointer flex items-center justify-center"
+                        title="Cancel edit"
+                      >
+                        <X size={10} className="stroke-[3]" />
+                      </button>
+                    </span>
+                  )}
                 </div>
 
                 {/* Client Particulars Fields (Horizontal layout matching original image) */}
@@ -1781,37 +1898,51 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
                 {/* Section Header: Items list table */}
                 <div className="flex items-center justify-between border-b border-zinc-150 pb-2 mt-2">
-                  <div className="flex items-center gap-1.5">
-                    <FileSpreadsheet size={15} className="text-zinc-600" />
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-950">
-                      Products List ({itemList.length})
-                    </h3>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-1.5">
+                      <FileSpreadsheet size={15} className="text-zinc-600" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-950">
+                        Products List ({itemList.length})
+                      </h3>
+                    </div>
+
+                    {/* Display Market Price Checkbox */}
+                    <label className="flex items-center gap-1.5 text-[10px] font-bold text-zinc-600 select-none cursor-pointer hover:text-zinc-900 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={showMarketPriceInPrint}
+                        onChange={(e) => setShowMarketPriceInPrint(e.target.checked)}
+                        className="rounded border-zinc-300 text-[#0B57D0] focus:ring-[#0B57D0] h-3 w-3 cursor-pointer"
+                      />
+                      <span>Display Market Price</span>
+                    </label>
                   </div>
-                  {editingDealId && (
-                    <span className="text-[9px] font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 uppercase animate-pulse">
-                      Editing Deal: {editingDealId}
-                    </span>
-                  )}
                 </div>
 
                 {/* Compact Items List Table */}
                 <div className="border border-zinc-200 rounded overflow-hidden flex flex-col flex-grow flex-1 min-h-[220px] bg-zinc-50/20">
                   <div className="w-full overflow-auto custom-scrollbar flex-grow">
-                    <table className="w-full min-w-[550px] text-xs text-left border-collapse">
+                    <table className={cn(
+                      "w-full text-xs text-left border-collapse",
+                      showMarketPriceInPrint ? "min-w-[660px]" : "min-w-[550px]"
+                    )}>
                       <thead>
-                        <tr className="bg-zinc-100/80 text-[10px] font-bold text-zinc-500 uppercase tracking-wider border-b border-zinc-200 select-none">
+                        <tr className="bg-zinc-100/80 text-[10px] font-bold text-zinc-500 uppercase tracking-wider border-b border-zinc-200 select-none whitespace-nowrap">
                           <th className="py-2 px-2 text-center w-14"></th>
                           <th className="py-2 px-3">Items</th>
                           <th className="py-2 px-3">Description</th>
                           <th className="py-2 px-3 text-right">$ Land Cost</th>
                           <th className="py-2 px-3 text-right">% Margin</th>
                           <th className="py-2 px-3 text-right">$ Net Profit</th>
+                          {showMarketPriceInPrint && (
+                            <th className="py-2 px-3 text-right">$ Market Price</th>
+                          )}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-200 font-medium text-zinc-700">
                         {itemList.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="py-12 text-center text-zinc-400 font-bold select-none">
+                            <td colSpan={showMarketPriceInPrint ? 7 : 6} className="py-12 text-center text-zinc-400 font-bold select-none">
                               <FileSpreadsheet size={24} className="stroke-1 mx-auto mb-2 opacity-50" />
                               <span className="block text-[11px]">No items in deal yet.</span>
                               <span className="block text-[9.5px] font-medium leading-normal px-6 mt-1 text-zinc-400">
@@ -1855,6 +1986,11 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                               <td className="py-2 px-3 text-right font-mono font-black text-emerald-655 align-top">
                                 {formatCurrency(item.computedNetProfit)}
                               </td>
+                              {showMarketPriceInPrint && (
+                                <td className="py-2 px-3 text-right font-mono font-semibold align-top">
+                                  {formatCurrency(item.computedRsp || 0)}
+                                </td>
+                              )}
                             </tr>
                           ))
                         )}
@@ -1866,7 +2002,10 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
               {/* Action Buttons: Load Deal & Save Deal */}
               <div className="flex gap-2.5 mt-5 border-t border-zinc-150 pt-4 shrink-0">
-                <div ref={loadDropdownRef} className="w-[55%] relative flex flex-col select-none">
+                <div ref={loadDropdownRef} className={cn(
+                  "relative flex flex-col select-none",
+                  editingDealId ? "w-[45%]" : "w-[55%]"
+                )}>
                   {/* Select Trigger */}
                   <div className="relative w-full h-9">
                     <button
@@ -1946,7 +2085,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                                     onConfirm: () => {
                                       // Optimistic UI Update: Revert deal status to Draft immediately in the UI
                                       setDeals(prev => prev.map(dealObj => dealObj.id === d.id ? { ...dealObj, status: "Draft", signed_proof_url: undefined } : dealObj));
-                                      showToast("Deal unlocked and reverted to active draft status!", "success");
+                                      showToast("Deal unlocked and reverted to active proposal status!", "success");
 
                                       // Silently update database in background
                                       revokeSnapDeal(
@@ -1983,7 +2122,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                                 <span className={`px-1 rounded-full text-[8px] font-black uppercase ${
                                   d.status === "Active" ? "bg-emerald-50 text-emerald-700 border border-emerald-150" : "bg-amber-50 text-amber-700 border border-amber-150"
                                 }`}>
-                                  {d.status || "Draft"}
+                                  {d.status === "Active" ? "Accepted" : (d.status === "Draft" || !d.status ? "Proposal" : d.status)}
                                 </span>
                               </span>
                             </button>
@@ -1994,10 +2133,34 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                   )}
                 </div>
 
+                {editingDealId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleReset();
+                      setEditingDealId(null);
+                      setDealingWith("");
+                      setNotes("");
+                      setItemList([]);
+                      setLoadDealIdInput("");
+                      showToast("Edit cancelled. Ready to create a new deal.", "info");
+                    }}
+                    className="w-[20%] h-9 px-3 text-xs font-bold text-zinc-700 bg-slate-100 hover:bg-slate-200 border border-zinc-200 rounded transition-all shadow-xs uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer select-none"
+                    title="Cancel edit"
+                  >
+                    <X size={13} />
+                    <span>Cancel</span>
+                  </button>
+                )}
+
                 <button
+                  type="button"
                   onClick={handleSaveDealClick}
                   disabled={itemList.length === 0}
-                  className="w-[45%] h-9 px-4 text-xs font-bold text-white bg-[#0B57D0] hover:bg-[#0842A0] rounded transition-all shadow-xs uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 select-none"
+                  className={cn(
+                    "h-9 px-4 text-xs font-bold text-white bg-[#0B57D0] hover:bg-[#0842A0] rounded transition-all shadow-xs uppercase tracking-wider flex items-center justify-center gap-1 cursor-pointer disabled:opacity-50 select-none",
+                    editingDealId ? "w-[35%]" : "w-[45%]"
+                  )}
                   title="Save deal"
                 >
                   <Save size={13} />
@@ -2016,14 +2179,14 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             {loadingDeals ? (
               <div className="w-full h-48 flex items-center justify-center gap-2 text-zinc-500 font-semibold animate-pulse">
                 <Loader2 size={16} className="animate-spin" />
-                <span>Loading draft deals...</span>
+                <span>Loading proposals...</span>
               </div>
             ) : (
               <DataTable
                 columns={columns}
                 data={mapDealsToRows(deals.filter(d => d.status === "Draft" || !d.status))}
                 height="h-full"
-                title="Draft Deals (Unsigned)"
+                title="Proposal Deals (Unsigned)"
                 userRole="admin"
               />
             )}
@@ -2036,14 +2199,14 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             {loadingDeals ? (
               <div className="w-full h-48 flex items-center justify-center gap-2 text-zinc-500 font-semibold animate-pulse">
                 <Loader2 size={16} className="animate-spin" />
-                <span>Loading active deals...</span>
+                <span>Loading accepted deals...</span>
               </div>
             ) : (
               <DataTable
                 columns={columns}
                 data={mapDealsToRows(deals.filter(d => d.status === "Active"))}
                 height="h-full"
-                title="Active Confirmed Deals (Signed)"
+                title="Accepted Deals (Signed)"
                 userRole="admin"
               />
             )}
@@ -2434,18 +2597,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             </div>
 
             {/* Modal Footer */}
-            <div className="border-t border-slate-200 p-4 bg-zinc-50 flex items-center justify-between shrink-0">
-              {/* Print Toggle */}
-              <label className="flex items-center gap-2 text-xs font-semibold text-zinc-600 select-none cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showMarketPriceInPrint}
-                  onChange={(e) => setShowMarketPriceInPrint(e.target.checked)}
-                  className="rounded border-zinc-300 text-blue-600 focus:ring-blue-500 h-3.5 w-3.5"
-                />
-                <span>Include Market Price in Printouts</span>
-              </label>
-
+            <div className="border-t border-slate-200 p-4 bg-zinc-50 flex items-center justify-end shrink-0">
               {/* Buttons */}
               <div className="flex gap-2 text-xs font-bold">
                 <button

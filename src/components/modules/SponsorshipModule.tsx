@@ -5,6 +5,7 @@ import { DataTable, Column } from "../data-table";
 import { NavigationTabs } from "../navigation-tabs";
 import { CustomButton } from "../custom-button";
 import { showToast } from "@/lib/toast";
+import { cn } from "@/lib/utils";
 import { 
   TrendingUp, 
   Coins, 
@@ -160,12 +161,12 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   const tabs = [
     { id: "dashboard", label: "Dashboard", desc: "Overview of sponsorship distribution." },
     { id: "transaction", label: "Transaction", desc: "Record and manage distribution outputs." },
-    { id: "sponsored", label: "Sponsored By", desc: "Configure brand owners and sponsored product SKUs." },
     { id: "receiver", label: "Receiver", desc: "Manage receiving entities and limits." },
-    { id: "claims", label: "Claim Record", desc: "Track and manage claims made." }
+    { id: "sponsored", label: "Sponsored", desc: "Manage sponsored entities and claims." }
   ];
 
   const [activeTab, setActiveTab] = React.useState<string>("dashboard");
+  const [sponsoredSubTab, setSponsoredSubTab] = React.useState<"entity" | "transaction">("entity");
   const [fetching, setFetching] = React.useState<boolean>(false);
 
   // Core database sources
@@ -1544,7 +1545,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
           <title>Claim Statement - ${claim.invoiceNumber}</title>
           <style>
             body { font-family: 'Inter', sans-serif; color: #1e293b; background-color: #f8fafc; margin: 0; padding: 40px 20px; display: flex; justify-content: center; min-height: 100vh; }
-            .page-container { width: 210mm; min-height: 297mm; background-color: #ffffff; padding: 20mm; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08); border-radius: 8px; box-sizing: border-box; }
+            .page-container { width: 210mm; padding: 20mm; margin-bottom: 40px; }
             table { width: 100%; border-collapse: collapse; margin-top: 15px; margin-bottom: 25px; }
             th { background-color: #f1f5f9; padding: 10px 8px; font-size: 11px; font-weight: bold; text-transform: uppercase; text-align: left; }
             .section2-th { font-size: 8px; padding: 4px 6px; }
@@ -2123,16 +2124,23 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   }, [receivers, transactions, catalog]);
 
   return (
-    <div className="flex flex-col gap-6 font-primary text-zinc-900 select-none">
+    <div className="flex flex-col gap-4 font-primary text-zinc-900 select-none h-full overflow-hidden">
       
       {/* Navigation sub-tabs */}
       <NavigationTabs 
         tabs={tabs} 
         activeTabId={activeTab} 
         onTabSelect={(id) => setActiveTab(id)} 
-        action={
-          activeTab === "dashboard" ? (
-            <div className="flex items-center gap-3">
+      />
+
+      {/* 1. DASHBOARD TAB */}
+      {activeTab === "dashboard" && (
+        <div className="flex flex-col gap-6 animate-tableFadeInOnly flex-grow h-full overflow-hidden">
+
+          {/* Dashboard Filters & Actions */}
+          <div className="flex flex-wrap items-center justify-between bg-[#F0F4F9]/60 border border-slate-200/80 rounded-lg p-3 shrink-0 gap-4">
+            <span className="text-xs font-bold text-zinc-700 uppercase tracking-wider whitespace-nowrap">Dashboard Reports & Claim Printing</span>
+            <div className="flex flex-wrap items-center gap-3">
               {(dashStartDate || dashEndDate || dashSponsorFilter !== "all") && (
                 <button
                   type="button"
@@ -2161,14 +2169,14 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
                   type="date"
                   value={dashStartDate}
                   onChange={(e) => setDashStartDate(e.target.value)}
-                  className="bg-white border border-zinc-300 rounded-lg p-1.5 font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-9"
+                  className="bg-white border border-zinc-300 rounded p-1.5 font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-9 text-xs"
                 />
                 <span className="mx-0.5 text-zinc-400 font-normal text-sm">-</span>
                 <input
                   type="date"
                   value={dashEndDate}
                   onChange={(e) => setDashEndDate(e.target.value)}
-                  className="bg-white border border-zinc-300 rounded-lg p-1.5 font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-9"
+                  className="bg-white border border-zinc-300 rounded p-1.5 font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-9 text-xs"
                 />
               </div>
               <CustomButton 
@@ -2177,67 +2185,61 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
                 variant="default"
                 title={isDashboardPrintDisabled ? "Selected sponsor & date range is already closed/claimed" : undefined}
               >
-                <Printer size={13} className="text-zinc-500" />
-                Print Claim
+                <Printer size={13} className="text-zinc-500 mr-1" />
+                Print Statement
               </CustomButton>
             </div>
-          ) : undefined
-        }
-      />
-
-      {/* 1. DASHBOARD TAB */}
-      {activeTab === "dashboard" && (
-        <div className="flex flex-col gap-6 animate-tableFadeInOnly">
+          </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="bg-white border border-slate-200 rounded p-5 shadow-xs flex items-center gap-4">
+          <div className="flex flex-wrap gap-4 shrink-0">
+            <div className="bg-white border border-slate-200 rounded p-5 shadow-xs flex items-center gap-4 flex-grow min-w-[240px]">
               <div className="p-3 bg-[#F0F4F9] text-[#041E49] rounded border border-transparent">
                 <TrendingUp size={22} className="stroke-[2.5]" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Cartons Distributed</p>
+                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap">Cartons Distributed</p>
                 <p className="text-2xl font-bold text-zinc-900 mt-0.5">{Math.round(dashboardStats.totalCartons)}</p>
               </div>
             </div>
-            <div className="bg-white border border-slate-200 rounded p-5 shadow-xs flex items-center gap-4">
+            <div className="bg-white border border-slate-200 rounded p-5 shadow-xs flex items-center gap-4 flex-grow min-w-[240px]">
               <div className="p-3 bg-[#F0F4F9] text-[#041E49] rounded border border-transparent">
                 <FileText size={22} className="stroke-[2.5]" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Total Transactions</p>
+                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap">Total Transactions</p>
                 <p className="text-2xl font-bold text-zinc-900 mt-0.5">{dashboardStats.totalTransactions}</p>
               </div>
             </div>
-            <div className="bg-white border border-slate-200 rounded p-5 shadow-xs flex items-center gap-4">
+            <div className="bg-white border border-slate-200 rounded p-5 shadow-xs flex items-center gap-4 flex-grow min-w-[240px]">
               <div className="p-3 bg-[#F0F4F9] text-[#041E49] rounded border border-transparent">
                 <Users size={22} className="stroke-[2.5]" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Registered Receivers</p>
+                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap">Registered Receivers</p>
                 <p className="text-2xl font-bold text-zinc-900 mt-0.5">{receivers.length}</p>
               </div>
             </div>
-            <div className="bg-white border border-slate-200 rounded p-5 shadow-xs flex items-center gap-4">
+            <div className="bg-white border border-slate-200 rounded p-5 shadow-xs flex items-center gap-4 flex-grow min-w-[240px]">
               <div className="p-3 bg-[#F0F4F9] text-[#041E49] rounded border border-transparent">
                 <Coins size={22} className="stroke-[2.5]" />
               </div>
               <div>
-                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">Est. Value (Cost)</p>
+                <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap">Est. Value (Cost)</p>
                 <p className="text-2xl font-bold text-zinc-900 mt-0.5">${dashboardStats.totalCost.toFixed(2)}</p>
               </div>
             </div>
           </div>
 
           {/* Recent Summary table */}
-          <div className="overflow-hidden flex flex-col">
+          <div className="overflow-hidden flex flex-col flex-grow h-full">
             <DataTable
               columns={dashboardColumns}
               data={dashboardTableData}
               userRole={userRole}
               title="Sponsore Summary"
               fetching={fetching}
-              height="h-[calc(100vh-340px)]"
+              height="h-full"
             />
           </div>
         </div>
@@ -2245,10 +2247,10 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
       {/* 2. TRANSACTION LOGGING TAB */}
       {activeTab === "transaction" && (
-        <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-tableFadeInOnly">
+        <div className="flex flex-col gap-4 flex-grow h-full overflow-hidden">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-tableFadeInOnly flex-grow h-full overflow-hidden">
             {/* History table col (left side) */}
-            <div className={`${isTxFormOpen ? "lg:col-span-2" : "lg:col-span-3"} overflow-hidden flex flex-col`}>
+            <div className={`${isTxFormOpen ? "lg:col-span-2" : "lg:col-span-3"} overflow-hidden flex flex-col h-full`}>
               <DataTable
                 columns={transactionColumns}
                 data={transactionsTableData}
@@ -2257,7 +2259,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
                 fetching={fetching}
                 onEditRow={(row) => handleEditTransaction(row.id)}
                 onDeleteRow={(id) => handleDeleteTransaction(id)}
-                height="h-[calc(100vh-240px)]"
+                height="h-full"
                 headerActions={
                   <CustomButton
                     variant={isTxFormOpen ? "dark" : "default"}
@@ -2453,128 +2455,352 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
         </div>
       )}
 
-      {/* 3. SPONSORED BY TAB */}
+      {/* 3. SPONSORED TAB */}
       {activeTab === "sponsored" && (
-        <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-tableFadeInOnly">
-            {/* Table col (left side) */}
-            <div className={`${isCatalogFormOpen ? "lg:col-span-2" : "lg:col-span-3"} overflow-hidden flex flex-col`}>
-              <DataTable
-                columns={catalogColumns}
-                data={catalogTableData}
-                userRole={userRole}
-                title="Sponsored Catalog Mappings"
-                fetching={fetching}
-                onEditRow={(row) => handleEditCatalog(row)}
-                onDeleteRow={(id) => handleDeleteCatalog(id)}
-                height="h-[calc(100vh-240px)]"
-                headerActions={
-                  <CustomButton
-                    variant={isCatalogFormOpen ? "dark" : "default"}
-                    onClick={() => setIsCatalogFormOpen(!isCatalogFormOpen)}
-                  >
-                    {isCatalogFormOpen ? "Hide Panel" : "Add New Record"}
-                  </CustomButton>
-                }
-              />
-            </div>
+        <div className="flex flex-col gap-4 flex-grow h-full overflow-hidden">
+          {/* Sub-navigation tabs */}
+          <div className="flex gap-2 border-b border-zinc-200/80 pb-2 mb-2 select-none shrink-0">
+            <button
+              onClick={() => setSponsoredSubTab("entity")}
+              className={cn(
+                "px-3 py-1.5 text-xs font-bold rounded transition-all cursor-pointer",
+                sponsoredSubTab === "entity"
+                  ? "bg-[#D3E3FD] text-[#041E49]"
+                  : "text-zinc-600 hover:text-[#1F1F1F] hover:bg-[#E0E8F6]"
+              )}
+            >
+              Sponsored Entity
+            </button>
+            <button
+              onClick={() => setSponsoredSubTab("transaction")}
+              className={cn(
+                "px-3 py-1.5 text-xs font-bold rounded transition-all cursor-pointer",
+                sponsoredSubTab === "transaction"
+                  ? "bg-[#D3E3FD] text-[#041E49]"
+                  : "text-zinc-600 hover:text-[#1F1F1F] hover:bg-[#E0E8F6]"
+              )}
+            >
+              Claim Transaction
+            </button>
+          </div>
 
-            {/* Form col (right side, collapsible) */}
-            {isCatalogFormOpen && (
-              <div className="lg:col-span-1 bg-white border border-zinc-300/40 p-5 rounded-xl shadow-sm h-fit">
-                <h3 className="font-bold text-zinc-900 border-b pb-2 text-sm uppercase tracking-wider">
-                  {sponsoredCatalogId ? "Edit Sponsored Product" : "Add Sponsored Product"}
-                </h3>
-                <form onSubmit={handleAddCatalog} className="flex flex-col gap-4 mt-4 text-xs">
-                  <div>
-                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Sponsored By</label>
-                    <input 
-                      type="text" 
-                      value={sponsoredBy}
-                      onChange={(e) => setSponsoredBy(e.target.value)}
-                      placeholder="e.g. HSG Global"
-                      required
-                      disabled={userRole === "viewer"}
-                      className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Brands</label>
-                    <SearchableSelect
-                      options={brandOptions}
-                      value={selectedBrand}
-                      onChange={(val) => {
-                        setSelectedBrand(val);
-                        setSelectedProductSku("");
-                      }}
-                      placeholder="Search and select brand..."
-                      disabled={userRole === "viewer"}
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Product SKU</label>
-                    <SearchableSelect
-                      options={productOptions}
-                      value={selectedProductSku}
-                      onChange={(val) => setSelectedProductSku(val)}
-                      disabled={!selectedBrand || userRole === "viewer"}
-                      placeholder={selectedBrand ? "Search product SKU..." : "Select Brand first"}
-                    />
-                  </div>
-                  {selectedProductSku && (
-                    <div className="p-3 bg-zinc-50 rounded-lg border border-zinc-200/80 flex flex-col gap-2 font-medium">
-                      <div className="flex justify-between">
-                        <span className="text-zinc-400 uppercase font-bold text-[10px]">UOM (Pieces/Ctn)</span>
-                        <span className="font-bold text-zinc-900">
-                          {productsList.find(p => p.SKU === selectedProductSku)?.Carton || 24} pcs
-                        </span>
+          {sponsoredSubTab === "entity" ? (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-tableFadeInOnly flex-grow h-full overflow-hidden">
+              {/* Table col (left side) */}
+              <div className={`${isCatalogFormOpen ? "lg:col-span-2" : "lg:col-span-3"} overflow-hidden flex flex-col h-full`}>
+                <DataTable
+                  columns={catalogColumns}
+                  data={catalogTableData}
+                  userRole={userRole}
+                  title="Sponsored Catalog Mappings"
+                  fetching={fetching}
+                  onEditRow={(row) => handleEditCatalog(row)}
+                  onDeleteRow={(id) => handleDeleteCatalog(id)}
+                  height="h-full"
+                  headerActions={
+                    <CustomButton
+                      variant={isCatalogFormOpen ? "dark" : "default"}
+                      onClick={() => setIsCatalogFormOpen(!isCatalogFormOpen)}
+                    >
+                      {isCatalogFormOpen ? "Hide Panel" : "Add New Record"}
+                    </CustomButton>
+                  }
+                />
+              </div>
+
+              {/* Form col (right side, collapsible) */}
+              {isCatalogFormOpen && (
+                <div className="lg:col-span-1 bg-white border border-zinc-300/40 p-5 rounded-xl shadow-sm h-fit">
+                  <h3 className="font-bold text-zinc-900 border-b pb-2 text-sm uppercase tracking-wider">
+                    {sponsoredCatalogId ? "Edit Sponsored Product" : "Add Sponsored Product"}
+                  </h3>
+                  <form onSubmit={handleAddCatalog} className="flex flex-col gap-4 mt-4 text-xs">
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase">Sponsored By</label>
+                      <input 
+                        type="text" 
+                        value={sponsoredBy}
+                        onChange={(e) => setSponsoredBy(e.target.value)}
+                        placeholder="e.g. HSG Global"
+                        required
+                        disabled={userRole === "viewer"}
+                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase">Brands</label>
+                      <SearchableSelect
+                        options={brandOptions}
+                        value={selectedBrand}
+                        onChange={(val) => {
+                          setSelectedBrand(val);
+                          setSelectedProductSku("");
+                        }}
+                        placeholder="Search and select brand..."
+                        disabled={userRole === "viewer"}
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase">Product SKU</label>
+                      <SearchableSelect
+                        options={productOptions}
+                        value={selectedProductSku}
+                        onChange={(val) => setSelectedProductSku(val)}
+                        placeholder={selectedBrand ? "Search product SKU..." : "Select Brand first"}
+                        disabled={!selectedBrand || userRole === "viewer"}
+                      />
+                    </div>
+                    {selectedProductSku && (
+                      <div className="bg-zinc-50/50 border border-zinc-200/60 p-3 rounded-lg flex flex-col gap-1.5 text-[10px] font-semibold text-zinc-650">
+                        <span className="font-bold text-[9px] text-zinc-400 uppercase tracking-wider mb-0.5 block">SKU Details</span>
+                        <div className="flex justify-between">
+                          <span>UOM (Pcs/Ctn):</span>
+                          <span className="text-zinc-900 font-bold">1 x {productsList.find(p => p.SKU === selectedProductSku)?.Carton || 24} pcs</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Unit Landed Cost:</span>
+                          <span className="text-zinc-900 font-bold">${parseFloat(productsList.find(p => p.SKU === selectedProductSku)?.Cost || "0").toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between border-t border-zinc-200/80 pt-1.5 mt-0.5 text-zinc-900 font-bold text-[10.5px]">
+                          <span>Carton Landed Cost:</span>
+                          <span className="text-blue-700">${(parseFloat(productsList.find(p => p.SKU === selectedProductSku)?.Cost || "0") * parseInt(productsList.find(p => p.SKU === selectedProductSku)?.Carton || "24")).toFixed(2)}</span>
+                        </div>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-zinc-400 uppercase font-bold text-[10px]">Cost per Piece</span>
-                        <span className="font-bold text-zinc-900">
-                          ${parseFloat(productsList.find(p => p.SKU === selectedProductSku)?.Cost || "0").toFixed(2)}
-                        </span>
+                    )}
+                    <div className="flex gap-2 mt-2">
+                      <CustomButton 
+                        type="submit"
+                        disabled={userRole === "viewer"}
+                        variant={sponsoredCatalogId ? "secondary" : "dark"}
+                        className="flex-1 h-10"
+                      >
+                        {userRole === "viewer" ? "View Only" : sponsoredCatalogId ? "Update Catalog" : "Add to Catalog"}
+                      </CustomButton>
+                      {sponsoredCatalogId && (
+                        <CustomButton 
+                          type="button" 
+                          onClick={handleCancelCatalogEdit}
+                          variant="default"
+                          className="h-10"
+                        >
+                          Cancel
+                        </CustomButton>
+                      )}
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-tableFadeInOnly flex-grow h-full overflow-hidden">
+              {/* Table col (left side) */}
+              <div className={`${isClaimFormOpen ? "lg:col-span-2" : "lg:col-span-3"} overflow-hidden flex flex-col h-full`}>
+                <DataTable
+                  columns={claimColumns}
+                  data={claimsTableData}
+                  userRole={userRole}
+                  title="Sponsorship Claim Records"
+                  fetching={fetching}
+                  onEditRow={(row) => handleEditClaim(row)}
+                  onDeleteRow={(id) => handleDeleteClaim(id)}
+                  height="h-full"
+                  headerActions={
+                    <CustomButton
+                      variant={isClaimFormOpen ? "dark" : "default"}
+                      onClick={() => setIsClaimFormOpen(!isClaimFormOpen)}
+                    >
+                      {isClaimFormOpen ? "Hide Panel" : "Add New Claim"}
+                    </CustomButton>
+                  }
+                />
+              </div>
+
+              {/* Form col (right side, collapsible) */}
+              {isClaimFormOpen && (
+                <div className="lg:col-span-1 bg-white border border-zinc-300/40 p-5 rounded-xl shadow-sm h-fit">
+                  <h3 className="font-bold text-zinc-900 border-b pb-2 text-sm uppercase tracking-wider">
+                    {claimId ? "Edit Claim Record" : "Add Claim Record"}
+                  </h3>
+                  <form onSubmit={handleAddClaim} className="flex flex-col gap-4 mt-4 text-xs font-primary">
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase">Invoice Number *</label>
+                      <input 
+                        type="text" 
+                        value={claimInvoiceNumber}
+                        onChange={(e) => setClaimInvoiceNumber(e.target.value)}
+                        placeholder="e.g. INV-10029"
+                        required
+                        disabled={userRole === "viewer"}
+                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                      />
+                    </div>
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase">Sponsor Name *</label>
+                      <input
+                        type="text"
+                        list="sponsor-names-list"
+                        value={claimSponsorName}
+                        onChange={(e) => setClaimSponsorName(e.target.value)}
+                        placeholder="Enter or select sponsor name"
+                        required
+                        disabled={userRole === "viewer"}
+                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                      />
+                      <datalist id="sponsor-names-list">
+                        {uniqueCatalogSponsors.map(s => (
+                          <option key={s} value={s} />
+                        ))}
+                      </datalist>
+                    </div>
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase">Date of Claim *</label>
+                      <input 
+                        type="date" 
+                        value={claimDate}
+                        onChange={(e) => setClaimDate(e.target.value)}
+                        required
+                        disabled={userRole === "viewer"}
+                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block mb-1 text-zinc-500 font-bold uppercase text-[10px]">Claim Range Start *</label>
+                        <input 
+                          type="date" 
+                          value={claimStartDate}
+                          onChange={(e) => setClaimStartDate(e.target.value)}
+                          required
+                          disabled={userRole === "viewer"}
+                          className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                        />
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-zinc-400 uppercase font-bold text-[10px]">Cost per Carton</span>
-                        <span className="font-bold text-zinc-900">
-                          ${(parseFloat(productsList.find(p => p.SKU === selectedProductSku)?.Cost || "0") * parseInt(productsList.find(p => p.SKU === selectedProductSku)?.Carton || "24")).toFixed(2)}
-                        </span>
+                      <div>
+                        <label className="block mb-1 text-zinc-500 font-bold uppercase text-[10px]">Claim Range End *</label>
+                        <input 
+                          type="date" 
+                          value={claimEndDate}
+                          onChange={(e) => setClaimEndDate(e.target.value)}
+                          required
+                          disabled={userRole === "viewer"}
+                          className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                        />
                       </div>
                     </div>
-                  )}
-                  <div className="flex gap-2 mt-2">
-                    <CustomButton 
-                      type="submit"
-                      disabled={userRole === "viewer"}
-                      variant={sponsoredCatalogId ? "secondary" : "dark"}
-                      className="flex-1 h-10"
-                    >
-                      {userRole === "viewer" ? "View Only" : sponsoredCatalogId ? "Update Catalog" : "Add to Catalog"}
-                    </CustomButton>
-                    {sponsoredCatalogId && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block mb-1 text-zinc-500 font-bold uppercase text-[9px]">Amt by Record (Auto) *</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          value={claimAmountByRecord}
+                          placeholder="0.00"
+                          required
+                          readOnly
+                          disabled={userRole === "viewer"}
+                          className="w-full bg-slate-200 border border-slate-300 rounded p-2.5 text-zinc-900 focus:outline-none font-bold text-center cursor-not-allowed"
+                        />
+                      </div>
+                      <div>
+                        <label className="block mb-1 text-zinc-500 font-bold uppercase text-[9px]">Amt in Inv *</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          value={claimAmountInInvoice}
+                          onChange={(e) => setClaimAmountInInvoice(e.target.value)}
+                          placeholder="0.00"
+                          required
+                          min={0}
+                          disabled={userRole === "viewer"}
+                          className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-955 focus:outline-none focus:border-blue-400 font-semibold"
+                        />
+                      </div>
+                      <div>
+                        <label className="block mb-1 text-zinc-500 font-bold uppercase text-[9px]">Total (GST) *</label>
+                        <input 
+                          type="number"
+                          step="0.01"
+                          value={claimTotalAfterGst}
+                          onChange={(e) => setClaimTotalAfterGst(e.target.value)}
+                          placeholder="0.00"
+                          required
+                          min={0}
+                          disabled={userRole === "viewer"}
+                          className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-950 focus:outline-none focus:border-blue-400 font-semibold"
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase">Invoice PDF (R2 Secure Storage)</label>
+                      {claimInvoicePdfUrl ? (
+                        <div className="flex items-center justify-between p-2 border border-green-250 bg-green-50 rounded text-zinc-800">
+                          <div className="flex items-center gap-1.5 overflow-hidden">
+                            <FileText size={14} className="text-green-600 flex-shrink-0" />
+                            <a 
+                              href={claimInvoicePdfUrl} 
+                              target="_blank" 
+                              rel="noopener noreferrer" 
+                              className="underline font-bold text-xs truncate"
+                            >
+                              View Uploaded Invoice PDF
+                            </a>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setClaimInvoicePdfUrl("")}
+                            className="text-red-500 hover:text-red-700 font-bold ml-2 cursor-pointer"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-1.5">
+                          <input
+                            type="file"
+                            accept="application/pdf"
+                            onChange={handlePdfUpload}
+                            disabled={uploadingPdf || userRole === "viewer"}
+                            className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2 text-zinc-955 focus:outline-none focus:border-blue-400 text-xs font-semibold cursor-pointer file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-zinc-800 file:text-white file:hover:bg-zinc-700 disabled:opacity-50"
+                          />
+                          {uploadingPdf && (
+                            <p className="text-[10px] text-blue-600 font-bold animate-pulse">Uploading file... Please wait.</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-2 mt-2">
                       <CustomButton 
-                        type="button" 
-                        onClick={handleCancelCatalogEdit}
-                        variant="default"
-                        className="h-10"
+                        type="submit"
+                        disabled={userRole === "viewer"}
+                        variant={claimId ? "secondary" : "dark"}
+                        className="flex-1 h-10"
                       >
-                        Cancel
+                        {userRole === "viewer" ? "View Only" : claimId ? "Update Claim" : "Save Claim"}
                       </CustomButton>
-                    )}
-                  </div>
-                </form>
-              </div>
-            )}
-          </div>
+                      {claimId && (
+                        <CustomButton 
+                          type="button" 
+                          onClick={handleCancelClaimEdit}
+                          variant="default"
+                          className="h-10"
+                        >
+                          Cancel
+                        </CustomButton>
+                      )}
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
       {/* 4. RECEIVER REGISTRY TAB */}
       {activeTab === "receiver" && (
-        <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-tableFadeInOnly">
+        <div className="flex flex-col gap-4 flex-grow h-full overflow-hidden">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-tableFadeInOnly flex-grow h-full overflow-hidden">
             {/* Table col (left side) */}
-            <div className={`${isReceiverFormOpen ? "lg:col-span-2" : "lg:col-span-3"} overflow-hidden flex flex-col`}>
+            <div className={`${isReceiverFormOpen ? "lg:col-span-2" : "lg:col-span-3"} overflow-hidden flex flex-col h-full`}>
               <DataTable
                 columns={receiverColumns}
                 data={receiversTableData}
@@ -2583,7 +2809,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
                 fetching={fetching}
                 onEditRow={(row) => handleEditReceiver(row)}
                 onDeleteRow={(id) => handleDeleteReceiver(id)}
-                height="h-[calc(100vh-240px)]"
+                height="h-full"
                 headerActions={
                   <CustomButton
                     variant={isReceiverFormOpen ? "dark" : "default"}
@@ -2672,213 +2898,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
           </div>
         </div>
       )}
-
-      {/* 5. CLAIM RECORD TAB */}
-      {activeTab === "claims" && (
-        <div className="flex flex-col gap-4">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-tableFadeInOnly">
-            {/* Table col (left side) */}
-            <div className={`${isClaimFormOpen ? "lg:col-span-2" : "lg:col-span-3"} overflow-hidden flex flex-col`}>
-              <DataTable
-                columns={claimColumns}
-                data={claimsTableData}
-                userRole={userRole}
-                title="Sponsorship Claim Records"
-                fetching={fetching}
-                onEditRow={(row) => handleEditClaim(row)}
-                onDeleteRow={(id) => handleDeleteClaim(id)}
-                height="h-[calc(100vh-240px)]"
-                headerActions={
-                  <CustomButton
-                    variant={isClaimFormOpen ? "dark" : "default"}
-                    onClick={() => setIsClaimFormOpen(!isClaimFormOpen)}
-                  >
-                    {isClaimFormOpen ? "Hide Panel" : "Add New Claim"}
-                  </CustomButton>
-                }
-              />
-            </div>
-
-            {/* Form col (right side, collapsible) */}
-            {isClaimFormOpen && (
-              <div className="lg:col-span-1 bg-white border border-zinc-300/40 p-5 rounded-xl shadow-sm h-fit">
-                <h3 className="font-bold text-zinc-900 border-b pb-2 text-sm uppercase tracking-wider">
-                  {claimId ? "Edit Claim Record" : "Add Claim Record"}
-                </h3>
-                <form onSubmit={handleAddClaim} className="flex flex-col gap-4 mt-4 text-xs font-primary">
-                  <div>
-                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Invoice Number *</label>
-                    <input 
-                      type="text" 
-                      value={claimInvoiceNumber}
-                      onChange={(e) => setClaimInvoiceNumber(e.target.value)}
-                      placeholder="e.g. INV-10029"
-                      required
-                      disabled={userRole === "viewer"}
-                      className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Sponsor Name *</label>
-                    <input
-                      type="text"
-                      list="sponsor-names-list"
-                      value={claimSponsorName}
-                      onChange={(e) => setClaimSponsorName(e.target.value)}
-                      placeholder="Enter or select sponsor name"
-                      required
-                      disabled={userRole === "viewer"}
-                      className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-                    />
-                    <datalist id="sponsor-names-list">
-                      {uniqueCatalogSponsors.map(s => (
-                        <option key={s} value={s} />
-                      ))}
-                    </datalist>
-                  </div>
-                  <div>
-                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Date of Claim *</label>
-                    <input 
-                      type="date" 
-                      value={claimDate}
-                      onChange={(e) => setClaimDate(e.target.value)}
-                      required
-                      disabled={userRole === "viewer"}
-                      className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[10px]">Claim Range Start *</label>
-                      <input 
-                        type="date" 
-                        value={claimStartDate}
-                        onChange={(e) => setClaimStartDate(e.target.value)}
-                        required
-                        disabled={userRole === "viewer"}
-                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-                      />
-                    </div>
-                    <div>
-                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[10px]">Claim Range End *</label>
-                      <input 
-                        type="date" 
-                        value={claimEndDate}
-                        onChange={(e) => setClaimEndDate(e.target.value)}
-                        required
-                        disabled={userRole === "viewer"}
-                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[9px]">Amt by Record (Auto) *</label>
-                      <input 
-                        type="number"
-                        step="0.01"
-                        value={claimAmountByRecord}
-                        placeholder="0.00"
-                        required
-                        readOnly
-                        disabled={userRole === "viewer"}
-                        className="w-full bg-slate-200 border border-slate-300 rounded p-2.5 text-zinc-900 focus:outline-none font-bold text-center cursor-not-allowed"
-                      />
-                    </div>
-                    <div>
-                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[9px]">Amt in Inv *</label>
-                      <input 
-                        type="number"
-                        step="0.01"
-                        value={claimAmountInInvoice}
-                        onChange={(e) => setClaimAmountInInvoice(e.target.value)}
-                        placeholder="0.00"
-                        required
-                        min={0}
-                        disabled={userRole === "viewer"}
-                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-950 focus:outline-none focus:border-blue-400 font-semibold"
-                      />
-                    </div>
-                    <div>
-                      <label className="block mb-1 text-zinc-500 font-bold uppercase text-[9px]">Total (GST) *</label>
-                      <input 
-                        type="number"
-                        step="0.01"
-                        value={claimTotalAfterGst}
-                        onChange={(e) => setClaimTotalAfterGst(e.target.value)}
-                        placeholder="0.00"
-                        required
-                        min={0}
-                        disabled={userRole === "viewer"}
-                        className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2.5 text-zinc-950 focus:outline-none focus:border-blue-400 font-semibold"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block mb-1 text-zinc-500 font-bold uppercase">Invoice PDF (R2 Secure Storage)</label>
-                    {claimInvoicePdfUrl ? (
-                      <div className="flex items-center justify-between p-2 border border-green-250 bg-green-50 rounded text-zinc-800">
-                        <div className="flex items-center gap-1.5 overflow-hidden">
-                          <FileText size={14} className="text-green-600 flex-shrink-0" />
-                          <a 
-                            href={claimInvoicePdfUrl} 
-                            target="_blank" 
-                            rel="noopener noreferrer" 
-                            className="underline font-bold text-xs truncate"
-                          >
-                            View Uploaded Invoice PDF
-                          </a>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setClaimInvoicePdfUrl("")}
-                          className="text-red-500 hover:text-red-700 font-bold ml-2 cursor-pointer"
-                        >
-                          Remove
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-1.5">
-                        <input
-                          type="file"
-                          accept="application/pdf"
-                          onChange={handlePdfUpload}
-                          disabled={uploadingPdf || userRole === "viewer"}
-                          className="w-full bg-[#F0F4F9] border border-slate-200 rounded p-2 text-zinc-950 focus:outline-none focus:border-blue-400 text-xs font-semibold cursor-pointer file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-zinc-800 file:text-white file:hover:bg-zinc-700 disabled:opacity-50"
-                        />
-                        {uploadingPdf && (
-                          <p className="text-[10px] text-blue-600 font-bold animate-pulse">Uploading file... Please wait.</p>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex gap-2 mt-2">
-                    <CustomButton 
-                      type="submit"
-                      disabled={userRole === "viewer"}
-                      variant={claimId ? "secondary" : "dark"}
-                      className="flex-1 h-10"
-                    >
-                      {userRole === "viewer" ? "View Only" : claimId ? "Update Claim" : "Save Claim"}
-                    </CustomButton>
-                    {claimId && (
-                      <CustomButton 
-                        type="button" 
-                        onClick={handleCancelClaimEdit}
-                        variant="default"
-                        className="h-10"
-                      >
-                        Cancel
-                      </CustomButton>
-                    )}
-                  </div>
-                </form>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
+      
     </div>
   );
 }

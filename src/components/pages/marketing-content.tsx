@@ -54,6 +54,7 @@ export function MarketingContentPage({ profile, idToken }: MarketingContentPageP
   const handleSubModuleSelect = (title: string) => {
     setActiveSubModule(title);
     window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Marketing & Content", title] }));
+    window.dispatchEvent(new CustomEvent("collapse-sidepanel"));
   };
 
   const renderActiveSubModule = () => {

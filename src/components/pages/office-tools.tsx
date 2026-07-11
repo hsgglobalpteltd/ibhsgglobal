@@ -53,6 +53,7 @@ export function OfficeToolsPage({ profile }: OfficeToolsPageProps) {
   const handleSubModuleSelect = (title: string) => {
     setActiveSubModule(title);
     window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Office Tools", title] }));
+    window.dispatchEvent(new CustomEvent("collapse-sidepanel"));
   };
 
   const renderActiveSubModule = () => {

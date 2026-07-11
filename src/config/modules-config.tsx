@@ -86,6 +86,20 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     ]
   },
   {
+    id: "Stock",
+    label: "Stock",
+    modules: [
+      {
+        title: "Inventory",
+        description: "Monitor and manage stock take logs, stock levels, and inventory adjustments.",
+      },
+      {
+        title: "Dispose Record",
+        description: "Manage and record damaged, returned, or expired goods disposal (coming soon).",
+      }
+    ]
+  },
+  {
     id: "Office Tools",
     label: "Office Tools",
     modules: [

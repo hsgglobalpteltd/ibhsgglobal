@@ -624,10 +624,10 @@ export function ClaimFormGeneratorModule() {
                 <tbody className="divide-y divide-zinc-200">
                   {claimRows.map((row, idx) => (
                     <tr key={row.id} className="hover:bg-zinc-50/50">
-                      <td className="p-3 text-center text-xs font-bold text-zinc-400">
+                      <td className="p-3 text-center text-xs font-bold text-zinc-400 align-top pt-[19px]">
                         {idx + 1}
                       </td>
-                      <td className="p-2">
+                      <td className="p-2 align-top">
                         <textarea
                           rows={1}
                           value={row.desc}
@@ -636,7 +636,7 @@ export function ClaimFormGeneratorModule() {
                           className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-white resize-none min-h-[38px] leading-normal"
                         />
                       </td>
-                      <td className="p-2">
+                      <td className="p-2 align-top">
                         <div className="flex items-center gap-1 bg-white border border-zinc-300 rounded-lg px-2 h-[38px] focus-within:ring-1 focus-within:ring-zinc-400">
                           <span className="text-xs font-bold text-zinc-400 select-none">$</span>
                           <input
@@ -649,7 +649,7 @@ export function ClaimFormGeneratorModule() {
                           />
                         </div>
                       </td>
-                      <td className="p-2">
+                      <td className="p-2 align-top">
                         <select
                           value={row.type}
                           onChange={(e) => handleRowChange(row.id, "type", e.target.value)}
@@ -660,16 +660,22 @@ export function ClaimFormGeneratorModule() {
                           <option value="NONE">No. GST</option>
                         </select>
                       </td>
-                      <td className="p-2">
+                      <td className="p-2 align-top">
                         <textarea
+                          ref={(el) => {
+                            if (el) {
+                              el.style.height = "auto";
+                              el.style.height = `${Math.min(el.scrollHeight, 78)}px`;
+                            }
+                          }}
                           rows={1}
                           value={row.remark}
                           onChange={(e) => handleRowChange(row.id, "remark", e.target.value)}
                           placeholder="Project remarks..."
-                          className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-white resize-none min-h-[38px] leading-normal"
+                          className="w-full p-2 border border-zinc-300 rounded-lg text-xs font-medium focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-white resize-none min-h-[38px] max-h-[78px] overflow-y-auto leading-normal"
                         />
                       </td>
-                      <td className="p-2 text-center">
+                      <td className="p-2 text-center align-top pt-2.5">
                         <button
                           onClick={() => handleRemoveClaimRow(row.id)}
                           className={`p-1.5 rounded-lg border border-zinc-300 bg-[#EEEEEE] text-zinc-500 hover:text-red-500 transition-colors shadow-xs ${

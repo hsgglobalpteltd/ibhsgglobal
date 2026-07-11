@@ -288,7 +288,7 @@ export default function Home() {
     }
 
     // Bypass placeholder check for categories
-    const categoryPages = ["Frontline", "Database", "Sales & Channels", "Office Tools", "Marketing & Content", "Administrator"];
+    const categoryPages = ["Frontline", "Database", "Sales & Channels", "Stock", "Office Tools", "Marketing & Content", "Administrator"];
     if (breadcrumbPath.length > 1 && !categoryPages.includes(activeItem)) {
       return (
         <div className="flex flex-col gap-4 font-primary">
@@ -324,16 +324,16 @@ export default function Home() {
     if (!firebaseUser || !profile) {
       return (
         <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 select-none font-primary animate-in fade-in duration-300">
-          <div className="w-full max-w-md bg-[#E5E5E5] border border-zinc-300 rounded-lg p-8 shadow-md flex flex-col gap-6 items-center text-center">
+          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 shadow-md flex flex-col gap-6 items-center text-center">
             <div className="flex flex-col gap-1.5">
-              <h1 className="text-3xl font-extrabold tracking-tight text-zinc-950">iB HSG Global</h1>
+              <h1 className="text-2xl font-extrabold tracking-tight text-zinc-950">iB HSG Global</h1>
               <p className="text-sm font-medium text-zinc-500">Connecting Teams. Bridging Operations.</p>
             </div>
             <div className="w-full border-t border-zinc-300/60 my-2" />
             <p className="text-xs text-zinc-500 max-w-xs leading-relaxed">
               Welcome to the HSG Global Internal Bridge. Authenticate below using your corporate Google login to access your workspaces.
             </p>
-            <CustomButton onClick={handleLogin} variant="dark" className="w-full mt-2 h-10 text-sm">
+            <CustomButton onClick={handleLogin} variant="dark" className="w-full mt-2 h-9 text-xs">
               Sign In with Google
             </CustomButton>
           </div>
@@ -363,7 +363,7 @@ export default function Home() {
     if (profile.active === 2) {
       return (
         <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 select-none font-primary animate-fade-in">
-          <div className="w-full max-w-md bg-[#E5E5E5] border border-zinc-300 rounded-lg p-8 shadow-md flex flex-col gap-6 items-center text-center">
+          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 shadow-md flex flex-col gap-6 items-center text-center">
             <div className="h-12 w-12 rounded-full bg-red-50 border border-red-200 flex items-center justify-center text-red-600 shadow-xs">
               <ShieldAlert className="w-6 h-6 animate-pulse" />
             </div>
@@ -372,7 +372,7 @@ export default function Home() {
               <p className="text-sm text-zinc-500">Please contact admin.</p>
             </div>
             <div className="w-full border-t border-zinc-300/60 my-1" />
-            <CustomButton onClick={handleLogout} variant="default" className="w-full h-10 text-sm">
+            <CustomButton onClick={handleLogout} variant="default" className="w-full h-9 text-xs">
               Log Out
             </CustomButton>
           </div>
@@ -384,7 +384,7 @@ export default function Home() {
     if (profile.active === 0) {
       return (
         <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 select-none font-primary animate-fade-in">
-          <div className="w-full max-w-md bg-[#E5E5E5] border border-zinc-300 rounded-lg p-8 shadow-md flex flex-col gap-6 items-center text-center">
+          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 shadow-md flex flex-col gap-6 items-center text-center">
             <div className="h-12 w-12 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shadow-xs">
               <ShieldAlert className="w-6 h-6" />
             </div>
@@ -393,13 +393,13 @@ export default function Home() {
               <p className="text-sm text-zinc-500">Please contact admin for approval.</p>
             </div>
             <div className="w-full border-t border-zinc-300/60 my-1" />
-            <CustomButton onClick={handleLogout} variant="default" className="w-full h-10 text-sm">
+            <CustomButton onClick={handleLogout} variant="default" className="w-full h-9 text-xs">
               Log Out
             </CustomButton>
           </div>
 
           {/* Live scanning progress bar line under the card container */}
-          <div className="w-full max-w-md h-1.5 bg-zinc-300/60 rounded-full mt-4 overflow-hidden relative">
+          <div className="w-full max-w-sm h-1.5 bg-zinc-300/60 rounded-full mt-4 overflow-hidden relative">
             <div className="animate-progress-slide rounded-full" />
           </div>
         </div>
@@ -410,19 +410,19 @@ export default function Home() {
     return (
       <>
         {/* Mobile View Block */}
-        <div className="flex md:hidden print:hidden min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 select-none font-primary text-center">
-          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 shadow-md flex flex-col gap-4 items-center">
-            <div className="h-10 w-10 rounded-lg bg-zinc-750 text-white flex items-center justify-center shadow-xs">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-monitor-smartphone"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+        <div className="flex md:hidden print:hidden min-h-screen w-full flex-col items-center justify-center bg-[#F0F4F9] p-8 select-none font-primary text-center">
+          <div className="flex flex-col gap-5 items-center max-w-sm">
+            <div className="h-12 w-12 rounded-full bg-[#D3E3FD] text-[#0B57D0] flex items-center justify-center shadow-xs">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-monitor-smartphone"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
             </div>
-            <div className="flex flex-col gap-1.5">
-              <h2 className="text-base font-bold text-zinc-950">Desktop Layout Required</h2>
-              <p className="text-xs text-zinc-500 font-medium leading-relaxed">
+            <div className="flex flex-col gap-2">
+              <h2 className="text-lg font-bold text-zinc-900">Desktop Layout Required</h2>
+              <p className="text-xs text-zinc-650 font-semibold leading-relaxed">
                 The HSG Global Internal Bridge is optimized for desktop and tablet screens to ensure proper database management and visibility.
               </p>
             </div>
-            <div className="w-full border-t border-zinc-300/60 my-0.5" />
-            <p className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider font-footer">
+            <div className="w-24 border-t border-[#AECBFA] my-1" />
+            <p className="text-[10px] text-[#0B57D0] font-bold uppercase tracking-wider font-footer">
               Please login from a tablet or PC
             </p>
           </div>
