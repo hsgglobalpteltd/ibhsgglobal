@@ -46,6 +46,32 @@ export default function RootLayout({
       className={`${outfit.variable} ${plusJakartaSans.variable} ${lora.variable} h-full antialiased`}
       suppressHydrationWarning
     >
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              // Prevent Ctrl + Mouse Wheel zoom
+              document.addEventListener('wheel', function(e) {
+                if (e.ctrlKey) {
+                  e.preventDefault();
+                }
+              }, { passive: false });
+
+              // Prevent Ctrl + Keys (+, -, 0) zoom
+              document.addEventListener('keydown', function(e) {
+                if (e.ctrlKey && (e.key === '=' || e.key === '-' || e.key === '0' || e.key === '+' || e.code === 'NumpadAdd' || e.code === 'NumpadSubtract')) {
+                  e.preventDefault();
+                }
+              });
+
+              // Prevent gesture/pinch zoom
+              document.addEventListener('gesturestart', function(e) {
+                if (e) e.preventDefault();
+              });
+            `
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col" suppressHydrationWarning>{children}</body>
     </html>
   );

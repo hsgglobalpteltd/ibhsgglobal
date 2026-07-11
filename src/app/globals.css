@@ -225,3 +225,7 @@ main .snap-deals-table td {
 main .snap-deals-table th {
   white-space: nowrap !important;
 }
+
+html, body {
+  touch-action: pan-x pan-y;
+}
