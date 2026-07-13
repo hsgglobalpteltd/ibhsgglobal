@@ -159,6 +159,12 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     if (!cachedProducts) {
       fetchFreshData("products_DB", false);
     }
+
+    // Trigger silent background sync after mount
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("db-refresh"));
+    }, 150);
+    return () => clearTimeout(timer);
   }, []);
 
   // Sync data when activeTab changes, loading from localStorage first
@@ -184,7 +190,6 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     const handleDbRefresh = async () => {
       const sheet = activeTab === "brands" ? "brands_DB" : "products_DB";
       await fetchFreshData(sheet, true);
-      showToast("Database cache refreshed!", "success");
     };
 
     window.addEventListener("db-refresh", handleDbRefresh);
@@ -369,7 +374,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative min-w-0">
       {/* Reusable Sub-Navigation NavigationTabs Component */}
       <div className="content-header">
         <NavigationTabs 

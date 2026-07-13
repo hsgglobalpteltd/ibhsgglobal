@@ -286,7 +286,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
   }
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary min-w-0">
       <div className="content-header">
         <NavigationTabs
           tabs={tabs}

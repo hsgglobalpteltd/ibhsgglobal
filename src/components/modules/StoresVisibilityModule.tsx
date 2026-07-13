@@ -182,6 +182,12 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
     }).finally(() => {
       setFetching(false);
     });
+
+    // Trigger silent background sync after mount
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("db-refresh"));
+    }, 150);
+    return () => clearTimeout(timer);
   }, []);
 
   // Listen for the global db-refresh event
@@ -205,7 +211,6 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         setRetailers(rt);
         setBrands(br);
         setSyncStatus("synced");
-        showToast("Database cache refreshed!", "success");
       } catch (err: any) {
         showToast("Failed to refresh database: " + err.message, "error");
       } finally {
@@ -458,7 +463,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         }
       `}} />
       {/* Sticky Header Wrapper */}
-      <div className={`sticky-header-module bg-[#F8F9FC] z-20 pt-6 pb-2.5 flex flex-col gap-2.5 transition-all duration-500 print:relative print:top-auto print:bg-transparent print:pt-0 print:pb-0 ${
+      <div className={`sticky-header-module bg-[#F8F9FC] z-20 pt-0 pb-2.5 flex flex-col gap-2.5 transition-all duration-500 print:relative print:top-auto print:bg-transparent print:pt-0 print:pb-0 ${
         isScrolled ? "shadow-xs border-b border-zinc-300/80 mb-2" : "border-b border-zinc-300/40"
       }`}>
         {/* Row 1: Title, Filters, Print Button */}

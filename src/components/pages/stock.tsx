@@ -82,7 +82,7 @@ export function StockPage({ profile }: StockPageProps) {
       {activeSubModule ? (
         renderActiveSubModule()
       ) : (
-        <div className="content-body flex-1 w-full overflow-y-auto">
+        <div className="content-body flex-1 w-full overflow-y-auto p-2">
           {visibleModules.length === 0 ? (
             <div className="flex items-center justify-center h-48 bg-[#F0F4F9] border border-dashed border-slate-200 rounded select-none">
               <span className="font-primary text-sm text-zinc-500 italic">

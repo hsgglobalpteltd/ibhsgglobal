@@ -62,7 +62,6 @@ export function UsersModule({ idToken = "simulated-id-token", profile }: UsersMo
   React.useEffect(() => {
     const handleDbRefresh = async () => {
       await loadUsers();
-      showToast("Users database refreshed successfully!", "success");
     };
     window.addEventListener("db-refresh", handleDbRefresh);
     return () => window.removeEventListener("db-refresh", handleDbRefresh);
@@ -157,7 +156,7 @@ export function UsersModule({ idToken = "simulated-id-token", profile }: UsersMo
   ];
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px]">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] min-w-0">
       {/* Reusable Sub-Navigation NavigationTabs Component */}
       <div className="content-header">
         <NavigationTabs 

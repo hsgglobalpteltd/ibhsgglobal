@@ -281,13 +281,13 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
 
   const tabs = [
     { id: "performance", label: "Performance", desc: "Analyze store visit statistics, performance indicators, and monthly retailer volume graphs." },
-    { id: "report", label: "Report", desc: "Detailed records of product audits, brand allocations, and photo captures in the last 60 days." },
-    { id: "task", label: "Task", desc: "Manage and update merchandiser-specific field tasks." },
     { id: "setting", label: "Deploy", desc: "Configure merchandiser parameters, target status limits, and avoided store rankings." },
+    { id: "visit_history", label: "Visit History", desc: "Detailed record of past store visits, audits, photo captures, and pending special field tasks." },
     { id: "users", label: "Users", desc: "Registry of active field merchandisers and secure PIN credentials." }
   ];
 
   const [activeTab, setActiveTab] = React.useState("performance");
+  const [historySubTab, setHistorySubTab] = React.useState<"pending" | "visited">("pending");
   const [calcGroupBy, setCalcGroupBy] = React.useState<"zone" | "retailer">("zone");
   const [fetching, setFetching] = React.useState(false);
 
@@ -560,6 +560,12 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     }).finally(() => {
       setFetching(false);
     });
+
+    // Trigger silent background sync after mount
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("db-refresh"));
+    }, 150);
+    return () => clearTimeout(timer);
   }, []);
 
   // Global Refresh Listener
@@ -604,7 +610,6 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
         setRetailers(retailersVal);
         setBrands(brandsVal);
 
-        showToast("Records refreshed successfully!", "success");
       } catch (err: any) {
         showToast("Refresh failed: " + err.message, "error");
       } finally {
@@ -1648,29 +1653,31 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
   ];
 
   return (
-    <div className="flex flex-col gap-5 font-primary h-full relative">
-      <NavigationTabs 
-        tabs={tabs}
-        activeTabId={activeTab}
-        onTabSelect={(id: any) => {
-          setActiveTab(id);
-          setIsEditMode(false);
-        }}
-        titleSuffix="Record"
-        action={
-          activeTab === "performance" ? (
-            <CustomButton onClick={() => setIsPrintModalOpen(true)} variant="default">
-              <Printer size={14} className="stroke-[2.5]" />
-              <span>Print to PDF</span>
-            </CustomButton>
-          ) : undefined
-        }
-      />
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative min-w-0">
+      <div className="content-header">
+        <NavigationTabs 
+          tabs={tabs}
+          activeTabId={activeTab}
+          onTabSelect={(id: any) => {
+            setActiveTab(id);
+            setIsEditMode(false);
+          }}
+          titleSuffix="Record"
+          action={
+            activeTab === "performance" ? (
+              <CustomButton onClick={() => setIsPrintModalOpen(true)} variant="default">
+                <Printer size={14} className="stroke-[2.5]" />
+                <span>Print to PDF</span>
+              </CustomButton>
+            ) : undefined
+          }
+        />
+      </div>
 
       {/* Tabs Content */}
-      <div className="flex-1 overflow-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+      <div className="content-body flex-1 w-full overflow-hidden flex flex-col min-h-0">
         {activeTab === "performance" && (
-          <div className="flex flex-col gap-6 animate-tableFadeInOnly">
+          <div className="flex flex-col gap-6 animate-tableFadeInOnly overflow-y-auto flex-1 min-h-0">
             {/* Summary metrics row */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs hover:scale-[1.01] hover:shadow-sm transition-all duration-200">
@@ -1761,14 +1768,14 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
             </div>
 
             {/* Main breakdown grids */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="flex flex-col lg:flex-row gap-6 items-stretch flex-grow min-h-0">
               {/* Retailer Breakdown table */}
-              <div className="lg:col-span-5 bg-white border border-slate-200 rounded overflow-hidden shadow-xs">
-                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+              <div className="w-full lg:w-[40%] bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs flex flex-col h-auto lg:h-full">
+                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2 shrink-0">
                   <UsersIcon size={14} className="text-zinc-600" />
                   <span className="font-bold text-xs text-zinc-700 uppercase tracking-wider">Visits per Retailer</span>
                 </div>
-                <div className="overflow-x-auto">
+                <div className="overflow-auto flex-grow min-h-[300px] lg:min-h-0">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50/50 font-bold text-zinc-600">
@@ -1801,8 +1808,8 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
               </div>
 
               {/* Monthly Grouped Bar Chart converted to Line Chart */}
-              <div className="lg:col-span-7 bg-white border border-slate-200 rounded p-4 shadow-xs relative flex flex-col gap-3 min-h-[360px]">
-                <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <div className="w-full lg:w-[60%] bg-white border border-slate-200 rounded-lg p-4 shadow-xs relative flex flex-col gap-3 h-auto lg:h-full min-h-[360px] lg:min-h-0">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-2 shrink-0">
                   <div className="flex items-center gap-2">
                     <BarChart3 size={14} className="text-zinc-600" />
                     <span className="font-bold text-xs text-zinc-700 uppercase tracking-wider">12-Month Performance Comparison</span>
@@ -1817,7 +1824,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
                 </div>
 
                 {/* SVG Render Container */}
-                <div className="flex-1 w-full relative">
+                <div className="flex-1 w-full relative min-h-[280px] lg:min-h-0">
                   {fetching ? (
                     <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400 italic">
                       Loading graph metrics...
@@ -1946,105 +1953,138 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
           </div>
         )}
 
-        {activeTab === "report" && (
-          <div className="w-full flex flex-col h-full animate-tableFadeInOnly">
-            <DataTable
-              columns={reportColumns}
-              data={reportData}
-              userRole="viewer"
-              title="Store Visits History (60 Days)"
-              fetching={fetching}
-              height="h-[calc(100vh-220px)]"
-            />
-          </div>
-        )}
+        {activeTab === "visit_history" && (
+          <div className="w-full flex flex-col h-full animate-tableFadeInOnly overflow-hidden flex-1 min-h-0">
+            {/* Inner sub-tabs navigation */}
+            <div className="flex border-b border-zinc-200 mb-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => setHistorySubTab("pending")}
+                className={`px-4 py-2 text-xs font-bold border-b-2 -mb-[2px] transition-colors cursor-pointer ${
+                  historySubTab === "pending"
+                    ? "border-[#0B57D0] text-[#0B57D0]"
+                    : "border-transparent text-zinc-500 hover:text-zinc-800"
+                }`}
+              >
+                Pending Special Visit
+              </button>
+              <button
+                type="button"
+                onClick={() => setHistorySubTab("visited")}
+                className={`px-4 py-2 text-xs font-bold border-b-2 -mb-[2px] transition-colors cursor-pointer ${
+                  historySubTab === "visited"
+                    ? "border-[#0B57D0] text-[#0B57D0]"
+                    : "border-transparent text-zinc-500 hover:text-zinc-800"
+                }`}
+              >
+                Visited
+              </button>
+            </div>
 
-        {activeTab === "task" && (
-          <div className="w-full flex flex-col h-full animate-tableFadeInOnly">
-            <DataTable
-              columns={taskColumns}
-              data={merchandiserTasks}
-              userRole="viewer"
-              title="Merchandiser Specific Tasks (Action: Visit)"
-              fetching={fetching}
-              height="h-[calc(100vh-220px)]"
-            />
+            {/* Sub-tab Content Panels */}
+            {historySubTab === "pending" && (
+              <div className="flex-grow min-h-0 flex flex-col">
+                <DataTable
+                  columns={taskColumns}
+                  data={merchandiserTasks}
+                  userRole="viewer"
+                  title="Pending Special Visit"
+                  fetching={fetching}
+                  height="h-full"
+                />
+              </div>
+            )}
+
+            {historySubTab === "visited" && (
+              <div className="flex-grow min-h-0 flex flex-col">
+                <DataTable
+                  columns={reportColumns}
+                  data={reportData}
+                  userRole="viewer"
+                  title="Store Visits History (60 Days)"
+                  fetching={fetching}
+                  height="h-full"
+                />
+              </div>
+            )}
           </div>
         )}
 
         {activeTab === "setting" && (
-          <div className="bg-white border border-slate-200 rounded p-6 shadow-xs max-w-6xl mx-auto animate-tableFadeInOnly grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch h-auto lg:h-full w-full max-w-7xl mx-auto animate-tableFadeInOnly overflow-y-auto lg:overflow-hidden p-1">
             {/* Left Column - Setting Values */}
-            <div className="lg:col-span-5 flex flex-col gap-5">
-              <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
-                <Settings2 size={16} className="text-zinc-700" />
-                <h3 className="font-bold text-sm text-zinc-800 uppercase tracking-wider">Deploy System Configuration</h3>
-              </div>
-
-              <div className="flex flex-col gap-4">
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visit Frequency (Days)</label>
-                  <input
-                    type="number"
-                    disabled={isViewer}
-                    value={settingFreq}
-                    onChange={(e) => setSettingFreq(Math.max(Number(e.target.value), 1))}
-                    placeholder="e.g. 14"
-                    className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
-                  />
+            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-lg p-5 shadow-3xs flex flex-col h-auto lg:h-full justify-between lg:overflow-hidden gap-5">
+              <div className="flex flex-col gap-5 flex-grow lg:overflow-y-auto pr-1">
+                <div className="flex items-center gap-2 border-b border-slate-200 pb-2 shrink-0">
+                  <Settings2 size={16} className="text-zinc-700" />
+                  <h3 className="font-bold text-sm text-zinc-800 uppercase tracking-wider">Deploy System Configuration</h3>
                 </div>
 
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Focus Retailers</label>
-                  <TagInput
-                    tags={settingFocusRet}
-                    onChange={setSettingFocusRet}
-                    placeholder={isViewer ? "No focus retailers set" : "Type retailer name and press Enter..."}
-                    suggestions={retailerSuggestions}
-                    id="focus_retailers"
-                    disabled={isViewer}
-                  />
-                </div>
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visit Frequency (Days)</label>
+                    <input
+                      type="number"
+                      disabled={isViewer}
+                      value={settingFreq}
+                      onChange={(e) => setSettingFreq(Math.max(Number(e.target.value), 1))}
+                      placeholder="e.g. 14"
+                      className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+                    />
+                  </div>
 
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Focus Status Stores</label>
-                  <TagInput
-                    tags={settingFocusStatus}
-                    onChange={setSettingFocusStatus}
-                    placeholder={isViewer ? "No focus status stores set" : "Type carry status and press Enter..."}
-                    suggestions={statusSuggestions}
-                    id="focus_status"
-                    disabled={isViewer}
-                  />
-                </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Focus Retailers</label>
+                    <TagInput
+                      tags={settingFocusRet}
+                      onChange={setSettingFocusRet}
+                      placeholder={isViewer ? "No focus retailers set" : "Type retailer name and press Enter..."}
+                      suggestions={retailerSuggestions}
+                      id="focus_retailers"
+                      disabled={isViewer}
+                    />
+                  </div>
 
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Focus Rank Stores</label>
-                  <TagInput
-                    tags={settingFocusRank}
-                    onChange={setSettingFocusRank}
-                    placeholder={isViewer ? "No focus rank stores set" : "Type store ranking level and press Enter..."}
-                    suggestions={rankSuggestions}
-                    id="focus_rank"
-                    disabled={isViewer}
-                  />
-                </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Focus Status Stores</label>
+                    <TagInput
+                      tags={settingFocusStatus}
+                      onChange={setSettingFocusStatus}
+                      placeholder={isViewer ? "No focus status stores set" : "Type carry status and press Enter..."}
+                      suggestions={statusSuggestions}
+                      id="focus_status"
+                      disabled={isViewer}
+                    />
+                  </div>
 
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Avoid Retailers</label>
-                  <TagInput
-                    tags={settingAvoidRet}
-                    onChange={setSettingAvoidRet}
-                    placeholder={isViewer ? "No avoided retailers set" : "Type retailer to exclude and press Enter..."}
-                    suggestions={retailerSuggestions}
-                    id="avoid_retailers"
-                    disabled={isViewer}
-                  />
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Focus Rank Stores</label>
+                    <TagInput
+                      tags={settingFocusRank}
+                      onChange={setSettingFocusRank}
+                      placeholder={isViewer ? "No focus rank stores set" : "Type store ranking level and press Enter..."}
+                      suggestions={rankSuggestions}
+                      id="focus_rank"
+                      disabled={isViewer}
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Avoid Retailers</label>
+                    <TagInput
+                      tags={settingAvoidRet}
+                      onChange={setSettingAvoidRet}
+                      placeholder={isViewer ? "No avoided retailers set" : "Type retailer to exclude and press Enter..."}
+                      suggestions={retailerSuggestions}
+                      id="avoid_retailers"
+                      disabled={isViewer}
+                    />
+                  </div>
                 </div>
               </div>
 
               {!isViewer && (
-                <div className="flex justify-end border-t border-zinc-300 pt-4 mt-2">
+                <div className="flex justify-end border-t border-zinc-300 pt-4 shrink-0">
                   <CustomButton
                     variant="dark"
                     onClick={handleDeploySettings}
@@ -2056,8 +2096,8 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
             </div>
 
             {/* Right Column - Calculations */}
-            <div className="lg:col-span-7 bg-[#F8F9FC] border border-slate-200 rounded p-5 flex flex-col gap-5">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <div className="lg:col-span-7 bg-[#F8F9FC] border border-slate-200 rounded-lg p-5 flex flex-col h-auto lg:h-full gap-5 lg:overflow-hidden">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2 shrink-0">
                 <div className="flex items-center gap-2">
                   <BarChart3 size={16} className="text-[#0B57D0]" strokeWidth={2} />
                   <h3 className="font-bold text-sm text-zinc-800 uppercase tracking-wider">Live Metrics Preview</h3>
@@ -2068,7 +2108,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
               </div>
 
               {/* Summary counters */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-3 gap-3 shrink-0">
                 <div className="bg-white border border-slate-200 rounded p-3.5 flex flex-col gap-0.5 shadow-3xs">
                   <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider text-center lg:text-left">Active Stores</span>
                   <span className="text-xl font-black text-zinc-950 text-center lg:text-left">{settingCalculation.totalActive}</span>
@@ -2082,9 +2122,10 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
                   <span className="text-xl font-black text-amber-700 text-center lg:text-left">{settingCalculation.totalPending}</span>
                 </div>
               </div>
+
               {/* Switcher & Table */}
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center justify-between">
+              <div className="flex flex-col flex-grow min-h-0 gap-3">
+                <div className="flex items-center justify-between shrink-0">
                   <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">Group breakdown</span>
                   
                   {/* Switch group button group */}
@@ -2113,9 +2154,9 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
                     </button>
                   </div>
                 </div>
- 
+
                 {/* Table Breakdown */}
-                <div className="bg-white border border-slate-200 rounded overflow-hidden shadow-3xs max-h-[220px] overflow-y-auto">
+                <div className="bg-white border border-slate-200 rounded overflow-hidden shadow-3xs flex-grow min-h-[300px] lg:min-h-0 overflow-y-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 font-bold text-zinc-600">
@@ -2170,7 +2211,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
         )}
 
         {activeTab === "users" && (
-          <div className="w-full flex flex-col h-full animate-tableFadeInOnly">
+          <div className="w-full flex flex-col h-full animate-tableFadeInOnly overflow-hidden flex-1 min-h-0">
             <DataTable
               columns={merchUserColumns}
               data={merchUsers}
@@ -2182,7 +2223,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
               onAddNew={handleAddNew}
               onDeleteRow={handleDeleteMerchUser}
               addNewText="Add Merchandiser"
-              height="h-[calc(100vh-220px)]"
+              height="h-full"
             />
           </div>
         )}

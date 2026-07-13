@@ -648,7 +648,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const handleDbRefresh = async () => {
       try {
         await fetchDatabaseOrders(true); // force sync from Sheets
-        showToast("Database refreshed successfully!", "success");
       } catch (err: any) {
         showToast("Refresh failed: " + err.message, "error");
       }
@@ -2765,7 +2764,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] relative">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] relative min-w-0">
       
       {/* Top Banner and Tabs */}
       <NavigationTabs

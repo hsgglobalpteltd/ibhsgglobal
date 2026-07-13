@@ -540,3 +540,22 @@ export async function restoreSnapDeal(
   return handleResponse(res, "Restore deal from archive");
 }
 
+export async function deleteSnapDeal(
+  dealId: string,
+  actor_email: string,
+  actor_name: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${WORKER_URL}/api/snap-deals/delete`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      id: dealId,
+      actor_email,
+      actor_name
+    })
+  });
+  return handleResponse(res, "Delete snap deal");
+}
+

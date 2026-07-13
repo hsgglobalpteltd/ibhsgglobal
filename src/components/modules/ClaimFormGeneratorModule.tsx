@@ -432,7 +432,7 @@ export function ClaimFormGeneratorModule() {
     claimRows.every((row) => row.desc.trim() !== "" && parseFloat(row.amt) > 0);
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative">
+    <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0">
       {/* Scrollable Content Container */}
       <div className="content-body flex-1 w-full overflow-hidden pr-1 pb-4">
         <div className="grid grid-cols-1 lg:grid-cols-10 gap-6 items-stretch h-full">

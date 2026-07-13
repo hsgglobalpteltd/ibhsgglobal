@@ -723,7 +723,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[15px] animate-tableFadeInOnly">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[15px] animate-tableFadeInOnly min-w-0">
       {/* Headless component to project the sub-tabs into TopBar (with no icons) */}
       <NavigationTabs
         tabs={tabsListItems}

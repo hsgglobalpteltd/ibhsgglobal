@@ -259,7 +259,7 @@ export function InvoiceBarcodeGeneratorModule() {
   const isFormValid = currentPdfData && invoiceNumber.length === 9 && !isScanning;
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative">
+    <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0">
       <div className="content-body flex-1 w-full overflow-y-auto pr-1 pb-4 flex items-center justify-center">
         <div className="max-w-md w-full flex flex-col gap-6">
         {/* Upload Zone */}

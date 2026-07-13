@@ -17,8 +17,14 @@ interface FrontlinePageProps {
   } | null;
 }
 
+import { ConfirmDialog } from "../confirm-dialog";
+
 export function FrontlinePage({ profile }: FrontlinePageProps) {
   const [activeSubModule, setActiveSubModule] = React.useState<string | null>(null);
+  
+  const [confirmOpen, setConfirmOpen] = React.useState<boolean>(false);
+  const [pendingSubModule, setPendingSubModule] = React.useState<string | null>(null);
+  const [pendingBack, setPendingBack] = React.useState<boolean>(false);
 
   const subModules = React.useMemo(() => {
     return APP_PAGES_CONFIG.find((p) => p.id === "Frontline")?.modules || [];
@@ -38,13 +44,43 @@ export function FrontlinePage({ profile }: FrontlinePageProps) {
     window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline"] }));
   }, []);
 
+  const handlePendingConfirm = () => {
+    localStorage.removeItem("ib_promoter_schedules_draft");
+    localStorage.removeItem("ib_promoter_schedules_backup");
+    window.dispatchEvent(new CustomEvent("ib-clear-edit-mode"));
+
+    if (pendingSubModule) {
+      setActiveSubModule(pendingSubModule);
+      window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline", pendingSubModule] }));
+      window.dispatchEvent(new CustomEvent("collapse-sidepanel"));
+    } else if (pendingBack) {
+      setActiveSubModule(null);
+    }
+    
+    setPendingSubModule(null);
+    setPendingBack(false);
+    setConfirmOpen(false);
+  };
+
+  const handlePendingCancel = () => {
+    setPendingSubModule(null);
+    setPendingBack(false);
+    setConfirmOpen(false);
+  };
+
   // Listen to window breadcrumb-back event to reset views
   React.useEffect(() => {
     const handleBreadcrumbBack = (e: Event) => {
       const customEvent = e as CustomEvent<string[]>;
       const path = customEvent.detail;
       if (path && path.length === 1 && path[0] === "Frontline") {
-        setActiveSubModule(null);
+        const draft = localStorage.getItem("ib_promoter_schedules_draft");
+        if (draft) {
+          setPendingBack(true);
+          setConfirmOpen(true);
+        } else {
+          setActiveSubModule(null);
+        }
       }
     };
     window.addEventListener("breadcrumb-back", handleBreadcrumbBack);
@@ -54,15 +90,21 @@ export function FrontlinePage({ profile }: FrontlinePageProps) {
   }, []);
 
   const handleSubModuleSelect = (title: string) => {
-    setActiveSubModule(title);
-    window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline", title] }));
-    window.dispatchEvent(new CustomEvent("collapse-sidepanel"));
+    const draft = localStorage.getItem("ib_promoter_schedules_draft");
+    if (draft) {
+      setPendingSubModule(title);
+      setConfirmOpen(true);
+    } else {
+      setActiveSubModule(title);
+      window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline", title] }));
+      window.dispatchEvent(new CustomEvent("collapse-sidepanel"));
+    }
   };
 
   const renderActiveSubModule = () => {
     switch (activeSubModule) {
       case "Promoter":
-        return <PromoterModule />;
+        return <PromoterModule profile={profile} />;
       case "Merchandiser":
         return <MerchandiserModule profile={profile} />;
       case "Task":
@@ -75,7 +117,7 @@ export function FrontlinePage({ profile }: FrontlinePageProps) {
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px]">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] min-w-0">
       {!activeSubModule && (
         <div className="content-header flex flex-col gap-1 px-1 border-b border-zinc-300/40 pb-4">
           <h2 className="font-primary text-2xl font-bold text-zinc-950">
@@ -90,7 +132,7 @@ export function FrontlinePage({ profile }: FrontlinePageProps) {
       {activeSubModule ? (
         renderActiveSubModule()
       ) : (
-        <div className="content-body flex-1 w-full overflow-y-auto">
+        <div className="content-body flex-1 w-full overflow-y-auto p-2">
           {visibleModules.length === 0 ? (
             <div className="flex items-center justify-center h-48 bg-[#F0F4F9] border border-dashed border-slate-200 rounded select-none">
               <span className="font-primary text-sm text-zinc-500 italic">
@@ -111,6 +153,18 @@ export function FrontlinePage({ profile }: FrontlinePageProps) {
           )}
         </div>
       )}
+      {/* Unsaved changes confirmation dialog */}
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Unsaved Changes"
+        description="You have unsaved schedule changes. Do you want to continue without saving?"
+        variant="danger"
+        confirmText="Continue without saving"
+        cancelText="Cancel"
+        onConfirm={handlePendingConfirm}
+        onCancel={handlePendingCancel}
+      />
     </div>
   );
 }

@@ -12,7 +12,7 @@ export function FeatureCard({ className, title, description, ...props }: Feature
   return (
     <div
       className={cn(
-        "group relative aspect-[4/3] w-full max-w-[250px] bg-white hover:bg-[#D3E3FD] border border-slate-200 rounded-lg flex items-center justify-center p-6 transition-all duration-300 shadow-xs hover:shadow-md hover:scale-[1.03] cursor-pointer select-none overflow-hidden",
+        "group relative aspect-[4/3] w-full max-w-[250px] bg-white hover:bg-[#D3E3FD] border border-slate-200 rounded-lg flex items-center justify-center p-6 transition-all duration-300 shadow-xs hover:shadow-md hover:scale-[1.03] cursor-pointer select-none",
         className
       )}
       {...props}

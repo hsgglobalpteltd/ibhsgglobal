@@ -77,7 +77,7 @@ export function AdministratorPage({ profile, idToken }: AdministratorPageProps) 
       {activeSubModule ? (
         renderActiveSubModule()
       ) : (
-        <div className="content-body flex-1 w-full overflow-y-auto">
+        <div className="content-body flex-1 w-full overflow-y-auto p-2">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
             {subModules.map((mod) => (
               <FeatureCard

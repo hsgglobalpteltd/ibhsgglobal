@@ -39,6 +39,7 @@ import {
   fetchSnapDealLogs, 
   archiveSnapDeal,
   restoreSnapDeal,
+  deleteSnapDeal,
   SnapDeal, 
   SnapDealLog 
 } from "../../lib/api";
@@ -100,7 +101,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     new Date().toISOString().substring(0, 10)
   );
   const [notes, setNotes] = React.useState<string>("");
-  const [termsConditions, setTermsConditions] = React.useState<string>(DEFAULT_TERMS);
+  const [termsConditions, setTermsConditions] = React.useState<string>("");
 
   // Drawer & Overlay States
   const [dealDrawerOpen, setDealDrawerOpen] = React.useState<boolean>(false);
@@ -151,6 +152,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     description: string;
     confirmText: string;
     cancelText: string;
+    variant?: "danger" | "default" | "dark";
     onConfirm: () => void;
   } | null>(null);
 
@@ -159,6 +161,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     description: string;
     confirmText?: string;
     cancelText?: string;
+    variant?: "danger" | "default" | "dark";
     onConfirm: () => void;
   }) => {
     setConfirmModalConfig({
@@ -166,6 +169,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       description: config.description,
       confirmText: config.confirmText || "Confirm",
       cancelText: config.cancelText || "Cancel",
+      variant: config.variant,
       onConfirm: config.onConfirm
     });
     setConfirmModalOpen(true);
@@ -666,7 +670,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     setItemList([]);
     setDealingWith("");
     setNotes("");
-    setTermsConditions(DEFAULT_TERMS);
+    setTermsConditions("");
     handleReset();
 
     // Silently save in the background
@@ -690,7 +694,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     setItemList([]);
     setDealingWith("");
     setNotes("");
-    setTermsConditions(DEFAULT_TERMS);
+    setTermsConditions("");
     handleReset();
     showToast("Edit cancelled", "info");
   };
@@ -704,7 +708,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       setDealingWith(deal.dealing_with);
       setHandshakeDate(new Date(deal.handshake_date).toISOString().substring(0, 10));
       setNotes(deal.notes || "");
-      setTermsConditions(deal.terms_conditions || DEFAULT_TERMS);
+      setTermsConditions(deal.terms_conditions || "");
       
       // Open form
       handleReset();
@@ -856,6 +860,37 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
           })
           .catch(err => {
             console.error("Silent archive error", err);
+          });
+      }
+    });
+  };
+
+  const handleDeleteDeal = async (dealId: string) => {
+    showConfirm({
+      title: "Delete Deal",
+      description: "Are you sure you want to permanently delete this deal? This action cannot be undone.",
+      confirmText: "Delete",
+      variant: "danger",
+      onConfirm: () => {
+        // Optimistic UI Update: remove from list
+        setDeals(prev => prev.filter(d => d.id !== dealId));
+        showToast("Deal deleted successfully", "success");
+
+        // Silently delete in database in background
+        deleteSnapDeal(
+          dealId,
+          profile?.email || "anonymous@hsg.com",
+          profile?.name || "Anonymous User"
+        )
+          .then(res => {
+            if (res.success) {
+              loadDeals();
+            } else {
+              console.error("Failed to delete silently", res);
+            }
+          })
+          .catch(err => {
+            console.error("Silent delete error", err);
           });
       }
     });
@@ -1189,6 +1224,12 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   const handleSaveTerms = async () => {
     if (!selectedTermsDeal) return;
 
+    const isDraft = selectedTermsDeal.status === "Draft" || !selectedTermsDeal.status;
+    if (!isDraft) {
+      showToast("Only deals in Proposal status can have T&Cs added or updated.", "error");
+      return;
+    }
+
     const updatedTerms = termsModalValue.trim();
     const originalTerms = selectedTermsDeal.terms_conditions || "";
 
@@ -1203,13 +1244,15 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
         id: selectedTermsDeal.id,
         dealing_with: selectedTermsDeal.dealing_with,
         handshake_date: selectedTermsDeal.handshake_date,
+        notes: selectedTermsDeal.notes || "",
         deal_data: selectedTermsDeal.deal_data,
-        status: selectedTermsDeal.status,
+        status: selectedTermsDeal.status || "Draft",
         terms_conditions: updatedTerms,
         actor_email: profile?.email || "anonymous@hsg.com",
         actor_name: profile?.name || "System"
       });
       showToast("Terms & conditions updated successfully!", "success");
+      loadDeals();
     } catch (err: any) {
       // Rollback on failure
       setDeals(prev => prev.map(d => d.id === selectedTermsDeal.id ? { ...d, terms_conditions: originalTerms } : d));
@@ -1233,6 +1276,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
   // Format DataTable rows
   const mapDealsToRows = (filteredDeals: SnapDeal[]) => {
+    const isAdmin = profile?.role === "Administrator";
     return filteredDeals.map((deal) => {
       return {
         id_raw: deal.id,
@@ -1248,7 +1292,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
         ),
         client_info_raw: `${deal.dealing_with} ${deal.id}`,
         notes: (
-          <div className="truncate w-[160px] max-w-[160px] shrink-0 font-medium text-zinc-500" title={deal.notes || ""}>
+          <div className="line-clamp-3 w-[160px] max-w-[160px] shrink-0 font-medium text-zinc-500 whitespace-pre-wrap break-words" title={deal.notes || ""}>
             {deal.notes || "—"}
           </div>
         ),
@@ -1335,6 +1379,16 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                     }}
                   />
                 </label>
+
+                {isAdmin && (
+                  <button
+                    onClick={() => handleDeleteDeal(deal.id)}
+                    className="p-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-855 transition-colors cursor-pointer flex items-center justify-center"
+                    title="Delete Proposal"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
               </>
             )}
 
@@ -1359,13 +1413,25 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             )}
 
             {deal.status === "Archived" && (
-              <button
-                onClick={() => handleRestoreDeal(deal.id)}
-                className="p-1 rounded bg-emerald-50 hover:bg-emerald-100 border border-emerald-250 text-emerald-700 hover:text-emerald-900 transition-colors cursor-pointer flex items-center justify-center"
-                title="Restore to Active Deals"
-              >
-                <Undo size={12} />
-              </button>
+              <>
+                <button
+                  onClick={() => handleRestoreDeal(deal.id)}
+                  className="p-1 rounded bg-emerald-50 hover:bg-emerald-100 border border-emerald-250 text-emerald-700 hover:text-emerald-900 transition-colors cursor-pointer flex items-center justify-center"
+                  title="Restore to Active Deals"
+                >
+                  <Undo size={12} />
+                </button>
+
+                {isAdmin && (
+                  <button
+                    onClick={() => handleDeleteDeal(deal.id)}
+                    className="p-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-855 transition-colors cursor-pointer flex items-center justify-center"
+                    title="Delete Archived Deal"
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </>
             )}
           </div>
         )
@@ -2438,9 +2504,10 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             <textarea
               value={termsModalValue}
               onChange={(e) => setTermsModalValue(e.target.value)}
+              disabled={selectedTermsDeal.status !== "Draft" && selectedTermsDeal.status !== undefined}
               rows={8}
               placeholder="Enter deal terms & conditions here..."
-              className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs resize-none"
+              className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs resize-none disabled:opacity-60"
             />
 
             <div className="flex justify-end gap-2 text-xs font-bold mt-5">
@@ -2448,14 +2515,16 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 onClick={() => setShowTermsModal(false)}
                 className="px-4 py-2 border border-slate-200 bg-white text-zinc-700 hover:text-zinc-950 hover:bg-slate-100 rounded transition-all cursor-pointer shadow-xs"
               >
-                Cancel
+                {selectedTermsDeal.status !== "Draft" && selectedTermsDeal.status !== undefined ? "Close" : "Cancel"}
               </button>
-              <button
-                onClick={handleSaveTerms}
-                className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded shadow transition-all cursor-pointer shadow-xs"
-              >
-                Save T&C
-              </button>
+              {(selectedTermsDeal.status === "Draft" || selectedTermsDeal.status === undefined) && (
+                <button
+                  onClick={handleSaveTerms}
+                  className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded shadow transition-all cursor-pointer shadow-xs"
+                >
+                  Save T&C
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2635,8 +2704,8 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
           description={confirmModalConfig.description}
           confirmText={confirmModalConfig.confirmText}
           cancelText={confirmModalConfig.cancelText}
+          variant={confirmModalConfig.variant || "dark"}
           onConfirm={confirmModalConfig.onConfirm}
-          variant="dark"
         />
       )}
     </div>

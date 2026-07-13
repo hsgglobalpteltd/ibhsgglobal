@@ -31,6 +31,11 @@ export default function Home() {
   } | null>(null);
 
   const [latestContractUpdatedAt, setLatestContractUpdatedAt] = React.useState<number>(0);
+  const [navConfirmOpen, setNavConfirmOpen] = React.useState<boolean>(false);
+  const [pendingNavAction, setPendingNavAction] = React.useState<{
+    type: "menu" | "back" | "breadcrumb";
+    target: any;
+  } | null>(null);
 
   // Load latest contract version to enforce re-signing
   React.useEffect(() => {
@@ -195,7 +200,31 @@ export default function Home() {
     return () => clearInterval(interval);
   }, [idToken, firebaseUser, activeItem, profile]);
 
-  const handleMenuSelect = async (item: string) => {
+  const handlePendingNavConfirm = () => {
+    localStorage.removeItem("ib_promoter_schedules_draft");
+    localStorage.removeItem("ib_promoter_schedules_backup");
+    window.dispatchEvent(new CustomEvent("ib-clear-edit-mode"));
+
+    if (pendingNavAction) {
+      const { type, target } = pendingNavAction;
+      if (type === "menu") {
+        executeMenuSelect(target);
+      } else if (type === "back") {
+        executeBack();
+      } else if (type === "breadcrumb") {
+        executeNavigateBreadcrumb(target);
+      }
+    }
+    setPendingNavAction(null);
+    setNavConfirmOpen(false);
+  };
+
+  const handlePendingNavCancel = () => {
+    setPendingNavAction(null);
+    setNavConfirmOpen(false);
+  };
+
+  const executeMenuSelect = async (item: string) => {
     setActiveItem(item);
     setBreadcrumbPath([item]);
     window.dispatchEvent(new CustomEvent("breadcrumb-back", { detail: [item] }));
@@ -225,7 +254,17 @@ export default function Home() {
     }
   };
 
-  const handleBack = () => {
+  const handleMenuSelect = async (item: string) => {
+    const draft = localStorage.getItem("ib_promoter_schedules_draft");
+    if (draft) {
+      setPendingNavAction({ type: "menu", target: item });
+      setNavConfirmOpen(true);
+    } else {
+      executeMenuSelect(item);
+    }
+  };
+
+  const executeBack = () => {
     if (breadcrumbPath.length > 1) {
       const nextPath = breadcrumbPath.slice(0, -1);
       setBreadcrumbPath(nextPath);
@@ -233,14 +272,34 @@ export default function Home() {
     }
   };
 
+  const handleBack = () => {
+    const draft = localStorage.getItem("ib_promoter_schedules_draft");
+    if (draft) {
+      setPendingNavAction({ type: "back", target: null });
+      setNavConfirmOpen(true);
+    } else {
+      executeBack();
+    }
+  };
+
+  const executeNavigateBreadcrumb = (index: number) => {
+    const nextPath = breadcrumbPath.slice(0, index + 1);
+    setBreadcrumbPath(nextPath);
+    if (index === 0) {
+      setActiveItem(nextPath[0]);
+    }
+    window.dispatchEvent(new CustomEvent("breadcrumb-back", { detail: nextPath }));
+  };
+
   const handleNavigateBreadcrumb = (index: number) => {
     if (index >= 0 && index < breadcrumbPath.length - 1) {
-      const nextPath = breadcrumbPath.slice(0, index + 1);
-      setBreadcrumbPath(nextPath);
-      if (index === 0) {
-        setActiveItem(nextPath[0]);
+      const draft = localStorage.getItem("ib_promoter_schedules_draft");
+      if (draft) {
+        setPendingNavAction({ type: "breadcrumb", target: index });
+        setNavConfirmOpen(true);
+      } else {
+        executeNavigateBreadcrumb(index);
       }
-      window.dispatchEvent(new CustomEvent("breadcrumb-back", { detail: nextPath }));
     }
   };
 
@@ -437,13 +496,13 @@ export default function Home() {
             profile={profile}
             onLogout={handleLogout}
           />
-          <div className="workspace-wrapper flex flex-col flex-1 h-screen overflow-hidden">
+          <div className="workspace-wrapper flex flex-col flex-1 h-screen overflow-hidden min-w-0">
             <TopBar 
               breadcrumbPath={breadcrumbPath} 
               onBack={handleBack} 
               onNavigateBreadcrumb={handleNavigateBreadcrumb}
             />
-            <main className="main-content flex flex-col flex-1 p-[20px] overflow-hidden">
+            <main className="main-content flex flex-col flex-1 p-[20px] overflow-hidden min-w-0">
               {renderActivePage()}
             </main>
           </div>
@@ -500,6 +559,18 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={navConfirmOpen}
+        onOpenChange={setNavConfirmOpen}
+        title="Unsaved Changes"
+        description="You have unsaved schedule changes. Do you want to continue without saving?"
+        variant="danger"
+        confirmText="Continue without saving"
+        cancelText="Cancel"
+        onConfirm={handlePendingNavConfirm}
+        onCancel={handlePendingNavCancel}
+      />
     </>
   );
 }

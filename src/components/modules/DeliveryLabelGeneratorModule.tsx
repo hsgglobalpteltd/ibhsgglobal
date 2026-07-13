@@ -242,7 +242,7 @@ export function DeliveryLabelGeneratorModule() {
   const isFormValid = receiverName.trim() !== "" && receiverAddress.trim() !== "";
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative">
+    <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0">
       <div className="content-body flex-1 w-full overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-8 h-full items-stretch">
         
         {/* Left Side - Settings & Form inputs */}

@@ -132,7 +132,6 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
         setRetailers(r);
         setProducts(p);
         setSkus(s);
-        showToast("SKU database refreshed successfully!", "success");
       } catch (err: any) {
         showToast("Refresh failed: " + err.message, "error");
       } finally {
@@ -622,7 +621,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
   }, [activeLogRecord, viewingLogType]);
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative">
+    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative min-w-0">
       
       {/* Top Bar Filter Dropdown */}
       <div className="content-header">

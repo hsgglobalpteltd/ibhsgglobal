@@ -155,6 +155,12 @@ export function TaskModule({ profile }: TaskModuleProps) {
     }).finally(() => {
       setFetching(false);
     });
+
+    // Trigger silent background sync after mount
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new CustomEvent("db-refresh"));
+    }, 150);
+    return () => clearTimeout(timer);
   }, []);
 
   // Global Refresh Listener
@@ -175,7 +181,6 @@ export function TaskModule({ profile }: TaskModuleProps) {
         setTasks(t);
         setStores(s);
         setRetailers(r);
-        showToast("Task database refreshed successfully!", "success");
       } catch (err: any) {
         showToast("Refresh failed: " + err.message, "error");
       } finally {

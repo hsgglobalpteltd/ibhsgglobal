@@ -264,7 +264,7 @@ export function AssetLibraryModule({ profile, idToken }: AssetLibraryModuleProps
 
   return (
     <div 
-      className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary w-full select-none"
+      className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary w-full select-none min-w-0"
       onDragEnter={handleDrag}
       onClick={handleModuleClick}
     >

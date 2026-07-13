@@ -14,34 +14,21 @@ interface TopBarProps {
 export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarProps) {
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [lastUpdated, setLastUpdated] = React.useState<string>("");
-  const [isRed, setIsRed] = React.useState(false);
   
   const [tabs, setTabs] = React.useState<TabItem[]>([]);
   const [activeTabId, setActiveTabId] = React.useState<string>("");
   
   const lastClickTimeRef = React.useRef<number>(Date.now());
-  const redTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const isRefreshingRef = React.useRef(isRefreshing);
 
   React.useEffect(() => {
     isRefreshingRef.current = isRefreshing;
   }, [isRefreshing]);
 
-  const startRedTimer = React.useCallback(() => {
-    if (redTimeoutRef.current) {
-      clearTimeout(redTimeoutRef.current);
-    }
-    setIsRed(false);
-    redTimeoutRef.current = setTimeout(() => {
-      setIsRed(true);
-    }, 5 * 60 * 1000); // 5 minutes
-  }, []);
-
   const triggerRefreshAnimation = React.useCallback(() => {
     if (isRefreshingRef.current) return;
     setIsRefreshing(true);
     lastClickTimeRef.current = Date.now();
-    startRedTimer();
 
     // Simulate fetching new data in the background (1 second delay)
     setTimeout(() => {
@@ -49,7 +36,7 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
       setLastUpdated(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
       setIsRefreshing(false);
     }, 1000);
-  }, [startRedTimer]);
+  }, []);
 
   const handleRefresh = React.useCallback(() => {
     // Dispatch global event so database listeners load fresh data
@@ -70,27 +57,23 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
     // Set initial timestamp on mount
     const now = new Date();
     setLastUpdated(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    
-    // Start initial 5-minute red timer
-    startRedTimer();
 
-    // 1-hour auto-click listener on window
+    // 5-minute inactivity auto-refresh listener on window click
     const handleWindowClick = () => {
-      const timeSinceLast = Date.now() - lastClickTimeRef.current;
-      if (timeSinceLast >= 60 * 60 * 1000) { // 1 hour
+      const currentTime = Date.now();
+      const timeSinceLast = currentTime - lastClickTimeRef.current;
+      if (timeSinceLast >= 5 * 60 * 1000) { // 5 minutes of inactivity
         handleRefresh();
       }
+      lastClickTimeRef.current = currentTime;
     };
 
     window.addEventListener("click", handleWindowClick, true);
 
     return () => {
-      if (redTimeoutRef.current) {
-        clearTimeout(redTimeoutRef.current);
-      }
       window.removeEventListener("click", handleWindowClick, true);
     };
-  }, [startRedTimer, handleRefresh]);
+  }, [handleRefresh]);
 
   // Listen to set-topbar-tabs event from sub-modules
   React.useEffect(() => {
@@ -166,13 +149,7 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
             id="global-refresh-button"
             onClick={handleRefresh}
             disabled={isRefreshing}
-            className={cn(
-              "flex h-7 w-7 items-center justify-center rounded-full transition-all border focus:outline-none cursor-pointer disabled:opacity-75 shadow-xs",
-              isRed
-                ? "bg-red-500 border-red-600 text-white hover:bg-red-600 hover:border-red-700"
-                : "bg-white border-slate-200 text-[#474747] hover:text-[#1F1F1F] hover:bg-slate-100"
-            )}
-            title={isRed ? "Data is older than 5 minutes. Click to refresh." : "Refresh data"}
+            className="flex h-7 w-7 items-center justify-center rounded-full transition-all border focus:outline-none cursor-pointer disabled:opacity-75 shadow-xs bg-white border-slate-200 text-[#474747] hover:text-[#1F1F1F] hover:bg-slate-100"
           >
             <RefreshCw 
               size={13} 
