@@ -203,7 +203,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       { id: "print", label: "Print" }
     ];
     if (isAuthorized) {
-      list.push({ id: "payout", label: "Pay Out" });
+      list.push({ id: "payout", label: "Payout" });
     }
     list.push(
       { id: "campaign", label: "Campaign" },
@@ -3194,16 +3194,16 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             {/* Calendar Mode contents */}
             {calendarMode === "monthly" ? (
               /* MONTHLY MODE (Original Calendar) */
-              <div className="w-full h-full flex flex-row gap-4 overflow-hidden select-none flex-grow">
+              <div className="w-full h-full flex flex-col xl:flex-row gap-4 overflow-y-auto select-none flex-grow pr-1.5 custom-scrollbar">
                 
                 {/* Left Box (70%): Calendar monthly view */}
-                <div className="flex-[70] bg-white border border-zinc-200 rounded p-4 flex flex-col justify-between overflow-hidden shadow-sm h-full">
+                <div className="flex-[70] bg-white border border-zinc-200 rounded p-4 flex flex-col justify-between overflow-hidden shadow-sm h-full min-h-[580px] xl:min-w-[800px] w-full">
                   <div className="flex flex-col flex-grow overflow-hidden">
                     
                     {/* Unified Header */}
-                    <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-zinc-150 shrink-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2.5 mb-3 border-b border-zinc-150 shrink-0 flex-wrap">
                       {/* Left: Mode toggles and Edit Actions */}
-                      <div className="flex items-center gap-4 select-none">
+                      <div className="flex items-center gap-3 select-none flex-wrap whitespace-nowrap">
                         <div className="flex gap-1.5">
                           <button
                             type="button"
@@ -3211,7 +3211,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               setCalendarMode("monthly");
                               setSelectedCampaignId("all");
                             }}
-                            className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-[#0B57D0] text-white border-transparent shadow-xs flex items-center justify-center"
+                            className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-[#0B57D0] text-white border-transparent shadow-xs flex items-center justify-center whitespace-nowrap"
                           >
                             Calendar
                           </button>
@@ -3222,7 +3222,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               setIsStoreLibraryCollapsed(true);
                               setSelectedCampaignId("");
                             }}
-                            className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-white text-zinc-655 border-zinc-200 hover:bg-zinc-50 flex items-center justify-center"
+                            className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-white text-zinc-655 border-zinc-200 hover:bg-zinc-50 flex items-center justify-center whitespace-nowrap"
                           >
                             Schedule
                           </button>
@@ -3241,7 +3241,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                   localStorage.setItem("ib_promoter_schedules_draft", JSON.stringify(schedules));
                                   localStorage.setItem("ib_promoter_schedules_backup", JSON.stringify(schedules));
                                 }}
-                                className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center gap-1 shadow-sm justify-center"
+                                className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center gap-1 shadow-sm justify-center whitespace-nowrap"
                               >
                                 <Pencil size={11} className="stroke-[2.5]" />
                                 Edit Mode
@@ -3251,7 +3251,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 <button
                                   type="button"
                                   onClick={handleSaveAndDeploy}
-                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center"
+                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center whitespace-nowrap"
                                 >
                                   <Check size={11} className="stroke-[2.5]" />
                                   Exit Edit Mode
@@ -3267,7 +3267,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     localStorage.removeItem("ib_promoter_schedules_backup");
                                     showToast("Draft changes discarded.", "info");
                                   }}
-                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-555 border border-zinc-200 hover:bg-zinc-50 hover:text-zinc-850 rounded transition-all cursor-pointer flex items-center justify-center"
+                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-555 border border-zinc-200 hover:bg-zinc-50 hover:text-zinc-850 rounded transition-all cursor-pointer flex items-center justify-center whitespace-nowrap"
                                 >
                                   Discard
                                 </button>
@@ -3297,12 +3297,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         )}
 
                         {/* Select Campaign Dropdown */}
-                        <div className="flex items-center gap-1.5 border-l border-zinc-200 pl-4 h-5">
-                          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Select Campaign:</span>
+                        <div className="flex items-center gap-1.5 md:border-l md:border-zinc-200 md:pl-3 h-5">
+                          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider whitespace-nowrap">Select Campaign:</span>
                           <select
                             value={selectedCampaignId}
                             onChange={(e) => setSelectedCampaignId(e.target.value)}
-                            className="h-[26px] px-2 py-0 bg-white border border-zinc-200 rounded text-[11px] font-bold text-zinc-800 outline-none focus:border-zinc-955 cursor-pointer"
+                            className="h-[26px] px-2 py-0 bg-white border border-zinc-200 rounded text-[11px] font-bold text-zinc-800 outline-none focus:border-zinc-955 cursor-pointer whitespace-nowrap"
                           >
                             <option value="">-- Choose Campaign --</option>
                             <option value="all">All Campaigns</option>
@@ -3316,9 +3316,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           </select>
                         </div>
                       </div>
-
+                      
                       {/* Right: Month navigation switcher */}
-                      <div className="h-[26px] flex items-center gap-1 bg-zinc-50 border border-zinc-200 rounded px-1 select-none">
+                      <div className="h-[26px] flex items-center gap-1 bg-zinc-50 border border-zinc-200 rounded px-1 select-none whitespace-nowrap">
                         <button
                           onClick={handlePrevMonth}
                           className="p-0.5 rounded hover:bg-zinc-200 text-zinc-600 transition-colors cursor-pointer flex items-center justify-center"
@@ -3326,12 +3326,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         >
                           <ChevronLeft size={13} className="stroke-[2.5]" />
                         </button>
-                        <span className="text-[11px] font-bold font-mono text-zinc-800 uppercase px-1.5 w-[90px] text-center select-none leading-none">
+                        <span className="text-[11px] font-bold font-mono text-zinc-800 uppercase px-1.5 w-[90px] text-center select-none leading-none whitespace-nowrap">
                           {currentDate.toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                         </span>
                         <button
                           onClick={handleNextMonth}
-                          className="p-0.5 rounded hover:bg-zinc-200 text-zinc-650 transition-colors cursor-pointer flex items-center justify-center"
+                          className="p-0.5 rounded hover:bg-zinc-200 text-zinc-655 transition-colors cursor-pointer flex items-center justify-center"
                           title="Next Month"
                         >
                           <ChevronRight size={13} className="stroke-[2.5]" />
@@ -3417,7 +3417,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                   </div>
                   </div>
-                <div className="flex-[30] bg-white border border-zinc-200 rounded p-5 flex flex-col overflow-hidden shadow-sm h-full">
+                <div className="flex-[30] bg-white border border-zinc-200 rounded p-5 flex flex-col overflow-hidden shadow-sm h-full min-h-[400px] xl:min-w-[320px] w-full">
                   {/* Header */}
                   <div className="flex flex-col pb-3 border-b border-zinc-150 shrink-0">
                     <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-955">
@@ -4431,9 +4431,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             
             {isCreatingCampaign ? (
               /* Campaign Creation / Edit Form */
-              <div className="bg-white border border-zinc-200 rounded p-6 shadow-sm flex flex-col justify-between max-w-5xl mx-auto w-full select-none">
-                <form onSubmit={handleSaveCampaign} className="flex flex-col gap-4 text-xs font-primary">
-                  <div className="flex justify-between items-center border-b border-zinc-150 pb-2 shrink-0">
+              <div className="flex flex-col flex-1 bg-white border border-zinc-200 rounded relative shadow-sm overflow-hidden select-none max-w-5xl mx-auto w-full h-[calc(100vh-220px)]">
+                <form onSubmit={handleSaveCampaign} className="flex flex-col flex-1 h-full overflow-hidden text-xs font-primary">
+                  <div className="flex justify-between items-center border-b border-zinc-150 px-6 py-4 bg-zinc-50 shrink-0">
                     <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-900">
                       {editingCampaignId ? "Edit Campaign Details" : "Create New Campaign"}
                     </h3>
@@ -4455,7 +4455,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   </div>
 
                   {/* Form Two Column Fields wrapper */}
-                  <div className="grid grid-cols-2 gap-6 items-start flex-grow pr-1 py-1">
+                  <div className="grid grid-cols-2 gap-6 items-start flex-grow overflow-y-auto p-6">
                     
                     {/* Left Column: Metadata Details */}
                     <div className="flex flex-col gap-4">
@@ -4560,7 +4560,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   </div>
 
                   {/* Action buttons */}
-                  <div className="flex justify-end gap-2 text-xs font-bold mt-3 border-t border-zinc-150 pt-3 shrink-0">
+                  <div className="flex justify-end gap-2 text-xs font-bold px-6 py-4 border-t border-zinc-150 bg-zinc-50 shrink-0">
                     <button
                       type="button"
                       onClick={() => {
@@ -4646,9 +4646,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             
             {isCreatingPromoter ? (
               /* Promoter Creation / Edit Form */
-              <div className="bg-white border border-zinc-200 rounded p-6 shadow-sm flex flex-col justify-between max-w-xl mx-auto w-full select-none">
-                <form onSubmit={handleSavePromoter} className="flex flex-col gap-4 text-xs font-primary">
-                  <div className="flex justify-between items-center border-b border-zinc-150 pb-2 shrink-0">
+              <div className="flex flex-col flex-1 bg-white border border-zinc-200 rounded relative shadow-sm overflow-hidden select-none max-w-xl mx-auto w-full h-[calc(100vh-220px)]">
+                <form onSubmit={handleSavePromoter} className="flex flex-col flex-1 h-full overflow-hidden text-xs font-primary">
+                  <div className="flex justify-between items-center border-b border-zinc-150 px-6 py-4 bg-zinc-50 shrink-0">
                     <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-900">
                       {editingPromoterId ? "Edit Promoter Details" : "Add New Promoter"}
                     </h3>
@@ -4670,7 +4670,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     </button>
                   </div>
 
-                  <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-4 flex-grow overflow-y-auto p-6">
                     {/* Promoter ID */}
                     <div className="flex flex-col gap-1">
                       <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
@@ -4778,7 +4778,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     )}
                   </div>
 
-                  <div className="flex justify-end gap-3 border-t border-zinc-150 pt-4 mt-2 shrink-0">
+                  <div className="flex justify-end gap-3 border-t border-zinc-150 px-6 py-4 bg-zinc-50 shrink-0">
                     <button
                       type="button"
                       onClick={() => {
@@ -5361,7 +5361,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               <th className="py-2.5 px-3">End Time</th>
                               <th className="py-2.5 px-3">Total Time</th>
                               <th className="py-2.5 px-3 text-center">Rate / Hour ($)</th>
-                              <th className="py-2.5 px-3">Total Pay Out</th>
+                              <th className="py-2.5 px-3">Total Payout</th>
                               <th className="py-2.5 px-3">Task Details</th>
                             </tr>
                           </thead>

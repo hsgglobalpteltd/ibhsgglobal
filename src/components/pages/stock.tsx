@@ -4,6 +4,7 @@ import * as React from "react";
 import { FeatureCard } from "../feature-card";
 import { FeatureComingSoon } from "../FeatureComingSoon";
 import { InventoryModule } from "../modules/InventoryModule";
+import { DisposeRecordModule } from "../modules/DisposeRecordModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 
 interface StockPageProps {
@@ -60,7 +61,7 @@ export function StockPage({ profile }: StockPageProps) {
       case "Inventory":
         return <InventoryModule profile={profile} />;
       case "Dispose Record":
-        return <FeatureComingSoon title="Dispose Record" />;
+        return <DisposeRecordModule profile={profile} />;
       default:
         return null;
     }
