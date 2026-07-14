@@ -93,7 +93,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Monthly Calendar states
   const [currentDate, setCurrentDate] = React.useState<Date>(new Date());
   const [selectedDay, setSelectedDay] = React.useState<number>(new Date().getDate());
-  const [selectedCampaignId, setSelectedCampaignId] = React.useState<string>("");
+  const [selectedCampaignId, setSelectedCampaignId] = React.useState<string>("all");
   const [campaignSubTab, setCampaignSubTab] = React.useState<"active" | "archive">("active");
 
   // Campaign Mode view states
@@ -1640,6 +1640,39 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     return filtered;
   }, [schedules, selectedCampaignId, year, month]);
 
+  const isChecklistPendingForDay = React.useCallback((dayNum: number) => {
+    const targetDate = new Date(year, month, dayNum).toDateString();
+    let daySchedules = schedules.filter(s => new Date(s.Date).toDateString() === targetDate);
+    
+    if (selectedCampaignId !== "all" && selectedCampaignId !== "") {
+      daySchedules = daySchedules.filter(s => String(s["Campaign ID"]) === String(selectedCampaignId));
+    }
+
+    return daySchedules.some(s => {
+      let customTasks: any[] = [];
+      try {
+        customTasks = JSON.parse(s["Custom Tasks"] || "[]");
+      } catch (err) {}
+      
+      const shiftDate = new Date(s.Date);
+      shiftDate.setHours(0,0,0,0);
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      const isPastDate = shiftDate.getTime() < today.getTime();
+
+      const customTasksCount = customTasks.length;
+      const customDoneCount = customTasks.filter((t: any) => !!t.answer).length;
+      const permDone = s["Permission By"] ? 1 : 0;
+      const stockDone = s["Stock Checked"] ? 1 : 0;
+      const actualDone = (isPastDate && s["Actual Start"] && s["Actual End"]) ? 1 : 0;
+
+      const totalCount = 2 + customTasksCount + (isPastDate ? 1 : 0);
+      const doneCount = permDone + stockDone + customDoneCount + actualDone;
+
+      return doneCount < totalCount;
+    });
+  }, [schedules, selectedCampaignId, year, month]);
+
   // Draft Save Handler (Updates state + pushes to history list)
   const executeSaveSchedule = (payloadData: any) => {
     const tempSchedule = {
@@ -1704,8 +1737,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     localStorage.removeItem("ib_promoter_schedules_draft");
     localStorage.removeItem("ib_promoter_schedules_backup");
 
-    showToast("Saving changes in background...", "info");
-
     // Silent background sync
     (async () => {
       try {
@@ -1747,7 +1778,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         const results = await Promise.all(promises);
         const allOk = results.every(r => r.ok);
         if (allOk) {
-          showToast("Changes synced successfully in background.", "success");
           loadSchedules(); // Reload database data
         } else {
           throw new Error("One or more update requests failed.");
@@ -1802,9 +1832,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     return bStart < aEnd + 60 && aStart < bEnd + 60;
   };
 
-  const validateShiftBuffer = (promoterId: string, dateVal: number, newStart: string, newEnd: string, excludeShiftId?: string): boolean => {
+  const getConflictingShift = (promoterId: string, dateVal: number, newStart: string, newEnd: string, excludeShiftId?: string): any | null => {
     const dateStr = new Date(dateVal).toDateString();
-    const conflict = schedules.some(s => {
+    const conflicting = schedules.find(s => {
       if (excludeShiftId && s.ID === excludeShiftId) return false;
       const sDateStr = new Date(s.Date).toDateString();
       if (sDateStr !== dateStr || String(s["Promoter ID"]) !== String(promoterId)) return false;
@@ -1813,7 +1843,27 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const otherEnd = formatTimeDisplay(s["Shift End"]) || "17:00";
       return checkShiftTimeOverlap(newStart, newEnd, otherStart, otherEnd);
     });
-    return !conflict;
+    return conflicting || null;
+  };
+
+  const validateShiftBuffer = (promoterId: string, dateVal: number, newStart: string, newEnd: string, excludeShiftId?: string): boolean => {
+    return getConflictingShift(promoterId, dateVal, newStart, newEnd, excludeShiftId) === null;
+  };
+
+  const checkAndToastConflict = (promoterId: string, dateVal: number, start: string, end: string, excludeShiftId?: string): boolean => {
+    const conflict = getConflictingShift(promoterId, dateVal, start, end, excludeShiftId);
+    if (conflict) {
+      const promoter = conflict["Promoter Name"] || "Promoter";
+      const campTitle = conflict["Campaign Title"] || "";
+      const shortCamp = campTitle.length > 10 ? campTitle.substring(0, 10) + "..." : campTitle;
+      const shStart = formatTimeDisplay(conflict["Shift Start"]) || "";
+      const shEnd = formatTimeDisplay(conflict["Shift End"]) || "";
+      const timeStr = shStart && shEnd ? `${shStart} - ${shEnd}` : "";
+      
+      showToast(`${promoter} has been assigned to ${shortCamp} at this time ${timeStr}`, "error");
+      return false;
+    }
+    return true;
   };
 
   // Drag and Drop Cell Assignment / Re-assignment (Campaign Mode)
@@ -1842,8 +1892,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           showToast("Operation blocked: One or both dates are locked due to completed promoter payouts.", "error");
           return;
         }
-        if (!validateShiftBuffer(promoterId, date.getTime(), start, end, sch.ID)) {
-          showToast("Conflict: There must be at least a 1-hour buffer between promoter shifts on the same day.", "error");
+        if (!checkAndToastConflict(promoterId, date.getTime(), start, end, sch.ID)) {
           return;
         }
 
@@ -1860,8 +1909,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           showToast("Operation blocked: The target date is locked due to completed promoter payouts.", "error");
           return;
         }
-        if (!validateShiftBuffer(promoterId, date.getTime(), start, end)) {
-          showToast("Conflict: There must be at least a 1-hour buffer between promoter shifts on the same day.", "error");
+        if (!checkAndToastConflict(promoterId, date.getTime(), start, end)) {
           return;
         }
 
@@ -1898,9 +1946,41 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
-    // Check buffer for default times 09:00 - 17:00
-    if (!validateShiftBuffer(promoterId, date.getTime(), "09:00", "17:00")) {
-      showToast("Conflict: There must be at least a 1-hour buffer between promoter shifts on the same day.", "error");
+    // Calculate next shift time block dynamically
+    const dayShifts = schedules.filter(s => 
+      String(s["Promoter ID"]) === String(promoterId) &&
+      new Date(s.Date).toDateString() === date.toDateString()
+    );
+
+    let shiftStart = "09:00";
+    let shiftEnd = "11:00";
+
+    if (dayShifts.length > 0) {
+      let latestEndMinutes = 0;
+      dayShifts.forEach(s => {
+        const endTimeStr = formatTimeDisplay(s["Shift End"]) || "11:00";
+        const [h, m] = endTimeStr.split(":").map(Number);
+        if (!isNaN(h) && !isNaN(m)) {
+          const totalMinutes = h * 60 + m;
+          if (totalMinutes > latestEndMinutes) {
+            latestEndMinutes = totalMinutes;
+          }
+        }
+      });
+
+      const nextStartMinutes = latestEndMinutes + 60; // 1-hour buffer
+      const nextEndMinutes = nextStartMinutes + 240; // 4-hour session
+
+      const startH = Math.floor(nextStartMinutes / 60) % 24;
+      const startM = nextStartMinutes % 60;
+      const endH = Math.floor(nextEndMinutes / 60) % 24;
+      const endM = nextEndMinutes % 60;
+
+      shiftStart = `${String(startH).padStart(2, "0")}:${String(startM).padStart(2, "0")}`;
+      shiftEnd = `${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`;
+    }
+
+    if (!checkAndToastConflict(promoterId, date.getTime(), shiftStart, shiftEnd)) {
       return;
     }
 
@@ -1947,8 +2027,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       "Store Name": selectedStore["Display Name"],
       "Promoter ID": String(promoterId),
       "Promoter Name": selectedPromoter.Name,
-      "Shift Start": "09:00",
-      "Shift End": "17:00"
+      "Shift Start": shiftStart,
+      "Shift End": shiftEnd
     };
 
     if (!carriesBrand) {
@@ -1966,9 +2046,41 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const handlePasteSchedule = (date: Date, promoterId: string) => {
     if (!copiedSchedule) return;
 
-    // Check buffer for default times 09:00 - 17:00
-    if (!validateShiftBuffer(promoterId, date.getTime(), "09:00", "17:00")) {
-      showToast("Conflict: There must be at least a 1-hour buffer between promoter shifts on the same day.", "error");
+    // Calculate next shift time block dynamically
+    const dayShifts = schedules.filter(s => 
+      String(s["Promoter ID"]) === String(promoterId) &&
+      new Date(s.Date).toDateString() === date.toDateString()
+    );
+
+    let shiftStart = "09:00";
+    let shiftEnd = "11:00";
+
+    if (dayShifts.length > 0) {
+      let latestEndMinutes = 0;
+      dayShifts.forEach(s => {
+        const endTimeStr = formatTimeDisplay(s["Shift End"]) || "11:00";
+        const [h, m] = endTimeStr.split(":").map(Number);
+        if (!isNaN(h) && !isNaN(m)) {
+          const totalMinutes = h * 60 + m;
+          if (totalMinutes > latestEndMinutes) {
+            latestEndMinutes = totalMinutes;
+          }
+        }
+      });
+
+      const nextStartMinutes = latestEndMinutes + 60; // 1-hour buffer
+      const nextEndMinutes = nextStartMinutes + 240; // 4-hour session
+
+      const startH = Math.floor(nextStartMinutes / 60) % 24;
+      const startM = nextStartMinutes % 60;
+      const endH = Math.floor(nextEndMinutes / 60) % 24;
+      const endM = nextEndMinutes % 60;
+
+      shiftStart = `${String(startH).padStart(2, "0")}:${String(startM).padStart(2, "0")}`;
+      shiftEnd = `${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`;
+    }
+
+    if (!checkAndToastConflict(promoterId, date.getTime(), shiftStart, shiftEnd)) {
       return;
     }
 
@@ -1984,8 +2096,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       "Store Name": copiedSchedule["Store Name"],
       "Promoter ID": String(promoterId),
       "Promoter Name": selectedPromoter.Name,
-      "Shift Start": "09:00",
-      "Shift End": "17:00",
+      "Shift Start": shiftStart,
+      "Shift End": shiftEnd,
       Remarks: copiedSchedule.Remarks || ""
     };
 
@@ -2010,8 +2122,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const nextStart = field === "Shift Start" ? value : (formatTimeDisplay(current["Shift Start"]) || "09:00");
     const nextEnd = field === "Shift End" ? value : (formatTimeDisplay(current["Shift End"]) || "17:00");
 
-    if (!validateShiftBuffer(current["Promoter ID"], current.Date, nextStart, nextEnd, schId)) {
-      showToast("Conflict: There must be at least a 1-hour buffer between promoter shifts on the same day.", "error");
+    if (!checkAndToastConflict(current["Promoter ID"], current.Date, nextStart, nextEnd, schId)) {
       return;
     }
 
@@ -2240,13 +2351,23 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             doc.setFontSize(7.5);
             doc.setTextColor(30, 58, 138); // Blue-900
             doc.setFont("helvetica", "bold");
-            const titleLine = `${s["Campaign Title"]} - ${s["Promoter Name"]}`;
+            const nickname = s["Promoter Name"] || "";
+            const campTitle = s["Campaign Title"] || "";
+            const titleLine = `${nickname} - ${campTitle}`;
             const wrappedTitle = doc.splitTextToSize(titleLine, colWidth - 7);
             doc.text(wrappedTitle[0] || "", x + 4, shiftY + 2.5);
 
             doc.setFont("helvetica", "normal");
             doc.setTextColor(75, 85, 99); // gray-600
-            const storeLine = getFormattedStoreName(s["Store ID"], s["Store Name"]);
+            
+            // Resolve retailer name
+            const storeObj = stores.find(st => String(st.ID) === String(s["Store ID"]));
+            const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
+            const retailerObj = retId ? retailers.find(r => String(r.ID) === String(retId)) : null;
+            const retailerName = retailerObj ? (retailerObj["Display Name"] || retailerObj.Name || "") : "";
+            const storeName = s["Store Name"] || (storeObj ? storeObj["Display Name"] : "");
+            const storeLine = retailerName ? `${retailerName} - ${storeName}` : storeName;
+            
             const wrappedStore = doc.splitTextToSize(storeLine, colWidth - 7);
             doc.text(wrappedStore[0] || "", x + 4, shiftY + 5.5);
 
@@ -2281,21 +2402,25 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const startMs = new Date(printStartDate + "T00:00:00").getTime();
       const endMs = new Date(printEndDate + "T23:59:59").getTime();
 
+      const campaignSchedules = schedules.filter(s => 
+        String(s["Campaign ID"]) === String(printCampaignId) &&
+        s.Date >= startMs && s.Date <= endMs
+      );
+
       const reportDates: Date[] = [];
       let tempDate = new Date(printStartDate + "T00:00:00");
       const maxEnd = new Date(printEndDate + "T23:59:59");
       while (tempDate <= maxEnd) {
-        reportDates.push(new Date(tempDate));
+        const currentDateStr = tempDate.toDateString();
+        const hasShift = campaignSchedules.some(s => new Date(s.Date).toDateString() === currentDateStr);
+        if (hasShift) {
+          reportDates.push(new Date(tempDate));
+        }
         tempDate.setDate(tempDate.getDate() + 1);
       }
 
       const campaign = campaigns.find(c => String(c.ID) === String(printCampaignId));
       const campaignTitle = campaign ? campaign["Campaign Title"] : "Campaign Schedule";
-
-      const campaignSchedules = schedules.filter(s => 
-        String(s["Campaign ID"]) === String(printCampaignId) &&
-        s.Date >= startMs && s.Date <= endMs
-      );
       const activePromoterIds = Array.from(new Set(campaignSchedules.map(s => String(s["Promoter ID"]))));
       const activeCampPromoters = promoters.filter(p => activePromoterIds.includes(String(p.ID)) && !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true")));
 
@@ -2330,35 +2455,49 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         doc.setFont("helvetica", "bold");
         doc.setFontSize(14);
         doc.setTextColor(24, 24, 27);
-        doc.text("iB - Campaign Schedule", 15, 15);
+        doc.text("iB - Campaign Schedule", 15, 13);
         
         doc.setFontSize(11);
-        doc.text(campaignTitle, 15, 21);
+        doc.text(campaignTitle, 15, 19);
+
+        let nextY = 24;
+
+        // Add campaign description under title, without label prefix
+        const campDescText = campaign ? String(campaign["Campaign Description"] || "").trim() : "";
+        if (campDescText) {
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(8.5);
+          doc.setTextColor(63, 63, 70);
+          const wrappedDesc = doc.splitTextToSize(campDescText, 267);
+          doc.text(wrappedDesc, 15, nextY);
+          nextY += wrappedDesc.length * 4.5;
+        }
 
         doc.setFont("helvetica", "normal");
         doc.setFontSize(8.5);
         doc.setTextColor(113, 113, 122);
-        doc.text(`Range: ${formatPrintDateStr(startMs)} - ${formatPrintDateStr(endMs)} (Generated: ${formatPrintDateStr(new Date())})`, 15, 26);
+        doc.text(`Range: ${formatPrintDateStr(startMs)} - ${formatPrintDateStr(endMs)} (Generated: ${formatPrintDateStr(new Date())})`, 15, nextY);
+
+        const tableHeaderY = nextY + 5;
+        let currentY = tableHeaderY + 8;
 
         // Table Header
         const colWidths = [43, 56, 56, 56, 56];
         doc.setFillColor(244, 244, 245);
-        doc.rect(15, 32, 267, 8, "F");
+        doc.rect(15, tableHeaderY, 267, 8, "F");
         doc.setFont("helvetica", "bold");
         doc.setFontSize(8.5);
         doc.setTextColor(63, 63, 70);
 
-        doc.rect(15, 32, 43, 8);
-        doc.text("Campaign Date", 17, 37);
+        doc.rect(15, tableHeaderY, 43, 8);
+        doc.text("Campaign Date", 17, tableHeaderY + 5);
 
         for (let i = 0; i < 4; i++) {
           const promoter = chunk[i];
           const x = 58 + i * 56;
-          doc.rect(x, 32, 56, 8);
-          doc.text(promoter ? promoter.Name : "", x + 2, 37);
+          doc.rect(x, tableHeaderY, 56, 8);
+          doc.text(promoter ? promoter.Name : "", x + 2, tableHeaderY + 5);
         }
-
-        let currentY = 40;
 
         reportDates.forEach((date) => {
           const cellTexts: string[][] = [];
@@ -2468,8 +2607,22 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
       // Add footer to all pages
       const pageCount = doc.getNumberOfPages();
+      const campInstrText = campaign ? String(campaign["Campaign Instruction"] || "").trim() : "";
       for (let i = 1; i <= pageCount; i++) {
         doc.setPage(i);
+        
+        if (campInstrText) {
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8);
+          doc.setTextColor(63, 63, 70);
+          doc.text("Instruction:", 15, 198);
+          
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(113, 113, 122);
+          const wrappedInstr = doc.splitTextToSize(campInstrText, 245);
+          doc.text(wrappedInstr[0] || "", 32, 198);
+        }
+
         doc.setFont("helvetica", "normal");
         doc.setFontSize(8);
         doc.setTextColor(113, 113, 122);
@@ -3054,7 +3207,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         <div className="flex gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setCalendarMode("monthly")}
+                            onClick={() => {
+                              setCalendarMode("monthly");
+                              setSelectedCampaignId("all");
+                            }}
                             className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-[#0B57D0] text-white border-transparent shadow-xs flex items-center justify-center"
                           >
                             Calendar
@@ -3064,9 +3220,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             onClick={() => {
                               setCalendarMode("campaign");
                               setIsStoreLibraryCollapsed(true);
-                              if (selectedCampaignId === "all") {
-                                setSelectedCampaignId("");
-                              }
+                              setSelectedCampaignId("");
                             }}
                             className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-white text-zinc-655 border-zinc-200 hover:bg-zinc-50 flex items-center justify-center"
                           >
@@ -3141,6 +3295,26 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             )}
                           </div>
                         )}
+
+                        {/* Select Campaign Dropdown */}
+                        <div className="flex items-center gap-1.5 border-l border-zinc-200 pl-4 h-5">
+                          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Select Campaign:</span>
+                          <select
+                            value={selectedCampaignId}
+                            onChange={(e) => setSelectedCampaignId(e.target.value)}
+                            className="h-[26px] px-2 py-0 bg-white border border-zinc-200 rounded text-[11px] font-bold text-zinc-800 outline-none focus:border-zinc-955 cursor-pointer"
+                          >
+                            <option value="">-- Choose Campaign --</option>
+                            <option value="all">All Campaigns</option>
+                            {campaigns
+                              .filter(c => !c.Archived || (String(c.Archived) !== "1" && String(c.Archived) !== "true"))
+                              .map((c) => (
+                                <option key={c.ID} value={c.ID}>
+                                  {c["Campaign Title"]}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
                       </div>
 
                       {/* Right: Month navigation switcher */}
@@ -3209,6 +3383,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             )}>
                               {cell}
                             </span>
+                            
+                            {isChecklistPendingForDay(cell) && (
+                              <div 
+                                className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-red-500" 
+                                title="Checklist Deployment Pending"
+                              />
+                            )}
                             
                             {dayEvents.length > 0 && (
                               <div className="flex flex-col gap-0.5 mt-1 overflow-hidden">
@@ -3774,7 +3955,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         <div className="flex gap-1.5">
                           <button
                             type="button"
-                            onClick={() => setCalendarMode("monthly")}
+                            onClick={() => {
+                              setCalendarMode("monthly");
+                              setSelectedCampaignId("all");
+                            }}
                             className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-white text-zinc-655 border-zinc-200 hover:bg-zinc-50 flex items-center justify-center"
                           >
                             Calendar
@@ -3784,9 +3968,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             onClick={() => {
                               setCalendarMode("campaign");
                               setIsStoreLibraryCollapsed(true);
-                              if (selectedCampaignId === "all") {
-                                setSelectedCampaignId("");
-                              }
+                              setSelectedCampaignId("");
                             }}
                             className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-[#0B57D0] text-white border-transparent shadow-xs flex items-center justify-center"
                           >
@@ -3861,11 +4043,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             )}
                           </div>
                         )}
-                      </div>
 
-                      {/* Right: Select Campaign dropdown & Show Stores */}
-                      <div className="flex items-center gap-3 select-none">
-                        <div className="flex items-center gap-1.5">
+                        {/* Select Campaign Dropdown */}
+                        <div className="flex items-center gap-1.5 border-l border-zinc-200 pl-4 h-5">
                           <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Select Campaign:</span>
                           <select
                             value={selectedCampaignId}
@@ -3882,7 +4062,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               ))}
                           </select>
                         </div>
+                      </div>
 
+                      {/* Right: Show Stores */}
+                      <div className="flex items-center gap-3 select-none">
                         {isStoreLibraryCollapsed && isEditMode && (
                           <button
                             type="button"
