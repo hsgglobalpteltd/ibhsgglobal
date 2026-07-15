@@ -1824,6 +1824,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       dateTimeStr: string;
       promoterName: string;
       cost: string;
+      payroll: string;
     }
 
     const retailerGroups: Record<string, { storeIds: Set<string>; shifts: GroupedShift[] }> = {};
@@ -1882,6 +1883,23 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       }
       const costText = totalCostVal > 0 ? `$${totalCostVal.toFixed(2)}` : "—";
 
+      // Matching Payout for Payroll
+      const matchingPayout = payouts.find(p => {
+        if (String(p["Promoter ID"]) !== String(s["Promoter ID"])) return false;
+        const shiftDateNum = new Date(s.Date).getTime();
+        const pStart = Number(p["Start Date"]);
+        const pEnd = Number(p["End Date"]);
+        return shiftDateNum >= pStart && shiftDateNum <= pEnd;
+      });
+
+      let payrollText = "Pending Paid";
+      if (matchingPayout && matchingPayout.Status === "Paid") {
+        payrollText = "Paid";
+        if (matchingPayout["Payment Reference"]) {
+          payrollText += ` (${matchingPayout["Payment Reference"]})`;
+        }
+      }
+
       if (!retailerGroups[retailerName]) {
         retailerGroups[retailerName] = {
           storeIds: new Set<string>(),
@@ -1898,7 +1916,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         storeName,
         dateTimeStr: dateTimeText,
         promoterName,
-        cost: costText
+        cost: costText,
+        payroll: payrollText
       });
     });
 
@@ -2048,8 +2067,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         doc.text(`${retailerName} (${qtyStores})`, 14, yPos);
         yPos += 2;
 
-        const tableHeaders = [["Store", "Promoter Name", "Date & Actual Time", "Cost"]];
-        const tableBody = group.shifts.map(s => [s.storeName, s.promoterName, s.dateTimeStr, s.cost]);
+        const tableHeaders = [["Store", "Promoter Name", "Date & Actual Time", "Cost", "Payroll"]];
+        const tableBody = group.shifts.map(s => [s.storeName, s.promoterName, s.dateTimeStr, s.cost, s.payroll]);
 
         autoTable(doc, {
           head: tableHeaders,
@@ -2057,6 +2076,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           startY: yPos,
           margin: { left: 14, right: 14 },
           theme: "striped",
+          columnStyles: {
+            0: { cellWidth: 40 }, // Store
+            1: { cellWidth: 35 }, // Promoter Name
+            2: { cellWidth: 60 }, // Date & Actual Time
+            3: { cellWidth: 22 }, // Cost
+            4: { cellWidth: 25 }, // Payroll
+          },
           headStyles: {
             fillColor: [240, 244, 249],
             textColor: [71, 71, 71],
