@@ -21,10 +21,12 @@ const lora = Lora({
 });
 
 import { ZoomBlocker } from "@/components/zoom-blocker";
+import { PwaRegister } from "@/components/pwa-register";
 
 export const metadata: Metadata = {
   title: "iB - HSG Global Internal Bridge",
   description: "A centralized internal portal connecting HSG Global teams, data, tools, and operations in one place.",
+  manifest: "/manifest.json",
   other: {
     slogan: "Connecting Teams. Bridging Operations.",
   },
@@ -49,6 +51,7 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
+        <PwaRegister />
         <ZoomBlocker />
         {children}
       </body>

@@ -52,6 +52,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Retailer SKU's",
         description: "Manage retailer pricing tiers, promotions, product listings, and registrations."
+      },
+      {
+        title: "Phonebook",
+        description: "Manage contact directories, affiliations, and phone communications registry."
       }
     ]
   },

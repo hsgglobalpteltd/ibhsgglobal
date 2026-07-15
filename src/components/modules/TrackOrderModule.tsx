@@ -1188,6 +1188,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const isMarkActive = dbOrders.some(o => 
       o.Type === "Return" && 
       o.Status !== "Complete" && 
+      o.Status !== "Collected" && 
+      o.Status !== "Return Collected" && 
       String(o.Completed) !== "true" &&
       o.Completed !== true &&
       String(o.Mark).toUpperCase() === finalMark.toUpperCase() &&
@@ -1424,13 +1426,21 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const usedMarks = new Set<string>();
     
     currentDbOrders.forEach((o) => {
-      if (o.Mark) {
+      if (
+        o.Mark && 
+        o.Type === "Return" && 
+        o.Status !== "Complete" && 
+        o.Status !== "Collected" && 
+        o.Status !== "Return Collected" && 
+        String(o.Completed) !== "true" && 
+        o.Completed !== true
+      ) {
         usedMarks.add(String(o.Mark).trim().toUpperCase());
       }
     });
 
     currentDrafts.forEach((d) => {
-      if (d.mark) {
+      if (d.mark && d.type === "Return") {
         usedMarks.add(String(d.mark).trim().toUpperCase());
       }
     });
@@ -2025,6 +2035,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           (o) =>
             o.Type === "Return" &&
             o.Status !== "Complete" &&
+            o.Status !== "Collected" &&
+            o.Status !== "Return Collected" &&
             String(o.Completed) !== "true" &&
             o.Completed !== true &&
             String(o.Mark).toUpperCase() === order.mark.toUpperCase()

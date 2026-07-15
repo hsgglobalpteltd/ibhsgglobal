@@ -1,0 +1,21 @@
+{
+  "name": "iB - HSG Global Internal Bridge",
+  "short_name": "iB",
+  "description": "A centralized internal portal connecting HSG Global teams, data, tools, and operations in one place.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F0F4F9",
+  "theme_color": "#0B57D0",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -36,6 +36,7 @@ import { ConfirmDialog } from "../confirm-dialog";
 import { showToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 
 interface UserProfile {
   role: string;
@@ -47,6 +48,42 @@ interface UserProfile {
 interface PromoterModuleProps {
   profile?: UserProfile | null;
 }
+
+const getMonday = (d: Date) => {
+  const date = new Date(d);
+  const day = date.getDay();
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+  return new Date(date.setDate(diff));
+};
+
+const formatEpochToDateInput = (epoch: any): string => {
+  if (!epoch) return "";
+  const num = Number(epoch);
+  if (isNaN(num)) return "";
+  const d = new Date(num);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const formatEpochToDisplay = (epoch: any): string => {
+  if (!epoch) return "";
+  const num = Number(epoch);
+  if (isNaN(num)) return "";
+  const d = new Date(num);
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}/${mm}/${yyyy}`;
+};
+
+const dateStrToEpoch = (dateStr: string): number => {
+  if (!dateStr) return 0;
+  const parts = dateStr.split("-");
+  if (parts.length !== 3) return 0;
+  return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])).getTime();
+};
 
 export function PromoterModule({ profile }: PromoterModuleProps) {
   const [activeTab, setActiveTab] = React.useState<string>("calendar");
@@ -70,10 +107,29 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
   // Campaign Form fields
   const [campTitle, setCampTitle] = React.useState<string>("");
+  const [campStartDate, setCampStartDate] = React.useState<string>("");
+  const [campEndDate, setCampEndDate] = React.useState<string>("");
   const [campDesc, setCampDesc] = React.useState<string>("");
   const [campInstr, setCampInstr] = React.useState<string>("");
   const [campBrand, setCampBrand] = React.useState<string>("");
   const [campProducts, setCampProducts] = React.useState<string[]>([]);
+
+  // Schedule view date range selection
+  const [scheduleStartDate, setScheduleStartDate] = React.useState<string>(() => {
+    const mon = getMonday(new Date());
+    const yyyy = mon.getFullYear();
+    const mm = String(mon.getMonth() + 1).padStart(2, "0");
+    const dd = String(mon.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  });
+  const [scheduleEndDate, setScheduleEndDate] = React.useState<string>(() => {
+    const mon = getMonday(new Date());
+    const sun = new Date(mon.getTime() + 6 * 24 * 60 * 60 * 1000);
+    const yyyy = sun.getFullYear();
+    const mm = String(sun.getMonth() + 1).padStart(2, "0");
+    const dd = String(sun.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  });
 
   // Schedules state
   const [schedules, setSchedules] = React.useState<any[]>([]);
@@ -97,12 +153,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [campaignSubTab, setCampaignSubTab] = React.useState<"active" | "archive">("active");
 
   // Campaign Mode view states
-  const getMonday = (d: Date) => {
-    const date = new Date(d);
-    const day = date.getDay();
-    const diff = date.getDate() - day + (day === 0 ? -6 : 1);
-    return new Date(date.setDate(diff));
-  };
   const [selectedWeekStart, setSelectedWeekStart] = React.useState<Date>(getMonday(new Date()));
   const [manuallyAddedPromoterIds, setManuallyAddedPromoterIds] = React.useState<string[]>([]);
   const [hiddenPromoterIds, setHiddenPromoterIds] = React.useState<string[]>([]);
@@ -146,7 +196,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     onConfirm: () => void;
   } | null>(null);
 
-  const [selectedPrintLayout, setSelectedPrintLayout] = React.useState<"master-calendar" | "campaign-schedule" | "promoter-schedule" | null>(null);
+  const [selectedPrintLayout, setSelectedPrintLayout] = React.useState<"master-calendar" | "campaign-schedule" | "promoter-schedule" | "campaign-briefing" | "campaign-reporting" | null>(null);
   const [printMonth, setPrintMonth] = React.useState<number>(new Date().getMonth());
   const [printYear, setPrintYear] = React.useState<number>(new Date().getFullYear());
   const [printCampaignId, setPrintCampaignId] = React.useState<string>("");
@@ -169,6 +219,65 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   });
 
   const printContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  const [promotingCostModalShiftId, setPromotingCostModalShiftId] = React.useState<string | null>(null);
+  const [promotingCostItems, setPromotingCostItems] = React.useState<any[]>([]);
+
+  const openPromotingCostModal = (shiftId: string) => {
+    const shift = schedules.find(s => String(s.ID) === String(shiftId));
+    if (!shift) return;
+
+    let items = [];
+    if (shift["Promoting Cost"]) {
+      try {
+        items = JSON.parse(shift["Promoting Cost"]);
+      } catch (e) {
+        items = [];
+      }
+    }
+    const itemsWithIds = items.map((it: any, idx: number) => ({
+      ...it,
+      id: it.id || `item_${idx}_${Date.now()}`
+    }));
+
+    setPromotingCostModalShiftId(shiftId);
+    setPromotingCostItems(itemsWithIds);
+  };
+
+  const handleUpdateItemField = (itemId: string, field: string, value: any) => {
+    setPromotingCostItems(prev => prev.map(item => {
+      if (item.id !== itemId) return item;
+
+      const updated = { ...item, [field]: value };
+
+      if (updated.type === "Goods") {
+        if (field === "sku" || field === "qty" || field === "type") {
+          const prod = products.find(p => String(p.SKU).toLowerCase() === String(updated.sku).toLowerCase());
+          const costPrice = prod ? (Number(prod.Cost) || Number(prod["Cost Price"]) || 0) : 0;
+          updated.amount = costPrice * (Number(updated.qty) || 0);
+        }
+      }
+
+      return updated;
+    }));
+  };
+
+  const handleAddCostRow = () => {
+    setPromotingCostItems(prev => [
+      ...prev,
+      {
+        id: `item_${Date.now()}_${Math.random()}`,
+        type: "Goods",
+        sku: "",
+        qty: 1,
+        amount: 0
+      }
+    ]);
+  };
+
+  const handleDeleteCostRow = (itemId: string) => {
+    setPromotingCostItems(prev => prev.filter(item => item.id !== itemId));
+  };
 
   React.useEffect(() => {
     if (!selectedPrintLayout) return;
@@ -1015,11 +1124,23 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
   const isEditAuthorized = profile?.role === "Administrator" || profile?.role === "Manager";
 
-  // Reset manually added/hidden promoters when campaign changes
+  // Reset manually added/hidden promoters and set view dates when campaign changes
   React.useEffect(() => {
     setManuallyAddedPromoterIds([]);
     setHiddenPromoterIds([]);
-  }, [selectedCampaignId]);
+
+    if (selectedCampaignId && selectedCampaignId !== "all" && selectedCampaignId !== "") {
+      const selectedCamp = campaigns.find(c => String(c.ID) === String(selectedCampaignId));
+      if (selectedCamp) {
+        if (selectedCamp["Start Date"]) {
+          setScheduleStartDate(formatEpochToDateInput(selectedCamp["Start Date"]));
+        }
+        if (selectedCamp["End Date"]) {
+          setScheduleEndDate(formatEpochToDateInput(selectedCamp["End Date"]));
+        }
+      }
+    }
+  }, [selectedCampaignId, campaigns]);
 
   // Check for local storage drafts on mount
   React.useEffect(() => {
@@ -1144,6 +1265,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
 
     const campaignId = editingCampaignId || `camp_${Date.now()}`;
+    const startMs = campStartDate ? dateStrToEpoch(campStartDate) : "";
+    const endMs = campEndDate ? dateStrToEpoch(campEndDate) : "";
+
     const payload = {
       sheet: "Promoter_Campaign",
       action: editingCampaignId ? "update" : "insert",
@@ -1153,7 +1277,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         "Campaign Description": campDesc.trim(),
         "Campaign Instruction": campInstr.trim(),
         Brand: campBrand,
-        Products: campProducts.join(",")
+        Products: campProducts.join(","),
+        "Start Date": startMs,
+        "End Date": endMs
       }
     };
 
@@ -1164,7 +1290,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       "Campaign Description": payload.data["Campaign Description"],
       "Campaign Instruction": payload.data["Campaign Instruction"],
       Brand: payload.data.Brand,
-      Products: payload.data.Products
+      Products: payload.data.Products,
+      "Start Date": payload.data["Start Date"],
+      "End Date": payload.data["End Date"]
     };
 
     setCampaigns(prev => {
@@ -1181,6 +1309,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     setIsCreatingCampaign(false);
     setEditingCampaignId(null);
     setCampTitle("");
+    setCampStartDate("");
+    setCampEndDate("");
     setCampDesc("");
     setCampInstr("");
     setCampBrand("");
@@ -1407,6 +1537,93 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
   // Print Campaign PDF
   const handlePrintCampaign = (c: any) => {
+    // Find all schedules assigned to this campaign
+    const campaignSchedules = schedules.filter(
+      (s) => String(s["Campaign ID"]) === String(c.ID)
+    );
+
+    // Extract unique promoter IDs and names
+    const uniquePromoterIds = Array.from(
+      new Set(campaignSchedules.map((s) => String(s["Promoter ID"] || "")).filter(Boolean))
+    );
+    const involvedPromoterNames = uniquePromoterIds.map((id) => {
+      const p = promoters.find((prm) => String(prm.ID) === id);
+      return p ? p.Name : `Unknown (${id})`;
+    }).sort();
+
+    // Group schedules by Retailer
+    interface GroupedShift {
+      storeId: string;
+      storeName: string;
+      dateTimeStr: string;
+      promoterName: string;
+    }
+
+    const retailerGroups: Record<string, { storeIds: Set<string>; shifts: GroupedShift[] }> = {};
+
+    campaignSchedules.forEach((s) => {
+      const storeId = String(s["Store ID"] || "");
+      const storeName = String(s["Store Name"] || "");
+      const promoterId = String(s["Promoter ID"] || "");
+      
+      const storeObj = stores.find(st => String(st.ID) === storeId);
+      const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
+      const retailerObj = retId ? retailers.find(r => String(r.ID) === String(retId)) : null;
+      const retailerName = retailerObj ? (retailerObj["Display Name"] || retailerObj.Name || "OTHERS") : "OTHERS";
+
+      const p = promoters.find((prm) => String(prm.ID) === promoterId);
+      const promoterName = p ? p.Name : `Unknown (${promoterId})`;
+
+      // Date formatting
+      const dateVal = s.Date;
+      let dateText = "";
+      if (dateVal) {
+        const d = new Date(Number(dateVal));
+        if (!isNaN(d.getTime())) {
+          const dd = String(d.getDate()).padStart(2, "0");
+          const mm = String(d.getMonth() + 1).padStart(2, "0");
+          const yyyy = d.getFullYear();
+          dateText = `${dd}/${mm}/${yyyy}`;
+        }
+      }
+
+      // Time formatting
+      const startTime = formatTimeDisplay(s["Start Time"] || s.StartTime);
+      const endTime = formatTimeDisplay(s["End Time"] || s.EndTime);
+      const timeRange = startTime && endTime ? `(${startTime} - ${endTime})` : "";
+      const dateTimeText = dateText ? `${dateText} ${timeRange}`.trim() : "";
+
+      if (!retailerGroups[retailerName]) {
+        retailerGroups[retailerName] = {
+          storeIds: new Set<string>(),
+          shifts: []
+        };
+      }
+
+      if (storeId) {
+        retailerGroups[retailerName].storeIds.add(storeId);
+      }
+
+      retailerGroups[retailerName].shifts.push({
+        storeId,
+        storeName,
+        dateTimeStr: dateTimeText,
+        promoterName
+      });
+    });
+
+    // Sort shifts inside each group by date
+    Object.keys(retailerGroups).forEach(ret => {
+      retailerGroups[ret].shifts.sort((a, b) => {
+        const parseD = (str: string) => {
+          if (!str) return 0;
+          const p = str.split(" ")[0].split("/");
+          return new Date(Number(p[2]), Number(p[1]) - 1, Number(p[0])).getTime();
+        };
+        return parseD(a.dateTimeStr) - parseD(b.dateTimeStr);
+      });
+    });
+
     const doc = new jsPDF({
       orientation: "portrait",
       unit: "mm",
@@ -1439,19 +1656,24 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.setTextColor(113, 113, 122);
     doc.text(`Brand: ${brandName}`, 14, 38);
 
+    // Campaign Duration
+    const startDisplay = formatEpochToDisplay(c["Start Date"]) || "—";
+    const endDisplay = formatEpochToDisplay(c["End Date"]) || "—";
+    doc.text(`Campaign Duration: ${startDisplay} - ${endDisplay}`, 14, 44);
+
     // Description
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(24, 24, 27);
-    doc.text("Description", 14, 48);
+    doc.text("Description", 14, 54);
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(39, 39, 42);
     const descLines = doc.splitTextToSize(c["Campaign Description"] || "No description provided.", 182);
-    doc.text(descLines, 14, 53);
+    doc.text(descLines, 14, 59);
 
-    let yPos = 55 + descLines.length * 4.5;
+    let yPos = 61 + descLines.length * 4.5;
 
     // Instructions
     doc.setFont("helvetica", "bold");
@@ -1488,6 +1710,364 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const prodLines = doc.splitTextToSize(targetProds, 182);
     doc.text(prodLines, 14, yPos + 5);
 
+    yPos = yPos + 7 + prodLines.length * 4.5;
+
+    // Promoters Involved Summary
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(24, 24, 27);
+    doc.text("Promoters Involved Summary", 14, yPos);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(39, 39, 42);
+    const promotersText = involvedPromoterNames.length > 0 
+      ? involvedPromoterNames.join(", ") 
+      : "No promoters assigned yet.";
+    const promoterLines = doc.splitTextToSize(promotersText, 182);
+    doc.text(promoterLines, 14, yPos + 5);
+
+    yPos = yPos + 7 + promoterLines.length * 4.5;
+
+    // Stores & Schedules (Grouped by Retailer)
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(24, 24, 27);
+    doc.text("Stores & Schedules", 14, yPos);
+    doc.line(14, yPos + 2, 196, yPos + 2);
+    yPos += 7;
+
+    if (Object.keys(retailerGroups).length === 0) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(113, 113, 122);
+      doc.text("No schedules assigned to this campaign yet.", 14, yPos);
+    } else {
+      Object.keys(retailerGroups).sort().forEach((retailerName) => {
+        const group = retailerGroups[retailerName];
+        const qtyStores = group.storeIds.size;
+
+        if (yPos > 245) {
+          doc.addPage();
+          yPos = 20;
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9.5);
+        doc.setTextColor(11, 87, 208); // Brand blue
+        doc.text(`${retailerName} (${qtyStores})`, 14, yPos);
+        yPos += 2;
+
+        const tableHeaders = [["Stores", "Date & Time", "Promoters Name"]];
+        const tableBody = group.shifts.map(s => [s.storeName, s.dateTimeStr, s.promoterName]);
+
+        autoTable(doc, {
+          head: tableHeaders,
+          body: tableBody,
+          startY: yPos,
+          margin: { left: 14, right: 14 },
+          theme: "striped",
+          headStyles: {
+            fillColor: [240, 244, 249],
+            textColor: [71, 71, 71],
+            fontStyle: "bold",
+            fontSize: 8.5,
+          },
+          bodyStyles: {
+            fontSize: 8,
+            textColor: [39, 39, 42],
+          },
+          styles: {
+            font: "helvetica",
+            cellPadding: 2.5,
+          }
+        });
+
+        yPos = (doc as any).lastAutoTable.finalY + 8;
+      });
+    }
+
+    const pdfBlob = doc.output("blob");
+    const url = URL.createObjectURL(pdfBlob);
+    window.open(url, "_blank");
+  };
+
+  // Print Campaign Report PDF
+  const handlePrintCampaignReport = (c: any) => {
+    // Find all schedules assigned to this campaign
+    const campaignSchedules = schedules.filter(
+      (s) => String(s["Campaign ID"]) === String(c.ID)
+    );
+
+    // Extract unique promoter IDs and names
+    const uniquePromoterIds = Array.from(
+      new Set(campaignSchedules.map((s) => String(s["Promoter ID"] || "")).filter(Boolean))
+    );
+    const involvedPromoterNames = uniquePromoterIds.map((id) => {
+      const p = promoters.find((prm) => String(prm.ID) === id);
+      return p ? p.Name : `Unknown (${id})`;
+    }).sort();
+
+    // Group schedules by Retailer
+    interface GroupedShift {
+      storeId: string;
+      storeName: string;
+      dateTimeStr: string;
+      promoterName: string;
+      cost: string;
+    }
+
+    const retailerGroups: Record<string, { storeIds: Set<string>; shifts: GroupedShift[] }> = {};
+
+    campaignSchedules.forEach((s) => {
+      const storeId = String(s["Store ID"] || "");
+      const storeName = String(s["Store Name"] || "");
+      const promoterId = String(s["Promoter ID"] || "");
+      
+      const storeObj = stores.find(st => String(st.ID) === storeId);
+      const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
+      const retailerObj = retId ? retailers.find(r => String(r.ID) === String(retId)) : null;
+      const retailerName = retailerObj ? (retailerObj["Display Name"] || retailerObj.Name || "OTHERS") : "OTHERS";
+
+      const p = promoters.find((prm) => String(prm.ID) === promoterId);
+      const promoterName = p ? p.Name : `Unknown (${promoterId})`;
+
+      // Date formatting
+      const dateVal = s.Date;
+      let dateText = "";
+      if (dateVal) {
+        const d = new Date(Number(dateVal));
+        if (!isNaN(d.getTime())) {
+          const dd = String(d.getDate()).padStart(2, "0");
+          const mm = String(d.getMonth() + 1).padStart(2, "0");
+          const yyyy = d.getFullYear();
+          dateText = `${dd}/${mm}/${yyyy}`;
+        }
+      }
+
+      // Actual Time formatting
+      const actualStartVal = s["Actual Start"];
+      const actualEndVal = s["Actual End"];
+      let actualTimeRange = "";
+      if (actualStartVal === "Absent") {
+        actualTimeRange = `Absent (Reason: ${actualEndVal || "Not specified"})`;
+      } else {
+        const actualStart = formatTimeDisplay(actualStartVal);
+        const actualEnd = formatTimeDisplay(actualEndVal);
+        actualTimeRange = actualStart && actualEnd ? `${actualStart} - ${actualEnd}` : "Not logged";
+      }
+      
+      const dateTimeText = dateText ? `${dateText} (${actualTimeRange})` : "";
+
+      // Promoting Cost calculation
+      let totalCostVal = 0;
+      if (s["Promoting Cost"]) {
+        try {
+          const parsed = JSON.parse(s["Promoting Cost"]);
+          if (Array.isArray(parsed)) {
+            totalCostVal = parsed.reduce((acc: number, curr: any) => acc + Number(curr.amount || 0), 0);
+          }
+        } catch (e) {
+          totalCostVal = 0;
+        }
+      }
+      const costText = totalCostVal > 0 ? `$${totalCostVal.toFixed(2)}` : "—";
+
+      if (!retailerGroups[retailerName]) {
+        retailerGroups[retailerName] = {
+          storeIds: new Set<string>(),
+          shifts: []
+        };
+      }
+
+      if (storeId) {
+        retailerGroups[retailerName].storeIds.add(storeId);
+      }
+
+      retailerGroups[retailerName].shifts.push({
+        storeId,
+        storeName,
+        dateTimeStr: dateTimeText,
+        promoterName,
+        cost: costText
+      });
+    });
+
+    // Sort shifts inside each group by date
+    Object.keys(retailerGroups).forEach(ret => {
+      retailerGroups[ret].shifts.sort((a, b) => {
+        const parseD = (str: string) => {
+          if (!str) return 0;
+          const p = str.split(" ")[0].split("/");
+          return new Date(Number(p[2]), Number(p[1]) - 1, Number(p[0])).getTime();
+        };
+        return parseD(a.dateTimeStr) - parseD(b.dateTimeStr);
+      });
+    });
+
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(24, 24, 27);
+    doc.text("Campaign Reporting Sheet", 14, 20);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(113, 113, 122);
+    const dateStr = new Date().toLocaleDateString("en-GB");
+    doc.text(`Generated: ${dateStr}`, 196, 20, { align: "right" });
+
+    doc.line(14, 23, 196, 23);
+
+    // Title
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.setTextColor(24, 24, 27);
+    doc.text(c["Campaign Title"], 14, 32);
+
+    // Brand info
+    const brandName = brands.find(b => String(b.ID) === String(c.Brand))?.["Display Name"] || c.Brand;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(113, 113, 122);
+    doc.text(`Brand: ${brandName}`, 14, 38);
+
+    // Campaign Duration
+    const startDisplay = formatEpochToDisplay(c["Start Date"]) || "—";
+    const endDisplay = formatEpochToDisplay(c["End Date"]) || "—";
+    doc.text(`Campaign Duration: ${startDisplay} - ${endDisplay}`, 14, 44);
+
+    // Description
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(24, 24, 27);
+    doc.text("Description", 14, 54);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(39, 39, 42);
+    const descLines = doc.splitTextToSize(c["Campaign Description"] || "No description provided.", 182);
+    doc.text(descLines, 14, 59);
+
+    let yPos = 61 + descLines.length * 4.5;
+
+    // Instructions
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(24, 24, 27);
+    doc.text("Instructions", 14, yPos);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(39, 39, 42);
+    const instrLines = doc.splitTextToSize(c["Campaign Instruction"] || "No instructions provided.", 182);
+    doc.text(instrLines, 14, yPos + 5);
+
+    yPos = yPos + 7 + instrLines.length * 4.5;
+
+    // Products
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(24, 24, 27);
+    doc.text("Target Products", 14, yPos);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(39, 39, 42);
+    let targetProds = "All Products in Brand";
+    if (c.Products && c.Products.trim()) {
+      const prodSkus = c.Products.split(",");
+      const prodNames = prodSkus.map((sku: string) => {
+        const p = products.find(prod => String(prod.SKU).toLowerCase() === sku.toLowerCase());
+        return p ? p["Display Name"] : sku;
+      });
+      targetProds = prodNames.join(", ");
+    }
+    const prodLines = doc.splitTextToSize(targetProds, 182);
+    doc.text(prodLines, 14, yPos + 5);
+
+    yPos = yPos + 7 + prodLines.length * 4.5;
+
+    // Promoters Involved Summary
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(24, 24, 27);
+    doc.text("Promoters Involved Summary", 14, yPos);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(39, 39, 42);
+    const promotersText = involvedPromoterNames.length > 0 
+      ? involvedPromoterNames.join(", ") 
+      : "No promoters assigned yet.";
+    const promoterLines = doc.splitTextToSize(promotersText, 182);
+    doc.text(promoterLines, 14, yPos + 5);
+
+    yPos = yPos + 7 + promoterLines.length * 4.5;
+
+    // Stores & Schedules (Grouped by Retailer)
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.setTextColor(24, 24, 27);
+    doc.text("Stores & Schedules", 14, yPos);
+    doc.line(14, yPos + 2, 196, yPos + 2);
+    yPos += 7;
+
+    if (Object.keys(retailerGroups).length === 0) {
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(113, 113, 122);
+      doc.text("No schedules assigned to this campaign yet.", 14, yPos);
+    } else {
+      Object.keys(retailerGroups).sort().forEach((retailerName) => {
+        const group = retailerGroups[retailerName];
+        const qtyStores = group.storeIds.size;
+
+        if (yPos > 245) {
+          doc.addPage();
+          yPos = 20;
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9.5);
+        doc.setTextColor(11, 87, 208); // Brand blue
+        doc.text(`${retailerName} (${qtyStores})`, 14, yPos);
+        yPos += 2;
+
+        const tableHeaders = [["Store", "Promoter Name", "Date & Actual Time", "Cost"]];
+        const tableBody = group.shifts.map(s => [s.storeName, s.promoterName, s.dateTimeStr, s.cost]);
+
+        autoTable(doc, {
+          head: tableHeaders,
+          body: tableBody,
+          startY: yPos,
+          margin: { left: 14, right: 14 },
+          theme: "striped",
+          headStyles: {
+            fillColor: [240, 244, 249],
+            textColor: [71, 71, 71],
+            fontStyle: "bold",
+            fontSize: 8.5,
+          },
+          bodyStyles: {
+            fontSize: 8,
+            textColor: [39, 39, 42],
+          },
+          styles: {
+            font: "helvetica",
+            cellPadding: 2.5,
+          }
+        });
+
+        yPos = (doc as any).lastAutoTable.finalY + 8;
+      });
+    }
+
     const pdfBlob = doc.output("blob");
     const url = URL.createObjectURL(pdfBlob);
     window.open(url, "_blank");
@@ -1517,6 +2097,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           <div className="flex flex-col gap-0.5 select-text">
             <span className="font-bold text-zinc-900">{c["Campaign Title"]}</span>
             <span className="text-[10px] text-zinc-400 font-bold font-mono">Brand: {brandName}</span>
+            {(c["Start Date"] || c["End Date"]) && (
+              <span className="text-[10px] text-[#0B57D0] font-bold font-mono">
+                Duration: {formatEpochToDisplay(c["Start Date"]) || "—"} to {formatEpochToDisplay(c["End Date"]) || "—"}
+              </span>
+            )}
           </div>
         ),
         title_raw: `${c["Campaign Title"]} ${brandName}`,
@@ -1535,16 +2120,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         actions: (
           <div className="flex items-center gap-1.5 w-[110px] shrink-0 select-none">
             <button
-              onClick={() => handlePrintCampaign(c)}
-              className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-650 hover:text-zinc-955 transition-colors cursor-pointer flex items-center justify-center"
-              title="Print Campaign Details"
-            >
-              <Printer size={12} className="text-zinc-650" />
-            </button>
-            <button
               onClick={() => {
                 setEditingCampaignId(c.ID);
                 setCampTitle(c["Campaign Title"]);
+                setCampStartDate(c["Start Date"] ? formatEpochToDateInput(c["Start Date"]) : "");
+                setCampEndDate(c["End Date"] ? formatEpochToDateInput(c["End Date"]) : "");
                 setCampDesc(c["Campaign Description"] || "");
                 setCampInstr(c["Campaign Instruction"] || "");
                 setCampBrand(c.Brand || "");
@@ -1711,6 +2291,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         backupItem["Actual Start"] !== s["Actual Start"] ||
         backupItem["Actual End"] !== s["Actual End"] ||
         backupItem["Custom Tasks"] !== s["Custom Tasks"] ||
+        backupItem["Promoting Cost"] !== s["Promoting Cost"] ||
         backupItem.Remarks !== s.Remarks
       );
     });
@@ -2224,16 +2805,26 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     await handleUpdateShiftField(shiftId, "Custom Tasks", JSON.stringify(updatedCustomTasks));
   };
 
-  // Campaign Mode helper dates
+  // Campaign Mode helper dates (uses the range date inputs selected by user)
   const weekDates = React.useMemo(() => {
     const dates = [];
-    const temp = new Date(selectedWeekStart);
-    for (let i = 0; i < 7; i++) {
+    if (!scheduleStartDate || !scheduleEndDate) return [];
+    
+    const start = new Date(scheduleStartDate);
+    const end = new Date(scheduleEndDate);
+    start.setHours(0, 0, 0, 0);
+    end.setHours(0, 0, 0, 0);
+
+    const temp = new Date(start);
+    let count = 0;
+    // Limit to 62 days maximum range to protect browser DOM rendering performance
+    while (temp <= end && count < 62) {
       dates.push(new Date(temp));
       temp.setDate(temp.getDate() + 1);
+      count++;
     }
     return dates;
-  }, [selectedWeekStart]);
+  }, [scheduleStartDate, scheduleEndDate]);
 
   const selectedDayShifts = React.useMemo(() => {
     const targetDate = new Date(year, month, selectedDay).toDateString();
@@ -3459,6 +4050,19 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         shiftDate.setHours(0,0,0,0);
                         const isPastDate = shiftDate.getTime() < today.getTime();
 
+                        // Parse promoting cost
+                        let promotingCosts: any[] = [];
+                        if (s["Promoting Cost"]) {
+                          try {
+                            promotingCosts = JSON.parse(s["Promoting Cost"]);
+                          } catch (e) {
+                            promotingCosts = [];
+                          }
+                        }
+                        const totalQty = promotingCosts.reduce((acc: number, curr: any) => acc + Number(curr.qty || 0), 0);
+                        const totalAmount = promotingCosts.reduce((acc: number, curr: any) => acc + Number(curr.amount || 0), 0);
+                        const promotingCostDone = promotingCosts.length > 0 ? 1 : 0;
+
                         // Task completions count
                         const customTasksCount = customTasks.length;
                         const customDoneCount = customTasks.filter((t: any) => !!t.answer).length;
@@ -3466,8 +4070,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         const stockDone = s["Stock Checked"] ? 1 : 0;
                         const actualDone = (isPastDate && s["Actual Start"] && s["Actual End"]) ? 1 : 0;
 
-                        const totalCount = 2 + customTasksCount + (isPastDate ? 1 : 0);
-                        const doneCount = permDone + stockDone + customDoneCount + actualDone;
+                        const totalCount = 3 + customTasksCount + (isPastDate ? 1 : 0);
+                        const doneCount = permDone + stockDone + promotingCostDone + customDoneCount + actualDone;
 
                         const taskInputText = customTaskTexts[s.ID] || "";
                         const isScheduleExpanded = expandedScheduleId === s.ID;
@@ -3890,6 +4494,53 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 );
                               })()}
 
+                              {/* Task 5: Promoting Cost */}
+                              {(() => {
+                                const isDone = promotingCosts.length > 0;
+                                return (
+                                  <div 
+                                    className="bg-white border rounded p-2.5 shadow-xs flex flex-col gap-2 border-zinc-200"
+                                  >
+                                    <div className="flex items-start gap-2.5">
+                                      <div className="mt-0.5 shrink-0 select-none">
+                                        {isDone ? (
+                                          <div className="w-3.5 h-3.5 rounded-full bg-[#0B57D0] flex items-center justify-center text-white">
+                                            <Check size={8} className="stroke-[3]" />
+                                          </div>
+                                        ) : (
+                                          <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-300 flex items-center justify-center text-transparent" />
+                                        )}
+                                      </div>
+                                      <div className="flex-grow min-w-0">
+                                        <div className="font-bold text-zinc-855 leading-snug text-[10.5px]">Promoting Cost</div>
+                                        <div className="mt-1 text-[9.5px] font-semibold">
+                                          {isDone ? (
+                                            <span className="text-zinc-555 leading-normal">
+                                              Qty: <span className="text-zinc-850 font-bold">{totalQty}</span> | Amount: <span className="text-[#0B57D0] font-bold">${totalAmount.toFixed(2)}</span>
+                                            </span>
+                                          ) : (
+                                            <span className="text-amber-500 font-bold uppercase tracking-wider text-[8px]">Pending</span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      
+                                      {isEditMode && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            openPromotingCostModal(s.ID);
+                                          }}
+                                          className="px-2 py-0.5 bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-700 font-bold rounded text-[9.5px] cursor-pointer transition-colors"
+                                        >
+                                          {isDone ? "Edit" : "Add"}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+
                               {/* Custom task creation input */}
                               {isEditMode && (
                                 <div className="border-t border-zinc-100 pt-3 space-y-2">
@@ -3919,7 +4570,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         e.stopPropagation();
                                         handleAddCustomTask(s.ID, taskInputText);
                                       }}
-                                      className="px-2.5 py-1.5 bg-zinc-955 hover:bg-zinc-800 text-white rounded font-bold shadow-xs transition-colors cursor-pointer text-xs"
+                                      className="px-2.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded font-bold shadow-xs transition-colors cursor-pointer text-xs"
                                     >
                                       Add
                                     </button>
@@ -4095,24 +4746,26 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           <thead>
                             <tr className="bg-zinc-50 border-b border-zinc-200">
                               {/* Date switcher in top-left cell (sticky top & left) */}
-                              <th className="py-2.5 px-3 text-center border-r border-zinc-200 w-[150px] shrink-0 select-none bg-zinc-50 sticky top-0 left-0 z-30 shadow-[2px_0_5px_0_rgba(0,0,0,0.05)] border-b border-zinc-200">
-                                <div className="flex gap-1 justify-center w-full">
-                                  <button
-                                    type="button"
-                                    onClick={handlePrevWeek}
-                                    className="flex-1 py-1.5 bg-white border border-zinc-200 hover:border-zinc-300 rounded text-[10px] font-bold text-[#0B57D0] hover:bg-zinc-50 transition-colors cursor-pointer shadow-xs"
-                                    title="Previous Week"
-                                  >
-                                    Prev
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={handleNextWeek}
-                                    className="flex-1 py-1.5 bg-white border border-zinc-200 hover:border-zinc-300 rounded text-[10px] font-bold text-[#0B57D0] hover:bg-zinc-50 transition-colors cursor-pointer shadow-xs"
-                                    title="Next Week"
-                                  >
-                                    Next
-                                  </button>
+                              <th className="py-2.5 px-3 text-left border-r border-zinc-200 w-[150px] shrink-0 select-none bg-zinc-50 sticky top-0 left-0 z-30 shadow-[2px_0_5px_0_rgba(0,0,0,0.05)] border-b border-zinc-200">
+                                <div className="flex flex-col gap-1.5 w-full">
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</span>
+                                    <input
+                                      type="date"
+                                      value={scheduleStartDate}
+                                      onChange={(e) => setScheduleStartDate(e.target.value)}
+                                      className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-bold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
+                                    />
+                                  </div>
+                                  <div className="flex flex-col gap-0.5">
+                                    <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">End Date</span>
+                                    <input
+                                      type="date"
+                                      value={scheduleEndDate}
+                                      onChange={(e) => setScheduleEndDate(e.target.value)}
+                                      className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-bold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
+                                    />
+                                  </div>
                                 </div>
                               </th>
                               
@@ -4443,6 +5096,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         setIsCreatingCampaign(false);
                         setEditingCampaignId(null);
                         setCampTitle("");
+                        setCampStartDate("");
+                        setCampEndDate("");
                         setCampDesc("");
                         setCampInstr("");
                         setCampBrand("");
@@ -4471,6 +5126,32 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           placeholder="e.g. Pak Man Product Launch"
                           className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs"
                         />
+                      </div>
+
+                      {/* Campaign Date Range */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                            Start Date
+                          </label>
+                          <input
+                            type="date"
+                            value={campStartDate}
+                            onChange={(e) => setCampStartDate(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs cursor-pointer"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                            End Date
+                          </label>
+                          <input
+                            type="date"
+                            value={campEndDate}
+                            onChange={(e) => setCampEndDate(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs cursor-pointer"
+                          />
+                        </div>
                       </div>
 
                       {/* Select Brand */}
@@ -4567,6 +5248,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         setIsCreatingCampaign(false);
                         setEditingCampaignId(null);
                         setCampTitle("");
+                        setCampStartDate("");
+                        setCampEndDate("");
                         setCampDesc("");
                         setCampInstr("");
                         setCampBrand("");
@@ -5183,6 +5866,195 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   )}
                 </div>
 
+                {/* Campaign Briefing Card */}
+                <div
+                  className={cn(
+                    "bg-white border rounded-lg transition-all duration-300 shadow-xs hover:shadow-md select-none flex flex-col justify-between overflow-hidden",
+                    selectedPrintLayout === "campaign-briefing"
+                      ? "w-[480px] min-h-[220px] border-[#0B57D0] scale-[1.01]"
+                      : "group relative w-[240px] h-[180px] border-slate-200 hover:bg-[#D3E3FD] cursor-pointer flex items-center justify-center hover:scale-[1.03]"
+                  )}
+                  onClick={() => {
+                    if (selectedPrintLayout !== "campaign-briefing") {
+                      setSelectedPrintLayout("campaign-briefing");
+                      setPrintCampaignId("");
+                    }
+                  }}
+                >
+                  {selectedPrintLayout !== "campaign-briefing" ? (
+                    <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
+                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                        Print Campaign Briefing
+                      </span>
+                      <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
+                        Print portrait A4 campaign briefing sheet with instructions and products.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
+                      <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                          Configure Campaign Briefing
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPrintLayout(null);
+                          }}
+                          className="p-1 hover:bg-zinc-100 rounded text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Campaign</label>
+                        <select
+                          value={printCampaignId}
+                          onChange={(e) => setPrintCampaignId(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none cursor-pointer focus:border-[#0B57D0]"
+                        >
+                          <option value="">-- Select Campaign --</option>
+                          {campaigns
+                            .filter(c => !(c.Archived && (String(c.Archived) === "1" || String(c.Archived) === "true")))
+                            .map(c => (
+                              <option key={c.ID} value={c.ID}>
+                                {c["Campaign Title"]}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-3 mt-2 pt-3 border-t border-zinc-150">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPrintLayout(null);
+                          }}
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!printCampaignId) {
+                              showToast("Please select a campaign.", "warning");
+                              return;
+                            }
+                            const selectedCamp = campaigns.find(c => String(c.ID) === String(printCampaignId));
+                            if (selectedCamp) {
+                              handlePrintCampaign(selectedCamp);
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                        >
+                          <Printer size={12} className="stroke-[2.5]" />
+                          Print Briefing
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Campaign Reporting Card */}
+                <div
+                  className={cn(
+                    "bg-white border rounded-lg transition-all duration-300 shadow-xs hover:shadow-md select-none flex flex-col justify-between overflow-hidden",
+                    selectedPrintLayout === "campaign-reporting"
+                      ? "w-[480px] min-h-[220px] border-[#0B57D0] scale-[1.01]"
+                      : "group relative w-[240px] h-[180px] border-slate-200 hover:bg-[#D3E3FD] cursor-pointer flex items-center justify-center hover:scale-[1.03]"
+                  )}
+                  onClick={() => {
+                    if (selectedPrintLayout !== "campaign-reporting") {
+                      setSelectedPrintLayout("campaign-reporting");
+                      setPrintCampaignId("");
+                    }
+                  }}
+                >
+                  {selectedPrintLayout !== "campaign-reporting" ? (
+                    <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
+                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                        Print Campaign Report
+                      </span>
+                      <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
+                        Print portrait A4 campaign report sheet with actual work times.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
+                      <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                          Configure Campaign Report
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPrintLayout(null);
+                          }}
+                          className="p-1 hover:bg-zinc-100 rounded text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Campaign</label>
+                        <select
+                          value={printCampaignId}
+                          onChange={(e) => setPrintCampaignId(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none cursor-pointer focus:border-[#0B57D0]"
+                        >
+                          <option value="">-- Select Campaign --</option>
+                          {campaigns
+                            .filter(c => !(c.Archived && (String(c.Archived) === "1" || String(c.Archived) === "true")))
+                            .map(c => (
+                              <option key={c.ID} value={c.ID}>
+                                {c["Campaign Title"]}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-3 mt-2 pt-3 border-t border-zinc-150">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPrintLayout(null);
+                          }}
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!printCampaignId) {
+                              showToast("Please select a campaign.", "warning");
+                              return;
+                            }
+                            const selectedCamp = campaigns.find(c => String(c.ID) === String(printCampaignId));
+                            if (selectedCamp) {
+                              handlePrintCampaignReport(selectedCamp);
+                            }
+                          }}
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                        >
+                          <Printer size={12} className="stroke-[2.5]" />
+                          Print Report
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+
               </div>
             </div>
           </div>
@@ -5564,6 +6436,226 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         )}
 
       </div>
+
+      {/* Promoting Cost Full-Screen Overlay Modal */}
+      {promotingCostModalShiftId && (() => {
+        const activeShift = schedules.find(s => String(s.ID) === String(promotingCostModalShiftId));
+        if (!activeShift) return null;
+
+        const activeCampaign = campaigns.find(c => String(c.ID) === String(activeShift["Campaign ID"]));
+        const campaignSkus = activeCampaign?.Products
+          ? activeCampaign.Products.split(",").map((sku: string) => sku.trim().toLowerCase()).filter(Boolean)
+          : [];
+        
+        const activeCampaignBrandId = String(activeCampaign?.Brand || "").trim().toLowerCase();
+        const activeBrandObj = brands.find(b => String(b.ID).toLowerCase() === activeCampaignBrandId);
+        const activeCampaignBrandName = activeBrandObj ? String(activeBrandObj["Display Name"] || activeBrandObj.name || "").trim().toLowerCase() : "";
+
+        const filteredProducts = products.filter(p => {
+          if (campaignSkus.length > 0) {
+            return campaignSkus.includes(String(p.SKU).toLowerCase());
+          }
+          if (!activeCampaignBrandId) {
+            return true;
+          }
+          const pBrandId = String(p["Brands ID"] || p.Brands_ID || p.brandId || "").trim().toLowerCase();
+          const pBrandObj = brands.find(b => String(b.ID).toLowerCase() === pBrandId);
+          const pBrandName = pBrandObj ? String(pBrandObj["Display Name"] || pBrandObj.name || "").trim().toLowerCase() : "";
+          
+          return pBrandId === activeCampaignBrandId || (activeCampaignBrandName && pBrandName === activeCampaignBrandName);
+        });
+        
+        const activeShiftDateStr = (() => {
+          const d = new Date(activeShift.Date);
+          return isNaN(d.getTime()) ? "" : `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+        })();
+
+        const totalCostSum = promotingCostItems.reduce((acc, curr) => acc + Number(curr.amount || 0), 0);
+
+        return (
+          <div className="fixed inset-0 bg-black/45 backdrop-blur-xs flex items-center justify-center z-50 animate-in fade-in duration-200">
+            <div className="w-[800px] max-w-[95vw] h-[550px] max-h-[85vh] bg-white rounded border border-zinc-200 shadow-2xl flex flex-col font-primary animate-in zoom-in-95 duration-150">
+              {/* Header */}
+              <div className="bg-zinc-50 px-5 py-4 border-b border-zinc-150 rounded-t flex justify-between items-center select-none shrink-0">
+                <div className="flex flex-col gap-0.5">
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-[#0B57D0]">Promoting Cost Details</h3>
+                  <p className="text-[10.5px] text-zinc-500 font-bold font-mono">
+                    {activeShift["Promoter Name"]} @ {getFormattedStoreName(activeShift["Store ID"], activeShift["Store Name"])} | {activeShiftDateStr}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPromotingCostModalShiftId(null)}
+                  className="p-1.5 hover:bg-zinc-200 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              {/* Table Body */}
+              <div className="flex-grow p-5 overflow-y-auto custom-scrollbar">
+                <div className="w-full flex flex-col gap-3">
+                  {/* Table Header */}
+                  <div className="grid grid-cols-[140px_1fr_90px_120px_45px] gap-3 pb-2 border-b border-zinc-150 text-[10px] font-bold text-zinc-400 uppercase tracking-wider pl-1 select-none shrink-0">
+                    <div>Type</div>
+                    <div>SKU / Description</div>
+                    <div>Qty</div>
+                    <div>Amount</div>
+                    <div></div>
+                  </div>
+
+                  {/* Table Rows */}
+                  {promotingCostItems.length === 0 ? (
+                    <div className="py-12 text-center text-zinc-400 font-bold border border-dashed border-zinc-150 rounded bg-zinc-50/20 select-none">
+                      No cost items added yet. Click "Add Item" below to start.
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      {promotingCostItems.map((item) => (
+                        <div key={item.id} className="grid grid-cols-[140px_1fr_90px_120px_45px] gap-3 items-center">
+                          {/* Type Column */}
+                          <div>
+                            <select
+                              value={item.type}
+                              onChange={(e) => handleUpdateItemField(item.id, "type", e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer"
+                            >
+                              <option value="Goods">Goods</option>
+                              <option value="Transport">Transport</option>
+                              <option value="Others">Others</option>
+                            </select>
+                          </div>
+
+                          {/* SKU / Description Column */}
+                          <div>
+                            {item.type === "Goods" ? (
+                              <select
+                                value={item.sku}
+                                onChange={(e) => handleUpdateItemField(item.id, "sku", e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer"
+                              >
+                                <option value="">-- Choose SKU --</option>
+                                {filteredProducts.map(p => (
+                                  <option key={p.SKU} value={p.SKU}>
+                                    {p.SKU} - {p["Display Name"] || p.Name}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <input
+                                type="text"
+                                placeholder="e.g. Grab Car / Taxi..."
+                                value={item.sku || ""}
+                                onChange={(e) => handleUpdateItemField(item.id, "sku", e.target.value)}
+                                className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0]"
+                              />
+                            )}
+                          </div>
+
+                          {/* Qty Column */}
+                          <div>
+                            <input
+                              type="number"
+                              min="1"
+                              placeholder="1"
+                              value={item.qty ?? ""}
+                              onChange={(e) => handleUpdateItemField(item.id, "qty", e.target.value === "" ? "" : Number(e.target.value))}
+                              className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-[#0B57D0]"
+                            />
+                          </div>
+
+                          {/* Amount Column */}
+                          <div>
+                            <div className="relative">
+                              <span className="absolute left-2.5 top-1.5 text-zinc-400 font-bold select-none">$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="0.00"
+                                disabled={item.type === "Goods"}
+                                value={item.amount !== undefined ? (typeof item.amount === "number" ? item.amount.toFixed(2) : item.amount) : ""}
+                                onChange={(e) => handleUpdateItemField(item.id, "amount", e.target.value === "" ? "" : Number(e.target.value))}
+                                className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-bold text-zinc-850 outline-none focus:border-[#0B57D0] disabled:bg-zinc-50 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Actions Column */}
+                          <div className="flex justify-center">
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteCostRow(item.id)}
+                              className="p-1.5 hover:bg-red-50 text-zinc-400 hover:text-red-500 rounded transition-colors cursor-pointer"
+                              title="Remove row"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add Row Button */}
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={handleAddCostRow}
+                      className="px-3 py-1.5 border border-dashed border-[#0B57D0] hover:bg-[#0B57D0]/5 text-[#0B57D0] font-bold rounded text-xs cursor-pointer transition-all flex items-center gap-1.5"
+                    >
+                      <Plus size={13} className="stroke-[2.5]" />
+                      Add Item
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="bg-zinc-50 px-5 py-4 border-t border-zinc-150 rounded-b flex justify-between items-center select-none shrink-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider pl-0.5">Total Cost:</span>
+                  <span className="text-sm font-bold text-[#0B57D0]">${totalCostSum.toFixed(2)}</span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setPromotingCostModalShiftId(null)}
+                    className="px-4 py-2 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded text-xs cursor-pointer transition-colors shadow-2xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const cleanItems = promotingCostItems.filter(item => {
+                        if (item.type === "Goods") {
+                          return !!item.sku && Number(item.qty) > 0;
+                        }
+                        return !!item.sku && Number(item.qty) > 0 && Number(item.amount) >= 0;
+                      });
+
+                      const jsonString = JSON.stringify(cleanItems);
+                      
+                      setSchedules(prev => prev.map(item => String(item.ID) === String(activeShift.ID) ? { ...item, "Promoting Cost": jsonString } : item));
+                      
+                      await handleUpdateShiftField(activeShift.ID, "Promoting Cost", jsonString);
+
+                      setPromotingCostModalShiftId(null);
+                      showToast("Promoting cost saved successfully.", "success");
+                    }}
+                    className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded text-xs cursor-pointer transition-all shadow-md flex items-center gap-1.5"
+                  >
+                    <Check size={14} className="stroke-[2.5]" />
+                    Save Cost
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Confirmation Dialog Overlays */}
       {confirmConfig && (

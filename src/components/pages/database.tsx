@@ -5,6 +5,7 @@ import { FeatureCard } from "../feature-card";
 import { ProductsDatabaseModule } from "../modules/ProductsDatabaseModule";
 import { StoresDatabaseModule } from "../modules/StoresDatabaseModule";
 import { RetailerSkusModule } from "../modules/RetailerSkusModule";
+import { PhonebookModule } from "../modules/PhonebookModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 
 interface DatabasePageProps {
@@ -64,6 +65,8 @@ export function DatabasePage({ profile }: DatabasePageProps) {
         return <StoresDatabaseModule profile={profile} />;
       case "Retailer SKU's":
         return <RetailerSkusModule profile={profile} />;
+      case "Phonebook":
+        return <PhonebookModule profile={profile} />;
       default:
         return null;
     }
