@@ -222,6 +222,15 @@ export default function Home() {
   const handlePendingNavCancel = () => {
     setPendingNavAction(null);
     setNavConfirmOpen(false);
+
+    // If there is a draft in localStorage, redirect back to the Promoter module
+    const draft = localStorage.getItem("ib_promoter_schedules_draft");
+    if (draft) {
+      setActiveItem("Frontline");
+      setBreadcrumbPath(["Frontline", "Promoter"]);
+      window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline", "Promoter"] }));
+      window.dispatchEvent(new CustomEvent("collapse-sidepanel"));
+    }
   };
 
   const executeMenuSelect = async (item: string) => {
@@ -362,7 +371,7 @@ export default function Home() {
     const activeRoute = menuConfig.find((route) => route.id === activeItem);
     if (activeRoute) {
       // Inject user profile and idToken as props dynamically using React.cloneElement
-      return React.cloneElement(activeRoute.component as React.ReactElement<{ profile: UserProfile | null; idToken?: string }>, { profile, idToken });
+      return React.cloneElement(activeRoute.component as React.ReactElement<{ profile: UserProfile | null; idToken?: string; breadcrumbPath?: string[] }>, { profile, idToken, breadcrumbPath });
     }
     return null;
   };

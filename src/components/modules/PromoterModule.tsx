@@ -196,11 +196,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     onConfirm: () => void;
   } | null>(null);
 
-  const [selectedPrintLayout, setSelectedPrintLayout] = React.useState<"master-calendar" | "campaign-schedule" | "promoter-schedule" | "campaign-briefing" | "campaign-reporting" | null>(null);
+  const [selectedPrintLayout, setSelectedPrintLayout] = React.useState<"master-calendar" | "master-calendar-promoter" | "campaign-schedule" | "promoter-schedule" | "campaign-briefing" | "campaign-reporting" | null>(null);
   const [printMonth, setPrintMonth] = React.useState<number>(new Date().getMonth());
   const [printYear, setPrintYear] = React.useState<number>(new Date().getFullYear());
   const [printCampaignId, setPrintCampaignId] = React.useState<string>("");
   const [printPromoterId, setPrintPromoterId] = React.useState<string>("");
+  const [printSelectedPromoterIds, setPrintSelectedPromoterIds] = React.useState<string[]>([]);
   const [printStartDate, setPrintStartDate] = React.useState<string>(() => {
     const today = new Date();
     const start = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -222,6 +223,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
   const [promotingCostModalShiftId, setPromotingCostModalShiftId] = React.useState<string | null>(null);
   const [promotingCostItems, setPromotingCostItems] = React.useState<any[]>([]);
+
+  const [otherLocationModalData, setOtherLocationModalData] = React.useState<{
+    date: Date;
+    promoterId: string;
+  } | null>(null);
+  const [otherLocationTitle, setOtherLocationTitle] = React.useState("");
+  const [otherLocationAddress, setOtherLocationAddress] = React.useState("");
 
   const openPromotingCostModal = (shiftId: string) => {
     const shift = schedules.find(s => String(s.ID) === String(shiftId));
@@ -455,6 +463,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Helper to format Store Name with 5-char Uppercase Retailer prefix
   const getFormattedStoreName = React.useCallback((storeId: any, baseStoreName: string) => {
     if (!storeId || !baseStoreName) return baseStoreName || "";
+    if (String(storeId).startsWith("OTHER")) return baseStoreName;
     const storeObj = stores.find(st => String(st.ID) === String(storeId));
     const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
     const retailerObj = retId ? retailers.find(r => String(r.ID) === String(retId)) : null;
@@ -2508,6 +2517,28 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
+    const isOtherLocation = e.dataTransfer.getData("otherLocation") === "true";
+    if (isOtherLocation) {
+      if (selectedCampaignId === "") {
+        showToast("Please select a Campaign from the dropdown first before dragging stores to assign shifts.", "error");
+        return;
+      }
+
+      const selectedCampaign = campaigns.find(c => c.ID === selectedCampaignId);
+      const selectedPromoter = promoters.find(p => String(p.ID) === String(promoterId));
+      if (!selectedCampaign || !selectedPromoter) return;
+
+      if (isShiftLocked(date.getTime(), promoterId)) {
+        showToast("Operation blocked: The target date is locked due to completed promoter payouts.", "error");
+        return;
+      }
+
+      setOtherLocationModalData({ date, promoterId });
+      setOtherLocationTitle("");
+      setOtherLocationAddress("");
+      return;
+    }
+
     const storeId = e.dataTransfer.getData("storeId");
     if (!storeId) return;
 
@@ -2842,7 +2873,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   };
 
   const handlePrintReport = (paperSize: string) => {
-    if (selectedPrintLayout === "master-calendar") {
+    if (selectedPrintLayout === "master-calendar" || selectedPrintLayout === "master-calendar-promoter") {
       const doc = new jsPDF({
         orientation: "landscape",
         unit: "mm",
@@ -2919,7 +2950,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           // Find shifts
           const cellDate = new Date(printYear, printMonth, dayNum);
           const cellDateStr = cellDate.toDateString();
-          const daySchedules = schedules.filter(s => new Date(s.Date).toDateString() === cellDateStr);
+          const daySchedules = schedules.filter(s => {
+            const matchesDate = new Date(s.Date).toDateString() === cellDateStr;
+            if (!matchesDate) return false;
+            if (selectedPrintLayout === "master-calendar-promoter") {
+              return printSelectedPromoterIds.includes(String(s["Promoter ID"]));
+            }
+            return true;
+          });
 
           // Write shifts
           let shiftY = y + 8;
@@ -3298,7 +3336,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         promoterSchedules.forEach((sch) => {
           const dateObj = new Date(sch.Date);
           const storeObj = stores.find(st => String(st.ID) === String(sch["Store ID"]));
-          const storeAddress = storeObj ? storeObj.Address : "";
+          const storeAddress = storeObj ? storeObj.Address : (sch.Address || sch["Store Address"] || "");
 
           const campaign = campaigns.find(c => String(c.ID) === String(sch["Campaign ID"]));
           const campaignTitle = campaign ? campaign["Campaign Title"] : sch["Campaign Title"];
@@ -3835,17 +3873,17 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center gap-1 shadow-sm justify-center whitespace-nowrap"
                               >
                                 <Pencil size={11} className="stroke-[2.5]" />
-                                Edit Mode
+                                Edit Schedule
                               </button>
                             ) : (
-                              <div className="flex items-center gap-1.5 animate-in fade-in slide-in-from-left duration-200">
+                              <div className="flex items-center gap-1.5 animate-in fade-in duration-200">
                                 <button
                                   type="button"
                                   onClick={handleSaveAndDeploy}
-                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center whitespace-nowrap"
+                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center whitespace-nowrap"
                                 >
                                   <Check size={11} className="stroke-[2.5]" />
-                                  Exit Edit Mode
+                                  Save & Deploy
                                 </button>
                                 <button
                                   type="button"
@@ -4063,15 +4101,22 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         const totalAmount = promotingCosts.reduce((acc: number, curr: any) => acc + Number(curr.amount || 0), 0);
                         const promotingCostDone = promotingCosts.length > 0 ? 1 : 0;
 
+                        // Check if it is an other location
+                        const isOtherLoc = String(s["Store ID"]).startsWith("OTHER");
+
                         // Task completions count
-                        const customTasksCount = customTasks.length;
-                        const customDoneCount = customTasks.filter((t: any) => !!t.answer).length;
-                        const permDone = s["Permission By"] ? 1 : 0;
-                        const stockDone = s["Stock Checked"] ? 1 : 0;
+                        const customTasksCount = isOtherLoc ? 0 : customTasks.length;
+                        const customDoneCount = isOtherLoc ? 0 : customTasks.filter((t: any) => !!t.answer).length;
+                        const permDone = (isOtherLoc || s["Permission By"]) ? 1 : 0;
+                        const stockDone = (isOtherLoc || s["Stock Checked"]) ? 1 : 0;
                         const actualDone = (isPastDate && s["Actual Start"] && s["Actual End"]) ? 1 : 0;
 
-                        const totalCount = 3 + customTasksCount + (isPastDate ? 1 : 0);
-                        const doneCount = permDone + stockDone + promotingCostDone + customDoneCount + actualDone;
+                        const totalCount = isOtherLoc 
+                          ? 1 + (isPastDate ? 1 : 0)
+                          : 3 + customTasksCount + (isPastDate ? 1 : 0);
+                        const doneCount = isOtherLoc
+                          ? promotingCostDone + actualDone
+                          : permDone + stockDone + promotingCostDone + customDoneCount + actualDone;
 
                         const taskInputText = customTaskTexts[s.ID] || "";
                         const isScheduleExpanded = expandedScheduleId === s.ID;
@@ -4129,7 +4174,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               <div className="border border-zinc-200 rounded-b p-3 bg-white max-h-[500px] overflow-y-auto custom-scrollbar space-y-3 animate-in slide-in-from-top-1 duration-150">
                               
                               {/* Task 1: Store Permission */}
-                              {(() => {
+                              {!isOtherLoc && (() => {
                                 const isDone = !!s["Permission By"];
                                 const isExpanded = expandedCardId === `${s.ID}_permission`;
                                 const canClick = isEditMode || isDone;
@@ -4194,7 +4239,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               })()}
 
                               {/* Task 2: Check Availability Stock */}
-                              {(() => {
+                              {!isOtherLoc && (() => {
                                 const isDone = !!s["Stock Checked"];
                                 const isExpanded = expandedCardId === `${s.ID}_stock`;
                                 const canClick = isEditMode || isDone;
@@ -4259,7 +4304,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               })()}
 
                               {/* Task 3: Custom checklist items */}
-                              {customTasks.map((t) => {
+                              {!isOtherLoc && customTasks.map((t) => {
                                 const isDone = !!t.answer;
                                 const isExpanded = expandedCardId === `${s.ID}_${t.id}`;
                                 const canClick = isEditMode || isDone;
@@ -4542,7 +4587,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               })()}
 
                               {/* Custom task creation input */}
-                              {isEditMode && (
+                              {isEditMode && !isOtherLoc && (
                                 <div className="border-t border-zinc-100 pt-3 space-y-2">
                                   <span className="text-[9px] font-bold text-[#0B57D0] uppercase tracking-widest block pl-0.5">
                                     Add Custom Task
@@ -4643,17 +4688,17 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center gap-1 shadow-sm justify-center"
                               >
                                 <Pencil size={11} className="stroke-[2.5]" />
-                                Edit Mode
+                                Edit Schedule
                               </button>
                             ) : (
-                              <div className="flex items-center gap-1.5 animate-in fade-in slide-in-from-left duration-200">
+                              <div className="flex items-center gap-1.5 animate-in fade-in duration-200">
                                 <button
                                   type="button"
                                   onClick={handleSaveAndDeploy}
-                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center"
+                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center"
                                 >
                                   <Check size={11} className="stroke-[2.5]" />
-                                  Exit Edit Mode
+                                  Save & Deploy
                                 </button>
                                 <button
                                   type="button"
@@ -5045,6 +5090,23 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       {/* Draggable Stores library card container */}
                       <div className="flex-grow overflow-y-auto custom-scrollbar mt-4 pr-1">
                         <div className="flex flex-col gap-2">
+                          {/* Other Location Draggable Card */}
+                          <div
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData("otherLocation", "true");
+                            }}
+                            className="bg-amber-50/20 hover:bg-amber-50/40 border border-dashed border-amber-300 hover:border-amber-500 rounded p-3 shadow-xs cursor-grab active:cursor-grabbing select-none transition-all flex flex-col gap-1.5 text-xs font-primary animate-in fade-in duration-200"
+                          >
+                            <div className="font-bold text-amber-800 flex items-center gap-1.5">
+                              <MapPin size={13} className="text-amber-600 stroke-[2.5]" />
+                              Other Location
+                            </div>
+                            <div className="text-[10.5px] text-zinc-500 font-normal whitespace-normal leading-normal">
+                              Drag here to specify a custom venue / location
+                            </div>
+                          </div>
+
                           {filteredStores.map((store) => (
                             <div
                               key={store.ID}
@@ -5639,6 +5701,130 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             handlePrintReport("A3 landscape");
                           }}
                           className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                        >
+                          <Printer size={12} className="stroke-[2.5]" />
+                          Print Report
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Master Calendar (Filter by Promoters) Card */}
+                <div
+                  className={cn(
+                    "bg-white border rounded-lg transition-all duration-300 shadow-xs hover:shadow-md select-none flex flex-col justify-between overflow-hidden",
+                    selectedPrintLayout === "master-calendar-promoter"
+                      ? "w-[480px] min-h-[320px] border-[#0B57D0] scale-[1.01]"
+                      : "group relative w-[240px] h-[180px] border-slate-200 hover:bg-[#D3E3FD] cursor-pointer flex items-center justify-center hover:scale-[1.03]"
+                  )}
+                  onClick={() => {
+                    if (selectedPrintLayout !== "master-calendar-promoter") {
+                      setSelectedPrintLayout("master-calendar-promoter");
+                      setPrintMonth(new Date().getMonth());
+                      setPrintYear(new Date().getFullYear());
+                      setPrintSelectedPromoterIds([]);
+                    }
+                  }}
+                >
+                  {selectedPrintLayout !== "master-calendar-promoter" ? (
+                    <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
+                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                        Print Calendar (By Promoters)
+                      </span>
+                      <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
+                        Print landscape A3 calendar grid filtered by checking multiple specific promoters.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
+                      <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                          Configure Calendar (By Promoters)
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPrintLayout(null);
+                          }}
+                          className="p-1 hover:bg-zinc-100 rounded text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+
+                      <div className="flex gap-4">
+                        <div className="flex flex-col gap-3 flex-1">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Month</label>
+                            <select
+                              value={printMonth}
+                              onChange={(e) => setPrintMonth(Number(e.target.value))}
+                              className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none cursor-pointer focus:border-[#0B57D0]"
+                            >
+                              {["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map((m, idx) => (
+                                <option key={m} value={idx}>{m}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Year</label>
+                            <input
+                              type="number"
+                              value={printYear}
+                              onChange={(e) => setPrintYear(Number(e.target.value))}
+                              className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] shadow-xs"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col gap-1 flex-1">
+                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5 mb-1">Select Promoters</label>
+                          <div className="w-full h-[120px] overflow-y-auto border border-zinc-200 rounded p-2.5 custom-scrollbar flex flex-col gap-1.5 bg-white shadow-inner">
+                            {promoters.map(p => {
+                              const isChecked = printSelectedPromoterIds.includes(String(p.ID));
+                              return (
+                                <label key={p.ID} className="flex items-center gap-2 cursor-pointer py-0.5 hover:bg-zinc-50 select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => {
+                                      if (isChecked) {
+                                        setPrintSelectedPromoterIds(prev => prev.filter(id => id !== String(p.ID)));
+                                      } else {
+                                        setPrintSelectedPromoterIds(prev => [...prev, String(p.ID)]);
+                                      }
+                                    }}
+                                    className="rounded border-zinc-300 text-[#0B57D0] focus:ring-[#0B57D0] h-3.5 w-3.5 cursor-pointer"
+                                  />
+                                  <span className="text-xs font-semibold text-zinc-850">{p.Name}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-3 mt-2 pt-3 border-t border-zinc-150">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPrintLayout(null);
+                          }}
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          disabled={printSelectedPromoterIds.length === 0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePrintReport("A3 landscape");
+                          }}
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Printer size={12} className="stroke-[2.5]" />
                           Print Report
@@ -6651,6 +6837,146 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     Save Cost
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* Other Custom Location Placement details popup modal overlay */}
+      {otherLocationModalData && (() => {
+        const activePromoter = promoters.find(p => String(p.ID) === String(otherLocationModalData.promoterId));
+        const activeDateStr = (() => {
+          const d = new Date(otherLocationModalData.date);
+          return isNaN(d.getTime()) ? "" : `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
+        })();
+
+        return (
+          <div className="fixed inset-0 bg-black/45 backdrop-blur-xs flex items-center justify-center z-50 animate-in fade-in duration-200">
+            <div className="w-[450px] bg-white rounded border border-zinc-200 shadow-2xl flex flex-col font-primary animate-in zoom-in-95 duration-150">
+              {/* Header */}
+              <div className="bg-zinc-50 px-5 py-4 border-b border-zinc-150 rounded-t flex justify-between items-center select-none shrink-0">
+                <div className="flex flex-col gap-0.5">
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-[#0B57D0]">Custom Location Details</h3>
+                  <p className="text-[10.5px] text-zinc-500 font-bold font-mono">
+                    Assigning to {activePromoter?.Name || "Promoter"} on {activeDateStr}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOtherLocationModalData(null)}
+                  className="p-1.5 hover:bg-zinc-200 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              {/* Inputs */}
+              <div className="p-5 flex flex-col gap-4">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10.5px] font-bold text-zinc-650 uppercase tracking-wider pl-0.5">Location Title</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Marina Bay Sands / Exhibition Hall..."
+                    value={otherLocationTitle}
+                    onChange={(e) => setOtherLocationTitle(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-850 outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10.5px] font-bold text-zinc-650 uppercase tracking-wider pl-0.5">Address</label>
+                  <textarea
+                    placeholder="e.g. 10 Bayfront Ave, Singapore 018956..."
+                    value={otherLocationAddress}
+                    onChange={(e) => setOtherLocationAddress(e.target.value)}
+                    rows={3}
+                    className="w-full px-3 py-2 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-850 outline-none focus:border-[#0B57D0] resize-none"
+                  />
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="bg-zinc-50 px-5 py-4 border-t border-zinc-150 rounded-b flex justify-end gap-2.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setOtherLocationModalData(null)}
+                  className="px-4 py-2 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded text-xs cursor-pointer transition-colors shadow-2xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!otherLocationTitle.trim() || !otherLocationAddress.trim()}
+                  onClick={() => {
+                    const { date, promoterId } = otherLocationModalData;
+                    const selectedCampaign = campaigns.find(c => c.ID === selectedCampaignId);
+                    const selectedPromoter = promoters.find(p => String(p.ID) === String(promoterId));
+                    if (!selectedCampaign || !selectedPromoter) return;
+
+                    // Calculate shift start/end times dynamically
+                    const dayShifts = schedules.filter(s => 
+                      String(s["Promoter ID"]) === String(promoterId) &&
+                      new Date(s.Date).toDateString() === date.toDateString()
+                    );
+
+                    let shiftStart = "09:00";
+                    let shiftEnd = "11:00";
+
+                    if (dayShifts.length > 0) {
+                      let latestEndMinutes = 0;
+                      dayShifts.forEach(s => {
+                        const endTimeStr = formatTimeDisplay(s["Shift End"]) || "11:00";
+                        const [h, m] = endTimeStr.split(":").map(Number);
+                        if (!isNaN(h) && !isNaN(m)) {
+                          const totalMinutes = h * 60 + m;
+                          if (totalMinutes > latestEndMinutes) {
+                            latestEndMinutes = totalMinutes;
+                          }
+                        }
+                      });
+
+                      const nextStartMinutes = latestEndMinutes + 60;
+                      const nextEndMinutes = nextStartMinutes + 240;
+
+                      const startH = Math.floor(nextStartMinutes / 60) % 24;
+                      const startM = nextStartMinutes % 60;
+                      const endH = Math.floor(nextEndMinutes / 60) % 24;
+                      const endM = nextEndMinutes % 60;
+
+                      shiftStart = `${String(startH).padStart(2, "0")}:${String(startM).padStart(2, "0")}`;
+                      shiftEnd = `${String(endH).padStart(2, "0")}:${String(endM).padStart(2, "0")}`;
+                    }
+
+                    if (!checkAndToastConflict(promoterId, date.getTime(), shiftStart, shiftEnd)) {
+                      return;
+                    }
+
+                    const scheduleData = {
+                      ID: `sch_${Date.now()}`,
+                      Date: date.getTime(),
+                      "Campaign ID": selectedCampaign.ID,
+                      "Campaign Title": selectedCampaign["Campaign Title"],
+                      "Store ID": `OTHER_${Date.now()}`,
+                      "Store Name": otherLocationTitle.trim(),
+                      "Promoter ID": String(promoterId),
+                      "Promoter Name": selectedPromoter.Name,
+                      "Shift Start": shiftStart,
+                      "Shift End": shiftEnd,
+                      "Store Address": otherLocationAddress.trim()
+                    };
+
+                    const newSchedules = [...schedules, scheduleData];
+                    setSchedules(newSchedules);
+                    pushHistory(newSchedules);
+                    
+                    setOtherLocationModalData(null);
+                    showToast("Custom location shift assigned successfully.", "success");
+                  }}
+                  className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded text-xs cursor-pointer transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Assign Location
+                </button>
               </div>
             </div>
           </div>

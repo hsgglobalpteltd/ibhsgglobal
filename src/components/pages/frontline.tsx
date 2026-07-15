@@ -15,12 +15,19 @@ interface FrontlinePageProps {
     name?: string;
     email?: string;
   } | null;
+  breadcrumbPath?: string[];
 }
 
 import { ConfirmDialog } from "../confirm-dialog";
 
-export function FrontlinePage({ profile }: FrontlinePageProps) {
+export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
   const [activeSubModule, setActiveSubModule] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Frontline") {
+      setActiveSubModule(breadcrumbPath[1]);
+    }
+  }, [breadcrumbPath]);
   
   const [confirmOpen, setConfirmOpen] = React.useState<boolean>(false);
   const [pendingSubModule, setPendingSubModule] = React.useState<string | null>(null);
@@ -41,8 +48,10 @@ export function FrontlinePage({ profile }: FrontlinePageProps) {
 
   // Set initial breadcrumb on mount
   React.useEffect(() => {
-    window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline"] }));
-  }, []);
+    if (!activeSubModule) {
+      window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline"] }));
+    }
+  }, [activeSubModule]);
 
   const handlePendingConfirm = () => {
     localStorage.removeItem("ib_promoter_schedules_draft");

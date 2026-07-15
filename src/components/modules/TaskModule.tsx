@@ -624,42 +624,46 @@ export function TaskModule({ profile }: TaskModuleProps) {
   }, [selectedTask]);
 
   return (
-    <div className="flex flex-col gap-5 font-primary h-full relative">
+    <div className="flex flex-col gap-4 font-primary h-full relative overflow-hidden min-w-0">
       <NavigationTabs 
         tabs={tabs}
         activeTabId={activeTab}
         onTabSelect={(tabId) => setActiveTab(tabId as any)}
-        action={
-          (isAdmin || isManager || isOperator) && (
-            <CustomButton
-              variant="dark"
-              onClick={() => {
-                setIsCreateOpen(true);
-                setSelectedRetailerId("");
-                setStoreTags([]);
-                setNewDescription("");
-                setTaskAction("Visit");
-                setEditingTask(null);
-              }}
-              className="flex items-center justify-center gap-1.5 mr-2"
-            >
-              <Plus size={14} className="stroke-[2.5]" />
-              <span>New Task</span>
-            </CustomButton>
-          )
-        }
-        hideHeader={true}
       />
 
+      {/* Tab Selector & Actions bar */}
+      <div className="flex justify-between items-center pb-2 border-b border-zinc-200 select-none shrink-0 px-1">
+        <h2 className="text-base font-bold text-zinc-900">
+          {activeTab === "pending" ? "Pending Assigned Tasks" : "Completed Tasks Archives"}
+        </h2>
+        {(isAdmin || isManager || isOperator) && (
+          <CustomButton
+            variant="dark"
+            onClick={() => {
+              setIsCreateOpen(true);
+              setSelectedRetailerId("");
+              setStoreTags([]);
+              setNewDescription("");
+              setTaskAction("Visit");
+              setEditingTask(null);
+            }}
+            className="flex items-center justify-center gap-1.5"
+          >
+            <Plus size={14} className="stroke-[2.5]" />
+            <span>New Task</span>
+          </CustomButton>
+        )}
+      </div>
+
       {/* Database list rendering */}
-      <div className="w-full flex flex-col h-full animate-tableFadeInOnly">
+      <div className="w-full flex flex-col flex-1 min-h-0 overflow-hidden animate-tableFadeInOnly">
         <DataTable
           columns={columns}
           data={mappedTasks}
           userRole="viewer"
           title={activeTab === "pending" ? "Pending Assigned Tasks" : "Completed Tasks Archives"}
           fetching={fetching}
-          height="h-[calc(100vh-220px)]"
+          height="h-full"
         />
       </div>
 

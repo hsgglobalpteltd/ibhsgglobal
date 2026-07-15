@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { showToast } from "@/lib/toast";
-import { X, Calendar, Filter, Layers, HelpCircle, Printer } from "lucide-react";
+import { X, Calendar, Filter, Layers, HelpCircle, Printer, Search } from "lucide-react";
 import { CustomButton } from "../custom-button";
 
 interface StoresVisibilityModuleProps {
@@ -45,6 +45,15 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
 
   // Results state
   const [extractedStores, setExtractedStores] = React.useState<any[]>([]);
+  const [searchQuery, setSearchQuery] = React.useState<string>("");
+  const displayedStores = React.useMemo(() => {
+    if (!searchQuery.trim()) return extractedStores;
+    const q = searchQuery.toLowerCase().trim();
+    return extractedStores.filter(item => 
+      item.storeName.toLowerCase().includes(q) || 
+      item.address.toLowerCase().includes(q)
+    );
+  }, [extractedStores, searchQuery]);
   const [selectedImage, setSelectedImage] = React.useState<string | null>(null);
 
   // Parser helper to safely handle Unix Epoch and ISO date strings
@@ -265,6 +274,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
     }
 
     setExtracting(true);
+    setSearchQuery("");
 
     try {
       // Calculate local timestamps based on dates
@@ -608,7 +618,41 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             
             {/* Mimicked Column Header (hidden on print) */}
             <div className="w-full bg-[#F0F4F9] border border-slate-200 rounded flex text-[10px] font-bold text-[#474747] uppercase tracking-wider select-none print:hidden">
-              <div className="px-4 py-2.5 border-r border-slate-200" style={{ width: "20%" }}>Store Details</div>
+              <div 
+                className="px-4 py-1 border-r border-slate-200 flex items-center justify-between gap-2 group transition-all duration-300" 
+                style={{ width: "20%" }}
+              >
+                <span className="text-[10px] font-bold text-[#474747] uppercase tracking-wider select-none shrink-0 group-hover:scale-95 origin-left transition-transform duration-300">
+                  Store Details
+                </span>
+                
+                {/* Search Container */}
+                <div 
+                  className="relative flex items-center bg-transparent border border-transparent hover:border-slate-300 focus-within:border-[#0B57D0]/60 focus-within:bg-white rounded px-2 py-1 transition-all duration-300 w-[110px] focus-within:w-[150px] group-hover:w-[130px] group-hover:bg-slate-50/50 shadow-2xs"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <Search 
+                    size={11} 
+                    className="text-zinc-400 group-hover:text-[#0B57D0] focus-within:text-[#0B57D0] transition-colors duration-300 shrink-0 transform group-hover:scale-110 transition-transform duration-300" 
+                  />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search..."
+                    className="bg-transparent border-none outline-none text-[10.5px] font-semibold text-zinc-800 placeholder-zinc-400 w-full pl-1.5 transition-all duration-300"
+                  />
+                  {searchQuery && (
+                    <button 
+                      type="button" 
+                      onClick={() => setSearchQuery("")} 
+                      className="p-0.5 hover:bg-zinc-200 rounded text-zinc-400 hover:text-zinc-700 cursor-pointer transition-colors"
+                    >
+                      <X size={9} />
+                    </button>
+                  )}
+                </div>
+              </div>
               <div className="px-4 py-2.5 border-r border-slate-200" style={{ width: "40%" }}>Recent Visit</div>
               <div className="px-4 py-2.5 border-r border-slate-200" style={{ width: "20%" }}>Products</div>
               <div className="px-4 py-2.5" style={{ width: "20%" }}>Shelf Visibility</div>
@@ -664,11 +708,18 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 print:divide-zinc-300">
-                    {extractedStores.map((item) => (
-                      <tr 
-                        key={item.id} 
-                        className="hover:bg-zinc-100/50 transition-colors align-top print:hover:bg-transparent"
-                      >
+                    {displayedStores.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-4 py-8 text-center text-zinc-500 font-semibold italic text-xs">
+                          No outlets match "{searchQuery}"
+                        </td>
+                      </tr>
+                    ) : (
+                      displayedStores.map((item) => (
+                        <tr 
+                          key={item.id} 
+                          className="hover:bg-zinc-100/50 transition-colors align-top print:hover:bg-transparent"
+                        >
                         {/* Store Details (Fixed 20% width) */}
                         <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
                           <div className="w-full overflow-hidden">
@@ -773,7 +824,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                           </div>
                         </td>
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
               </div>
