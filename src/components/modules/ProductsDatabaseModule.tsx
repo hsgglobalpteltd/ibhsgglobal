@@ -24,7 +24,10 @@ const defaultProductColumns: Column[] = [
   { id: "Status", header: "Status", accessor: "Status" },
   { id: "Single Barcode", header: "Single Barcode", accessor: "Single Barcode" },
   { id: "Carton Barcode", header: "Carton Barcode", accessor: "Carton Barcode" },
-  { id: " Carton Weight", header: "Carton Weight", accessor: " Carton Weight" }
+  { id: " Carton Weight", header: "Carton Weight", accessor: " Carton Weight" },
+  { id: "Carton H (mm)", header: "Carton H (mm)", accessor: "Carton H (mm)" },
+  { id: "Carton W (mm)", header: "Carton W (mm)", accessor: "Carton W (mm)" },
+  { id: "Carton L (mm)", header: "Carton L (mm)", accessor: "Carton L (mm)" }
 ];
 
 interface ProductsDatabaseModuleProps {
@@ -793,7 +796,7 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
             />
           </div>
  
-          <div className="flex flex-col gap-1.5 col-span-2">
+          <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton Weight</label>
             <input
               type="text"
@@ -803,10 +806,40 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
             />
           </div>
 
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton H (mm)</label>
+            <input
+              type="text"
+              value={formData["Carton H (mm)"] !== undefined ? formData["Carton H (mm)"] : ""}
+              onChange={(e) => handleChange("Carton H (mm)", e.target.value)}
+              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton W (mm)</label>
+            <input
+              type="text"
+              value={formData["Carton W (mm)"] !== undefined ? formData["Carton W (mm)"] : ""}
+              onChange={(e) => handleChange("Carton W (mm)", e.target.value)}
+              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton L (mm)</label>
+            <input
+              type="text"
+              value={formData["Carton L (mm)"] !== undefined ? formData["Carton L (mm)"] : ""}
+              onChange={(e) => handleChange("Carton L (mm)", e.target.value)}
+              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+            />
+          </div>
+
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
             .filter((k) => {
-              if (["SKU", "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "id", "isNew"].includes(k)) return false;
+              if (["SKU", "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "Carton H (mm)", "Carton W (mm)", "Carton L (mm)", "id", "isNew"].includes(k)) return false;
               const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
                 otherKey !== k && 
                 otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
