@@ -296,7 +296,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     setSkus(updatedList);
     localStorage.setItem("Retailers_SKU_data", JSON.stringify(updatedList));
 
-    showToast("Deleting SKU record...", "info");
+
 
     try {
       const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
@@ -314,7 +314,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
       if (!result.success) throw new Error(result.error || "Failed to delete record");
 
       fetchFreshData("Retailers_SKU", false);
-      showToast("SKU record deleted successfully!", "success");
+
     } catch (err: any) {
       showToast("Delete failed: " + err.message + ". Reverting changes...", "error");
       setSkus(previousSkus);
@@ -477,7 +477,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     localStorage.setItem("Retailers_SKU_data", JSON.stringify(updatedList));
     setEditingRecord(null);
 
-    showToast("Saving SKU profile...", "info");
+
 
     try {
       const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
@@ -495,7 +495,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
       if (!result.success) throw new Error(result.error || "Failed to save record");
 
       fetchFreshData("Retailers_SKU", false);
-      showToast("SKU profile saved and synced successfully!", "success");
+
     } catch (err: any) {
       showToast("Sync failed: " + err.message + ". Reverting changes...", "error");
       setSkus(previousSkus);

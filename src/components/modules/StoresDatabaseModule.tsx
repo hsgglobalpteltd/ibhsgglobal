@@ -286,7 +286,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     setData(updatedList);
     localStorage.setItem(`${sheet}_data`, JSON.stringify(updatedList));
 
-    showToast("Saving changes in background...", "info");
+
 
     // 4. Perform network request in background
     (async () => {
@@ -319,7 +319,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
 
         // Silent refresh of D1 cache from server in background
         fetchFreshData(sheet, false);
-        showToast("Changes synced successfully!", "success");
+
       } catch (err: any) {
         showToast("Background sync failed: " + err.message + ". Reverting changes...", "error");
         // Revert to previous state
@@ -339,7 +339,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     );
     if (!targetItem) return;
 
-    showToast("Deleting record from database...", "info");
+
 
     try {
       const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
@@ -368,7 +368,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
       // Pull fresh data in background
       fetchFreshData(sheet, false);
 
-      showToast("Record deleted successfully!", "success");
+
     } catch (err: any) {
       showToast("Delete failed: " + err.message, "error");
     }
