@@ -1,5 +1,5 @@
 import * as React from "react";
-import { LayoutDashboard, Users, Database, TrendingUp, Package, Briefcase, Megaphone, Shield } from "lucide-react";
+import { LayoutDashboard, Users, Database, TrendingUp, Package, Briefcase, Megaphone, Shield, Globe } from "lucide-react";
 import { DashboardPage } from "@/components/pages/dashboard";
 import { FrontlinePage } from "@/components/pages/frontline";
 import { DatabasePage } from "@/components/pages/database";
@@ -7,6 +7,7 @@ import { SalesChannelsPage } from "@/components/pages/sales-channels";
 import { StockPage } from "@/components/pages/stock";
 import { OfficeToolsPage } from "@/components/pages/office-tools";
 import { MarketingContentPage } from "@/components/pages/marketing-content";
+import { WebsitePage } from "@/components/pages/website";
 import { AdministratorPage } from "@/components/pages/administrator";
 
 export interface MenuItem {
@@ -58,6 +59,12 @@ export const menuConfig: MenuItem[] = [
     label: "Marketing & Content",
     icon: <Megaphone size={18} />,
     component: <MarketingContentPage />,
+  },
+  {
+    id: "Website",
+    label: "Website",
+    icon: <Globe size={18} />,
+    component: <WebsitePage />,
   },
   {
     id: "Administrator",

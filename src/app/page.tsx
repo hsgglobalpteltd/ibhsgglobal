@@ -356,7 +356,7 @@ export default function Home() {
     }
 
     // Bypass placeholder check for categories
-    const categoryPages = ["Frontline", "Database", "Sales & Channels", "Stock", "Office Tools", "Marketing & Content", "Administrator"];
+    const categoryPages = ["Frontline", "Database", "Sales & Channels", "Stock", "Office Tools", "Marketing & Content", "Website", "Administrator"];
     if (breadcrumbPath.length > 1 && !categoryPages.includes(activeItem)) {
       return (
         <div className="flex flex-col gap-4 font-primary">
@@ -503,6 +503,7 @@ export default function Home() {
             onSelectMenu={handleMenuSelect} 
             user={firebaseUser}
             profile={profile}
+            idToken={idToken}
             onLogout={handleLogout}
           />
           <div className="workspace-wrapper flex flex-col flex-1 h-screen overflow-hidden min-w-0">

@@ -745,6 +745,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       showToast("Please assign a Mark (A, B, C, D)", "error");
       return;
     }
+    if (createMark.trim().toUpperCase().startsWith("R")) {
+      showToast("Delivery order mark cannot start with 'R' (reserved for Returns).", "error");
+      return;
+    }
 
     // Check if Mark is active in pending orders
     const isMarkActive = pendingOrders.some(
@@ -1415,6 +1419,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     for (let i = 0; i < alphabet.length; i++) {
       const char = alphabet[i];
+      if (char === "R") continue;
       if (!usedMarks.has(char)) {
         return char;
       }
@@ -1970,6 +1975,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         if (field === "mark") {
           // Capitalize & limit to single letter or characters
           cleanVal = String(value).toUpperCase().trim();
+          if (draft.type !== "Return" && cleanVal.startsWith("R")) {
+            showToast("Delivery order mark cannot start with 'R' (reserved for Returns).", "error");
+            return draft;
+          }
         }
         
         const newDraft = { ...draft, [field]: cleanVal };
@@ -2014,6 +2023,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     if (!order.mark) {
       showToast("Please assign a Mark (A, B, C, D) before sending.", "error");
+      return;
+    }
+    if (order.type !== "Return" && order.mark.trim().toUpperCase().startsWith("R")) {
+      showToast("Delivery order mark cannot start with 'R' (reserved for Returns).", "error");
       return;
     }
     

@@ -98,7 +98,7 @@ export function SidePanel({ activeItem, onSelectMenu, user, profile, onLogout }:
           {isCollapsed ? (
             <button 
               onClick={onLogout}
-              className="flex w-10 h-10 items-center justify-center rounded text-zinc-600 hover:text-zinc-950 hover:bg-[#EEEEEE] transition-all duration-200 shadow-sm cursor-pointer"
+              className="flex w-10 h-10 items-center justify-center rounded text-zinc-600 hover:text-zinc-950 hover:bg-[#EEEEEE] transition-all duration-200 shadow-sm cursor-pointer border-none bg-transparent"
               title="Log Out"
             >
               <LogOut size={18} />
@@ -115,7 +115,7 @@ export function SidePanel({ activeItem, onSelectMenu, user, profile, onLogout }:
               </div>
               <button 
                 onClick={onLogout}
-                className="text-left text-xs text-zinc-600 hover:text-zinc-950 font-primary font-medium hover:underline focus-visible:outline-none w-fit cursor-pointer mt-0.5"
+                className="text-left text-xs text-zinc-600 hover:text-zinc-950 font-primary font-medium hover:underline focus-visible:outline-none w-fit cursor-pointer mt-0.5 border-none bg-transparent"
               >
                 Log Out
               </button>

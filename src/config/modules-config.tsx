@@ -140,6 +140,20 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     ]
   },
   {
+    id: "Website",
+    label: "Website",
+    modules: [
+      {
+        title: "Portal Users",
+        description: "Manage registered user portals. Approve, suspend, or remove portal workspace access.",
+      },
+      {
+        title: "Site",
+        description: "Create website folders and allocate them to approved portal users (supports multi-user binding).",
+      }
+    ]
+  },
+  {
     id: "Administrator",
     label: "Administrator",
     modules: [
