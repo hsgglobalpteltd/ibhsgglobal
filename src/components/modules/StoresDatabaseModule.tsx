@@ -159,16 +159,10 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     });
   }, [data, activeTab]);
 
-  // On mount: prefetch both retailer and store tables silently if they are not in cache
+  // On mount: prefetch both retailer and store tables silently
   React.useEffect(() => {
-    const cachedRetailers = localStorage.getItem("retailers_DB_data");
-    if (!cachedRetailers) {
-      fetchFreshData("retailers_DB", false);
-    }
-    const cachedStores = localStorage.getItem("Store_Retailer_DB_data");
-    if (!cachedStores) {
-      fetchFreshData("Store_Retailer_DB", false);
-    }
+    fetchFreshData("retailers_DB", false);
+    fetchFreshData("Store_Retailer_DB", false);
 
     // Trigger silent background sync after mount
     const timer = setTimeout(() => {

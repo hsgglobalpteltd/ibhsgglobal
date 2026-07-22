@@ -158,16 +158,10 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     });
   }, [data, activeTab]);
 
-  // On mount: prefetch both brand and product tables silently if they are not in cache
+  // On mount: prefetch both brand and product tables silently
   React.useEffect(() => {
-    const cachedBrands = localStorage.getItem("brands_DB_data");
-    if (!cachedBrands) {
-      fetchFreshData("brands_DB", false);
-    }
-    const cachedProducts = localStorage.getItem("products_DB_data");
-    if (!cachedProducts) {
-      fetchFreshData("products_DB", false);
-    }
+    fetchFreshData("brands_DB", false);
+    fetchFreshData("products_DB", false);
 
     // Trigger silent background sync after mount
     const timer = setTimeout(() => {
