@@ -796,44 +796,54 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
             />
           </div>
  
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton Weight</label>
-            <input
-              type="text"
-              value={formData[" Carton Weight"] !== undefined ? formData[" Carton Weight"] : ""}
-              onChange={(e) => handleChange(" Carton Weight", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton H (mm)</label>
-            <input
-              type="text"
-              value={formData["Carton H (mm)"] !== undefined ? formData["Carton H (mm)"] : ""}
-              onChange={(e) => handleChange("Carton H (mm)", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton W (mm)</label>
-            <input
-              type="text"
-              value={formData["Carton W (mm)"] !== undefined ? formData["Carton W (mm)"] : ""}
-              onChange={(e) => handleChange("Carton W (mm)", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton L (mm)</label>
-            <input
-              type="text"
-              value={formData["Carton L (mm)"] !== undefined ? formData["Carton L (mm)"] : ""}
-              onChange={(e) => handleChange("Carton L (mm)", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
+          <div className="flex flex-col gap-1.5 col-span-2">
+            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton Specifications (Weight & Dimensions)</label>
+            <div className="grid grid-cols-4 gap-2.5">
+              {/* Weight */}
+              <div className="relative flex items-center">
+                <input
+                  type="text"
+                  placeholder="Weight (g)"
+                  value={formData[" Carton Weight"] !== undefined ? formData[" Carton Weight"] : ""}
+                  onChange={(e) => handleChange(" Carton Weight", e.target.value)}
+                  className="w-full text-xs bg-white border border-slate-300 rounded pl-3 pr-6 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+                />
+                <span className="absolute right-2.5 text-[10px] font-bold text-zinc-400">g</span>
+              </div>
+              {/* Height */}
+              <div className="relative flex items-center">
+                <input
+                  type="text"
+                  placeholder="H (mm)"
+                  value={formData["Carton H (mm)"] !== undefined ? formData["Carton H (mm)"] : ""}
+                  onChange={(e) => handleChange("Carton H (mm)", e.target.value)}
+                  className="w-full text-xs bg-white border border-slate-300 rounded pl-3 pr-8 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+                />
+                <span className="absolute right-2.5 text-[10px] font-bold text-zinc-400">mm</span>
+              </div>
+              {/* Width */}
+              <div className="relative flex items-center">
+                <input
+                  type="text"
+                  placeholder="W (mm)"
+                  value={formData["Carton W (mm)"] !== undefined ? formData["Carton W (mm)"] : ""}
+                  onChange={(e) => handleChange("Carton W (mm)", e.target.value)}
+                  className="w-full text-xs bg-white border border-slate-300 rounded pl-3 pr-8 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+                />
+                <span className="absolute right-2.5 text-[10px] font-bold text-zinc-400">mm</span>
+              </div>
+              {/* Length */}
+              <div className="relative flex items-center">
+                <input
+                  type="text"
+                  placeholder="L (mm)"
+                  value={formData["Carton L (mm)"] !== undefined ? formData["Carton L (mm)"] : ""}
+                  onChange={(e) => handleChange("Carton L (mm)", e.target.value)}
+                  className="w-full text-xs bg-white border border-slate-300 rounded pl-3 pr-8 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+                />
+                <span className="absolute right-2.5 text-[10px] font-bold text-zinc-400">mm</span>
+              </div>
+            </div>
           </div>
 
           {/* Generic fields editor for other sheets scale-up */}

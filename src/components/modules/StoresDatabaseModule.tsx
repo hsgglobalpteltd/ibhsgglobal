@@ -9,7 +9,8 @@ import { NavigationTabs } from "../navigation-tabs";
 const defaultRetailerColumns: Column[] = [
   { id: "ID", header: "ID", accessor: "ID" },
   { id: "Display Name", header: "Display Name", accessor: "Display Name" },
-  { id: "Logo Image", header: "Logo Image", accessor: "Logo Image" }
+  { id: "Logo Image", header: "Logo Image", accessor: "Logo Image" },
+  { id: "Retailer Group", header: "Retailer Group", accessor: "Retailer Group" }
 ];
 
 const defaultStoreColumns: Column[] = [
@@ -147,7 +148,9 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
 
   // Preprocess stores list to swap Retailer ID for looked up Retailer Name
   const processedData = React.useMemo(() => {
-    if (activeTab !== "stores") return data;
+    if (activeTab === "retailers") {
+      return data.filter(r => !String(r.ID || r.id).startsWith("Group"));
+    }
     const retailersList = getRetailersList();
     return data.map((store) => {
       const retailerId = store["Retailers ID"] || store["Retailer ID"];
@@ -541,11 +544,27 @@ function RetailerEditForm({ retailer, onSave, onCancel }: { retailer: any; onSav
               </div>
             )}
           </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Retailer Group</label>
+            <select
+              value={formData["Retailer Group"] || "Individual"}
+              onChange={(e) => handleChange("Retailer Group", e.target.value)}
+              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold cursor-pointer"
+            >
+              <option value="Individual">Individual</option>
+              <option value="Group A">Group A</option>
+              <option value="Group B">Group B</option>
+              <option value="Group C">Group C</option>
+              <option value="Group D">Group D</option>
+              <option value="Group E">Group E</option>
+            </select>
+          </div>
           
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
             .filter((k) => {
-              if (["ID", "Display Name", "Logo Image", "id", "isNew"].includes(k)) return false;
+              if (["ID", "Display Name", "Logo Image", "Retailer Group", "id", "isNew"].includes(k)) return false;
               const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
                 otherKey !== k && 
                 otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&

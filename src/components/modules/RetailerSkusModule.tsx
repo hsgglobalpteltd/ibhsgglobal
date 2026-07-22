@@ -20,7 +20,9 @@ const defaultColumns: Column[] = [
   { id: "SKU Number", header: "SKU Number", accessor: "SKU Number" },
   { id: "SKU Name", header: "SKU Name", accessor: "SKU Name" },
   { id: "Link to Product SKU", header: "Products Linked", accessor: "Link to Product SKU" },
+  { id: "UOM/PACK", header: "UOM/PACK", accessor: "UOM/PACK" },
   { id: "Cost Price", header: "Cost Price", accessor: "Cost Price" },
+  { id: "Margin", header: "Margin", accessor: "Margin" },
   { id: "RSP", header: "RSP Tiers", accessor: "RSP" },
   { id: "Promotion", header: "Promotions", accessor: "Promotion" }
 ];
@@ -100,9 +102,9 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
 
     setFetching(true);
     Promise.all([
-      cachedRetailers ? Promise.resolve(JSON.parse(cachedRetailers)) : fetchSheet("retailers_DB"),
-      cachedProducts ? Promise.resolve(JSON.parse(cachedProducts)) : fetchSheet("products_DB"),
-      cachedSkus ? Promise.resolve(JSON.parse(cachedSkus)) : fetchSheet("Retailers_SKU")
+      fetchSheet("retailers_DB"),
+      fetchSheet("products_DB"),
+      fetchSheet("Retailers_SKU")
     ]).then(([r, p, s]) => {
       setRetailers(r);
       setProducts(p);
@@ -168,6 +170,17 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
       }
     } catch (e) {}
     return "-";
+  };
+
+  const getLatestCostPriceVal = (logStr: string) => {
+    try {
+      const logs = JSON.parse(logStr || "[]");
+      if (Array.isArray(logs) && logs.length > 0) {
+        const latest = logs[logs.length - 1];
+        return latest?.Price !== undefined ? Number(latest.Price) : 0;
+      }
+    } catch (e) {}
+    return 0;
   };
 
   const getLatestRsp = (logStr: string) => {
@@ -282,6 +295,9 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
       "Cost Price Log": "[]",
       "RSP Log": "[]",
       "Promotion Log": "[]",
+      Margin: "",
+      UOM: "EA",
+      Pack: "",
       Status: "TRUE",
       isNew: true
     });
@@ -461,6 +477,9 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
       "Cost Price Log": costLog,
       "RSP Log": rspLog,
       "Promotion Log": promoLog,
+      Margin: editingRecord.Margin ? String(editingRecord.Margin).trim() : "",
+      UOM: editingRecord.UOM ? String(editingRecord.UOM).trim() : "",
+      Pack: editingRecord.Pack ? String(editingRecord.Pack).trim() : "",
       Status: isRecordActive ? "TRUE" : "FALSE",
       Remove: "FALSE"
     };
@@ -502,6 +521,19 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
       localStorage.setItem("Retailers_SKU_data", JSON.stringify(previousSkus));
     }
   };
+
+  const retailerDropdownOptions = React.useMemo(() => {
+    const optionsMap = new Map<string, string>();
+    retailers.forEach((r) => {
+      const group = r["Retailer Group"];
+      if (!group || group === "Individual") {
+        optionsMap.set(String(r.ID), r["Display Name"] || String(r.ID));
+      } else {
+        optionsMap.set(String(group), `Retailers ${group}`);
+      }
+    });
+    return Array.from(optionsMap.entries()).map(([id, label]) => ({ id, label }));
+  }, [retailers]);
 
   // Mapped Table Data Rendering
   const filteredData = React.useMemo(() => {
@@ -589,6 +621,19 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
         </button>
       );
 
+      const costVal = getLatestCostPriceVal(item["Cost Price Log"]);
+      const marginPercent = Number(item.Margin) || 0;
+      const marginAmount = costVal > 0 ? (costVal * marginPercent) / 100 : 0;
+      const marginDisplay = marginPercent > 0 
+        ? `(${marginPercent}%) $${marginAmount.toFixed(2)}` 
+        : "-";
+
+      const uomVal = item.UOM || "";
+      const packVal = item.Pack || "";
+      const uomPackDisplay = uomVal && packVal 
+        ? `${uomVal}/${packVal}` 
+        : (uomVal || packVal || "-");
+
       return {
         ...item,
         "SKU Name": (
@@ -597,8 +642,12 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
         "SKU Name_raw": item["SKU Name"],
         "Link to Product SKU": linkNodes,
         "Link to Product SKU_raw": links.join(" "),
+        "UOM/PACK": <span className="font-semibold text-zinc-700">{uomPackDisplay}</span>,
+        "UOM/PACK_raw": uomPackDisplay,
         "Cost Price": costNode,
         "Cost Price_raw": getLatestCostPrice(item["Cost Price Log"]),
+        Margin: <span className="font-medium text-zinc-700">{marginDisplay}</span>,
+        Margin_raw: marginDisplay,
         RSP: rspNode,
         RSP_raw: getLatestRsp(item["RSP Log"]),
         Promotion: promoNode,
@@ -620,6 +669,15 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     return [];
   }, [activeLogRecord, viewingLogType]);
 
+  const activeCostPrice = React.useMemo(() => {
+    if (!editingRecord) return 0;
+    if (newCostVal.trim()) {
+      const val = Number(newCostVal);
+      if (!isNaN(val)) return val;
+    }
+    return getLatestCostPriceVal(editingRecord["Cost Price Log"]);
+  }, [newCostVal, editingRecord]);
+
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative min-w-0">
       
@@ -636,9 +694,9 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
             className="bg-slate-50 border border-slate-200 hover:bg-slate-100/50 hover:border-slate-350 rounded-lg px-3 py-1.5 text-xs font-bold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-blue-500/10 focus:border-blue-500 cursor-pointer min-w-[200px] transition-all duration-150"
           >
             <option value="">-- Choose Retailer --</option>
-            {retailers.map((r) => (
-              <option key={r.ID} value={r.ID}>
-                {r["Display Name"] || r.ID}
+            {retailerDropdownOptions.map((opt) => (
+              <option key={opt.id} value={opt.id}>
+                {opt.label}
               </option>
             ))}
           </select>
@@ -893,6 +951,32 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
                 />
               </div>
 
+              {/* UOM and PACK */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">UOM</label>
+                  <select
+                    value={editingRecord.UOM || "EA"}
+                    onChange={(e) => setEditingRecord({ ...editingRecord, UOM: e.target.value })}
+                    className="w-full text-xs bg-slate-50/50 border border-slate-200 focus:border-blue-500 focus:bg-white rounded-lg px-3 py-2 text-zinc-900 focus:outline-none font-semibold transition-all duration-150 cursor-pointer"
+                  >
+                    <option value="EA">EA</option>
+                    <option value="CT">CT</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">PACK</label>
+                  <input
+                    type="text"
+                    value={editingRecord.Pack || ""}
+                    onChange={(e) => setEditingRecord({ ...editingRecord, Pack: e.target.value })}
+                    placeholder="e.g. 12"
+                    className="w-full text-xs bg-slate-50/50 border border-slate-200 focus:border-blue-500 focus:bg-white rounded-lg px-3 py-2 text-zinc-900 focus:outline-none font-semibold transition-all duration-150"
+                  />
+                </div>
+              </div>
+
               {/* Status Switch */}
               <div className="flex items-center gap-3 border-t border-b border-zinc-300/40 py-2">
                 <input
@@ -916,21 +1000,42 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
               {/* NEW COST PRICE */}
               <div className="border-t border-slate-200 pt-3">
                 <h4 className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-2">Cost Price Update</h4>
-                <div className="flex flex-col gap-1 bg-slate-50/60 border border-slate-200/60 rounded-xl p-3">
+                <div className="flex flex-col gap-3 bg-slate-50/60 border border-slate-200/60 rounded-xl p-3">
                   <div className="text-[9px] text-zinc-500 font-bold mb-1">
                     Current: {getLatestCostPrice(editingRecord["Cost Price Log"])}
                   </div>
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">New Cost Price</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={newCostVal}
-                      onChange={(e) => setNewCostVal(e.target.value)}
-                      placeholder="e.g. 10.50"
-                      className="w-full text-xs bg-white border border-slate-200 focus:border-blue-500 focus:bg-white rounded-lg px-3 py-2 text-zinc-900 focus:outline-none font-semibold transition-all duration-150"
-                    />
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">New Cost Price</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={newCostVal}
+                        onChange={(e) => setNewCostVal(e.target.value)}
+                        placeholder="e.g. 10.50"
+                        className="w-full text-xs bg-white border border-slate-200 focus:border-blue-500 focus:bg-white rounded-lg px-3 py-2 text-zinc-900 focus:outline-none font-semibold transition-all duration-150"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Margin Set (%)</label>
+                      <input
+                        type="number"
+                        step="0.1"
+                        placeholder="e.g. 23"
+                        value={editingRecord.Margin || ""}
+                        onChange={(e) => setEditingRecord({ ...editingRecord, Margin: e.target.value })}
+                        className="w-full text-xs bg-white border border-slate-200 focus:border-blue-500 focus:bg-white rounded-lg px-3 py-2 text-zinc-900 focus:outline-none font-semibold transition-all duration-150"
+                      />
+                    </div>
                   </div>
+
+                  {editingRecord.Margin && activeCostPrice > 0 && (
+                    <div className="text-[9px] text-[#0B57D0] font-bold px-1 mt-1">
+                      Margin Amount: ({editingRecord.Margin}%) ${((activeCostPrice * (Number(editingRecord.Margin) || 0)) / 100).toFixed(2)}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -957,7 +1062,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
                         )}
                       </div>
                       <div className="grid grid-cols-4 gap-2">
-                        <div className="flex flex-col gap-0.5 col-span-1 font-primary">
+                        <div className="flex flex-col gap-0.5 col-span-2 font-primary">
                           <span className="text-[8px] font-bold text-zinc-500 uppercase">Tier Label</span>
                           <input 
                             type="text" 
@@ -987,6 +1092,33 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
                           />
                         </div>
                         <div className="flex flex-col gap-0.5 col-span-1 font-primary">
+                          <span className="text-[8px] font-bold text-zinc-500 uppercase">Margin %</span>
+                          <input 
+                            type="number" 
+                            step="0.1" 
+                            placeholder="Margin %" 
+                            value={
+                              tier.Price && activeCostPrice > 0
+                                ? String(Math.round(((Number(tier.Price) - activeCostPrice) / activeCostPrice) * 100))
+                                : ""
+                            } 
+                            onChange={(e) => {
+                              const marginVal = Number(e.target.value);
+                              const updated = [...rspFormTiers];
+                              if (!isNaN(marginVal) && activeCostPrice > 0) {
+                                updated[idx].Price = String(Number((activeCostPrice * (1 + marginVal / 100)).toFixed(2)));
+                              } else {
+                                updated[idx].Price = "";
+                              }
+                              setRspFormTiers(updated);
+                            }} 
+                            className="w-full bg-white border border-slate-200 text-xs px-2 py-1 rounded focus:outline-none font-semibold text-zinc-800" 
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-4 gap-2">
+                        <div className="flex flex-col gap-0.5 col-span-2 font-primary">
                           <span className="text-[8px] font-bold text-zinc-500 uppercase">Start Date</span>
                           <input 
                             type="date" 
@@ -999,7 +1131,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
                             className="w-full bg-white border border-slate-200 text-xs px-1 py-0.5 rounded focus:outline-none text-zinc-750" 
                           />
                         </div>
-                        <div className="flex flex-col gap-0.5 col-span-1 font-primary">
+                        <div className="flex flex-col gap-0.5 col-span-2 font-primary">
                           <span className="text-[8px] font-bold text-zinc-500 uppercase">End Date</span>
                           <input 
                             type="date" 
@@ -1013,6 +1145,13 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
                           />
                         </div>
                       </div>
+
+                      {/* Display Computed Margin Amount */}
+                      {tier.Price && activeCostPrice > 0 && (
+                        <div className="text-[9px] text-zinc-500 font-bold mt-1 px-1">
+                          Margin Amount: ({Math.round(((Number(tier.Price) - activeCostPrice) / activeCostPrice) * 100)}%) ${Number(Number(tier.Price) - activeCostPrice).toFixed(2)}
+                        </div>
+                      )}
                     </div>
                   ))}
 
