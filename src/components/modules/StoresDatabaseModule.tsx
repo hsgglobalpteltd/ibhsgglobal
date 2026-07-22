@@ -92,7 +92,16 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
   // Helper to update column definitions dynamically
   const updateColumnsForData = (items: any[]) => {
     if (items.length > 0) {
-      const keys = Object.keys(items[0]);
+      const allKeys = Object.keys(items[0]);
+      const keys = allKeys.filter(key => {
+        const hasUpperCaseEquivalent = allKeys.some(otherKey => 
+          otherKey !== key && 
+          otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === key.toLowerCase().replace(/[^a-z0-9]/g, '') &&
+          otherKey !== otherKey.toLowerCase()
+        );
+        return !hasUpperCaseEquivalent;
+      });
+
       const cols = keys.map((key) => {
         // Replace Retailer ID column with Retailer Name for stores database visual rendering
         if (activeTab === "stores" && (key === "Retailer ID" || key === "Retailers ID")) {
@@ -541,7 +550,15 @@ function RetailerEditForm({ retailer, onSave, onCancel }: { retailer: any; onSav
           
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
-            .filter((k) => !["ID", "Display Name", "Logo Image", "id", "isNew"].includes(k))
+            .filter((k) => {
+              if (["ID", "Display Name", "Logo Image", "id", "isNew"].includes(k)) return false;
+              const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
+                otherKey !== k && 
+                otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
+                otherKey !== otherKey.toLowerCase()
+              );
+              return !hasUpperCaseEquivalent;
+            })
             .map((key) => (
               <div key={key} className="flex flex-col gap-1.5">
                 <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">{key}</label>
@@ -733,7 +750,15 @@ function StoreEditForm({ store, retailers, onSave, onCancel }: { store: any; ret
 
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
-            .filter((k) => !["ID", "Retailers ID", "Retailer ID", "Retailer Name", "Display Name", "Address", "id", "isNew"].includes(k) && k !== imgKey)
+            .filter((k) => {
+              if (["ID", "Retailers ID", "Retailer ID", "Retailer Name", "Display Name", "Address", "id", "isNew"].includes(k) || k === imgKey) return false;
+              const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
+                otherKey !== k && 
+                otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
+                otherKey !== otherKey.toLowerCase()
+              );
+              return !hasUpperCaseEquivalent;
+            })
             .map((key) => (
               <div key={key} className="flex flex-col gap-1.5 col-span-2">
                 <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">{key}</label>

@@ -100,7 +100,16 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
   // Helper to update column definitions dynamically
   const updateColumnsForData = (items: any[]) => {
     if (items.length > 0) {
-      const keys = Object.keys(items[0]);
+      const allKeys = Object.keys(items[0]);
+      const keys = allKeys.filter(key => {
+        const hasUpperCaseEquivalent = allKeys.some(otherKey => 
+          otherKey !== key && 
+          otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === key.toLowerCase().replace(/[^a-z0-9]/g, '') &&
+          otherKey !== otherKey.toLowerCase()
+        );
+        return !hasUpperCaseEquivalent;
+      });
+
       const cols = keys.map((key) => {
         // Replace Brands ID column with Brand Name for products database visual rendering
         if (activeTab === "products" && key === "Brands ID") {
@@ -552,7 +561,15 @@ function BrandEditForm({ brand, onSave, onCancel }: { brand: any; onSave: (data:
           
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
-            .filter((k) => !["ID", "Display Name", "Logo Image", "Rank", "id", "isNew"].includes(k))
+            .filter((k) => {
+              if (["ID", "Display Name", "Logo Image", "Rank", "id", "isNew"].includes(k)) return false;
+              const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
+                otherKey !== k && 
+                otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
+                otherKey !== otherKey.toLowerCase()
+              );
+              return !hasUpperCaseEquivalent;
+            })
             .map((key) => (
               <div key={key} className="flex flex-col gap-1.5">
                 <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">{key}</label>
@@ -794,7 +811,15 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
 
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
-            .filter((k) => !["SKU", "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "id", "isNew"].includes(k))
+            .filter((k) => {
+              if (["SKU", "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "id", "isNew"].includes(k)) return false;
+              const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
+                otherKey !== k && 
+                otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
+                otherKey !== otherKey.toLowerCase()
+              );
+              return !hasUpperCaseEquivalent;
+            })
             .map((key) => (
               <div key={key} className="flex flex-col gap-1.5 col-span-2">
                 <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">{key}</label>
