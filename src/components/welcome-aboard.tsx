@@ -12,6 +12,7 @@ interface WelcomeAboardScreenProps {
   idToken: string;
   onLogout: () => void;
   onComplete: (updatedProfile: UserProfile) => void;
+  userEmail?: string | null;
 }
 
 const FALLBACK_CONTRACT_TEXT = `iB - HSG GLOBAL Internal Bridge
@@ -34,7 +35,8 @@ Any deliberate attempt to sabotage, corrupt, or manipulate data—including but 
 5. No Financial Transactions
 The iB is exclusively an operational tool. It does not require, request, or accept any form of payment, subscription fees, or financial transactions. Be vigilant against any unauthorized requests for financial information within this platform.`;
 
-export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete }: WelcomeAboardScreenProps) {
+export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, userEmail }: WelcomeAboardScreenProps) {
+  const emailToUse = userEmail || profile.email || (profile as any).Email || "";
   const [contractText, setContractText] = React.useState(FALLBACK_CONTRACT_TEXT);
   const [scrolledToBottom, setScrolledToBottom] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
@@ -142,7 +144,7 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete }: 
 
       // 2. Upload signed PDF directly to R2
       const pdfBlob = doc.output("blob");
-      const uploadFileName = `contract/Signed_Contract/contract_${profile.email}_${Date.now()}.pdf`;
+      const uploadFileName = `contract/Signed_Contract/contract_${emailToUse}_${Date.now()}.pdf`;
       const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(uploadFileName)}`, {
         method: "POST",
         body: pdfBlob,
@@ -158,7 +160,7 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete }: 
       // 3. Finalize and update profile in D1
       const updatedProfile = await finalizeContractSignature(
         idToken,
-        profile.email,
+        emailToUse,
         sessionData.name,
         sessionData.phone,
         sessionData.signature_data,
@@ -179,7 +181,7 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete }: 
   const handleSignClick = async () => {
     setLoading(true);
     try {
-      const res = await startSigningSession(profile.email);
+      const res = await startSigningSession(emailToUse);
       setSessionId(res.session_id);
       setTimeLeft(180); // 3 mins countdown
       setShowQrModal(true);
@@ -236,7 +238,7 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete }: 
   const getQrCodeUrl = () => {
     if (typeof window === "undefined" || !sessionId) return "";
     const origin = window.location.origin;
-    const signUrl = `${origin}/contract/sign?sessionId=${encodeURIComponent(sessionId)}&email=${encodeURIComponent(profile.email)}`;
+    const signUrl = `${origin}/contract/sign?sessionId=${encodeURIComponent(sessionId)}&email=${encodeURIComponent(emailToUse)}`;
     return `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(signUrl)}`;
   };
 

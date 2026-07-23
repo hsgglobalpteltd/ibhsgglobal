@@ -423,6 +423,7 @@ export default function Home() {
           idToken={idToken} 
           onLogout={handleLogout}
           onComplete={(updatedProfile) => setProfile(updatedProfile)}
+          userEmail={firebaseUser?.email || undefined}
         />
       );
     }
