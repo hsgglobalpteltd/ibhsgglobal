@@ -202,6 +202,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [printCampaignId, setPrintCampaignId] = React.useState<string>("");
   const [printPromoterId, setPrintPromoterId] = React.useState<string>("");
   const [printSelectedPromoterIds, setPrintSelectedPromoterIds] = React.useState<string[]>([]);
+  const [printSelectedCampaignIds, setPrintSelectedCampaignIds] = React.useState<string[]>([]);
   const [printStartDate, setPrintStartDate] = React.useState<string>(() => {
     const today = new Date();
     const start = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -2979,6 +2980,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           const daySchedules = schedules.filter(s => {
             const matchesDate = new Date(s.Date).toDateString() === cellDateStr;
             if (!matchesDate) return false;
+            if (selectedPrintLayout === "master-calendar") {
+              return printSelectedCampaignIds.includes(String(s["Campaign ID"]));
+            }
             if (selectedPrintLayout === "master-calendar-promoter") {
               return printSelectedPromoterIds.includes(String(s["Promoter ID"]));
             }
@@ -5655,6 +5659,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       setSelectedPrintLayout("master-calendar");
                       setPrintMonth(new Date().getMonth());
                       setPrintYear(new Date().getFullYear());
+                      setPrintSelectedCampaignIds(campaigns.map(c => String(c.ID)));
                     }
                   }}
                 >
@@ -5686,26 +5691,73 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       </div>
 
                       <div className="flex gap-4">
-                        <div className="flex flex-col gap-1 flex-1">
-                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Month</label>
-                          <select
-                            value={printMonth}
-                            onChange={(e) => setPrintMonth(Number(e.target.value))}
-                            className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none cursor-pointer focus:border-[#0B57D0]"
-                          >
-                            {["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map((m, idx) => (
-                              <option key={m} value={idx}>{m}</option>
-                            ))}
-                          </select>
+                        <div className="flex flex-col gap-3 flex-1">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Month</label>
+                            <select
+                              value={printMonth}
+                              onChange={(e) => setPrintMonth(Number(e.target.value))}
+                              className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none cursor-pointer focus:border-[#0B57D0]"
+                            >
+                              {["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"].map((m, idx) => (
+                                <option key={m} value={idx}>{m}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Year</label>
+                            <input
+                              type="number"
+                              value={printYear}
+                              onChange={(e) => setPrintYear(Number(e.target.value))}
+                              className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] shadow-xs"
+                            />
+                          </div>
                         </div>
+
                         <div className="flex flex-col gap-1 flex-1">
-                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Year</label>
-                          <input
-                            type="number"
-                            value={printYear}
-                            onChange={(e) => setPrintYear(Number(e.target.value))}
-                            className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] shadow-xs"
-                          />
+                          <div className="flex justify-between items-center pr-1">
+                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5 mb-1">Select Campaigns</label>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const allIds = campaigns.map(c => String(c.ID));
+                                if (printSelectedCampaignIds.length === campaigns.length) {
+                                  setPrintSelectedCampaignIds([]);
+                                } else {
+                                  setPrintSelectedCampaignIds(allIds);
+                                }
+                              }}
+                              className="text-[9px] font-bold text-[#0B57D0] hover:text-[#0842A0] hover:underline cursor-pointer"
+                            >
+                              {printSelectedCampaignIds.length === campaigns.length ? "Deselect All" : "Select All"}
+                            </button>
+                          </div>
+                          <div className="w-full h-[120px] overflow-y-auto border border-zinc-200 rounded p-2.5 custom-scrollbar flex flex-col gap-1.5 bg-white shadow-inner">
+                            {campaigns.map(c => {
+                              const isChecked = printSelectedCampaignIds.includes(String(c.ID));
+                              return (
+                                <label key={c.ID} className="flex items-center gap-2 cursor-pointer py-0.5 hover:bg-zinc-50 select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => {
+                                      if (isChecked) {
+                                        setPrintSelectedCampaignIds(prev => prev.filter(id => id !== String(c.ID)));
+                                      } else {
+                                        setPrintSelectedCampaignIds(prev => [...prev, String(c.ID)]);
+                                      }
+                                    }}
+                                    className="rounded border-zinc-300 text-[#0B57D0] focus:ring-[#0B57D0] h-3.5 w-3.5 cursor-pointer"
+                                  />
+                                  <span className="text-[10px] font-semibold text-zinc-800 leading-tight truncate max-w-[170px]" title={c["Campaign Title"] || c.Title || c.name || c.ID}>
+                                    {c["Campaign Title"] || c.Title || c.name || c.ID}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
 
@@ -5722,11 +5774,17 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         </button>
                         <button
                           type="button"
+                          disabled={printSelectedCampaignIds.length === 0}
                           onClick={(e) => {
                             e.stopPropagation();
                             handlePrintReport("A3 landscape");
                           }}
-                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                          className={cn(
+                            "px-3 py-1.5 text-white font-bold rounded shadow transition-all flex items-center gap-1.5",
+                            printSelectedCampaignIds.length === 0
+                              ? "bg-[#0B57D0]/50 cursor-not-allowed opacity-50"
+                              : "bg-[#0B57D0] hover:bg-[#0842A0] cursor-pointer"
+                          )}
                         >
                           <Printer size={12} className="stroke-[2.5]" />
                           Print Report
