@@ -889,7 +889,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const completedOrders = React.useMemo(() => {
     return dbOrders.filter(
       (o) => (String(o.Completed) === "true" || o.Completed === true) && o.Type !== "Return"
-    );
+    ).sort((a, b) => {
+      const timeA = Number(a.Timestamp) || 0;
+      const timeB = Number(b.Timestamp) || 0;
+      return timeB - timeA;
+    });
   }, [dbOrders]);
 
   const tasksDoneToday = React.useMemo(() => {
@@ -951,9 +955,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   const sortedReturnOrders = React.useMemo(() => {
     return [...returnOrders].sort((a, b) => {
-      const markA = String(a.Mark || "").toUpperCase();
-      const markB = String(b.Mark || "").toUpperCase();
-      return markA.localeCompare(markB);
+      const timeA = Number(a.Timestamp) || 0;
+      const timeB = Number(b.Timestamp) || 0;
+      return timeB - timeA;
     });
   }, [returnOrders]);
 
@@ -1396,9 +1400,29 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     return <span className="text-zinc-500">Normal</span>;
   };
 
-  // Find the next unused capital letter mark character A-Z skipping pending orders & existing drafts
+  const getExcelColumnLabel = (index: number): string => {
+    let label = "";
+    let temp = index;
+    while (temp > 0) {
+      const mod = (temp - 1) % 26;
+      label = String.fromCharCode(65 + mod) + label;
+      temp = Math.floor((temp - 1) / 26);
+    }
+    return label;
+  };
+
+  const formatDateStr = (ts: any): string => {
+    if (!ts) return "—";
+    const d = new Date(Number(ts));
+    if (isNaN(d.getTime())) return "—";
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    const year = d.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  // Find the next unused capital letter mark character A-Z, AA-AZ, BA-BZ skipping pending orders & existing drafts
   const getNextAvailableMark = (currentDrafts: TrackOrderDraft[], currentPending: any[], tempAssigned: string[] = []): string => {
-    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
     const usedMarks = new Set<string>();
     
     currentPending.forEach((o) => {
@@ -1417,14 +1441,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       usedMarks.add(m.trim().toUpperCase());
     });
 
-    for (let i = 0; i < alphabet.length; i++) {
-      const char = alphabet[i];
-      if (char === "R") continue;
-      if (!usedMarks.has(char)) {
-        return char;
+    let index = 1;
+    while (true) {
+      const label = getExcelColumnLabel(index);
+      // Delivery order mark cannot start with 'R' (reserved for Returns)
+      if (label.startsWith("R")) {
+        index++;
+        continue;
       }
+      if (!usedMarks.has(label)) {
+        return label;
+      }
+      index++;
     }
-    return "";
   };
 
   const getNextAvailableReturnMark = (currentDrafts: TrackOrderDraft[], currentDbOrders: DbOrder[]): string => {
@@ -1450,15 +1479,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
     });
 
-    const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    for (let i = 0; i < alphabet.length; i++) {
-      const char = alphabet[i];
-      const candidate = `R${char}`;
+    let index = 1;
+    while (true) {
+      const baseLabel = getExcelColumnLabel(index);
+      const candidate = `R${baseLabel}`;
       if (!usedMarks.has(candidate)) {
-        return char;
+        return baseLabel;
       }
+      index++;
     }
-    return "";
   };
 
   // Get Singapore Zone based on 6-digit postcode (first 2 digits)
@@ -2767,9 +2796,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Sort Pending Orders alphabetically by Mark A-Z
   const sortedPendingOrders = React.useMemo(() => {
     return [...pendingOrders].sort((a, b) => {
-      const markA = String(a.Mark || "").toUpperCase();
-      const markB = String(b.Mark || "").toUpperCase();
-      return markA.localeCompare(markB);
+      const timeA = Number(a.Timestamp) || 0;
+      const timeB = Number(b.Timestamp) || 0;
+      return timeB - timeA;
     });
   }, [pendingOrders]);
 
@@ -2918,7 +2947,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
 
           {activeDeliveryTab === "pending" ? (
-            <div className="h-[calc(100vh-280px)] min-h-[400px] w-full relative">
+            <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
               {sortedPendingOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                   <Boxes size={40} className="text-zinc-400 mb-3" />
@@ -2944,128 +2973,144 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200">
-                      {sortedPendingOrders.map((order, idx) => {
-                        let itemsCount = 0;
-                        let parsedItems: SKUItem[] = [];
-                        try {
-                          parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
-                          itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
-                        } catch (_) {}
+                      {(() => {
+                        let lastDate = "";
+                        return sortedPendingOrders.map((order, idx) => {
+                          const dateStr = formatDateStr(order.Timestamp);
+                          const showDivider = dateStr !== lastDate;
+                          if (showDivider) {
+                            lastDate = dateStr;
+                          }
+                          let itemsCount = 0;
+                          let parsedItems: SKUItem[] = [];
+                          try {
+                            parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+                            itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
+                          } catch (_) {}
 
-                        let statusBadge = "bg-zinc-100 text-zinc-700 border-zinc-300";
-                        if (order.Status === "Ready to Pick") {
-                          statusBadge = "bg-blue-50 text-blue-700 border-blue-200";
-                        } else if (order.Status === "Picking") {
-                          statusBadge = "bg-amber-50 text-amber-700 border-amber-200";
-                        } else if (order.Status === "Ready to Deliver") {
-                          statusBadge = "bg-indigo-50 text-indigo-700 border-indigo-200";
-                        } else if (order.Status === "Load") {
-                          statusBadge = "bg-purple-50 text-purple-700 border-purple-200";
-                        } else if (order.Status === "Out for Delivery") {
-                          statusBadge = "bg-pink-50 text-pink-700 border-pink-200";
-                        } else if (order.Status === "Delivered") {
-                          statusBadge = "bg-emerald-50 text-emerald-700 border-emerald-200";
-                        }
+                          let statusBadge = "bg-zinc-100 text-zinc-700 border-zinc-300";
+                          if (order.Status === "Ready to Pick") {
+                            statusBadge = "bg-blue-50 text-blue-700 border-blue-200";
+                          } else if (order.Status === "Picking") {
+                            statusBadge = "bg-amber-50 text-amber-700 border-amber-200";
+                          } else if (order.Status === "Ready to Deliver") {
+                            statusBadge = "bg-indigo-50 text-indigo-700 border-indigo-200";
+                          } else if (order.Status === "Load") {
+                            statusBadge = "bg-purple-50 text-purple-700 border-purple-200";
+                          } else if (order.Status === "Out for Delivery") {
+                            statusBadge = "bg-pink-50 text-pink-700 border-pink-200";
+                          } else if (order.Status === "Delivered") {
+                            statusBadge = "bg-emerald-50 text-emerald-700 border-emerald-200";
+                          }
 
-                        return (
-                          <tr 
-                            key={`${order.ID}-${idx}`} 
-                            className={`transition-all h-14 ${
-                              idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
-                            } hover:bg-slate-50`}
-                          >
-                            <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                              <div className="flex items-center gap-1.5">
-                                <CustomButton
-                                  variant="secondary"
-                                  onClick={() => handleRevokeOrder(order)}
-                                  title={order.Status === "Delivered" ? "Cannot revoke a delivered order" : "Revoke and send back to drafts"}
-                                  className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
-                                  disabled={order.Status === "Delivered"}
-                                >
-                                  <Undo size={12} className="text-zinc-600" />
-                                </CustomButton>
-                                <CustomButton
-                                  variant="secondary"
-                                  onClick={() => openEditOrderPanel(order)}
-                                  title={order.Status === "Delivered" ? "Cannot edit a delivered order" : "Edit Order"}
-                                  className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
-                                  disabled={order.Status === "Delivered"}
-                                >
-                                  <Pencil size={12} className="text-zinc-600" />
-                                </CustomButton>
-                                <CustomButton
-                                  variant="secondary"
-                                  onClick={() => handleTriggerChangeStatus(order)}
-                                  title="Change Status (Overwrite)"
-                                  className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
-                                >
-                                  <History size={12} className="text-zinc-600" />
-                                </CustomButton>
-                                <CustomButton
-                                  variant="default"
-                                  onClick={() => handleTriggerCompleteOrder(order)}
-                                  disabled={order.Status !== "Delivered"}
-                                  title={order.Status !== "Delivered" ? "Cannot complete until status is Delivered" : "Verify and archive"}
-                                  className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
-                                >
-                                  <CheckCircle size={12} className="text-emerald-600" />
-                                </CustomButton>
-                              </div>
-                            </td>
-                            <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold ${statusBadge}`}>
-                                {order.Status || "Ready to Pick"}
-                              </span>
-                            </td>
-                            <td className="p-3 w-16 text-center font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                              {order.Mark}
-                            </td>
-                            <td className="p-3 w-56 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                              {order.DO_Number}
-                              {order.Ref_Number ? `_${order.Ref_Number}` : ""}
-                            </td>
-                            <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                              {renderTypeCell(order)}
-                            </td>
-                            <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
-                              {order.Deliver_To}
-                            </td>
-                            <td className="p-3 w-28 text-center text-zinc-500 align-middle border-b border-zinc-200">
-                              {renderPoscodeCell(order.Poscode)}
-                            </td>
-                            <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
-                              {order.Deliver_Method || "Company Delivery"}
-                            </td>
-                            <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
-                              <button
-                                type="button"
-                                onClick={() => openItemsPanel("view", order.ID, parsedItems)}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
+                          return (
+                            <React.Fragment key={`${order.ID}-${idx}`}>
+                              {showDivider && (
+                                <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
+                                  <td colSpan={10} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                    📅 {dateStr}
+                                  </td>
+                                </tr>
+                              )}
+                              <tr 
+                                className={`transition-all h-14 ${
+                                  idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
+                                } hover:bg-slate-50`}
                               >
-                                <Boxes size={12} className="text-zinc-500" />
-                                <span>{itemsCount}</span>
-                              </button>
-                            </td>
-                            <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
-                              <button
-                                type="button"
-                                onClick={() => handleOpenLogs(order)}
-                                className="p-1 rounded hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-all cursor-pointer"
-                              >
-                                <History size={16} />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                                <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                                  <div className="flex items-center gap-1.5">
+                                    <CustomButton
+                                      variant="secondary"
+                                      onClick={() => handleRevokeOrder(order)}
+                                      title={order.Status === "Delivered" ? "Cannot revoke a delivered order" : "Revoke and send back to drafts"}
+                                      className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
+                                      disabled={order.Status === "Delivered"}
+                                    >
+                                      <Undo size={12} className="text-zinc-600" />
+                                    </CustomButton>
+                                    <CustomButton
+                                      variant="secondary"
+                                      onClick={() => openEditOrderPanel(order)}
+                                      title={order.Status === "Delivered" ? "Cannot edit a delivered order" : "Edit Order"}
+                                      className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
+                                      disabled={order.Status === "Delivered"}
+                                    >
+                                      <Pencil size={12} className="text-zinc-600" />
+                                    </CustomButton>
+                                    <CustomButton
+                                      variant="secondary"
+                                      onClick={() => handleTriggerChangeStatus(order)}
+                                      title="Change Status (Overwrite)"
+                                      className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
+                                    >
+                                      <History size={12} className="text-zinc-600" />
+                                    </CustomButton>
+                                    <CustomButton
+                                      variant="default"
+                                      onClick={() => handleTriggerCompleteOrder(order)}
+                                      disabled={order.Status !== "Delivered"}
+                                      title={order.Status !== "Delivered" ? "Cannot complete until status is Delivered" : "Verify and archive"}
+                                      className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
+                                    >
+                                      <CheckCircle size={12} className="text-emerald-600" />
+                                    </CustomButton>
+                                  </div>
+                                </td>
+                                <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold ${statusBadge}`}>
+                                    {order.Status || "Ready to Pick"}
+                                  </span>
+                                </td>
+                                <td className="p-3 w-16 text-center font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                                  {order.Mark}
+                                </td>
+                                <td className="p-3 w-56 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                                  {order.DO_Number}
+                                  {order.Ref_Number ? `_${order.Ref_Number}` : ""}
+                                </td>
+                                <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                                  {renderTypeCell(order)}
+                                </td>
+                                <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
+                                  {order.Deliver_To}
+                                </td>
+                                <td className="p-3 w-28 text-center text-zinc-500 align-middle border-b border-zinc-200">
+                                  {renderPoscodeCell(order.Poscode)}
+                                </td>
+                                <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
+                                  {order.Deliver_Method || "Company Delivery"}
+                                </td>
+                                <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => openItemsPanel("view", order.ID, parsedItems)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
+                                  >
+                                    <Boxes size={12} className="text-zinc-500" />
+                                    <span>{itemsCount}</span>
+                                  </button>
+                                </td>
+                                <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenLogs(order)}
+                                    className="p-1 rounded hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-all cursor-pointer"
+                                  >
+                                    <History size={16} />
+                                  </button>
+                                </td>
+                              </tr>
+                            </React.Fragment>
+                          );
+                        });
+                      })()}
                     </tbody>
                   </table>
                 </div>
               )}
             </div>
           ) : (
-            <div className="h-[calc(100vh-280px)] min-h-[400px] w-full relative">
+            <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
               {completedOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                   <CheckCircle size={40} className="text-zinc-400 mb-3" />
@@ -3092,107 +3137,123 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200">
-                      {completedOrders.map((order, idx) => {
-                        let itemsCount = 0;
-                        let parsedItems: SKUItem[] = [];
-                        try {
-                          parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
-                          itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
-                        } catch (_) {}
-
-                        let deliveredTs = order.Delivered_At;
-                        if (!deliveredTs) {
-                          let logsArr: LogEntry[] = [];
+                      {(() => {
+                        let lastDate = "";
+                        return completedOrders.map((order, idx) => {
+                          const dateStr = formatDateStr(order.Timestamp);
+                          const showDivider = dateStr !== lastDate;
+                          if (showDivider) {
+                            lastDate = dateStr;
+                          }
+                          let itemsCount = 0;
+                          let parsedItems: SKUItem[] = [];
                           try {
-                            logsArr = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
-                            const match = logsArr.find((l) => l.action.toLowerCase() === "delivered" || l.action.includes("Delivered"));
-                            if (match) deliveredTs = match.timestamp;
+                            parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+                            itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
                           } catch (_) {}
-                        }
-                        if (!deliveredTs) {
-                          deliveredTs = order.Timestamp; 
-                        }
 
-                        return (
-                          <tr 
-                            key={order.ID} 
-                            className={`transition-all h-14 ${
-                              idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
-                            } hover:bg-slate-50`}
-                          >
-                            <td className="p-3 w-24 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
-                              <button
-                                type="button"
-                                onClick={() => handleTriggerRevokeComplete(order)}
-                                title="Revoke Complete (Send back to Pending)"
-                                className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
-                              >
-                                <Undo size={12} />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEditInvoice(order)}
-                                title="Edit Invoice Details"
-                                className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
-                              >
-                                <Pencil size={12} />
-                              </button>
-                            </td>
-                            <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
-                              {formatTimestamp(deliveredTs)}
-                            </td>
-                            <td className="p-3 w-36 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
-                              {order.Driver || "-"}
-                            </td>
-                            <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                              {order.Invoice_Number ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
-                                  Invoiced
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-700 border-amber-200">
-                                  Pending Invoice
-                                </span>
+                          let deliveredTs = order.Delivered_At;
+                          if (!deliveredTs) {
+                            let logsArr: LogEntry[] = [];
+                            try {
+                              logsArr = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+                              const match = logsArr.find((l) => l.action.toLowerCase() === "delivered" || l.action.includes("Delivered"));
+                              if (match) deliveredTs = match.timestamp;
+                            } catch (_) {}
+                          }
+                          if (!deliveredTs) {
+                            deliveredTs = order.Timestamp; 
+                          }
+
+                          return (
+                            <React.Fragment key={order.ID}>
+                              {showDivider && (
+                                <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
+                                  <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                    📅 {dateStr}
+                                  </td>
+                                </tr>
                               )}
-                            </td>
-                            <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
-                              {order.DO_Number}
-                              {order.Ref_Number ? `_${order.Ref_Number}` : ""}
-                            </td>
-                            <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
-                              {order.Deliver_To}
-                            </td>
-                            <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
-                              {order.Deliver_Method || "Company Delivery"}
-                            </td>
-                            <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                              {order.Invoice_Number || "-"}
-                            </td>
-                            <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                              {order.Invoice_Amount ? `$${Number(order.Invoice_Amount).toFixed(2)}` : "-"}
-                            </td>
-                            <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
-                              <button
-                                type="button"
-                                onClick={() => openItemsPanel("view", order.ID, parsedItems)}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
+                              <tr 
+                                className={`transition-all h-14 ${
+                                  idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
+                                } hover:bg-slate-50`}
                               >
-                                <Boxes size={12} className="text-zinc-500" />
-                                <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
-                              </button>
-                            </td>
-                            <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
-                              <button
-                                type="button"
-                                onClick={() => handleOpenLogs(order)}
-                                className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 cursor-pointer transition-all outline-none mx-auto"
-                              >
-                                <FileText size={12} />
-                              </button>
-                            </td>
-                          </tr>
-                        );
-                      })}
+                                <td className="p-3 w-24 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleTriggerRevokeComplete(order)}
+                                    title="Revoke Complete (Send back to Pending)"
+                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                  >
+                                    <Undo size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenEditInvoice(order)}
+                                    title="Edit Invoice Details"
+                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                  >
+                                    <Pencil size={12} />
+                                  </button>
+                                </td>
+                                <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                                  {formatTimestamp(deliveredTs)}
+                                </td>
+                                <td className="p-3 w-36 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                                  {order.Driver || "-"}
+                                </td>
+                                <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                                  {order.Invoice_Number ? (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
+                                      Invoiced
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-700 border-amber-200">
+                                      Pending Invoice
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
+                                  {order.DO_Number}
+                                  {order.Ref_Number ? `_${order.Ref_Number}` : ""}
+                                </td>
+                                <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
+                                  {order.Deliver_To}
+                                </td>
+                                <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
+                                  {order.Deliver_Method || "Company Delivery"}
+                                </td>
+                                <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                                  {order.Invoice_Number || "-"}
+                                </td>
+                                <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                                  {order.Invoice_Amount ? `$${Number(order.Invoice_Amount).toFixed(2)}` : "-"}
+                                </td>
+                                <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => openItemsPanel("view", order.ID, parsedItems)}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
+                                  >
+                                    <Boxes size={12} className="text-zinc-500" />
+                                    <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
+                                  </button>
+                                </td>
+                                <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenLogs(order)}
+                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 cursor-pointer transition-all outline-none mx-auto"
+                                  >
+                                    <FileText size={12} />
+                                  </button>
+                                </td>
+                              </tr>
+                            </React.Fragment>
+                          );
+                        });
+                      })()}
                     </tbody>
                   </table>
                 </div>
@@ -3235,7 +3296,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             </span>
           </div>
 
-          <div className="h-[calc(100vh-280px)] min-h-[400px] w-full relative">
+          <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
             {sortedReturnOrders.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                 <Boxes size={40} className="text-zinc-400 mb-3" />
@@ -3264,106 +3325,122 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200">
-                    {sortedReturnOrders.map((order, idx) => {
-                      let itemsCount = 0;
-                      let parsedItems: SKUItem[] = [];
-                      try {
-                        parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
-                        itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
-                      } catch (_) {}
-
-                      let deliveredTs = order.Delivered_At;
-                      if (!deliveredTs) {
-                        let logsArr: LogEntry[] = [];
+                    {(() => {
+                      let lastDate = "";
+                      return sortedReturnOrders.map((order, idx) => {
+                        const dateStr = formatDateStr(order.Timestamp);
+                        const showDivider = dateStr !== lastDate;
+                        if (showDivider) {
+                          lastDate = dateStr;
+                        }
+                        let itemsCount = 0;
+                        let parsedItems: SKUItem[] = [];
                         try {
-                          logsArr = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
-                          const match = logsArr.find((l) => l.action.toLowerCase() === "completed" || l.action.includes("Completed") || l.action.toLowerCase() === "complete" || l.action.includes("Complete"));
-                          if (match) deliveredTs = match.timestamp;
+                          parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+                          itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
                         } catch (_) {}
-                      }
-                      if (!deliveredTs) {
-                        deliveredTs = order.Timestamp; 
-                      }
 
-                      return (
-                        <tr 
-                          key={order.ID} 
-                          className={`transition-all h-14 ${
-                            idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
-                          } hover:bg-slate-50`}
-                        >
-                          <td className="p-3 w-24 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
-                            <button
-                              type="button"
-                              onClick={() => handleTriggerRevokeComplete(order)}
-                              title="Revoke Complete (Send back to Pending)"
-                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
-                            >
-                              <Undo size={12} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditInvoice(order)}
-                              title="Edit Credit Note Details"
-                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
-                            >
-                              <Pencil size={12} />
-                            </button>
-                          </td>
-                          <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
-                            {formatTimestamp(deliveredTs)}
-                          </td>
-                          <td className="p-3 w-36 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
-                            {order.Driver || "-"}
-                          </td>
-                          <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                            {order.Credit_Note_Number ? (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
-                                Credit Noted
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-700 border-amber-200">
-                                Pending CN
-                              </span>
+                        let deliveredTs = order.Delivered_At;
+                        if (!deliveredTs) {
+                          let logsArr: LogEntry[] = [];
+                          try {
+                            logsArr = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+                            const match = logsArr.find((l) => l.action.toLowerCase() === "completed" || l.action.includes("Completed") || l.action.toLowerCase() === "complete" || l.action.includes("Complete"));
+                            if (match) deliveredTs = match.timestamp;
+                          } catch (_) {}
+                        }
+                        if (!deliveredTs) {
+                          deliveredTs = order.Timestamp; 
+                        }
+
+                        return (
+                          <React.Fragment key={order.ID}>
+                            {showDivider && (
+                              <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
+                                <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                  📅 {dateStr}
+                                </td>
+                              </tr>
                             )}
-                          </td>
-                          <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
-                            {order.Ref_Number || order.DO_Number}
-                          </td>
-                          <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
-                            {order.Deliver_To}
-                          </td>
-                          <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
-                            {order.Deliver_Method || "Company Vehicle"}
-                          </td>
-                          <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                            {order.Credit_Note_Number || "-"}
-                          </td>
-                          <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                            {order.Invoice_Amount ? `$${Number(order.Invoice_Amount).toFixed(2)}` : "-"}
-                          </td>
-                          <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
-                            <button
-                              type="button"
-                              onClick={() => openItemsPanel("view", order.ID, parsedItems)}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
+                            <tr 
+                              className={`transition-all h-14 ${
+                                idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
+                              } hover:bg-slate-50`}
                             >
-                              <Boxes size={12} className="text-zinc-500" />
-                              <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
-                            </button>
-                          </td>
-                          <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenLogs(order)}
-                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 cursor-pointer transition-all outline-none mx-auto"
-                            >
-                              <FileText size={12} />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                              <td className="p-3 w-24 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                                <button
+                                  type="button"
+                                  onClick={() => handleTriggerRevokeComplete(order)}
+                                  title="Revoke Complete (Send back to Pending)"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                >
+                                  <Undo size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditInvoice(order)}
+                                  title="Edit Credit Note Details"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                >
+                                  <Pencil size={12} />
+                                </button>
+                              </td>
+                              <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                                {formatTimestamp(deliveredTs)}
+                              </td>
+                              <td className="p-3 w-36 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                                {order.Driver || "-"}
+                              </td>
+                              <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                                {order.Credit_Note_Number ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
+                                    Credit Noted
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-700 border-amber-200">
+                                    Pending CN
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
+                                {order.Ref_Number || order.DO_Number}
+                              </td>
+                              <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
+                                {order.Deliver_To}
+                              </td>
+                              <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
+                                {order.Deliver_Method || "Company Vehicle"}
+                              </td>
+                              <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                                {order.Credit_Note_Number || "-"}
+                              </td>
+                              <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                                {order.Invoice_Amount ? `$${Number(order.Invoice_Amount).toFixed(2)}` : "-"}
+                              </td>
+                              <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
+                                <button
+                                  type="button"
+                                  onClick={() => openItemsPanel("view", order.ID, parsedItems)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
+                                >
+                                  <Boxes size={12} className="text-zinc-500" />
+                                  <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
+                                </button>
+                              </td>
+                              <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenLogs(order)}
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 cursor-pointer transition-all outline-none mx-auto"
+                                >
+                                  <FileText size={12} />
+                                </button>
+                              </td>
+                            </tr>
+                          </React.Fragment>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -3384,120 +3461,127 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200">
-                    {sortedReturnOrders.map((order, idx) => {
-                      let itemsCount = 0;
-                      let parsedItems: SKUItem[] = [];
-                      try {
-                        parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
-                        itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
-                      } catch (_) {}
+                    {(() => {
+                      let lastDate = "";
+                      return sortedReturnOrders.map((order, idx) => {
+                        const dateStr = formatDateStr(order.Timestamp);
+                        const showDivider = dateStr !== lastDate;
+                        if (showDivider) {
+                          lastDate = dateStr;
+                        }
+                        let itemsCount = 0;
+                        let parsedItems: SKUItem[] = [];
+                        try {
+                          parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+                          itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
+                        } catch (_) {}
 
-                      let statusBadge = "bg-zinc-100 text-zinc-700 border-zinc-300";
-                      if (order.Status === "Pending") {
-                        statusBadge = "bg-amber-50 text-amber-700 border-amber-200";
-                      } else if (order.Status === "Collected" || order.Status === "Return Collected") {
-                        statusBadge = "bg-blue-50 text-blue-700 border-blue-200";
-                      } else if (order.Status === "Complete") {
-                        statusBadge = "bg-emerald-50 text-emerald-700 border-emerald-200";
-                      }
+                        let statusBadge = "bg-zinc-100 text-zinc-700 border-zinc-300";
+                        if (order.Status === "Pending") {
+                          statusBadge = "bg-amber-50 text-amber-700 border-amber-200";
+                        } else if (order.Status === "Collected" || order.Status === "Return Collected") {
+                          statusBadge = "bg-blue-50 text-blue-700 border-blue-200";
+                        } else if (order.Status === "Complete") {
+                          statusBadge = "bg-emerald-50 text-emerald-700 border-emerald-200";
+                        }
 
-                      const formatDateStr = (ts: any) => {
-                        if (!ts) return "—";
-                        const d = new Date(Number(ts));
-                        const day = String(d.getDate()).padStart(2, "0");
-                        const month = String(d.getMonth() + 1).padStart(2, "0");
-                        const year = d.getFullYear();
-                        return `${day}/${month}/${year}`;
-                      };
-
-                      return (
-                        <tr 
-                          key={order.ID} 
-                          className={`transition-all h-14 ${
-                            idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
-                          } hover:bg-slate-50`}
-                        >
-                          <td className="p-3 w-36 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteReturnOrder(order)}
-                              title="Delete Return"
-                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 cursor-pointer transition-all outline-none"
+                        return (
+                          <React.Fragment key={order.ID}>
+                            {showDivider && (
+                              <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
+                                <td colSpan={9} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                  📅 {dateStr}
+                                </td>
+                              </tr>
+                            )}
+                            <tr 
+                              className={`transition-all h-14 ${
+                                idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
+                              } hover:bg-slate-50`}
                             >
-                              <Trash2 size={12} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => openEditReturnPanel(order)}
-                              title="Edit Return"
-                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
-                            >
-                              <Pencil size={12} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleTriggerChangeStatus(order)}
-                              title="Change Status (Overwrite)"
-                              className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
-                            >
-                              <History size={12} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleTriggerCompleteReturnOrder(order)}
-                              disabled={order.Status !== "Collected" && order.Status !== "Return Collected"}
-                              title={order.Status !== "Collected" && order.Status !== "Return Collected" ? "Cannot complete until status is Collected" : "Mark as Complete"}
-                              className={`w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border transition-all outline-none ${
-                                order.Status !== "Collected" && order.Status !== "Return Collected" 
-                                  ? "border-zinc-200 bg-zinc-50 text-zinc-400 cursor-not-allowed opacity-50"
-                                  : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 cursor-pointer"
-                              }`}
-                            >
-                              <CheckCircle size={12} />
-                            </button>
-                          </td>
-                          <td className="p-3 w-16 text-center font-bold text-zinc-800 align-middle border-b border-zinc-200">
-                            {order.Mark}
-                          </td>
-                          <td className="p-3 w-32 align-middle border-b border-zinc-200">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold ${statusBadge}`}>
-                              {order.Status || "Pending"}
-                            </span>
-                          </td>
-                          <td className="p-3 w-44 font-semibold text-zinc-850 align-middle border-b border-zinc-200">
-                            {order.Ref_Number || order.DO_Number}
-                          </td>
-                          <td className="p-3 w-56 text-zinc-700 font-semibold align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
-                            {order.Deliver_To}
-                          </td>
-                          <td className="p-3 w-36 text-zinc-700 font-semibold align-middle border-b border-zinc-200" title={order.Deliver_Method}>
-                            {order.Deliver_Method || "—"}
-                          </td>
-                          <td className="p-3 w-32 text-zinc-700 font-semibold align-middle border-b border-zinc-200">
-                            {formatDateStr(order.Deadline)}
-                          </td>
-                          <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
-                            <button
-                              type="button"
-                              onClick={() => openItemsPanel("view", order.ID, parsedItems)}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
-                            >
-                              <Boxes size={12} className="text-zinc-500" />
-                              <span>{itemsCount}</span>
-                            </button>
-                          </td>
-                          <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenLogs(order)}
-                              className="p-1 rounded hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-all cursor-pointer"
-                            >
-                              <History size={16} />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                              <td className="p-3 w-36 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteReturnOrder(order)}
+                                  title="Delete Return"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 cursor-pointer transition-all outline-none"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditReturnPanel(order)}
+                                  title="Edit Return"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                >
+                                  <Pencil size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleTriggerChangeStatus(order)}
+                                  title="Change Status (Overwrite)"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                >
+                                  <History size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleTriggerCompleteReturnOrder(order)}
+                                  disabled={order.Status !== "Collected" && order.Status !== "Return Collected"}
+                                  title={order.Status !== "Collected" && order.Status !== "Return Collected" ? "Cannot complete until status is Collected" : "Mark as Complete"}
+                                  className={`w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border transition-all outline-none ${
+                                    order.Status !== "Collected" && order.Status !== "Return Collected" 
+                                      ? "border-zinc-200 bg-zinc-50 text-zinc-400 cursor-not-allowed opacity-50"
+                                      : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 cursor-pointer"
+                                  }`}
+                                >
+                                  <CheckCircle size={12} />
+                                </button>
+                              </td>
+                              <td className="p-3 w-16 text-center font-bold text-zinc-800 align-middle border-b border-zinc-200">
+                                {order.Mark}
+                              </td>
+                              <td className="p-3 w-32 align-middle border-b border-zinc-200">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold ${statusBadge}`}>
+                                  {order.Status || "Pending"}
+                                </span>
+                              </td>
+                              <td className="p-3 w-44 font-semibold text-zinc-850 align-middle border-b border-zinc-200">
+                                {order.Ref_Number || order.DO_Number}
+                              </td>
+                              <td className="p-3 w-56 text-zinc-700 font-semibold align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
+                                {order.Deliver_To}
+                              </td>
+                              <td className="p-3 w-36 text-zinc-700 font-semibold align-middle border-b border-zinc-200" title={order.Deliver_Method}>
+                                {order.Deliver_Method || "—"}
+                              </td>
+                              <td className="p-3 w-32 text-zinc-700 font-semibold align-middle border-b border-zinc-200">
+                                {formatDateStr(order.Deadline)}
+                              </td>
+                              <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
+                                <button
+                                  type="button"
+                                  onClick={() => openItemsPanel("view", order.ID, parsedItems)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
+                                >
+                                  <Boxes size={12} className="text-zinc-500" />
+                                  <span>{itemsCount}</span>
+                                </button>
+                              </td>
+                              <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenLogs(order)}
+                                  className="p-1 rounded hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-all cursor-pointer"
+                                >
+                                  <History size={16} />
+                                </button>
+                              </td>
+                            </tr>
+                          </React.Fragment>
+                        );
+                      });
+                    })()}
                   </tbody>
                 </table>
               </div>
