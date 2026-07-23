@@ -411,7 +411,7 @@ export default function Home() {
 
     // 3. Welcome Aboard Onboarding Lock Screen (First Sign In or New Contract Version)
     const needsToSignContract = 
-      profile.email !== "hsgglobalpteltd@gmail.com" && (
+      (profile.email || "").trim().toLowerCase() !== "hsgglobalpteltd@gmail.com" && (
         !profile.contract_signed_at || 
         (latestContractUpdatedAt > 0 && profile.contract_signed_at < latestContractUpdatedAt)
       );
