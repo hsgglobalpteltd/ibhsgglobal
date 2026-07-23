@@ -503,7 +503,6 @@ export default function Home() {
             onSelectMenu={handleMenuSelect} 
             user={firebaseUser}
             profile={profile}
-            idToken={idToken}
             onLogout={handleLogout}
           />
           <div className="workspace-wrapper flex flex-col flex-1 h-screen overflow-hidden min-w-0">
