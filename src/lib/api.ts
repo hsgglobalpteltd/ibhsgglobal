@@ -92,6 +92,11 @@ export async function syncUserProfile(
     body: JSON.stringify({ email, name, session_id: sessionId, force }),
   });
   const data = await handleResponse(res, "Profile sync");
+  if (data && data.error) {
+    const err = new Error(data.message || data.error);
+    (err as any).code = data.error;
+    throw err;
+  }
   return {
     ...data,
     pages_access: safeParseAccess(data.pages_access),
