@@ -164,6 +164,19 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     };
   }, []);
 
+  // 3. Listen for global refresh trigger
+  React.useEffect(() => {
+    const handleDbRefresh = () => {
+      console.log("Global refresh event received. Refreshing TikTok Fulfillment orders...");
+      fetchOrders(true);
+    };
+
+    window.addEventListener("db-refresh", handleDbRefresh);
+    return () => {
+      window.removeEventListener("db-refresh", handleDbRefresh);
+    };
+  }, []);
+
   // Parse items JSON safely
   const parseItems = (itemsStr: string): { sku: string; qty: number }[] => {
     try {
@@ -589,14 +602,6 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
           </div>
           
           <div className="flex items-center gap-3">
-            <button 
-              id="global-refresh-button"
-              onClick={() => fetchOrders(true)}
-              className="flex items-center justify-center p-2 rounded-lg border border-zinc-200 hover:bg-zinc-50 text-zinc-600 transition"
-              title="Refresh Central Database"
-            >
-              <RefreshCw className={`w-4 h-4 ${fetching ? "animate-spin" : ""}`} />
-            </button>
             <CustomButton 
               variant="dark"
               onClick={() => fileInputRef.current?.click()}
