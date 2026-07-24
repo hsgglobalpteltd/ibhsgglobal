@@ -889,7 +889,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     </tr>
                     
                     {/* Orders lists */}
-                    {group.orders.map((order) => {
+                    {group.orders.map((order, orderIdx) => {
                       const isPacked = order.status === "Packed";
                       const isHandover = order.status === "Picked Up";
                       const hasActiveIssueOnRow = hasActiveIssue(order);
@@ -897,7 +897,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
 
                       return (
                         <tr 
-                          key={order.id} 
+                          key={order.id || `order-${orderIdx}`} 
                           className={`hover:bg-zinc-50/50 transition-colors ${hasActiveIssueOnRow ? "bg-red-50/30 hover:bg-red-50/40" : ""}`}
                         >
                           <td className="py-3 px-3">
@@ -1049,8 +1049,8 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                       </td>
                     </tr>
                   ) : (
-                    users.map((u) => (
-                      <tr key={u.id} className="hover:bg-zinc-50/50 transition-colors">
+                    users.map((u, idx) => (
+                      <tr key={u.id || `operator-${idx}`} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="py-3 px-3 font-semibold text-zinc-900">{u.name}</td>
                         <td className="py-3 px-3 font-mono font-bold text-zinc-600 select-all">{u.pin}</td>
                         <td className="py-3 px-3 text-zinc-500">{formatDate(u.created_at)}</td>
