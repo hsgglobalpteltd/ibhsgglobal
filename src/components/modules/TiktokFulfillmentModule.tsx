@@ -60,6 +60,8 @@ interface TiktokOrder {
   due_date?: number;
   Due_date?: number;
   "Due Date"?: number;
+  courier?: string;
+  Courier?: string;
 }
 
 interface Issue {
@@ -108,6 +110,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
   const [showManifestModal, setShowManifestModal] = React.useState(false);
   const [courierName, setCourierName] = React.useState("");
   const [courierPlate, setCourierPlate] = React.useState("");
+  const [selectedCourierFilter, setSelectedCourierFilter] = React.useState<"all" | "SingPost" | "J&T" | "Other">("all");
   const [isGeneratingManifest, setIsGeneratingManifest] = React.useState(false);
 
   // PDF Upload States
@@ -207,7 +210,8 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
         address: o.address || o.Address || "",
         postcode: o.postcode || o.Postcode || "",
         due_date: Number(o.due_date || o.Due_date || o["Due Date"] || 0),
-        order_id: o.order_id || o.Order_ID || ""
+        order_id: o.order_id || o.Order_ID || "",
+        courier: o.courier || o.Courier || ""
       }));
       setOrders(normalized);
       lastFetchTime.current = Date.now();
@@ -498,6 +502,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
           upload_date: Date.now(),
           status: "Pending Pack",
           issues: "[]",
+          courier: String(o.courier || o.Courier || "").trim(),
           logs: JSON.stringify([{
             action: "Batch Uploaded",
             actionBy: profile?.name || "Operator",
@@ -676,20 +681,18 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
 
   // Compile selected orders and generate printable Courier Handover Manifest
   const triggerCourierHandover = async () => {
-    if (selectedOrderIds.size === 0) {
-      showToast("Please select at least one order to generate a handover manifest.", "error");
-      return;
-    }
-    
-    // Find all selected orders
-    const selectedOrders = getSelectedOrders(orders, selectedOrderIds);
-    if (selectedOrders.length === 0) {
-      showToast("No valid orders selected. Make sure the orders match existing records.", "error");
+    // If no checkboxes checked, check if there are any packed orders
+    const targetOrders = selectedOrderIds.size > 0 
+      ? getSelectedOrders(orders, selectedOrderIds)
+      : orders.filter(o => (o.status || o.Status) === "Packed");
+
+    if (targetOrders.length === 0) {
+      showToast("No packed orders ready to dispatch.", "error");
       return;
     }
     
     // Safety check: All orders must be "Packed"
-    const anyUnpacked = selectedOrders.some(o => o.status !== "Packed");
+    const anyUnpacked = targetOrders.some(o => (o.status || o.Status) !== "Packed");
     if (anyUnpacked) {
       showToast("Only orders in 'Packed' status can be handed over to a courier.", "error");
       return;
@@ -697,6 +700,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
 
     setCourierName("");
     setCourierPlate("");
+    setSelectedCourierFilter("all");
     setShowManifestModal(true);
   };
 
@@ -817,7 +821,26 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     return { pendingPack, packed, issue, pickedUp, total: orders.length };
   }, [orders]);
 
-  const printableOrders = getSelectedOrders(orders, selectedOrderIds);
+  // Compute the orders that go into the manifest in a memoized way
+  const printableOrders = React.useMemo(() => {
+    if (selectedOrderIds.size > 0) {
+      // If manual checkbox selection is active, use it
+      return getSelectedOrders(orders, selectedOrderIds);
+    } else {
+      // Otherwise, select all packed orders filtered by selectedCourierFilter
+      const packedOrders = orders.filter(o => (o.status || o.Status) === "Packed");
+      return packedOrders.filter(o => {
+        if (selectedCourierFilter === "all") return true;
+        if (selectedCourierFilter === "SingPost") {
+          return String(o.courier).toLowerCase().includes("singpost");
+        }
+        if (selectedCourierFilter === "J&T") {
+          return String(o.courier).toLowerCase().includes("j&t");
+        }
+        return !String(o.courier).toLowerCase().includes("singpost") && !String(o.courier).toLowerCase().includes("j&t");
+      });
+    }
+  }, [orders, selectedOrderIds, selectedCourierFilter]);
 
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative min-w-0 print:bg-white print:p-0">
@@ -865,14 +888,14 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
               </span>
             )}
             
-            {selectedOrderIds.size > 0 && (
+            {(selectedOrderIds.size > 0 || orders.some(o => (o.status || o.Status) === "Packed")) && (
               <CustomButton
                 variant="dark"
                 onClick={triggerCourierHandover}
                 className="h-9 text-xs gap-1.5 px-3 bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[200px]"
               >
                 <Printer className="w-4 h-4" />
-                Handover ({selectedOrderIds.size})
+                Handover {selectedOrderIds.size > 0 ? `(${selectedOrderIds.size})` : `(${orders.filter(o => (o.status || o.Status) === "Packed").length} Ready)`}
               </CustomButton>
             )}
 
@@ -1035,7 +1058,18 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                             />
                           </td>
                           <td className="py-3 px-3">
-                            <div className="font-bold text-zinc-900 font-mono select-all text-xs">{order.id}</div>
+                            <div className="flex flex-col gap-1">
+                              <div className="font-bold text-zinc-900 font-mono select-all text-xs">{order.id}</div>
+                              {order.courier ? (
+                                <span className={`inline-flex items-center w-max px-1.5 py-0.5 rounded text-[9px] font-bold border uppercase tracking-wider ${
+                                  order.courier.toLowerCase().includes("singpost") 
+                                    ? "bg-blue-50 text-blue-600 border-blue-200" 
+                                    : "bg-orange-50 text-orange-600 border-orange-200"
+                                }`}>
+                                  {order.courier}
+                                </span>
+                              ) : null}
+                            </div>
                           </td>
                           <td className="py-3 px-3 max-w-[150px] font-mono font-bold text-zinc-900 text-xs select-all">
                             {order.order_id || "-"}
@@ -1407,27 +1441,53 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
             </div>
 
             {/* Courier Info Forms (Hidden in Print) */}
-            <div className="grid grid-cols-2 gap-4 border border-zinc-200 bg-zinc-50 rounded-xl p-4 print:hidden">
+            <div className="flex flex-col gap-3 border border-zinc-200 bg-zinc-50 rounded-xl p-4 print:hidden">
               <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-zinc-700">Courier / Driver Name</label>
-                <input 
-                  type="text"
-                  placeholder="e.g. J&T Courier / Driver Name..."
-                  value={courierName}
-                  onChange={(e) => setCourierName(e.target.value)}
-                  className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
-                />
+                <label className="text-xs font-bold text-zinc-700">Choose Courier for Collection</label>
+                <select
+                  value={selectedCourierFilter}
+                  onChange={(e) => {
+                    const val = e.target.value as any;
+                    setSelectedCourierFilter(val);
+                    if (val === "SingPost") {
+                      setCourierName("SingPost");
+                    } else if (val === "J&T") {
+                      setCourierName("J&T Express");
+                    } else {
+                      setCourierName("");
+                    }
+                  }}
+                  className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs font-semibold focus:outline-none focus:border-pink-500 text-zinc-800"
+                >
+                  <option value="all">All Packed Couriers ({orders.filter(o => (o.status || o.Status) === "Packed").length})</option>
+                  <option value="SingPost">SingPost ({orders.filter(o => (o.status || o.Status) === "Packed" && String(o.courier).toLowerCase().includes("singpost")).length})</option>
+                  <option value="J&T">J&T Express ({orders.filter(o => (o.status || o.Status) === "Packed" && String(o.courier).toLowerCase().includes("j&t")).length})</option>
+                  <option value="Other">Other / Unassigned ({orders.filter(o => (o.status || o.Status) === "Packed" && !String(o.courier).toLowerCase().includes("singpost") && !String(o.courier).toLowerCase().includes("j&t")).length})</option>
+                </select>
               </div>
 
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-zinc-700">Vehicle Plate Number</label>
-                <input 
-                  type="text"
-                  placeholder="e.g. GBC1234A..."
-                  value={courierPlate}
-                  onChange={(e) => setCourierPlate(e.target.value)}
-                  className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-zinc-700">Courier / Driver Name</label>
+                  <input 
+                    type="text"
+                    placeholder="e.g. Courier / Driver Name..."
+                    value={courierName}
+                    onChange={(e) => setCourierName(e.target.value)}
+                    className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-bold text-zinc-700">Vehicle Plate Number</label>
+                  <input 
+                    type="text"
+                    placeholder="e.g. GBC1234A..."
+                    value={courierPlate}
+                    onChange={(e) => setCourierPlate(e.target.value)}
+                    className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
+                  />
+                </div>
               </div>
             </div>
 
