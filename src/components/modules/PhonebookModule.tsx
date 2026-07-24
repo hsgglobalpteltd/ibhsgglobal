@@ -6,6 +6,7 @@ import { showToast } from "@/lib/toast";
 import { Search, Plus, Edit, Trash2, X, AlertTriangle } from "lucide-react";
 
 interface Contact {
+  ID?: number | string;
   Phone: string;
   Position: string;
   Name: string;
@@ -13,6 +14,7 @@ interface Contact {
   Gender: string;
   "Group Link": string;
   "ID Link": string;
+  [key: string]: any;
 }
 
 interface Store {
@@ -48,7 +50,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
   const categories = React.useMemo(() => {
     const uniqueKeys = new Set<string>();
     contacts.forEach((c) => {
-      const grp = (c["Group Link"] || "").trim().toLowerCase();
+      const grp = (c["Group Link"] || c["group_link"] || "").trim().toLowerCase();
       if (grp) {
         uniqueKeys.add(grp);
       }
@@ -179,13 +181,18 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
     const q = searchQuery.toLowerCase().trim();
     return contacts.filter((c) => {
       // Look up store name to allow searching by store display name
-      const storeName = c["Group Link"] === "stores" ? String(getStoreDisplayName(c["ID Link"])).toLowerCase() : "";
+      const cGroupLink = c["Group Link"] || c["group_link"] || "";
+      const cIdLink = c["ID Link"] || c["id_link"] || "";
+      const cGender = c.Gender || c.gender || "";
+      const cPosition = c.Position || c.position || "";
+
+      const storeName = cGroupLink.toLowerCase() === "stores" ? String(getStoreDisplayName(cIdLink)).toLowerCase() : "";
       
       const rawName = String(c.Name || "");
       const capitalizedName = capitalizeWords(rawName).toLowerCase();
       const name = rawName.toLowerCase();
       
-      const prefix = getGenderPrefix(c.Gender).toLowerCase(); // "mr." or "ms."
+      const prefix = getGenderPrefix(cGender).toLowerCase(); // "mr." or "ms."
       const prefixNoDot = prefix.replace(".", ""); // "mr" or "ms"
       const nameWithPrefix = `${prefix} ${name}`;
       const nameWithPrefixNoDot = `${prefixNoDot} ${name}`;
@@ -194,9 +201,9 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
 
       const phone = String(c.Phone || "").toLowerCase();
       const email = String(c.Email || "").toLowerCase();
-      const position = String(c.Position || "").toLowerCase();
-      const groupLink = String(c["Group Link"] || "").toLowerCase();
-      const idLink = String(c["ID Link"] || "").toLowerCase();
+      const position = String(cPosition).toLowerCase();
+      const groupLink = String(cGroupLink).toLowerCase();
+      const idLink = String(cIdLink).toLowerCase();
       
       return (
         name.includes(q) ||
@@ -259,9 +266,11 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
     if (isNew) {
       newContactsList = [...contacts, cleanData];
     } else {
-      newContactsList = contacts.map((c) =>
-        String(c.Phone) === String(cleanData[keyColumn]) ? { ...c, ...cleanData } : c
-      );
+      newContactsList = contacts.map((c) => {
+        const matchesID = cleanData.ID !== undefined && c.ID !== undefined && String(c.ID) === String(cleanData.ID);
+        const matchesPhone = String(c.Phone) === String(cleanData[keyColumn]);
+        return (matchesID || matchesPhone) ? { ...c, ...cleanData } : c;
+      });
     }
     setContacts(newContactsList);
     localStorage.setItem("Contacts_Book_data", JSON.stringify(newContactsList));
@@ -302,7 +311,11 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
     setDeletingContact(null);
 
     // 1. Optimistic update
-    const newContactsList = contacts.filter((c) => c.Phone !== contact.Phone);
+    const newContactsList = contacts.filter((c) =>
+      contact.ID !== undefined && c.ID !== undefined
+        ? String(c.ID) !== String(contact.ID)
+        : c.Phone !== contact.Phone
+    );
     setContacts(newContactsList);
     localStorage.setItem("Contacts_Book_data", JSON.stringify(newContactsList));
 
@@ -319,6 +332,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
           sheet: "Contacts_Book",
           action: "delete",
           data: {
+            ID: contact.ID,
             Phone: contact.Phone
           }
         })
@@ -351,14 +365,21 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
     });
   };
 
-  const handleEditClick = (contact: Contact) => {
+  const handleEditClick = (contact: any) => {
+    const contactGender = contact.Gender || contact.gender || "";
     let genderVal = "Mr.";
-    if (contact.Gender && (contact.Gender.toLowerCase() === "female" || contact.Gender.toLowerCase() === "f" || contact.Gender.toLowerCase() === "ms")) {
+    if (contactGender && (contactGender.toLowerCase() === "female" || contactGender.toLowerCase() === "f" || contactGender.toLowerCase() === "ms")) {
       genderVal = "Ms.";
     }
     
     setEditingContact({
       ...contact,
+      Name: contact.Name || contact.name || "",
+      Phone: contact.Phone || contact.phone || "",
+      Email: contact.Email || contact.email || "",
+      Position: contact.Position || contact.position || "",
+      "Group Link": contact["Group Link"] || contact["group_link"] || "",
+      "ID Link": contact["ID Link"] || contact["id_link"] || "",
       Gender: genderVal
     });
   };
@@ -400,7 +421,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
           {categories.map((cat) => {
             // Filter contacts belonging to this category
             const catContacts = filteredContacts.filter(
-              (c) => (c["Group Link"] || "").toLowerCase().trim() === cat.key
+              (c) => (c["Group Link"] || c["group_link"] || "").toLowerCase().trim() === cat.key
             );
 
             return (
@@ -430,12 +451,14 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
                 ) : (
                   <div className="flex flex-col gap-3 py-1">
                     {catContacts.map((contact, idx) => {
-                      const prefix = getGenderPrefix(contact.Gender);
+                      const contactGender = contact.Gender || contact.gender || "";
+                      const contactIdLink = contact["ID Link"] || contact["id_link"] || "";
+                      const prefix = getGenderPrefix(contactGender);
                       // If stores category, translate Store ID to Display Name
                       const isStoreCat = cat.key === "stores";
                       const affiliationLabel = isStoreCat
-                        ? getStoreDisplayName(contact["ID Link"])
-                        : contact["ID Link"];
+                        ? getStoreDisplayName(contactIdLink)
+                        : contactIdLink;
 
                       return (
                         <div
@@ -477,7 +500,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
                             {/* Row 2: Title @ Store ID and Email (Small Text) */}
                             <div className="flex justify-between items-baseline gap-3 text-[10px]">
                               <span className="font-bold text-zinc-500 truncate">
-                                {contact.Position || "Unspecified"}
+                                {contact.Position || contact.position || "Unspecified"}
                                 {affiliationLabel ? ` @ ${affiliationLabel}` : ""}
                               </span>
                               <span className="text-zinc-400 font-medium break-all select-all shrink-0">
