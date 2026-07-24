@@ -182,7 +182,19 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
       const res = await fetch(`${WORKER_URL}/api/admin/cache?sheet=tiktok_orders&t=${Date.now()}`);
       if (!res.ok) throw new Error("Database read failed.");
       const data = await res.json();
-      setOrders(Array.isArray(data) ? data : []);
+      const normalized = (Array.isArray(data) ? data : []).map((o: any) => ({
+        ...o,
+        id: String(o.id || o.ID || "").trim(),
+        status: o.status || o.Status || "Pending Pack",
+        logs: o.logs || o.Logs || "[]",
+        issues: o.issues || o.Issues || "[]",
+        items: o.items || o.Items || "[]",
+        address: o.address || o.Address || "",
+        postcode: o.postcode || o.Postcode || "",
+        due_date: Number(o.due_date || o.Due_date || o["Due Date"] || 0),
+        order_id: o.order_id || o.Order_ID || ""
+      }));
+      setOrders(normalized);
       lastFetchTime.current = Date.now();
       setSyncStatus("idle");
     } catch (err: any) {
