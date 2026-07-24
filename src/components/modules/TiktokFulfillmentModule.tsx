@@ -35,16 +35,20 @@ interface TiktokOrder {
   tracking_number: string;
   buyer_name?: string;
   items?: string; // JSON string of products
+  Items?: string;
   batch_id: string;
   upload_date: number;
   status: "Pending Pack" | "Packed" | "Picked Up" | "Issue";
+  Status?: string;
   packed_by?: string;
   packed_at?: number;
   proof_photo?: string;
   handover_manifest_id?: string;
   handover_at?: number;
   issues?: string; // JSON string of issues array
+  Issues?: string;
   logs?: string;   // JSON string of logs array
+  Logs?: string;
   order_id?: string;
   Order_ID?: string;
   postcode?: string;
@@ -140,6 +144,32 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     const hours = String(date.getHours()).padStart(2, "0");
     const minutes = String(date.getMinutes()).padStart(2, "0");
     return `${day}/${month}/${year} ${hours}:${minutes}`;
+  };
+
+  // Format due date helper: Urgent if today or past due, DD/MM/YYYY otherwise
+  const formatDueDate = (dueDateMs?: number | string) => {
+    if (!dueDateMs) return "-";
+    const numMs = Number(dueDateMs);
+    if (isNaN(numMs) || numMs <= 0) return "-";
+    
+    const due = new Date(numMs);
+    const now = new Date();
+    
+    const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate()).getTime();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    
+    if (dueDay <= today) {
+      return (
+        <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-red-50 text-red-600 text-[9px] font-bold border border-red-200 uppercase tracking-wider animate-pulse">
+          Urgent
+        </span>
+      );
+    }
+    
+    const day = String(due.getDate()).padStart(2, "0");
+    const month = String(due.getMonth() + 1).padStart(2, "0");
+    const year = due.getFullYear();
+    return `${day}/${month}/${year}`;
   };
 
   // Fetch orders from Supabase Postgres
@@ -255,7 +285,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     if (!window.confirm(`Are you sure you want to revoke order ${order.id} and reset it to Pending Pack?`)) return;
 
     try {
-      const orderLogs = parseLogs(order.logs);
+      const orderLogs = parseLogs(order.Logs || order.logs);
       orderLogs.push({
         action: "Order Revoked",
         actionBy: profile?.name || "Operator",
@@ -375,7 +405,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
 
   // Check if an order has a pending issue active
   const hasActiveIssue = (order: TiktokOrder): boolean => {
-    const parsed = parseIssues(order.issues);
+    const parsed = parseIssues(order.Issues || order.issues);
     return parsed.some(i => i.status === "pending");
   };
 
@@ -506,7 +536,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     const orderId = activeIssueOrder.id;
     const operatorName = profile?.name || "Operator";
     
-    const currentIssues = parseIssues(activeIssueOrder.issues);
+    const currentIssues = parseIssues(activeIssueOrder.Issues || activeIssueOrder.issues);
     const newIssue: Issue = {
       id: `iss_${Date.now()}`,
       issue_type: issueType,
@@ -518,7 +548,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     };
     currentIssues.push(newIssue);
 
-    const currentLogs = parseLogs(activeIssueOrder.logs);
+    const currentLogs = parseLogs(activeIssueOrder.Logs || activeIssueOrder.logs);
     currentLogs.push({
       action: "Issue Logged",
       actionBy: operatorName,
@@ -565,7 +595,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     const operatorName = profile?.name || "Operator";
     
     // Resolve issue in issues array
-    const currentIssues = parseIssues(activeIssueOrder.issues).map(iss => {
+    const currentIssues = parseIssues(activeIssueOrder.Issues || activeIssueOrder.issues).map(iss => {
       if (iss.id === issueId) {
         return {
           ...iss,
@@ -582,7 +612,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     const hasRemainingPending = currentIssues.some(iss => iss.status === "pending");
     const newStatus = hasRemainingPending ? "Issue" : (activeIssueOrder.packed_by ? "Packed" : "Pending Pack");
 
-    const currentLogs = parseLogs(activeIssueOrder.logs);
+    const currentLogs = parseLogs(activeIssueOrder.Logs || activeIssueOrder.logs);
     currentLogs.push({
       action: "Issue Resolved",
       actionBy: operatorName,
@@ -710,7 +740,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
       if (!matchSearch) return false;
       if (filterStatus === "all") return true;
       if (filterStatus === "Issue") return hasActiveIssue(o);
-      return o.status === filterStatus;
+      return (o.Status || o.status) === filterStatus;
     });
 
     filtered.forEach(o => {
@@ -738,12 +768,15 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     orders.forEach(o => {
       if (hasActiveIssue(o)) {
         issue++;
-      } else if (o.status === "Pending Pack") {
-        pendingPack++;
-      } else if (o.status === "Packed") {
-        packed++;
-      } else if (o.status === "Picked Up") {
-        pickedUp++;
+      } else {
+        const status = o.Status || o.status;
+        if (status === "Pending Pack") {
+          pendingPack++;
+        } else if (status === "Packed") {
+          packed++;
+        } else if (status === "Picked Up") {
+          pickedUp++;
+        }
       }
     });
 
@@ -892,26 +925,26 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     type="checkbox"
                     className="rounded text-pink-600 focus:ring-pink-500"
                     onChange={() => {
-                      const allPacked = orders.filter(o => o.status === "Packed" && 
+                      const allPacked = orders.filter(o => (o.Status || o.status) === "Packed" && 
                         (String(o.id).toLowerCase().includes(searchQuery.toLowerCase()) ||
                          String(o.tracking_number).toLowerCase().includes(searchQuery.toLowerCase()))
                       );
                       toggleSelectAllPacked(allPacked);
                     }}
                     checked={
-                      orders.filter(o => o.status === "Packed" && 
+                      orders.filter(o => (o.Status || o.status) === "Packed" && 
                         (String(o.id).toLowerCase().includes(searchQuery.toLowerCase()) ||
                          String(o.tracking_number).toLowerCase().includes(searchQuery.toLowerCase()))
                       ).length > 0 &&
-                      orders.filter(o => o.status === "Packed" && 
+                      orders.filter(o => (o.Status || o.status) === "Packed" && 
                         (String(o.id).toLowerCase().includes(searchQuery.toLowerCase()) ||
                          String(o.tracking_number).toLowerCase().includes(searchQuery.toLowerCase()))
                       ).every(o => selectedOrderIds.has(o.id))
                     }
                   />
                 </th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Tracking ID</th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Order Details</th>
-                <th className="py-2.5 px-3 font-semibold text-zinc-700">Tracking Details</th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Items list</th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Status</th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Pack by / Time</th>
@@ -946,8 +979,9 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     
                     {/* Orders lists */}
                     {group.orders.map((order, orderIdx) => {
-                      const isPacked = order.status === "Packed";
-                      const isHandover = order.status === "Picked Up";
+                      const status = order.Status || order.status;
+                      const isPacked = status === "Packed";
+                      const isHandover = status === "Picked Up";
                       const hasActiveIssueOnRow = hasActiveIssue(order);
                       const isChecked = selectedOrderIds.has(order.id);
 
@@ -965,25 +999,28 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                               className="rounded text-pink-600 focus:ring-pink-500 disabled:opacity-30 disabled:cursor-not-allowed"
                             />
                           </td>
-                          <td className="py-3 px-3 max-w-[280px]">
+                          <td className="py-3 px-3">
+                            <div className="font-bold text-zinc-900 font-mono select-all text-xs">{order.id}</div>
+                          </td>
+                          <td className="py-3 px-3 max-w-[320px]">
                             <div className="flex flex-col gap-1 select-text">
                               <div className="flex items-center gap-1.5">
                                 <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Order ID:</span>
                                 <span className="font-mono font-bold text-zinc-900 text-xs select-all">{order.order_id || order.Order_ID || "-"}</span>
                               </div>
-                              <div className="text-[11px] text-zinc-700 flex flex-wrap gap-x-1">
-                                <span className="font-bold">Postcode:</span>
-                                <span className="font-mono bg-zinc-100 border border-zinc-200 rounded px-1 text-[10px]">{order.postcode || order.Postcode || "-"}</span>
+                              <div className="text-[11px] text-zinc-600 break-words leading-tight mt-0.5">
+                                {order.postcode || order.Postcode ? (
+                                  <span className="font-mono font-bold text-zinc-800 bg-zinc-100 border border-zinc-200 rounded px-1.5 py-0.5 mr-1 text-[10px]">
+                                    {order.postcode || order.Postcode}
+                                  </span>
+                                ) : null}
+                                {order.address || order.Address || "-"}
                               </div>
-                              <div className="text-[11px] text-zinc-500 break-words leading-tight">{order.address || order.Address || "-"}</div>
-                              <div className="text-[10px] text-zinc-500 mt-0.5 flex items-center gap-1">
-                                <span className="font-bold uppercase text-[9px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1">Due Date:</span>
-                                <span>{formatDateTime(order.due_date || order.Due_date || order["Due Date"] || 0)}</span>
+                              <div className="text-[10px] text-zinc-500 mt-1 flex items-center gap-1.5">
+                                <span className="font-bold uppercase text-[9px]">Due Date:</span>
+                                <span>{formatDueDate(order.due_date || order.Due_date || order["Due Date"])}</span>
                               </div>
                             </div>
-                          </td>
-                          <td className="py-3 px-3">
-                            <div className="font-bold text-zinc-900 font-mono select-all text-xs">{order.id}</div>
                           </td>
                           <td className="py-3 px-3 max-w-[200px]">
                             <div className="flex flex-wrap gap-1">
@@ -1003,7 +1040,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                                 <AlertCircle className="w-3.5 h-3.5" />
                                 Issue
                               </span>
-                            ) : order.status === "Pending Pack" ? (
+                            ) : status === "Pending Pack" ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-bold bg-amber-50 text-amber-600 border border-amber-200">
                                 <Clock className="w-3.5 h-3.5" />
                                 Pending Pack
@@ -1071,7 +1108,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                                 {hasActiveIssueOnRow ? "Resolve Issue" : "Log Issue"}
                               </button>
 
-                              {order.status !== "Pending Pack" && (
+                              {status !== "Pending Pack" && (
                                 <button 
                                   onClick={() => handleRevokeOrder(order)}
                                   className="px-2 py-1 rounded border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 font-semibold"
@@ -1123,7 +1160,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
             {/* RESOLVE ISSUE STATE */}
             {hasActiveIssue(activeIssueOrder) ? (
               <div className="flex flex-col gap-4">
-                {parseIssues(activeIssueOrder.issues).filter(i => i.status === "pending").map((iss) => (
+                {parseIssues(activeIssueOrder.Issues || activeIssueOrder.issues).filter(i => i.status === "pending").map((iss) => (
                   <div key={iss.id} className="bg-red-50 border border-red-200 rounded-xl p-3.5 text-xs text-red-800 flex flex-col gap-2">
                     <div>
                       <strong>Type:</strong> <span className="bg-red-100 px-1.5 py-0.5 rounded font-bold">{iss.issue_type}</span>
@@ -1162,7 +1199,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   <CustomButton
                     variant="dark"
                     onClick={() => {
-                      const pendingIssue = parseIssues(activeIssueOrder.issues).find(i => i.status === "pending");
+                      const pendingIssue = parseIssues(activeIssueOrder.Issues || activeIssueOrder.issues).find(i => i.status === "pending");
                       if (pendingIssue) resolveLoggedIssue(pendingIssue.id);
                     }}
                     className="h-9 px-4 text-xs font-bold bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[150px]"
@@ -1256,11 +1293,11 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
 
             {/* Timeline scroll container */}
             <div className="max-h-[350px] overflow-y-auto pr-1 flex flex-col gap-4">
-              {parseLogs(activeLogOrder.logs).length === 0 ? (
+              {parseLogs(activeLogOrder.Logs || activeLogOrder.logs).length === 0 ? (
                 <span className="text-xs text-zinc-400 italic text-center py-6">No logs saved for this order.</span>
               ) : (
                 <div className="relative border-l border-zinc-200 pl-4 ml-2 flex flex-col gap-5 py-2">
-                  {parseLogs(activeLogOrder.logs).map((log, index) => (
+                  {parseLogs(activeLogOrder.Logs || activeLogOrder.logs).map((log, index) => (
                     <div key={index} className="relative text-xs">
                       {/* Marker dot */}
                       <span className="absolute -left-[21px] top-1.5 w-3.5 h-3.5 rounded-full border-2 border-white bg-pink-500 shadow-xs" />
