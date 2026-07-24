@@ -19,10 +19,15 @@ interface TiktokFulfillmentModuleProps {
 }
 
 interface TiktokUser {
-  id: string;
-  name: string;
-  pin: string;
-  created_at: number;
+  id?: string;
+  ID?: string;
+  name?: string;
+  Name?: string;
+  pin?: string;
+  PIN?: string;
+  created_at?: number;
+  Created_At?: number;
+  "Created At"?: number;
 }
 
 interface TiktokOrder {
@@ -183,7 +188,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
       id: userId,
       name: userName.trim(),
       pin: userPin.trim(),
-      created_at: editingUser ? editingUser.created_at : Date.now()
+      created_at: editingUser ? (editingUser.Created_At || editingUser.created_at || Date.now()) : Date.now()
     };
 
     try {
@@ -1526,16 +1531,16 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     </tr>
                   ) : (
                     users.map((u, idx) => (
-                      <tr key={u.id || `operator-${idx}`} className="hover:bg-zinc-50/50 transition-colors">
-                        <td className="py-2.5 px-3 font-semibold text-zinc-900">{u.name}</td>
+                      <tr key={u.ID || u.id || `operator-${idx}`} className="hover:bg-zinc-50/50 transition-colors">
+                        <td className="py-2.5 px-3 font-semibold text-zinc-900">{u.Name || u.name}</td>
                         {isAdmin && (
                           <td className="py-2.5 px-3 text-right">
                             <div className="flex items-center justify-end gap-2">
                               <button
                                 onClick={() => {
                                   setEditingUser(u);
-                                  setUserName(u.name);
-                                  setUserPin(u.pin);
+                                  setUserName(u.Name || u.name || "");
+                                  setUserPin(u.PIN || u.pin || "");
                                   setUserModalOpen(true);
                                 }}
                                 className="px-2.5 py-1 rounded border border-zinc-200 hover:bg-zinc-50 text-zinc-700 font-semibold"
@@ -1543,7 +1548,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                                 Edit
                               </button>
                               <button
-                                onClick={() => handleDeleteUser(u.id)}
+                                onClick={() => handleDeleteUser(u.ID || u.id || "")}
                                 className="px-2.5 py-1 rounded border border-red-200 bg-red-50/50 hover:bg-red-50 text-red-600 font-semibold"
                               >
                                 Delete
