@@ -181,7 +181,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     }
     
     setIsSavingUser(true);
-    const userId = editingUser ? editingUser.id : `USR-${Date.now()}`;
+    const userId = editingUser ? (editingUser.ID || editingUser.id) : `USR-${Date.now()}`;
     const action = editingUser ? "update" : "insert";
     
     const userData = {
