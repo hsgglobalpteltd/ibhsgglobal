@@ -2276,14 +2276,28 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       today.setHours(0,0,0,0);
       const isPastDate = shiftDate.getTime() < today.getTime();
 
-      const customTasksCount = customTasks.length;
-      const customDoneCount = customTasks.filter((t: any) => !!t.answer).length;
-      const permDone = s["Permission By"] ? 1 : 0;
-      const stockDone = s["Stock Checked"] ? 1 : 0;
+      const isOtherLoc = String(s["Store ID"]).startsWith("OTHER");
+
+      let promotingCosts: any[] = [];
+      if (s["Promoting Cost"]) {
+        try {
+          promotingCosts = JSON.parse(s["Promoting Cost"]);
+        } catch (e) {}
+      }
+      const promotingCostDone = promotingCosts.length > 0 ? 1 : 0;
+
+      const customTasksCount = isOtherLoc ? 0 : customTasks.length;
+      const customDoneCount = isOtherLoc ? 0 : customTasks.filter((t: any) => !!t.answer).length;
+      const permDone = (isOtherLoc || s["Permission By"]) ? 1 : 0;
+      const stockDone = (isOtherLoc || s["Stock Checked"]) ? 1 : 0;
       const actualDone = (isPastDate && s["Actual Start"] && s["Actual End"]) ? 1 : 0;
 
-      const totalCount = 2 + customTasksCount + (isPastDate ? 1 : 0);
-      const doneCount = permDone + stockDone + customDoneCount + actualDone;
+      const totalCount = isOtherLoc 
+        ? 1 + (isPastDate ? 1 : 0)
+        : 3 + customTasksCount + (isPastDate ? 1 : 0);
+      const doneCount = isOtherLoc
+        ? promotingCostDone + actualDone
+        : permDone + stockDone + promotingCostDone + customDoneCount + actualDone;
 
       return doneCount < totalCount;
     });
