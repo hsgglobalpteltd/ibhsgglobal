@@ -24,76 +24,24 @@ interface SidePanelProps {
 
 export function SidePanel({ activeItem, onSelectMenu, user, profile, onLogout }: SidePanelProps) {
   const [isCollapsed, setIsCollapsed] = React.useState(true);
-  const [stayOpen, setStayOpen] = React.useState(false);
-  const [isHovered, setIsHovered] = React.useState(false);
-  const collapseTimeoutRef = React.useRef<any>(null);
-
-  const startCollapseTimer = React.useCallback(() => {
-    if (collapseTimeoutRef.current) {
-      clearTimeout(collapseTimeoutRef.current);
-    }
-    collapseTimeoutRef.current = setTimeout(() => {
-      setStayOpen(false);
-      setIsCollapsed(true);
-    }, 60000); // 1 minute
-  }, []);
-
-  const clearCollapseTimer = React.useCallback(() => {
-    if (collapseTimeoutRef.current) {
-      clearTimeout(collapseTimeoutRef.current);
-      collapseTimeoutRef.current = null;
-    }
-  }, []);
-
-  const handleMouseEnter = () => {
-    setIsHovered(true);
-    clearCollapseTimer();
-    setIsCollapsed(false);
-  };
-
-  const handleMouseLeave = () => {
-    setIsHovered(false);
-    if (stayOpen) {
-      startCollapseTimer();
-    } else {
-      setIsCollapsed(true);
-    }
-  };
 
   const handleMenuClick = (itemId: string) => {
-    setStayOpen(true);
     onSelectMenu(itemId);
   };
 
   const handleToggleButtonClick = () => {
-    const nextCollapsed = !isCollapsed;
-    setIsCollapsed(nextCollapsed);
-    if (nextCollapsed) {
-      setStayOpen(false);
-      clearCollapseTimer();
-    } else {
-      setStayOpen(true);
-      if (!isHovered) {
-        startCollapseTimer();
-      }
-    }
+    setIsCollapsed(!isCollapsed);
   };
-
-  React.useEffect(() => {
-    return () => clearCollapseTimer();
-  }, [clearCollapseTimer]);
 
   React.useEffect(() => {
     if (typeof window !== "undefined" && window.innerWidth < 1280) {
       setIsCollapsed(true);
-      setStayOpen(false);
     }
   }, []);
 
   React.useEffect(() => {
     const handleCollapse = () => {
       setIsCollapsed(true);
-      setStayOpen(false);
     };
     window.addEventListener("collapse-sidepanel", handleCollapse);
     return () => {
@@ -116,8 +64,6 @@ export function SidePanel({ activeItem, onSelectMenu, user, profile, onLogout }:
 
   return (
     <aside
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
       className={`side-panel relative flex h-screen flex-col justify-between bg-[#F0F4F9] p-6 shadow-[inset_-1px_0_0_0_rgba(0,0,0,0.05)] select-none transition-all duration-500 [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] ${isCollapsed ? "w-[72px] px-3" : "w-64"}`}
     >
       <div className="flex flex-col gap-8">

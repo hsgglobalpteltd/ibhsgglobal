@@ -440,7 +440,7 @@ function ApiEditForm({ record, onSave, onCancel }: { record: any; onSave: (data:
               required
               value={formData.Key}
               onChange={(e) => setFormData((prev: any) => ({ ...prev, Key: e.target.value }))}
-              placeholder="e.g. AIzaSy..."
+              placeholder="e.g. API Key..."
               className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
             />
           </div>

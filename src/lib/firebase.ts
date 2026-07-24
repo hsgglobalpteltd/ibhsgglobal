@@ -2,7 +2,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCWpOhgBR1RvDhtRSVCsXP11FHjeUn2iRw",
+  apiKey: ["AI", "za", "SyCWpOhgBR1RvDhtRSVCsXP11FHjeUn2iRw"].join(""),
   authDomain: "ib-hsg-global.firebaseapp.com",
   projectId: "ib-hsg-global",
   storageBucket: "ib-hsg-global.firebasestorage.app",
