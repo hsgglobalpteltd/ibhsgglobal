@@ -1517,7 +1517,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                 <input 
                   type="text"
                   placeholder="e.g. Alex Tan..."
-                  value={userName}
+                  value={userName || ""}
                   onChange={(e) => setUserName(e.target.value)}
                   className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
                 />
@@ -1529,7 +1529,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   type="text"
                   maxLength={4}
                   placeholder="e.g. 1234..."
-                  value={userPin}
+                  value={userPin || ""}
                   onChange={(e) => setUserPin(e.target.value.replace(/[^0-9]/g, ""))}
                   className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400 font-mono"
                 />
