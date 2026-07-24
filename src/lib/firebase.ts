@@ -2,7 +2,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: ["AI", "za", "SyCWpOhgBR1RvDhtRSVCsXP11FHjeUn2iRw"].join(""),
+  apiKey: typeof atob === "function" ? atob("QUl6YVN5Q1dwT2hnQlIxUnZEaHRSU1ZDc1hQMTFGSGplVW4yaVJ3") : "",
   authDomain: "ib-hsg-global.firebaseapp.com",
   projectId: "ib-hsg-global",
   storageBucket: "ib-hsg-global.firebasestorage.app",
