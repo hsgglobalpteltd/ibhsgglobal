@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "../custom-button";
+import { NavigationTabs } from "../navigation-tabs";
 
 interface TiktokFulfillmentModuleProps {
   profile?: {
@@ -16,6 +17,13 @@ interface TiktokFulfillmentModuleProps {
     email?: string;
   } | null;
   idToken?: string;
+}
+
+interface TiktokUser {
+  id: string;
+  name: string;
+  pin: string;
+  created_at: number;
 }
 
 interface TiktokOrder {
@@ -89,6 +97,20 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
   // Poll state tracker for Visibility-aware fetching
   const lastFetchTime = React.useRef<number>(0);
 
+  // User Management tab states
+  const [activeTab, setActiveTab] = React.useState<"orders" | "users">("orders");
+  const [users, setUsers] = React.useState<TiktokUser[]>([]);
+  const [userModalOpen, setUserModalOpen] = React.useState(false);
+  const [editingUser, setEditingUser] = React.useState<TiktokUser | null>(null);
+  const [userName, setUserName] = React.useState("");
+  const [userPin, setUserPin] = React.useState("");
+  const [isSavingUser, setIsSavingUser] = React.useState(false);
+
+  const tabs = React.useMemo(() => [
+    { id: "orders", label: "Fulfillment Orders" },
+    { id: "users", label: "PWA Operators" }
+  ], []);
+
   // Format date helper: DD/MM/YYYY
   const formatDate = (timestamp?: number) => {
     if (!timestamp) return "-";
@@ -133,17 +155,105 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     }
   };
 
+  // Fetch users from Supabase Postgres
+  const fetchUsers = async () => {
+    try {
+      const res = await fetch(`${WORKER_URL}/api/admin/cache?sheet=tiktok_users&t=${Date.now()}`);
+      if (!res.ok) throw new Error("Failed to load operators.");
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      console.error("Failed to load users:", err);
+      showToast("Error pulling operators: " + err.message, "error");
+    }
+  };
+
+  // Save Operator (Create or Update)
+  const handleSaveUser = async () => {
+    if (!userName.trim() || !userPin.trim()) {
+      showToast("Please fill in both name and PIN fields.", "error");
+      return;
+    }
+    
+    if (!/^\d{4}$/.test(userPin.trim())) {
+      showToast("PIN must be exactly 4 numeric digits.", "error");
+      return;
+    }
+    
+    setIsSavingUser(true);
+    const userId = editingUser ? editingUser.id : `USR-${Date.now()}`;
+    const action = editingUser ? "update" : "insert";
+    
+    const userData = {
+      id: userId,
+      name: userName.trim(),
+      pin: userPin.trim(),
+      created_at: editingUser ? editingUser.created_at : Date.now()
+    };
+
+    try {
+      const res = await fetch(`${WORKER_URL}/api/admin/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet: "Tiktok_Users",
+          action: action,
+          data: userData
+        })
+      });
+
+      if (!res.ok) throw new Error("Failed to save operator details.");
+
+      showToast(`Operator ${editingUser ? "updated" : "created"} successfully.`, "success");
+      setUserModalOpen(false);
+      setEditingUser(null);
+      setUserName("");
+      setUserPin("");
+      fetchUsers();
+    } catch (err: any) {
+      showToast("Error saving operator: " + err.message, "error");
+    } finally {
+      setIsSavingUser(false);
+    }
+  };
+
+  // Delete Operator
+  const handleDeleteUser = async (userId: string) => {
+    if (!confirm("Are you sure you want to delete this operator?")) return;
+    
+    try {
+      const res = await fetch(`${WORKER_URL}/api/admin/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet: "Tiktok_Users",
+          action: "delete",
+          data: { id: userId }
+        })
+      });
+
+      if (!res.ok) throw new Error("Failed to delete operator.");
+
+      showToast("Operator deleted successfully.", "success");
+      fetchUsers();
+    } catch (err: any) {
+      showToast("Error deleting operator: " + err.message, "error");
+    }
+  };
+
   // 1. Initialize data fetching on mount
   React.useEffect(() => {
     fetchOrders();
+    fetchUsers();
   }, []);
 
   // 2. Page Visibility-Aware Polling (refresh every 1 min when active)
   React.useEffect(() => {
     const interval = setInterval(() => {
       if (document.visibilityState === "visible") {
-        console.log("Visibility polling: Fetching TikTok orders update...");
+        console.log("Visibility polling: Fetching TikTok orders & users update...");
         fetchOrders();
+        fetchUsers();
       }
     }, 60000); // 1 minute
 
@@ -153,6 +263,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
         if (timeSinceLastFetch >= 60000) {
           console.log("Tab focused: Fetching immediate TikTok orders update...");
           fetchOrders();
+          fetchUsers();
         }
       }
     };
@@ -167,8 +278,9 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
   // 3. Listen for global refresh trigger
   React.useEffect(() => {
     const handleDbRefresh = () => {
-      console.log("Global refresh event received. Refreshing TikTok Fulfillment orders...");
+      console.log("Global refresh event received. Refreshing TikTok Fulfillment orders & users...");
       fetchOrders(true);
+      fetchUsers();
     };
 
     window.addEventListener("db-refresh", handleDbRefresh);
@@ -583,11 +695,18 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
 
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative min-w-0 print:bg-white print:p-0">
+      <NavigationTabs 
+        tabs={tabs} 
+        activeTabId={activeTab} 
+        onTabSelect={(tabId) => setActiveTab(tabId as "orders" | "users")} 
+      />
       
       {/* =========================================================
            Screen View (Hidden during Print)
            ========================================================= */}
       <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] min-w-0 print:hidden">
+        {activeTab === "orders" ? (
+          <>
         
         {/* Header Title & Sync */}
         <div className="content-header flex flex-row items-center justify-between px-1 border-b border-zinc-300/40 pb-3 flex-shrink-0">
@@ -893,6 +1012,77 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
             </tbody>
           </table>
         </div>
+      </>
+    ) : (
+      <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] min-w-0">
+            <div className="flex items-center justify-between bg-zinc-50 border border-zinc-200 rounded-xl p-3 flex-shrink-0">
+              <h3 className="text-sm font-bold text-zinc-950">Active PWA Operators</h3>
+              <CustomButton
+                variant="dark"
+                onClick={() => {
+                  setEditingUser(null);
+                  setUserName("");
+                  setUserPin("");
+                  setUserModalOpen(true);
+                }}
+                className="h-8 text-xs max-w-[150px] bg-pink-600 border-pink-600 hover:bg-pink-700"
+              >
+                Add Operator
+              </CustomButton>
+            </div>
+
+            <div className="content-body flex-1 overflow-y-auto border border-zinc-200 rounded-xl bg-white shadow-sm h-[calc(100vh-280px)] select-text">
+              <table className="w-full border-collapse text-left text-xs">
+                <thead>
+                  <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold uppercase tracking-wider sticky top-0 z-10">
+                    <th className="py-2.5 px-3">Operator Name</th>
+                    <th className="py-2.5 px-3">4-Digit Security PIN</th>
+                    <th className="py-2.5 px-3">Created On</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-200">
+                  {users.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="py-12 text-center text-zinc-400 italic">
+                        No PWA operators registered. Click "Add Operator" to create one.
+                      </td>
+                    </tr>
+                  ) : (
+                    users.map((u) => (
+                      <tr key={u.id} className="hover:bg-zinc-50/50 transition-colors">
+                        <td className="py-3 px-3 font-semibold text-zinc-900">{u.name}</td>
+                        <td className="py-3 px-3 font-mono font-bold text-zinc-600 select-all">{u.pin}</td>
+                        <td className="py-3 px-3 text-zinc-500">{formatDate(u.created_at)}</td>
+                        <td className="py-3 px-3 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => {
+                                setEditingUser(u);
+                                setUserName(u.name);
+                                setUserPin(u.pin);
+                                setUserModalOpen(true);
+                              }}
+                              className="px-2.5 py-1 rounded border border-zinc-200 hover:bg-zinc-50 text-zinc-700 font-semibold"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => handleDeleteUser(u.id)}
+                              className="px-2.5 py-1 rounded border border-red-200 bg-red-50/50 hover:bg-red-50 text-red-600 font-semibold"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* =========================================================
@@ -1293,6 +1483,88 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
               </CustomButton>
             </div>
             
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================
+           Modal Overlay: Add / Edit PWA Operator
+           ========================================================= */}
+      {userModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-primary select-none print:hidden">
+          <div className="w-full max-w-sm bg-white border border-zinc-200 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
+            
+            <div className="flex items-start justify-between border-b border-zinc-200 pb-3">
+              <h3 className="text-lg font-bold text-zinc-950">
+                {editingUser ? "Edit PWA Operator" : "Add PWA Operator"}
+              </h3>
+              <button 
+                onClick={() => {
+                  setUserModalOpen(false);
+                  setEditingUser(null);
+                  setUserName("");
+                  setUserPin("");
+                }}
+                className="p-1 rounded-full text-zinc-400 hover:bg-zinc-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-zinc-700">Operator Name</label>
+                <input 
+                  type="text"
+                  placeholder="e.g. Alex Tan..."
+                  value={userName}
+                  onChange={(e) => setUserName(e.target.value)}
+                  className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-zinc-700">4-Digit Access PIN</label>
+                <input 
+                  type="text"
+                  maxLength={4}
+                  placeholder="e.g. 1234..."
+                  value={userPin}
+                  onChange={(e) => setUserPin(e.target.value.replace(/[^0-9]/g, ""))}
+                  className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400 font-mono"
+                />
+              </div>
+
+              <div className="flex justify-end gap-3 border-t border-zinc-200 pt-3">
+                <CustomButton
+                  variant="default"
+                  onClick={() => {
+                    setUserModalOpen(false);
+                    setEditingUser(null);
+                    setUserName("");
+                    setUserPin("");
+                  }}
+                  className="h-9 px-4 text-xs font-bold max-w-[100px]"
+                >
+                  Cancel
+                </CustomButton>
+                <CustomButton
+                  variant="dark"
+                  disabled={isSavingUser}
+                  onClick={handleSaveUser}
+                  className="h-9 px-4 text-xs font-bold bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[120px]"
+                >
+                  {isSavingUser ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save Operator"
+                  )}
+                </CustomButton>
+              </div>
+            </div>
           </div>
         </div>
       )}
