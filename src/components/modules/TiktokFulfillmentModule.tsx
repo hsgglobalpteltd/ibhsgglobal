@@ -978,11 +978,11 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   />
                 </th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Tracking ID</th>
-                <th className="py-2.5 px-3 font-semibold text-zinc-700">Order Details (ID, Buyer, Address)</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Order ID</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Receiver</th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Due Date</th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Items list</th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Status</th>
-                <th className="py-2.5 px-3 font-semibold text-zinc-700">Log</th>
                 <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -1037,16 +1037,15 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                           <td className="py-3 px-3">
                             <div className="font-bold text-zinc-900 font-mono select-all text-xs">{order.id}</div>
                           </td>
-                          <td className="py-3 px-3 max-w-[320px]">
-                            <div className="flex flex-col gap-1 select-text">
-                              <div className="flex items-center gap-1.5">
-                                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Order ID:</span>
-                                <span className="font-mono font-bold text-zinc-900 text-xs select-all">{order.order_id || order.Order_ID || "-"}</span>
+                          <td className="py-3 px-3 max-w-[150px] font-mono font-bold text-zinc-900 text-xs select-all">
+                            {order.order_id || "-"}
+                          </td>
+                          <td className="py-3 px-3 max-w-[280px]">
+                            <div className="flex flex-col gap-0.5 select-text">
+                              <div className="text-zinc-900 font-semibold text-[11px]">
+                                {order.buyer_name || "TikTok Customer"}
                               </div>
-                              <div className="text-[11px] text-zinc-700 font-semibold select-text">
-                                Buyer: {order.buyer_name || "TikTok Customer"}
-                              </div>
-                              <div className="text-[11px] text-zinc-600 break-words leading-tight mt-0.5">
+                              <div className="text-[11px] text-zinc-500 break-words select-text leading-tight mt-0.5">
                                 {order.postcode || order.Postcode ? (
                                   <span className="font-mono font-bold text-zinc-800 bg-zinc-100 border border-zinc-200 rounded px-1.5 py-0.5 mr-1 text-[10px]">
                                     {order.postcode || order.Postcode}
@@ -1056,7 +1055,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                               </div>
                             </div>
                           </td>
-                          <td className="py-3 px-3">
+                          <td className="py-3 px-3 font-semibold text-zinc-800">
                             {formatDueDate(order.due_date || order.Due_date || order["Due Date"])}
                           </td>
                           <td className="py-3 px-3 max-w-[200px]">
@@ -1094,21 +1093,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                               </span>
                             )}
                           </td>
-                          <td className="py-3 px-3">
-                            {isPacked && (
-                              <div className="flex flex-col gap-0.5">
-                                <span className="font-semibold text-zinc-800">{order.packed_by}</span>
-                                <span className="text-[10px] text-zinc-500">{formatDateTime(order.packed_at)}</span>
-                              </div>
-                            )}
-                            {isHandover && (
-                              <div className="flex flex-col gap-0.5">
-                                <span className="font-semibold text-zinc-800 font-mono text-[10px]">Manifest: {order.handover_manifest_id}</span>
-                                <span className="text-[10px] text-zinc-500">{formatDateTime(order.handover_at)}</span>
-                              </div>
-                            )}
-                            {!isPacked && !isHandover && <span className="text-zinc-400 italic">Not packed yet</span>}
-                          </td>
+
                           <td className="py-3 px-3 text-right">
                             <div className="flex items-center justify-end gap-2">
                               {/* Proof photo thumbnail trigger */}
