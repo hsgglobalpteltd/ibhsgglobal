@@ -944,24 +944,25 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   />
                 </th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Tracking ID</th>
-                <th className="py-2.5 px-3 font-semibold text-zinc-700">Order Details</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Order Details (ID, Buyer, Address)</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Due Date</th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Items list</th>
                 <th className="py-2.5 px-3 font-semibold text-zinc-700">Status</th>
-                <th className="py-2.5 px-3 font-semibold text-zinc-700">Pack by / Time</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Log</th>
                 <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-200">
               {fetching && orders.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-zinc-500">
+                  <td colSpan={8} className="py-12 text-center text-zinc-500">
                     <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-zinc-400" />
                     Fetching database records...
                   </td>
                 </tr>
               ) : groupedOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-12 text-center text-zinc-400 italic">
+                  <td colSpan={8} className="py-12 text-center text-zinc-400 italic">
                     No matching TikTok orders found in database.
                   </td>
                 </tr>
@@ -970,7 +971,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   <React.Fragment key={group.batch_id}>
                     {/* Batch Separator Group Header */}
                     <tr className="bg-zinc-100 border-y border-zinc-200 font-bold text-zinc-600 select-none">
-                      <td colSpan={7} className="py-2 px-3 font-semibold text-[11px] uppercase tracking-wider flex-row items-center gap-1.5">
+                      <td colSpan={8} className="py-2 px-3 font-semibold text-[11px] uppercase tracking-wider flex-row items-center gap-1.5">
                         📦 Batch ID: <span className="font-mono text-zinc-900 bg-white border border-zinc-200 rounded px-1.5 py-0.5 mr-2">{group.batch_id}</span>
                         • Imported: <span className="text-zinc-900">{formatDateTime(group.upload_date)}</span>
                         <span className="text-zinc-400 font-normal ml-2">({group.orders.length} items)</span>
@@ -1008,6 +1009,9 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                                 <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Order ID:</span>
                                 <span className="font-mono font-bold text-zinc-900 text-xs select-all">{order.order_id || order.Order_ID || "-"}</span>
                               </div>
+                              <div className="text-[11px] text-zinc-700 font-semibold select-text">
+                                Buyer: {order.buyer_name || "TikTok Customer"}
+                              </div>
                               <div className="text-[11px] text-zinc-600 break-words leading-tight mt-0.5">
                                 {order.postcode || order.Postcode ? (
                                   <span className="font-mono font-bold text-zinc-800 bg-zinc-100 border border-zinc-200 rounded px-1.5 py-0.5 mr-1 text-[10px]">
@@ -1016,11 +1020,10 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                                 ) : null}
                                 {order.address || order.Address || "-"}
                               </div>
-                              <div className="text-[10px] text-zinc-500 mt-1 flex items-center gap-1.5">
-                                <span className="font-bold uppercase text-[9px]">Due Date:</span>
-                                <span>{formatDueDate(order.due_date || order.Due_date || order["Due Date"])}</span>
-                              </div>
                             </div>
+                          </td>
+                          <td className="py-3 px-3">
+                            {formatDueDate(order.due_date || order.Due_date || order["Due Date"])}
                           </td>
                           <td className="py-3 px-3 max-w-[200px]">
                             <div className="flex flex-wrap gap-1">
