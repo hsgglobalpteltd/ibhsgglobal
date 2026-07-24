@@ -1444,29 +1444,54 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
               <table className="w-full border-collapse border border-zinc-300 text-[11px] text-left">
                 <thead>
                   <tr className="bg-zinc-100 border-b border-zinc-300 text-zinc-800 font-bold">
-                    <th className="py-2 px-3 border-r border-zinc-300 w-[5%]">#</th>
-                    <th className="py-2 px-3 border-r border-zinc-300 w-[45%]">TikTok Order ID</th>
-                    <th className="py-2 px-3 border-r border-zinc-300 w-[25%]">Tracking Code</th>
-                    <th className="py-2 px-3 w-[25%]">SKU / Item List</th>
+                    <th className="py-2 px-3 border-r border-zinc-300 w-[4%]">#</th>
+                    <th className="py-2 px-3 border-r border-zinc-300 w-[20%]">Tracking ID</th>
+                    <th className="py-2 px-3 border-r border-zinc-300 w-[35%]">Order Details (ID, Buyer, Address)</th>
+                    <th className="py-2 px-3 border-r border-zinc-300 w-[15%]">Due Date</th>
+                    <th className="py-2 px-3 border-r border-zinc-300 w-[12%]">Status</th>
+                    <th className="py-2 px-3 w-[14%]">Log</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-300">
-                  {printableOrders.map((ord, i) => (
-                    <tr key={ord.id} className="border-b border-zinc-300 bg-white">
-                      <td className="py-2 px-3 border-r border-zinc-300 text-center font-mono">{i + 1}</td>
-                      <td className="py-2 px-3 border-r border-zinc-300 font-mono font-bold text-zinc-900">{ord.id}</td>
-                      <td className="py-2 px-3 border-r border-zinc-300 font-mono font-semibold">{ord.tracking_number}</td>
-                      <td className="py-2 px-3 max-w-[200px]">
-                        <div className="flex flex-col gap-0.5">
-                          {parseItems(ord.items || "[]").map((item, idx) => (
-                            <span key={idx}>
-                              • {item.sku} (x{item.qty})
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {printableOrders.map((ord, i) => {
+                    const status = ord.Status || ord.status;
+                    return (
+                      <tr key={ord.id} className="border-b border-zinc-300 bg-white">
+                        <td className="py-2 px-3 border-r border-zinc-300 text-center font-mono">{i + 1}</td>
+                        <td className="py-2 px-3 border-r border-zinc-300 font-mono font-bold text-zinc-900">{ord.id}</td>
+                        <td className="py-2 px-3 border-r border-zinc-300">
+                          <div className="flex flex-col gap-0.5 select-text">
+                            <div><strong>Order ID:</strong> <span className="font-mono font-semibold">{ord.order_id || ord.Order_ID || "-"}</span></div>
+                            <div><strong>Buyer:</strong> {ord.buyer_name || "-"}</div>
+                            <div className="text-[10px] text-zinc-500 leading-tight">
+                              {ord.postcode || ord.Postcode ? (
+                                <span className="font-mono font-bold bg-zinc-100 border border-zinc-200 rounded px-1 mr-1 text-[9px]">
+                                  {ord.postcode || ord.Postcode}
+                                </span>
+                              ) : null}
+                              {ord.address || ord.Address || "-"}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 border-r border-zinc-300 text-center">
+                          {formatDueDate(ord.due_date || ord.Due_date || ord["Due Date"])}
+                        </td>
+                        <td className="py-2 px-3 border-r border-zinc-300 font-bold text-zinc-800 text-center">
+                          {status || "-"}
+                        </td>
+                        <td className="py-2 px-3">
+                          {ord.packed_by ? (
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-semibold text-zinc-800">{ord.packed_by}</span>
+                              <span className="text-[9px] text-zinc-400 font-mono">{formatDateTime(ord.packed_at)}</span>
+                            </div>
+                          ) : (
+                            <span className="text-zinc-400 italic text-[10px]">Pending pack</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
 
