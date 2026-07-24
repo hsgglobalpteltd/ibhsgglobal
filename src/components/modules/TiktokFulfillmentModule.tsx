@@ -32,7 +32,9 @@ interface TiktokUser {
 
 interface TiktokOrder {
   id: string;
+  ID?: string;
   tracking_number: string;
+  Tracking_Number?: string;
   buyer_name?: string;
   items?: string; // JSON string of products
   Items?: string;
@@ -170,6 +172,19 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     const month = String(due.getMonth() + 1).padStart(2, "0");
     const year = due.getFullYear();
     return `${day}/${month}/${year}`;
+  };
+
+  // Get all currently selected order objects in a robust case-insensitive way
+  const getSelectedOrders = (ordersList: TiktokOrder[], selectedIds: Set<string>): TiktokOrder[] => {
+    return ordersList.filter(o => {
+      const matchId = String(o.id || o.ID || "").trim();
+      const matchTrack = String(o.tracking_number || o.Tracking_Number || "").trim();
+      return (
+        selectedIds.has(matchId) || 
+        selectedIds.has(matchTrack) ||
+        (o.id && selectedIds.has(o.id))
+      );
+    });
   };
 
   // Fetch orders from Supabase Postgres
@@ -661,10 +676,17 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
 
   // Compile selected orders and generate printable Courier Handover Manifest
   const triggerCourierHandover = async () => {
-    if (selectedOrderIds.size === 0) return;
+    if (selectedOrderIds.size === 0) {
+      showToast("Please select at least one order to generate a handover manifest.", "error");
+      return;
+    }
     
     // Find all selected orders
-    const selectedOrders = orders.filter(o => selectedOrderIds.has(o.id));
+    const selectedOrders = getSelectedOrders(orders, selectedOrderIds);
+    if (selectedOrders.length === 0) {
+      showToast("No valid orders selected. Make sure the orders match existing records.", "error");
+      return;
+    }
     
     // Safety check: All orders must be "Packed"
     const anyUnpacked = selectedOrders.some(o => o.status !== "Packed");
@@ -687,7 +709,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     setIsGeneratingManifest(true);
     const operatorName = profile?.name || "Operator";
     const manifestId = `MAN-${Date.now()}`;
-    const selectedOrders = orders.filter(o => selectedOrderIds.has(o.id));
+    const selectedOrders = getSelectedOrders(orders, selectedOrderIds);
 
     try {
       const updates = selectedOrders.map(order => {
@@ -795,7 +817,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     return { pendingPack, packed, issue, pickedUp, total: orders.length };
   }, [orders]);
 
-  const printableOrders = orders.filter(o => selectedOrderIds.has(o.id));
+  const printableOrders = getSelectedOrders(orders, selectedOrderIds);
 
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative min-w-0 print:bg-white print:p-0">
