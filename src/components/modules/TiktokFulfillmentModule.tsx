@@ -67,6 +67,7 @@ const WORKER_URL = "https://ib.hsgglobalpteltd.workers.dev";
 
 export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentModuleProps) {
   const [orders, setOrders] = React.useState<TiktokOrder[]>([]);
+  const isAdmin = profile?.role === "Administrator" || profile?.role === "Manager";
   const [fetching, setFetching] = React.useState(true);
   const [syncStatus, setSyncStatus] = React.useState<"idle" | "syncing" | "error">("idle");
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -747,10 +748,10 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
             <CustomButton
               variant="default"
               onClick={() => setOperatorRegistryOpen(true)}
-              className="h-9 text-xs gap-1.5 px-3 max-w-[150px] border-zinc-200 text-zinc-700 hover:bg-zinc-50"
+              className="h-9 text-xs gap-1.5 px-3 max-w-[200px] border-zinc-200 text-zinc-700 hover:bg-zinc-50"
             >
               <Users className="w-4 h-4" />
-              Operators
+              Tiktok Pack Team
             </CustomButton>
 
             <CustomButton 
@@ -1408,16 +1409,16 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
       )}
 
       {/* =========================================================
-           Modal Overlay: PWA Operators Registry (Popup)
+           Modal Overlay: Tiktok Pack Team Registry (Popup)
            ========================================================= */}
       {operatorRegistryOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs font-primary select-none print:hidden">
-          <div className="w-full max-w-2xl bg-white border border-zinc-200 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
+          <div className="w-full max-w-xl bg-white border border-zinc-200 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
             
             <div className="flex items-start justify-between border-b border-zinc-200 pb-3">
               <div className="flex flex-col gap-0.5">
-                <h3 className="text-lg font-bold text-zinc-950">PWA Operators Registry</h3>
-                <span className="text-xs text-zinc-500">Manage security PIN codes for the TikTok mobile scanning PWA.</span>
+                <h3 className="text-lg font-bold text-zinc-950">Tiktok Pack Team Registry</h3>
+                <span className="text-xs text-zinc-500 font-normal">Manage operator accounts for the TikTok scan mobile application.</span>
               </div>
               <button 
                 onClick={() => {
@@ -1436,7 +1437,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
             {/* List / Table header actions inside modal */}
             <div className="flex items-center justify-between bg-zinc-50 border border-zinc-200 rounded-xl p-3 flex-shrink-0">
               <span className="text-xs font-bold text-zinc-700">{users.length} Operators Registered</span>
-              {!userModalOpen && (
+              {isAdmin && !userModalOpen && (
                 <CustomButton
                   variant="dark"
                   onClick={() => {
@@ -1445,7 +1446,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     setUserPin("");
                     setUserModalOpen(true);
                   }}
-                  className="h-8 text-xs max-w-[130px] bg-pink-600 border-pink-600 hover:bg-pink-700"
+                  className="h-8 text-xs max-w-[130px]"
                 >
                   Add Operator
                 </CustomButton>
@@ -1453,10 +1454,10 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
             </div>
 
             {/* NESTED ADD/EDIT FORM INLINE INSIDE REGISTRY MODAL */}
-            {userModalOpen && (
-              <div className="border border-pink-100 bg-pink-50/20 rounded-xl p-4 flex flex-col gap-3">
-                <h4 className="text-xs font-bold text-pink-600 uppercase tracking-wider">
-                  {editingUser ? "Edit Operator Details" : "Add New PWA Operator"}
+            {isAdmin && userModalOpen && (
+              <div className="border border-zinc-200 bg-zinc-50 rounded-xl p-4 flex flex-col gap-3">
+                <h4 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                  {editingUser ? "Edit Operator Details" : "Add New Operator"}
                 </h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
@@ -1466,7 +1467,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                       placeholder="e.g. Alex Tan..."
                       value={userName || ""}
                       onChange={(e) => setUserName(e.target.value)}
-                      className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
+                      className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-zinc-900 placeholder-zinc-400"
                     />
                   </div>
 
@@ -1478,7 +1479,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                       placeholder="e.g. 1234..."
                       value={userPin || ""}
                       onChange={(e) => setUserPin(e.target.value.replace(/[^0-9]/g, ""))}
-                      className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400 font-mono"
+                      className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-zinc-900 placeholder-zinc-400 font-mono"
                     />
                   </div>
                 </div>
@@ -1499,7 +1500,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     variant="dark"
                     disabled={isSavingUser}
                     onClick={handleSaveUser}
-                    className="h-8 px-3 text-xs bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[120px]"
+                    className="h-8 px-3 text-xs max-w-[120px]"
                   >
                     {isSavingUser ? "Saving..." : "Save Operator"}
                   </CustomButton>
@@ -1513,45 +1514,43 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                 <thead>
                   <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-bold uppercase tracking-wider sticky top-0 z-10">
                     <th className="py-2.5 px-3">Operator Name</th>
-                    <th className="py-2.5 px-3">PIN code</th>
-                    <th className="py-2.5 px-3">Created On</th>
-                    <th className="py-2.5 px-3 text-right">Actions</th>
+                    {isAdmin && <th className="py-2.5 px-3 text-right">Actions</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200">
                   {users.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="py-8 text-center text-zinc-400 italic">
-                        No operators registered. Click "Add Operator" to create one.
+                      <td colSpan={isAdmin ? 2 : 1} className="py-8 text-center text-zinc-400 italic">
+                        No operators registered.
                       </td>
                     </tr>
                   ) : (
                     users.map((u, idx) => (
                       <tr key={u.id || `operator-${idx}`} className="hover:bg-zinc-50/50 transition-colors">
                         <td className="py-2.5 px-3 font-semibold text-zinc-900">{u.name}</td>
-                        <td className="py-2.5 px-3 font-mono font-bold text-zinc-600 select-all">{u.pin}</td>
-                        <td className="py-2.5 px-3 text-zinc-500">{formatDate(u.created_at)}</td>
-                        <td className="py-2.5 px-3 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => {
-                                setEditingUser(u);
-                                setUserName(u.name);
-                                setUserPin(u.pin);
-                                setUserModalOpen(true);
-                              }}
-                              className="px-2 py-0.5 rounded border border-zinc-200 hover:bg-zinc-50 text-zinc-700 font-semibold"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleDeleteUser(u.id)}
-                              className="px-2 py-0.5 rounded border border-red-200 bg-red-50/50 hover:bg-red-50 text-red-600 font-semibold"
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </td>
+                        {isAdmin && (
+                          <td className="py-2.5 px-3 text-right">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => {
+                                  setEditingUser(u);
+                                  setUserName(u.name);
+                                  setUserPin(u.pin);
+                                  setUserModalOpen(true);
+                                }}
+                                className="px-2.5 py-1 rounded border border-zinc-200 hover:bg-zinc-50 text-zinc-700 font-semibold"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteUser(u.id)}
+                                className="px-2.5 py-1 rounded border border-red-200 bg-red-50/50 hover:bg-red-50 text-red-600 font-semibold"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}
