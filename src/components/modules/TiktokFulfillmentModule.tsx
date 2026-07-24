@@ -33,8 +33,8 @@ interface TiktokUser {
 interface TiktokOrder {
   id: string;
   tracking_number: string;
-  buyer_name: string;
-  items: string; // JSON string of products
+  buyer_name?: string;
+  items?: string; // JSON string of products
   batch_id: string;
   upload_date: number;
   status: "Pending Pack" | "Packed" | "Picked Up" | "Issue";
@@ -45,6 +45,15 @@ interface TiktokOrder {
   handover_at?: number;
   issues?: string; // JSON string of issues array
   logs?: string;   // JSON string of logs array
+  order_id?: string;
+  Order_ID?: string;
+  postcode?: string;
+  Postcode?: string;
+  address?: string;
+  Address?: string;
+  due_date?: number;
+  Due_date?: number;
+  "Due Date"?: number;
 }
 
 interface Issue {
@@ -241,6 +250,49 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
     }
   };
 
+  // Revoke Order to Pending Pack
+  const handleRevokeOrder = async (order: TiktokOrder) => {
+    if (!window.confirm(`Are you sure you want to revoke order ${order.id} and reset it to Pending Pack?`)) return;
+
+    try {
+      const orderLogs = parseLogs(order.logs);
+      orderLogs.push({
+        action: "Order Revoked",
+        actionBy: profile?.name || "Operator",
+        remark: "Status reset back to Pending Pack.",
+        timestamp: Date.now()
+      });
+
+      const payload = {
+        id: order.id,
+        status: "Pending Pack",
+        packed_by: null,
+        packed_at: null,
+        proof_photo: null,
+        handover_manifest_id: null,
+        handover_at: null,
+        logs: JSON.stringify(orderLogs)
+      };
+
+      const res = await fetch(`${WORKER_URL}/api/admin/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet: "Tiktok_Orders",
+          action: "update",
+          data: payload
+        })
+      });
+
+      if (!res.ok) throw new Error("Revoke request failed.");
+
+      showToast(`Order ${order.id} revoked successfully.`, "success");
+      fetchOrders();
+    } catch (err: any) {
+      showToast("Failed to revoke order: " + err.message, "error");
+    }
+  };
+
   // 1. Initialize data fetching on mount
   React.useEffect(() => {
     fetchOrders();
@@ -374,22 +426,29 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
       showToast(`Extracted ${parsedOrders.length} orders. Syncing with database...`, "info");
 
       // Save orders to Supabase via bulk upsert
-      const uploadOrdersPayload = parsedOrders.map((o: any) => ({
-        id: String(o.id || o.Order_ID || o.order_id).trim(),
-        tracking_number: String(o.tracking_number || o.tracking_code || o.Tracking_Number || "").trim(),
-        buyer_name: String(o.buyer_name || o.customer_name || "TikTok Customer").trim(),
-        items: JSON.stringify(o.items || []),
-        batch_id: batchId,
-        upload_date: Date.now(),
-        status: "Pending Pack",
-        issues: "[]",
-        logs: JSON.stringify([{
-          action: "Batch Uploaded",
-          actionBy: profile?.name || "Operator",
-          remark: `Labels PDF uploaded. Batch ID: ${batchId}`,
-          timestamp: Date.now()
-        }])
-      }));
+      const uploadOrdersPayload = parsedOrders.map((o: any) => {
+        const trackingNum = String(o.id || o.tracking_number || o.tracking_code || o.Tracking_Number || "").trim();
+        return {
+          id: trackingNum, // The tracking detail is the ID to scan.
+          tracking_number: trackingNum,
+          order_id: String(o.order_id || o.Order_ID || "").trim(),
+          postcode: String(o.postcode || o.Postcode || "").trim(),
+          address: String(o.address || o.Address || "").trim(),
+          due_date: Number(o.due_date || o.Due_date || o["Due Date"] || Date.now()),
+          buyer_name: String(o.buyer_name || o.customer_name || "").trim() || "TikTok Customer",
+          items: JSON.stringify(o.items || []),
+          batch_id: batchId,
+          upload_date: Date.now(),
+          status: "Pending Pack",
+          issues: "[]",
+          logs: JSON.stringify([{
+            action: "Batch Uploaded",
+            actionBy: profile?.name || "Operator",
+            remark: `Labels PDF uploaded. Batch ID: ${batchId}`,
+            timestamp: Date.now()
+          }])
+        };
+      });
 
       const writeRes = await fetch(`${WORKER_URL}/api/admin/update`, {
         method: "POST",
@@ -851,11 +910,11 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     }
                   />
                 </th>
-                <th className="py-2.5 px-3">Order Details</th>
-                <th className="py-2.5 px-3">Tracking Details</th>
-                <th className="py-2.5 px-3">Items list</th>
-                <th className="py-2.5 px-3">Status</th>
-                <th className="py-2.5 px-3">Operator / Timestamp</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Order Details</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Tracking Details</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Items list</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Status</th>
+                <th className="py-2.5 px-3 font-semibold text-zinc-700">Pack by / Time</th>
                 <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
@@ -906,16 +965,29 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                               className="rounded text-pink-600 focus:ring-pink-500 disabled:opacity-30 disabled:cursor-not-allowed"
                             />
                           </td>
-                          <td className="py-3 px-3">
-                            <div className="font-bold text-zinc-900 font-mono select-all">{order.id}</div>
-                            <div className="text-[11px] text-zinc-500 mt-0.5">Buyer: {order.buyer_name}</div>
+                          <td className="py-3 px-3 max-w-[280px]">
+                            <div className="flex flex-col gap-1 select-text">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Order ID:</span>
+                                <span className="font-mono font-bold text-zinc-900 text-xs select-all">{order.order_id || order.Order_ID || "-"}</span>
+                              </div>
+                              <div className="text-[11px] text-zinc-700 flex flex-wrap gap-x-1">
+                                <span className="font-bold">Postcode:</span>
+                                <span className="font-mono bg-zinc-100 border border-zinc-200 rounded px-1 text-[10px]">{order.postcode || order.Postcode || "-"}</span>
+                              </div>
+                              <div className="text-[11px] text-zinc-500 break-words leading-tight">{order.address || order.Address || "-"}</div>
+                              <div className="text-[10px] text-zinc-500 mt-0.5 flex items-center gap-1">
+                                <span className="font-bold uppercase text-[9px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1">Due Date:</span>
+                                <span>{formatDateTime(order.due_date || order.Due_date || order["Due Date"] || 0)}</span>
+                              </div>
+                            </div>
                           </td>
                           <td className="py-3 px-3">
-                            <div className="font-semibold text-zinc-800 font-mono">{order.tracking_number || "Awaiting allocation"}</div>
+                            <div className="font-bold text-zinc-900 font-mono select-all text-xs">{order.id}</div>
                           </td>
                           <td className="py-3 px-3 max-w-[200px]">
                             <div className="flex flex-wrap gap-1">
-                              {parseItems(order.items).map((item, idx) => (
+                              {parseItems(order.items || "[]").map((item, idx) => (
                                 <span 
                                   key={idx} 
                                   className="inline-flex items-center px-1.5 py-0.5 rounded bg-zinc-100 text-[10px] text-zinc-700 font-medium border border-zinc-200"
@@ -998,6 +1070,16 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                               >
                                 {hasActiveIssueOnRow ? "Resolve Issue" : "Log Issue"}
                               </button>
+
+                              {order.status !== "Pending Pack" && (
+                                <button 
+                                  onClick={() => handleRevokeOrder(order)}
+                                  className="px-2 py-1 rounded border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 font-semibold"
+                                  title="Reset order status to Pending Pack"
+                                >
+                                  Revoke
+                                </button>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1339,7 +1421,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                       <td className="py-2 px-3 border-r border-zinc-300 font-mono font-semibold">{ord.tracking_number}</td>
                       <td className="py-2 px-3 max-w-[200px]">
                         <div className="flex flex-col gap-0.5">
-                          {parseItems(ord.items).map((item, idx) => (
+                          {parseItems(ord.items || "[]").map((item, idx) => (
                             <span key={idx}>
                               • {item.sku} (x{item.qty})
                             </span>
