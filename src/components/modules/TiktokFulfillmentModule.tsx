@@ -708,19 +708,55 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
         {activeTab === "orders" ? (
           <>
         
-        {/* Header Title & Sync */}
-        <div className="content-header flex flex-row items-center justify-between px-1 border-b border-zinc-300/40 pb-3 flex-shrink-0">
-          <div className="flex flex-col gap-0.5">
-            <h2 className="text-2xl font-bold text-zinc-950 flex items-center gap-2">
-              TikTok Fulfillment
-              {syncStatus === "syncing" && <Loader2 className="w-5 h-5 animate-spin text-pink-500" />}
-            </h2>
-            <p className="text-sm text-zinc-500">
-              Process labels, track scanner statuses, handle order issues, and dispatch courier manifests.
-            </p>
+        {/* Header Search & Actions Row */}
+        <div className="content-header flex flex-row items-center justify-between px-1 border-b border-zinc-300/40 pb-3 flex-shrink-0 gap-4">
+          
+          {/* Left: Search & Filter Dropdown */}
+          <div className="flex items-center gap-3 flex-1 max-w-xl">
+            <div className="relative w-full">
+              <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
+              <input 
+                type="text"
+                placeholder="Search by Order ID, Tracking No, or Buyer Name..."
+                value={searchQuery || ""}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-white border border-zinc-200 rounded-lg pl-9 pr-4 py-2 text-xs focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 placeholder-zinc-400"
+              />
+            </div>
+            
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs text-zinc-700 focus:outline-none focus:border-pink-500 flex-shrink-0"
+            >
+              <option value="all">All Statuses</option>
+              <option value="Pending Pack">Pending Pack</option>
+              <option value="Packed">Packed</option>
+              <option value="Issue">Issue</option>
+              <option value="Picked Up">Picked Up</option>
+            </select>
           </div>
           
-          <div className="flex items-center gap-3">
+          {/* Right: Actions */}
+          <div className="flex items-center gap-3 flex-shrink-0">
+            {syncStatus === "syncing" && (
+              <span className="flex items-center gap-1.5 text-xs text-zinc-400 animate-pulse mr-1">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-pink-500" />
+                Syncing...
+              </span>
+            )}
+            
+            {selectedOrderIds.size > 0 && (
+              <CustomButton
+                variant="dark"
+                onClick={triggerCourierHandover}
+                className="h-9 text-xs gap-1.5 px-3 bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[200px]"
+              >
+                <Printer className="w-4 h-4" />
+                Handover ({selectedOrderIds.size})
+              </CustomButton>
+            )}
+
             <CustomButton 
               variant="dark"
               onClick={() => fileInputRef.current?.click()}
@@ -781,47 +817,6 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
               <span className="text-2xl font-extrabold text-zinc-950">{summaryTotals.pickedUp}</span>
               <span className="text-xs px-2 py-0.5 rounded-full font-bold bg-zinc-100 text-zinc-600 border border-zinc-200">Completed</span>
             </div>
-          </div>
-        </div>
-
-        {/* Filter Controls Row */}
-        <div className="flex items-center justify-between bg-zinc-50 border border-zinc-200 rounded-xl p-3 flex-shrink-0">
-          <div className="flex items-center gap-3 flex-1 max-w-md">
-            <div className="relative w-full">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-zinc-400" />
-              <input 
-                type="text"
-                placeholder="Search by Order ID, Tracking No, or Buyer Name..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white border border-zinc-200 rounded-lg pl-9 pr-4 py-2 text-xs focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 placeholder-zinc-400"
-              />
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs text-zinc-700 focus:outline-none focus:border-pink-500"
-            >
-              <option value="all">All Statuses</option>
-              <option value="Pending Pack">Pending Pack</option>
-              <option value="Packed">Packed</option>
-              <option value="Issue">Issue</option>
-              <option value="Picked Up">Picked Up</option>
-            </select>
-
-            {selectedOrderIds.size > 0 && (
-              <CustomButton
-                variant="dark"
-                onClick={triggerCourierHandover}
-                className="h-8 text-[11px] gap-1.5 px-3 bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[200px]"
-              >
-                <Printer className="w-3.5 h-3.5" />
-                Handover ({selectedOrderIds.size})
-              </CustomButton>
-            )}
           </div>
         </div>
 
