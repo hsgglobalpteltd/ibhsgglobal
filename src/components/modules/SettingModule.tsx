@@ -135,11 +135,11 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
           const items = JSON.parse(cached);
           setData(items);
         } catch (e) {
-          fetchFreshData();
+          // ignore
         }
-      } else {
-        fetchFreshData();
       }
+      // Always fetch fresh data from network to ensure it is synchronized
+      fetchFreshData();
     } else {
       setData([]);
     }
