@@ -678,7 +678,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
           <div className="flex flex-col gap-0.5">
             <h2 className="text-2xl font-bold text-zinc-950 flex items-center gap-2">
               TikTok Fulfillment
-              {syncStatus === "syncing" && <Loader2 className="w-5 h-5 animate-spin text-pink-500" />}
+              {syncStatus === "syncing" && <Loader2 className="w-5 h-5 animate-spin text-[#0B57D0]" />}
             </h2>
             <p className="text-sm text-zinc-500">
               Process labels, track scanner statuses, handle order issues, and dispatch courier manifests.
@@ -705,7 +705,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   onChange={toggleAutoShip}
                   className="sr-only peer"
                 />
-                <div className="w-9 h-5 bg-zinc-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-pink-600"></div>
+                <div className="w-9 h-5 bg-zinc-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#0B57D0]"></div>
               </div>
             </label>
 
@@ -714,7 +714,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
               variant="dark"
               onClick={syncTikTokOrders}
               disabled={isSyncingOrders}
-              className="h-9 gap-2 text-xs bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[200px]"
+              className="h-9 gap-2 text-xs bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] max-w-[200px]"
             >
               {isSyncingOrders ? (
                 <>
@@ -802,7 +802,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                 placeholder="Search by Order ID, Tracking No, or Buyer Name..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white border border-zinc-200 rounded-lg pl-9 pr-4 py-2 text-xs focus:outline-none focus:border-pink-500 focus:ring-1 focus:ring-pink-500 placeholder-zinc-400"
+                className="w-full bg-white border border-zinc-200 rounded-lg pl-9 pr-4 py-2 text-xs focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] placeholder-zinc-400"
               />
             </div>
           </div>
@@ -811,7 +811,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
             <select
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value)}
-              className="bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs text-zinc-700 focus:outline-none focus:border-pink-500"
+              className="bg-white border border-zinc-200 rounded-lg px-3 py-2 text-xs text-zinc-700 focus:outline-none focus:border-[#0B57D0]"
             >
               <option value="all">All Statuses</option>
               <option value="Pending Pack">Pending Pack</option>
@@ -824,7 +824,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
               <CustomButton
                 variant="dark"
                 onClick={triggerCourierHandover}
-                className="h-8 text-[11px] gap-1.5 px-3 bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[200px]"
+                className="h-8 text-[11px] gap-1.5 px-3 bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] max-w-[200px]"
               >
                 <Printer className="w-3.5 h-3.5" />
                 Handover ({selectedOrderIds.size})
@@ -842,7 +842,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   {/* Select all checkbox for active filter visible rows */}
                   <input 
                     type="checkbox"
-                    className="rounded text-pink-600 focus:ring-pink-500"
+                    className="rounded text-[#0B57D0] focus:ring-[#0B57D0]"
                     onChange={() => {
                       const allPacked = orders.filter(o => o.status === "Packed" && 
                         (String(o.id).toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -914,7 +914,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                               disabled={!isPacked || hasActiveIssueOnRow}
                               checked={isChecked}
                               onChange={() => toggleSelectOrder(order.id)}
-                              className="rounded text-pink-600 focus:ring-pink-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                              className="rounded text-[#0B57D0] focus:ring-[#0B57D0] disabled:opacity-30 disabled:cursor-not-allowed"
                             />
                           </td>
                           <td className="py-3 px-3">
@@ -928,7 +928,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                                   {order.tracking_number}
                                 </div>
                                 {order.courier && (
-                                  <span className="inline-flex items-center w-fit px-1.5 py-0.5 rounded bg-pink-50 text-[10px] text-pink-600 font-bold border border-pink-200">
+                                  <span className="inline-flex items-center w-fit px-1.5 py-0.5 rounded bg-blue-50 text-[10px] text-[#0B57D0] font-bold border border-blue-200">
                                     {order.courier}
                                   </span>
                                 )}
@@ -938,7 +938,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                                 variant="dark"
                                 onClick={() => generateAirwaybillManually(order.id)}
                                 disabled={generatingAwbOrderId === order.id}
-                                className="h-7 text-[10px] px-2 bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[120px] font-bold flex items-center justify-center gap-1"
+                                className="h-7 text-[10px] px-2 bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] max-w-[120px] font-bold flex items-center justify-center gap-1"
                               >
                                 {generatingAwbOrderId === order.id ? (
                                   <>
@@ -1103,7 +1103,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     placeholder="Describe how the issue was resolved (e.g. repacked and scanned proof, cancellation processed)..."
                     value={resolutionRemark}
                     onChange={(e) => setResolutionRemark(e.target.value)}
-                    className="w-full border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400 resize-none"
+                    className="w-full border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-[#0B57D0] placeholder-zinc-400 resize-none"
                   />
                 </div>
 
@@ -1121,7 +1121,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                       const pendingIssue = parseIssues(activeIssueOrder.issues).find(i => i.status === "pending");
                       if (pendingIssue) resolveLoggedIssue(pendingIssue.id);
                     }}
-                    className="h-9 px-4 text-xs font-bold bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[150px]"
+                    className="h-9 px-4 text-xs font-bold bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] max-w-[150px]"
                   >
                     Resolve Issue
                   </CustomButton>
@@ -1135,7 +1135,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   <select
                     value={issueType}
                     onChange={(e) => setIssueType(e.target.value)}
-                    className="w-full border border-zinc-200 rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-pink-500"
+                    className="w-full border border-zinc-200 rounded-lg px-2.5 py-2 text-xs focus:outline-none focus:border-[#0B57D0]"
                   >
                     <option value="Cancel after Courier pick">Cancel after Courier pick</option>
                     <option value="Wrong pack">Wrong pack</option>
@@ -1153,7 +1153,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     placeholder="Detail what occurred..."
                     value={issueDesc}
                     onChange={(e) => setIssueDesc(e.target.value)}
-                    className="w-full border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400 resize-none"
+                    className="w-full border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-[#0B57D0] placeholder-zinc-400 resize-none"
                   />
                 </div>
 
@@ -1164,7 +1164,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                     placeholder="e.g. Awaiting return of package, repack correct items..."
                     value={issueAction}
                     onChange={(e) => setIssueAction(e.target.value)}
-                    className="w-full border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
+                    className="w-full border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-[#0B57D0] placeholder-zinc-400"
                   />
                 </div>
 
@@ -1219,7 +1219,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   {parseLogs(activeLogOrder.logs).map((log, index) => (
                     <div key={index} className="relative text-xs">
                       {/* Marker dot */}
-                      <span className="absolute -left-[21px] top-1.5 w-3.5 h-3.5 rounded-full border-2 border-white bg-pink-500 shadow-xs" />
+                      <span className="absolute -left-[21px] top-1.5 w-3.5 h-3.5 rounded-full border-2 border-white bg-blue-500 shadow-xs" />
                       
                       <div className="flex flex-col gap-0.5">
                         <div className="font-bold text-zinc-900 text-xs flex items-center justify-between">
@@ -1312,7 +1312,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   placeholder="e.g. J&T Courier / Driver Name..."
                   value={courierName}
                   onChange={(e) => setCourierName(e.target.value)}
-                  className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
+                  className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-[#0B57D0] placeholder-zinc-400"
                 />
               </div>
 
@@ -1323,7 +1323,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                   placeholder="e.g. GBC1234A..."
                   value={courierPlate}
                   onChange={(e) => setCourierPlate(e.target.value)}
-                  className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-pink-500 placeholder-zinc-400"
+                  className="w-full bg-white border border-zinc-200 rounded-lg p-2.5 text-xs focus:outline-none focus:border-[#0B57D0] placeholder-zinc-400"
                 />
               </div>
             </div>
@@ -1347,7 +1347,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
               <div className="grid grid-cols-3 gap-6 bg-white border border-zinc-200 rounded-lg p-3 text-xs print:border-zinc-300">
                 <div>
                   <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">Manifest Status</span>
-                  <span className="font-bold text-pink-600">READY FOR DISPATCH</span>
+                  <span className="font-bold text-[#0B57D0]">READY FOR DISPATCH</span>
                 </div>
                 <div>
                   <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider block">Total Packages</span>
@@ -1431,7 +1431,7 @@ export function TiktokFulfillmentModule({ profile, idToken }: TiktokFulfillmentM
                 variant="dark"
                 disabled={isGeneratingManifest}
                 onClick={submitHandoverManifest}
-                className="h-9 px-4 text-xs font-bold bg-pink-600 border-pink-600 hover:bg-pink-700 max-w-[180px]"
+                className="h-9 px-4 text-xs font-bold bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] max-w-[180px]"
               >
                 {isGeneratingManifest ? (
                   <>
