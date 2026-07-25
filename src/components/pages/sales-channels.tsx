@@ -62,7 +62,7 @@ export function SalesChannelsPage({ profile }: SalesChannelsPageProps) {
   const renderActiveSubModule = () => {
     switch (activeSubModule) {
       case "Multi-Channel Sync":
-        return <MultiChannelSyncModule />;
+        return <MultiChannelSyncModule profile={profile} />;
       case "Sales Leaderboard":
         return <SalesLeaderboardModule />;
       case "Promo & Pricing Rules":
