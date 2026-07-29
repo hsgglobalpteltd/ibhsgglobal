@@ -34,10 +34,6 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Track Order",
         description: "Monitor and manage delivery orders, vehicle routing tracks, and real-time delivery logs.",
-      },
-      {
-        title: "TikTok Fulfillment",
-        description: "Process labels, track scanner statuses, handle order issues, and dispatch courier manifests.",
       }
     ]
   },

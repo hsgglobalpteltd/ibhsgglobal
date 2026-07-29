@@ -389,7 +389,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           return parseTimestamp(b.Timestamp).getTime() - parseTimestamp(a.Timestamp).getTime();
         });
 
-        const latestShelfImage = sortedShelfLogs.length > 0 ? sortedShelfLogs[0]["Image Link"] : null;
+        const latestShelfImage = sortedShelfLogs.length > 0 ? (sortedShelfLogs[0]["Image Link"] || sortedShelfLogs[0]["image_link"]) : null;
 
         return {
           id: store.ID,

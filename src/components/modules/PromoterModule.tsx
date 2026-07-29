@@ -1232,7 +1232,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Filter products by selected brand in campaign form
   const brandProducts = React.useMemo(() => {
     if (!campBrand) return [];
-    return products.filter(p => String(p["Brands ID"] || p["Brand ID"]) === String(campBrand));
+    const brandIds = campBrand.split(",").map(id => id.trim()).filter(Boolean);
+    return products.filter(p => brandIds.includes(String(p["Brands ID"] || p["Brand ID"])));
   }, [products, campBrand]);
 
   // Undo / Redo history controller helper
@@ -1660,7 +1661,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.text(c["Campaign Title"], 14, 32);
 
     // Brand info
-    const brandName = brands.find(b => String(b.ID) === String(c.Brand))?.["Display Name"] || c.Brand;
+    const brandName = String(c.Brand || "").split(",")
+      .map(id => brands.find(b => String(b.ID) === String(id.trim()))?.["Display Name"] || id.trim())
+      .join(", ");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
     doc.setTextColor(113, 113, 122);
@@ -1960,7 +1963,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.text(c["Campaign Title"], 14, 32);
 
     // Brand info
-    const brandName = brands.find(b => String(b.ID) === String(c.Brand))?.["Display Name"] || c.Brand;
+    const brandName = String(c.Brand || "").split(",")
+      .map(id => brands.find(b => String(b.ID) === String(id.trim()))?.["Display Name"] || id.trim())
+      .join(", ");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
     doc.setTextColor(113, 113, 122);
@@ -2124,7 +2129,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     });
 
     return list.map(c => {
-      const brandName = brands.find(b => String(b.ID) === String(c.Brand))?.["Display Name"] || c.Brand;
+      const brandName = String(c.Brand || "").split(",")
+        .map(id => brands.find(b => String(b.ID) === String(id.trim()))?.["Display Name"] || id.trim())
+        .join(", ");
       const isArchived = c.Archived && (String(c.Archived) === "1" || String(c.Archived) === "true");
 
       return {
@@ -2638,8 +2645,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
 
     // Validation 2: Merchandiser Brand Carry lookup
-    const brandId = selectedCampaign.Brand;
-    const brandName = brands.find(b => String(b.ID) === String(brandId))?.["Display Name"] || brandId;
+    const brandIds = String(selectedCampaign.Brand || "").split(",").map(id => id.trim()).filter(Boolean);
+    const brandName = brandIds.map(bId => brands.find(b => String(b.ID) === String(bId))?.["Display Name"] || bId).join(", ");
 
     const storeLogs = productLogs.filter(log => {
       const logStoreId = log["Retailer Stores ID"] || log["Store ID"];
@@ -2661,7 +2668,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         } catch (err) {}
 
         const brandSkus = products
-          .filter(p => String(p["Brands ID"] || p["Brand ID"]) === String(brandId))
+          .filter(p => brandIds.includes(String(p["Brands ID"] || p["Brand ID"])))
           .map(p => String(p.SKU).toLowerCase());
 
         carriesBrand = auditJson.some((item: any) => {
@@ -5263,23 +5270,38 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       {/* Select Brand */}
                       <div className="flex flex-col gap-1">
                         <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
-                          Select Brand (Choose 1)
+                          Select Brands (Choose 1 or more)
                         </label>
-                        <select
-                          value={campBrand}
-                          onChange={(e) => {
-                            setCampBrand(e.target.value);
-                            setCampProducts([]); // Reset products selection when brand changes
-                          }}
-                          className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-955 focus:ring-1 focus:ring-zinc-955 transition-all cursor-pointer"
-                        >
-                          <option value="">-- Select Brand --</option>
-                          {brands.map(b => (
-                            <option key={b.ID} value={b.ID}>
-                              {b["Display Name"]}
-                            </option>
-                          ))}
-                        </select>
+                        <div className="flex flex-col gap-1.5 mt-1 max-h-40 overflow-y-auto border border-zinc-200 rounded p-2.5 bg-white shadow-3xs custom-scrollbar">
+                          {brands.length === 0 ? (
+                            <span className="text-[10px] text-zinc-455 italic pl-1">No brands found.</span>
+                          ) : (
+                            brands.map(b => {
+                              const isChecked = campBrand.split(",").map(id => id.trim()).includes(String(b.ID));
+                              return (
+                                <label key={b.ID} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-zinc-700 hover:text-zinc-955 select-none">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={(e) => {
+                                      const currentBrandIds = campBrand.split(",").map(id => id.trim()).filter(Boolean);
+                                      let newBrandIds: string[];
+                                      if (e.target.checked) {
+                                        newBrandIds = [...currentBrandIds, String(b.ID)];
+                                      } else {
+                                        newBrandIds = currentBrandIds.filter(id => id !== String(b.ID));
+                                      }
+                                      setCampBrand(newBrandIds.join(","));
+                                      setCampProducts([]); // Reset products selection when brands change
+                                    }}
+                                    className="rounded border-zinc-300 text-[#0B57D0] focus:ring-[#0B57D0] h-3.5 w-3.5"
+                                  />
+                                  <span>{b["Display Name"]}</span>
+                                </label>
+                              );
+                            })
+                          )}
+                        </div>
                       </div>
 
                       {/* Select Products Checklist */}
@@ -6731,22 +6753,24 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           ? activeCampaign.Products.split(",").map((sku: string) => sku.trim().toLowerCase()).filter(Boolean)
           : [];
         
-        const activeCampaignBrandId = String(activeCampaign?.Brand || "").trim().toLowerCase();
-        const activeBrandObj = brands.find(b => String(b.ID).toLowerCase() === activeCampaignBrandId);
-        const activeCampaignBrandName = activeBrandObj ? String(activeBrandObj["Display Name"] || activeBrandObj.name || "").trim().toLowerCase() : "";
+        const activeCampaignBrandIds = String(activeCampaign?.Brand || "").split(",").map(id => id.trim().toLowerCase()).filter(Boolean);
+        const activeCampaignBrandNames = activeCampaignBrandIds.map(id => {
+          const bObj = brands.find(b => String(b.ID).toLowerCase() === id);
+          return bObj ? String(bObj["Display Name"] || bObj.name || "").trim().toLowerCase() : "";
+        }).filter(Boolean);
 
         const filteredProducts = products.filter(p => {
           if (campaignSkus.length > 0) {
             return campaignSkus.includes(String(p.SKU).toLowerCase());
           }
-          if (!activeCampaignBrandId) {
+          if (activeCampaignBrandIds.length === 0) {
             return true;
           }
           const pBrandId = String(p["Brands ID"] || p.Brands_ID || p.brandId || "").trim().toLowerCase();
           const pBrandObj = brands.find(b => String(b.ID).toLowerCase() === pBrandId);
           const pBrandName = pBrandObj ? String(pBrandObj["Display Name"] || pBrandObj.name || "").trim().toLowerCase() : "";
           
-          return pBrandId === activeCampaignBrandId || (activeCampaignBrandName && pBrandName === activeCampaignBrandName);
+          return activeCampaignBrandIds.includes(pBrandId) || (pBrandName && activeCampaignBrandNames.includes(pBrandName));
         });
         
         const activeShiftDateStr = (() => {

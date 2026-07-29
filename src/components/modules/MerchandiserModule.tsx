@@ -1117,7 +1117,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
             if (storeShelfLogs.length > 1) {
               storeShelfLogs.sort((a, b) => parseTimestamp(b.Timestamp).getTime() - parseTimestamp(a.Timestamp).getTime());
             }
-            const shelfImageLink = storeShelfLogs.length > 0 ? storeShelfLogs[0]["Image Link"] : "";
+            const shelfImageLink = storeShelfLogs.length > 0 ? (storeShelfLogs[0]["Image Link"] || storeShelfLogs[0]["image_link"] || "") : "";
 
             brandSkuCounts[brandId] = { 
               brandId,
