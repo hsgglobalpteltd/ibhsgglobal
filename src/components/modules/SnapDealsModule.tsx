@@ -191,7 +191,10 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     setLoadingDeals(true);
     try {
       const data = await fetchSnapDeals();
-      setDeals(data);
+      setDeals(data.map((deal: any) => ({
+        ...deal,
+        id: deal.ID || deal.id
+      })));
     } catch (err: any) {
       showToast(err.message || "Failed to load snap deals", "error");
     } finally {

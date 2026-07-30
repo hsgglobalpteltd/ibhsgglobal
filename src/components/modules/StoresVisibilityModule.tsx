@@ -28,7 +28,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   const [isScrolled, setIsScrolled] = React.useState(false);
   
   // Selected filter states
-  const [selectedRetailer, setSelectedRetailer] = React.useState<string>("");
+  const [selectedRetailer, setSelectedRetailer] = React.useState<string>("all");
   const [selectedBrand, setSelectedBrand] = React.useState<string>("");
   const [includeNotCarry, setIncludeNotCarry] = React.useState<boolean>(false);
   
@@ -179,8 +179,8 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       setSyncStatus("synced");
       
       // Auto-select first options if available
-      if (rt.length > 0 && !selectedRetailer) {
-        setSelectedRetailer(String(rt[0].ID));
+      if (!selectedRetailer) {
+        setSelectedRetailer("all");
       }
       if (br.length > 0 && !selectedBrand) {
         setSelectedBrand(String(br[0].ID));
@@ -285,10 +285,12 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       const endMs = new Date(eYear, eMonth - 1, eDay, 23, 59, 59, 999).getTime();
 
       // Find stores belonging to the selected Retailer
-      const filteredStores = stores.filter(store => {
-        const retId = store["Retailers ID"] || store["Retailer ID"];
-        return String(retId) === String(selectedRetailer);
-      });
+      const filteredStores = selectedRetailer === "all"
+        ? stores
+        : stores.filter(store => {
+            const retId = store["Retailers ID"] || store["Retailer ID"];
+            return String(retId) === String(selectedRetailer);
+          });
 
       // Filter products belonging to the selected Brand
       const brandProducts = products.filter(p => {
@@ -299,6 +301,9 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       const brandSkus = brandProducts.map(p => String(p.SKU).toLowerCase());
 
       const results = filteredStores.map(store => {
+        const retailer = retailers.find(r => String(r.ID) === String(store["Retailers ID"] || store["Retailer ID"]));
+        const retailerName = retailer ? retailer["Display Name"] : "";
+
         // Find visits/audits within date range for this store (from Merch_Visit_Product_Audit_Logs)
         const storeProductLogs = productLogs.filter(log => {
           const storeId = log["Retailer Stores ID"] || log["Store ID"];
@@ -394,6 +399,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         return {
           id: store.ID,
           storeName: store["Display Name"] || `Store #${store.ID}`,
+          retailerName,
           address: store.Address || "No address listed",
           activities: latestVisits,
           products: carriedProductsList,
@@ -426,6 +432,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   };
 
   const activeRetailerName = React.useMemo(() => {
+    if (selectedRetailer === "all") return "All Retailers";
     const found = retailers.find(r => String(r.ID) === String(selectedRetailer));
     return found ? found["Display Name"] : "";
   }, [retailers, selectedRetailer]);
@@ -498,7 +505,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                   onChange={(e) => setSelectedRetailer(e.target.value)}
                   className="w-full bg-white border border-zinc-300 rounded px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 select-none cursor-pointer"
                 >
-                  <option value="" disabled>Select Retailer...</option>
+                  <option value="all">All Retailers</option>
                   {retailers.map((r) => (
                     <option key={r.ID} value={r.ID}>
                       {r["Display Name"]}
@@ -723,6 +730,11 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                         {/* Store Details (Fixed 20% width) */}
                         <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
                           <div className="w-full overflow-hidden">
+                            {item.retailerName && (
+                              <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide mb-0.5">
+                                {item.retailerName}
+                              </div>
+                            )}
                             <div className="font-bold text-zinc-950 whitespace-normal break-words">
                               {item.storeName}
                             </div>

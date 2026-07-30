@@ -118,13 +118,18 @@ export function TiktokFulfillmentModule({ profile }: { profile?: any }) {
   };
 
   const handleDeleteTerminal = async (row: any) => {
+    const ip = typeof row === "string" ? row : row?.ip;
+    if (!ip) {
+      showToast("Cannot delete terminal: missing IP address", "error");
+      return;
+    }
     try {
       const res = await fetch(`${WORKER_URL}/api/tiktok/terminals`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "delete",
-          terminal: { ip: row.ip }
+          terminal: { ip }
         })
       });
       if (!res.ok) throw new Error(await res.text());
@@ -161,13 +166,18 @@ export function TiktokFulfillmentModule({ profile }: { profile?: any }) {
   };
 
   const handleDeleteOperator = async (row: any) => {
+    const id = typeof row === "string" ? row : row?.id;
+    if (!id) {
+      showToast("Cannot delete operator: missing ID", "error");
+      return;
+    }
     try {
       const res = await fetch(`${WORKER_URL}/api/tiktok/operators`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "delete",
-          operator: { id: row.id }
+          operator: { id }
         })
       });
       if (!res.ok) throw new Error(await res.text());
@@ -277,7 +287,7 @@ function TerminalModal({ terminal, existingTerminals, onClose, onSave }: Termina
   const [pin, setPin] = React.useState(terminal?.pin || "");
   const [autoPrint, setAutoPrint] = React.useState(!!terminal?.auto_print);
   
-  const pagesList = ["Dashboard", "Orders", "Scan Pack", "Scan Handover", "Setting"];
+  const pagesList = ["Dashboard", "Orders", "Scan Parcel", "Scan Handover", "Setting"];
   const [allowedPages, setAllowedPages] = React.useState<string[]>(() => {
     if (terminal?.allowed_pages) {
       try {
