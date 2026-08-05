@@ -1280,6 +1280,8 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   // Format DataTable rows
   const mapDealsToRows = (filteredDeals: SnapDeal[]) => {
     const isAdmin = profile?.role === "Administrator";
+    const isManager = profile?.role === "Manager";
+    const canDelete = isAdmin || isManager;
     return filteredDeals.map((deal) => {
       return {
         id_raw: deal.id,
@@ -1383,7 +1385,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                   />
                 </label>
 
-                {isAdmin && (
+                {canDelete && (
                   <button
                     onClick={() => handleDeleteDeal(deal.id)}
                     className="p-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-855 transition-colors cursor-pointer flex items-center justify-center"
@@ -1425,7 +1427,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                   <Undo size={12} />
                 </button>
 
-                {isAdmin && (
+                {canDelete && (
                   <button
                     onClick={() => handleDeleteDeal(deal.id)}
                     className="p-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-855 transition-colors cursor-pointer flex items-center justify-center"

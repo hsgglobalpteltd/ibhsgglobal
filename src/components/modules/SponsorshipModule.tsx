@@ -248,15 +248,15 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
         const items = JSON.parse(cachedClaims);
         setClaims(items.map((item: any) => ({
           id: item.ID || item.id,
-          invoiceNumber: item.Invoice_Number || item.invoiceNumber || "",
-          sponsorName: item.Sponsor_Name || item.sponsorName || "",
+          invoiceNumber: item.Invoice_Number || item.invoiceNumber || item["Invoice Number"] || "",
+          sponsorName: item.Sponsor_Name || item.sponsorName || item["Sponsor Name"] || "",
           date: parseInt(item.Date || item.date) || Date.now(),
-          claimStartDate: parseInt(item.Claim_Start_Date || item.claimStartDate) || Date.now(),
-          claimEndDate: parseInt(item.Claim_End_Date || item.claimEndDate) || Date.now(),
-          amountByRecord: parseFloat(item.Amount_By_Record || item.amountByRecord) || 0,
-          amountInInvoice: parseFloat(item.Amount_In_Invoice || item.amountInInvoice) || 0,
-          totalAfterGst: parseFloat(item.Total_After_Gst || item.totalAfterGst) || 0,
-          invoicePdfUrl: item.Invoice_Pdf_Url || item.invoicePdfUrl || ""
+          claimStartDate: parseInt(item.Claim_Start_Date || item.claimStartDate || item["Claim Start Date"]) || Date.now(),
+          claimEndDate: parseInt(item.Claim_End_Date || item.claimEndDate || item["Claim End Date"]) || Date.now(),
+          amountByRecord: parseFloat(item.Amount_By_Record || item.amountByRecord || item["Amount By Record"]) || 0,
+          amountInInvoice: parseFloat(item.Amount_In_Invoice || item.amountInInvoice || item["Amount In Invoice"]) || 0,
+          totalAfterGst: parseFloat(item.Total_After_Gst || item.totalAfterGst || item["Total After GST"]) || 0,
+          invoicePdfUrl: item.Invoice_Pdf_Url || item.invoicePdfUrl || item["Invoice PDF URL"] || ""
         })));
       }
 
@@ -392,15 +392,15 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       if (claimsData) {
         const newClaims = claimsData.map((item: any) => ({
           id: item.ID || item.id,
-          invoiceNumber: item.Invoice_Number || item.invoiceNumber || "",
-          sponsorName: item.Sponsor_Name || item.sponsorName || "",
+          invoiceNumber: item.Invoice_Number || item.invoiceNumber || item["Invoice Number"] || "",
+          sponsorName: item.Sponsor_Name || item.sponsorName || item["Sponsor Name"] || "",
           date: parseInt(item.Date || item.date) || Date.now(),
-          claimStartDate: parseInt(item.Claim_Start_Date || item.claimStartDate) || Date.now(),
-          claimEndDate: parseInt(item.Claim_End_Date || item.claimEndDate) || Date.now(),
-          amountByRecord: parseFloat(item.Amount_By_Record || item.amountByRecord) || 0,
-          amountInInvoice: parseFloat(item.Amount_In_Invoice || item.amountInInvoice) || 0,
-          totalAfterGst: parseFloat(item.Total_After_Gst || item.totalAfterGst) || 0,
-          invoicePdfUrl: item.Invoice_Pdf_Url || item.invoicePdfUrl || ""
+          claimStartDate: parseInt(item.Claim_Start_Date || item.claimStartDate || item["Claim Start Date"]) || Date.now(),
+          claimEndDate: parseInt(item.Claim_End_Date || item.claimEndDate || item["Claim End Date"]) || Date.now(),
+          amountByRecord: parseFloat(item.Amount_By_Record || item.amountByRecord || item["Amount By Record"]) || 0,
+          amountInInvoice: parseFloat(item.Amount_In_Invoice || item.amountInInvoice || item["Amount In Invoice"]) || 0,
+          totalAfterGst: parseFloat(item.Total_After_Gst || item.totalAfterGst || item["Total After GST"]) || 0,
+          invoicePdfUrl: item.Invoice_Pdf_Url || item.invoicePdfUrl || item["Invoice PDF URL"] || ""
         }));
         setClaims(newClaims);
         localStorage.setItem("sponsorship_claims_data", JSON.stringify(claimsData));
@@ -582,7 +582,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     // --- SILENT BACKGROUND SAVE ---
     writeToDatabase("sponsorship_catalog", action, newLinkData)
       .catch((err) => {
-        showToast("Background sync failed for catalog item: " + err.message, "warning");
+        showToast("Failed to save catalog item: " + err.message, "warning");
       });
   };
 
@@ -614,7 +614,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     // --- SILENT BACKGROUND SAVE ---
     writeToDatabase("sponsorship_catalog", "delete", { ID: id })
       .catch((err) => {
-        showToast("Background sync failed to delete catalog item: " + err.message, "warning");
+        showToast("Failed to delete catalog item: " + err.message, "warning");
       });
   };
 
@@ -725,7 +725,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     // --- SILENT BACKGROUND SAVE ---
     writeToDatabase("sponsorship_receivers", action, newRecData)
       .catch((err) => {
-        showToast("Background sync failed for receiver: " + err.message, "warning");
+        showToast("Failed to save receiver: " + err.message, "warning");
       });
   };
 
@@ -754,7 +754,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     // --- SILENT BACKGROUND SAVE ---
     writeToDatabase("sponsorship_receivers", "delete", { ID: id })
       .catch((err) => {
-        showToast("Background sync failed to delete receiver: " + err.message, "warning");
+        showToast("Failed to delete receiver: " + err.message, "warning");
       });
   };
 
@@ -924,7 +924,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
       writeToDatabase("sponsorship_transactions", action, txPayload)
         .catch((err) => {
-          showToast(`Background sync failed for SKU [${targetId}]: ` + err.message, "warning");
+          showToast(`Failed to save transaction: ` + err.message, "warning");
         });
     });
 
@@ -1041,7 +1041,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     // --- SILENT BACKGROUND SAVE ---
     writeToDatabase("sponsorship_transactions", "delete", { ID: id })
       .catch((err) => {
-        showToast("Background sync failed to delete transaction: " + err.message, "warning");
+        showToast("Failed to delete transaction: " + err.message, "warning");
       });
   };
 
@@ -1873,7 +1873,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     // --- SILENT BACKGROUND SAVE ---
     writeToDatabase("sponsorship_claims", action, newClaimData)
       .catch((err) => {
-        showToast("Background sync failed for claim record: " + err.message, "warning");
+        showToast("Failed to save claim record: " + err.message, "warning");
       });
   };
 
@@ -1902,7 +1902,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
     writeToDatabase("sponsorship_claims", "delete", { ID: id })
       .catch((err) => {
-        showToast("Background sync failed for claim deletion: " + err.message, "warning");
+        showToast("Failed to delete claim: " + err.message, "warning");
       });
   };
 

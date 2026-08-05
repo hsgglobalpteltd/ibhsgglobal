@@ -12,6 +12,7 @@ import {
   Check, 
   X, 
   MapPin, 
+  Eye,
   Clock,
   Calendar as CalendarIcon,
   Megaphone,
@@ -201,6 +202,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [printYear, setPrintYear] = React.useState<number>(new Date().getFullYear());
   const [printCampaignId, setPrintCampaignId] = React.useState<string>("");
   const [printPromoterId, setPrintPromoterId] = React.useState<string>("");
+  const [printPromoterType, setPrintPromoterType] = React.useState<"all" | "selected">("all");
+  const [printSelectedPromoterId, setPrintSelectedPromoterId] = React.useState<string>("");
   const [printSelectedPromoterIds, setPrintSelectedPromoterIds] = React.useState<string[]>([]);
   const [printSelectedCampaignIds, setPrintSelectedCampaignIds] = React.useState<string[]>([]);
   const [printStartDate, setPrintStartDate] = React.useState<string>(() => {
@@ -513,16 +516,32 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     return str;
   };
 
-  // Check if a shift date and promoter is locked under completed payouts
-  const isShiftLocked = React.useCallback((dateVal: any, promoterId: any): boolean => {
-    if (!dateVal || !promoterId) return false;
-    const dateNum = new Date(dateVal).getTime();
+  // Check if a shift is locked (i.e. linked to a payout)
+  const isShiftLocked = React.useCallback((shiftIdOrObj: any): boolean => {
+    if (!shiftIdOrObj) return false;
+    let shiftId = "";
+    if (typeof shiftIdOrObj === "string") {
+      shiftId = shiftIdOrObj;
+    } else if (shiftIdOrObj && typeof shiftIdOrObj === "object" && shiftIdOrObj.ID) {
+      shiftId = String(shiftIdOrObj.ID);
+    } else {
+      return false;
+    }
+
+    if (!shiftId) return false;
+
     return payouts.some(p => {
-      if (String(p["Promoter ID"]) !== String(promoterId)) return false;
-      if (p.Status !== "Paid") return false;
-      const start = Number(p["Start Date"]);
-      const end = Number(p["End Date"]);
-      return dateNum >= start && dateNum <= end;
+      if (p["Payout Details"]) {
+        try {
+          const details = JSON.parse(p["Payout Details"]);
+          if (Array.isArray(details)) {
+            return details.some((d: any) => String(d.scheduleId) === String(shiftId));
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+      return false;
     });
   }, [payouts]);
 
@@ -544,6 +563,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [paymentDate, setPaymentDate] = React.useState<string>("");
   const [paymentReceiptFile, setPaymentReceiptFile] = React.useState<File | null>(null);
   const [isPaymentSaving, setIsPaymentSaving] = React.useState<boolean>(false);
+  const [viewingJobsPayout, setViewingJobsPayout] = React.useState<any | null>(null);
 
   // Helper: Format date or timestamp to YYYY-MM-DD
   const formatDateToYYYYMMDD = React.useCallback((ts: any): string => {
@@ -568,6 +588,28 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     return Number((diffMins / 60).toFixed(2));
   }, []);
 
+  const paidScheduleIds = React.useMemo(() => {
+    const ids = new Set<string>();
+    payouts.forEach(p => {
+      if (editingPayoutId && p.ID === editingPayoutId) return;
+      if (p["Payout Details"]) {
+        try {
+          const details = JSON.parse(p["Payout Details"]);
+          if (Array.isArray(details)) {
+            details.forEach((d: any) => {
+              if (d.scheduleId) {
+                ids.add(String(d.scheduleId));
+              }
+            });
+          }
+        } catch (e) {
+          console.error("Failed to parse Payout Details for", p.ID, e);
+        }
+      }
+    });
+    return ids;
+  }, [payouts, editingPayoutId]);
+
   // Fetch Schedules for Payout creation
   const fetchPayoutSchedules = React.useCallback(() => {
     if (!selectedPayoutPromoterId || !payoutStartDate || !payoutEndDate || !payoutHourlyRate) {
@@ -583,21 +625,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const startRange = new Date(payoutStartDate + "T00:00:00").getTime();
     const endRange = new Date(payoutEndDate + "T23:59:59").getTime();
 
-    // Check if promoter already has a payout that overlaps this date range
-    const hasOverlap = payouts.some(p => {
-      if (editingPayoutId && p.ID === editingPayoutId) return false;
-      if (String(p["Promoter ID"]) !== String(selectedPayoutPromoterId)) return false;
-      const pStart = Number(p["Start Date"]);
-      const pEnd = Number(p["End Date"]);
-      return startRange <= pEnd && endRange >= pStart;
-    });
-
-    if (hasOverlap) {
-      setPayoutFetchError("Error: This promoter already has a payout recorded that overlaps with the selected date range. Please select another date range.");
-      setIsPayoutFetching(false);
-      return;
-    }
-
     // Filter schedules
     const filtered = schedules.filter(s => {
       if (String(s["Promoter ID"]) !== String(selectedPayoutPromoterId)) return false;
@@ -607,22 +634,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     if (filtered.length === 0) {
       showToast("No schedules found for this promoter in the selected date range.", "warning");
-      setIsPayoutFetching(false);
-      return;
-    }
-
-    // Check for unkeyed actual times
-    const unkeyed = filtered.filter(s => {
-      const actualStart = s["Actual Start"];
-      if (actualStart === "Absent") return false; // absent is valid
-      if (!actualStart || String(actualStart).trim() === "") return true;
-      const actualEnd = s["Actual End"];
-      if (!actualEnd || String(actualEnd).trim() === "") return true;
-      return false;
-    });
-
-    if (unkeyed.length > 0) {
-      setPayoutFetchError("Error: Actual start/end times are missing for some scheduled shifts in this range. Please settle this in the Schedule tab before creating a payout.");
       setIsPayoutFetching(false);
       return;
     }
@@ -645,6 +656,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const campaign = campaigns.find(c => String(c.ID) === String(s["Campaign ID"]));
       const campaignTitle = campaign ? campaign["Campaign Title"] : (s["Campaign Title"] || "");
 
+      const isPaid = paidScheduleIds.has(String(s.ID));
+
       return {
         scheduleId: s.ID,
         date: s.Date,
@@ -655,7 +668,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         totalPayout,
         taskDetails: `${campaignTitle} @ ${formattedStore}`,
         absent: isAbsent,
-        absentReason: isAbsent ? (s["Actual End"] || "Not specified") : ""
+        absentReason: isAbsent ? (s["Actual End"] || "Not specified") : "",
+        alreadyPaid: isPaid,
+        selected: !isPaid
       };
     });
 
@@ -664,7 +679,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     setEditedPayoutRows(rows);
     setIsPayoutFetching(false);
-  }, [selectedPayoutPromoterId, payoutStartDate, payoutEndDate, payoutHourlyRate, schedules, stores, campaigns, getFormattedStoreName, calculateHours, payouts, editingPayoutId]);
+  }, [selectedPayoutPromoterId, payoutStartDate, payoutEndDate, payoutHourlyRate, schedules, stores, campaigns, getFormattedStoreName, calculateHours, payouts, editingPayoutId, paidScheduleIds]);
 
   // Save Payout to database
   const handleSavePayout = async () => {
@@ -673,25 +688,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
-    // Double check overlap on save
-    const startRange = new Date(payoutStartDate + "T00:00:00").getTime();
-    const endRange = new Date(payoutEndDate + "T23:59:59").getTime();
-
-    const hasOverlap = payouts.some(p => {
-      if (editingPayoutId && p.ID === editingPayoutId) return false;
-      if (String(p["Promoter ID"]) !== String(selectedPayoutPromoterId)) return false;
-      const pStart = Number(p["Start Date"]);
-      const pEnd = Number(p["End Date"]);
-      return startRange <= pEnd && endRange >= pStart;
-    });
-
-    if (hasOverlap) {
-      showToast("Cannot save payout: date range overlaps with an existing payout for this promoter.", "error");
+    const selectedRows = editedPayoutRows.filter(r => r.selected);
+    if (selectedRows.length === 0) {
+      showToast("Please select at least one shift to pay.", "warning");
       return;
     }
 
     const promoterName = promoters.find(p => String(p.ID) === String(selectedPayoutPromoterId))?.Name || "";
-    const totalSum = Number(editedPayoutRows.reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2));
+    const totalSum = Number(selectedRows.reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2));
     
     const payload = {
       ID: editingPayoutId || `payout_${Date.now()}`,
@@ -701,8 +705,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       "End Date": new Date(payoutEndDate + "T23:59:59").getTime(),
       "Hourly Rate": Number(payoutHourlyRate),
       "Total Payout": totalSum,
-      "Payout Details": JSON.stringify(editedPayoutRows),
-      Status: editingPayoutId ? (payouts.find(p => p.ID === editingPayoutId)?.Status || "Draft") : "Draft",
+      "Payout Details": JSON.stringify(selectedRows),
+      Status: editingPayoutId ? (payouts.find(p => p.ID === editingPayoutId)?.Status || "Pending Payout") : "Pending Payout",
       "Receipt Photo URL": editingPayoutId ? (payouts.find(p => p.ID === editingPayoutId)?.["Receipt Photo URL"] || "") : "",
       "Payment Reference": editingPayoutId ? (payouts.find(p => p.ID === editingPayoutId)?.["Payment Reference"] || "") : "",
       "Payment Date": editingPayoutId ? (payouts.find(p => p.ID === editingPayoutId)?.["Payment Date"] || "") : "",
@@ -711,6 +715,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     // Capture snapshot for rollback
     const payoutsBeforeSave = [...payouts];
+    const schedulesBeforeSave = [...schedules];
 
     // Optimistically update local state and cache
     let nextPayouts = [...payouts];
@@ -722,6 +727,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
     setPayouts(nextPayouts);
     localStorage.setItem("ib_promoter_payouts_cache", JSON.stringify(nextPayouts));
+
+    // Optimistically update schedules locally
+    const nextSchedules = schedules.map(s => {
+      const match = selectedRows.find(r => r.scheduleId === s.ID);
+      if (match) {
+        return {
+          ...s,
+          "Actual Start": match.startTime,
+          "Actual End": match.endTime
+        };
+      }
+      return s;
+    });
+    setSchedules(nextSchedules);
 
     // Close form instantly
     setIsCreatePayoutOpen(false);
@@ -744,11 +763,37 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         const data = await res.json() as any;
         if (!data.success) throw new Error(data.error || "Save failed");
 
+        // Sync updated schedule times to the database
+        const updatePromises = selectedRows.map(async (row) => {
+          const originalSchedule = schedulesBeforeSave.find(s => s.ID === row.scheduleId);
+          if (!originalSchedule) return;
+          if (originalSchedule["Actual Start"] !== row.startTime || originalSchedule["Actual End"] !== row.endTime) {
+            const updatedSchedule = {
+              ...originalSchedule,
+              "Actual Start": row.startTime,
+              "Actual End": row.endTime
+            };
+            return fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                sheet: "Promoter_Schedule",
+                action: "update",
+                data: updatedSchedule
+              })
+            });
+          }
+        });
+
+        await Promise.all(updatePromises.filter(Boolean));
+
         // Silent cache bust write
         await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Promoter_Payout`, { method: "POST" });
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Promoter_Schedule`, { method: "POST" });
       } catch (err: any) {
-        showToast("Background sync failed. Rolling back payout.", "error");
+        showToast("Failed to save payout. Rolling back changes.", "error");
         setPayouts(payoutsBeforeSave);
+        setSchedules(schedulesBeforeSave);
         localStorage.setItem("ib_promoter_payouts_cache", JSON.stringify(payoutsBeforeSave));
       }
     })();
@@ -786,7 +831,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             // Silent cache bust write
             await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Promoter_Payout`, { method: "POST" });
           } catch (err: any) {
-            showToast("Background delete failed. Rolling back deletion.", "error");
+            showToast("Failed to delete payout. Rolling back changes.", "error");
             setPayouts(payoutsBeforeDelete);
             localStorage.setItem("ib_promoter_payouts_cache", JSON.stringify(payoutsBeforeDelete));
           }
@@ -1338,7 +1383,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         loadCampaigns();
       }
     } catch (err: any) {
-      showToast("Failed to sync campaign to server: " + err.message, "error");
+      showToast("Failed to save campaign: " + err.message, "error");
     }
   };
 
@@ -1475,7 +1520,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         loadPromoters();
       }
     } catch (err: any) {
-      showToast("Failed to sync promoter to server: " + err.message, "error");
+      showToast("Failed to save promoter: " + err.message, "error");
       loadPromoters();
     }
   };
@@ -1896,11 +1941,32 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         return shiftDateNum >= pStart && shiftDateNum <= pEnd;
       });
 
-      let payrollText = "Pending Paid";
-      if (matchingPayout && matchingPayout.Status === "Paid") {
-        payrollText = "Paid";
-        if (matchingPayout["Payment Reference"]) {
-          payrollText += ` (${matchingPayout["Payment Reference"]})`;
+      let payrollText = "—";
+      let shiftWage = 0;
+
+      if (matchingPayout) {
+        try {
+          const details = JSON.parse(matchingPayout["Payout Details"] || "[]");
+          if (Array.isArray(details)) {
+            const matchRow = details.find((d: any) => String(d.scheduleId) === String(s.ID));
+            if (matchRow) {
+              shiftWage = Number(matchRow.totalPayout || 0);
+            }
+          }
+        } catch (err) {}
+        
+        if (!shiftWage) {
+          const hrs = calculateHours(s["Actual Start"], s["Actual End"]);
+          shiftWage = hrs * Number(matchingPayout["Hourly Rate"] || 0);
+        }
+
+        if (matchingPayout.Status === "Paid") {
+          payrollText = `$${shiftWage.toFixed(2)} (Paid)`;
+          if (matchingPayout["Payment Reference"]) {
+            payrollText += ` - ${matchingPayout["Payment Reference"]}`;
+          }
+        } else {
+          payrollText = `$${shiftWage.toFixed(2)} (Pending)`;
         }
       }
 
@@ -2107,6 +2173,94 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
         yPos = (doc as any).lastAutoTable.finalY + 8;
       });
+
+      // Calculate total cost and total wage for all campaign schedules
+      let grandTotalCost = 0;
+      let grandTotalWage = 0;
+
+      campaignSchedules.forEach((s) => {
+        // 1. Cost calculation
+        if (s["Promoting Cost"]) {
+          try {
+            const parsed = JSON.parse(s["Promoting Cost"]);
+            if (Array.isArray(parsed)) {
+              grandTotalCost += parsed.reduce((acc: number, curr: any) => acc + Number(curr.amount || 0), 0);
+            }
+          } catch (e) {}
+        }
+
+        // 2. Wage calculation
+        const matchingPayout = payouts.find(p => {
+          if (String(p["Promoter ID"]) !== String(s["Promoter ID"])) return false;
+          const shiftDateNum = new Date(s.Date).getTime();
+          const pStart = Number(p["Start Date"]);
+          const pEnd = Number(p["End Date"]);
+          return shiftDateNum >= pStart && shiftDateNum <= pEnd;
+        });
+
+        if (matchingPayout) {
+          let shiftWage = 0;
+          try {
+            const details = JSON.parse(matchingPayout["Payout Details"] || "[]");
+            if (Array.isArray(details)) {
+              const matchRow = details.find((d: any) => String(d.scheduleId) === String(s.ID));
+              if (matchRow) {
+                shiftWage = Number(matchRow.totalPayout || 0);
+              }
+            }
+          } catch (err) {}
+          if (!shiftWage) {
+            const hrs = calculateHours(s["Actual Start"], s["Actual End"]);
+            shiftWage = hrs * Number(matchingPayout["Hourly Rate"] || 0);
+          }
+          grandTotalWage += shiftWage;
+        }
+      });
+
+      const grandTotalSpend = grandTotalCost + grandTotalWage;
+
+      if (yPos > 240) {
+        doc.addPage();
+        yPos = 20;
+      }
+
+      doc.setDrawColor(228, 228, 231); // zinc-200
+      doc.line(14, yPos, 196, yPos);
+      yPos += 6;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10.5);
+      doc.setTextColor(24, 24, 27); // zinc-900
+      doc.text("Campaign Financial Summary", 14, yPos);
+      yPos += 5;
+
+      // Draw a beautiful summary card
+      doc.setFillColor(244, 244, 245); // zinc-100
+      doc.rect(14, yPos, 182, 30, "F");
+      doc.setDrawColor(228, 228, 231); // zinc-200
+      doc.rect(14, yPos, 182, 30, "S");
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      doc.setTextColor(82, 82, 91); // zinc-600
+      doc.text("Total Promoting Cost:", 20, yPos + 7);
+      doc.text("Total Wages (Payroll):", 20, yPos + 15);
+      
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(11, 87, 208); // Brand blue
+      doc.text("Total Campaign Spend:", 20, yPos + 24);
+
+      // Values aligned to the right
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(39, 39, 42); // zinc-800
+      doc.text(`$${grandTotalCost.toFixed(2)}`, 190, yPos + 7, { align: "right" });
+      doc.text(`$${grandTotalWage.toFixed(2)}`, 190, yPos + 15, { align: "right" });
+
+      doc.setFontSize(10);
+      doc.setTextColor(11, 87, 208);
+      doc.text(`$${grandTotalSpend.toFixed(2)}`, 190, yPos + 24, { align: "right" });
     }
 
     const pdfBlob = doc.output("blob");
@@ -2291,7 +2445,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           promotingCosts = JSON.parse(s["Promoting Cost"]);
         } catch (e) {}
       }
-      const promotingCostDone = promotingCosts.length > 0 ? 1 : 0;
+      const promotingCostDone = (s["Promoting Cost"] !== undefined && s["Promoting Cost"] !== null && s["Promoting Cost"] !== "") ? 1 : 0;
 
       const customTasksCount = isOtherLoc ? 0 : customTasks.length;
       const customDoneCount = isOtherLoc ? 0 : customTasks.filter((t: any) => !!t.answer).length;
@@ -2421,7 +2575,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           throw new Error("One or more update requests failed.");
         }
       } catch (e: any) {
-        showToast("Background sync failed: " + e.message + ". Rolling back changes.", "error");
+        showToast("Failed to save schedule changes: " + e.message + ". Rolling back changes.", "error");
         setSchedules(schedulesBeforeSave);
         setSchedulesBackup(backupBeforeSave);
         setIsEditMode(true);
@@ -2438,8 +2592,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
     const sch = schedules.find(s => s.ID === schId);
-    if (sch && isShiftLocked(sch.Date, sch["Promoter ID"])) {
-      showToast("This shift is locked because the promoter has already been paid for this date range.", "error");
+    if (sch && isShiftLocked(sch.ID)) {
+      showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
     showConfirm({
@@ -2526,8 +2680,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       if (!destPromoter) return;
 
       if (dragAction === "move") {
-        if (isShiftLocked(sch.Date, sch["Promoter ID"]) || isShiftLocked(date.getTime(), promoterId)) {
-          showToast("Operation blocked: One or both dates are locked due to completed promoter payouts.", "error");
+        if (isShiftLocked(sch.ID)) {
+          showToast("Operation blocked: This shift is locked because it is linked to a payout.", "error");
           return;
         }
         if (!checkAndToastConflict(promoterId, date.getTime(), start, end, sch.ID)) {
@@ -2543,10 +2697,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         pushHistory(newSchedules);
         showToast("Shift moved successfully.", "success");
       } else if (dragAction === "duplicate") {
-        if (isShiftLocked(date.getTime(), promoterId)) {
-          showToast("Operation blocked: The target date is locked due to completed promoter payouts.", "error");
-          return;
-        }
         if (!checkAndToastConflict(promoterId, date.getTime(), start, end)) {
           return;
         }
@@ -2576,11 +2726,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const selectedPromoter = promoters.find(p => String(p.ID) === String(promoterId));
       if (!selectedCampaign || !selectedPromoter) return;
 
-      if (isShiftLocked(date.getTime(), promoterId)) {
-        showToast("Operation blocked: The target date is locked due to completed promoter payouts.", "error");
-        return;
-      }
-
       setOtherLocationModalData({ date, promoterId });
       setOtherLocationTitle("");
       setOtherLocationAddress("");
@@ -2600,11 +2745,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const selectedPromoter = promoters.find(p => String(p.ID) === String(promoterId));
 
     if (!selectedCampaign || !selectedStore || !selectedPromoter) return;
-
-    if (isShiftLocked(date.getTime(), promoterId)) {
-      showToast("Operation blocked: The target date is locked due to completed promoter payouts.", "error");
-      return;
-    }
 
     // Calculate next shift time block dynamically
     const dayShifts = schedules.filter(s => 
@@ -2775,8 +2915,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
     const current = schedules.find(s => s.ID === schId);
     if (!current) return;
-    if (isShiftLocked(current.Date, current["Promoter ID"])) {
-      showToast("This shift is locked because the promoter has already been paid for this date range.", "error");
+    if (isShiftLocked(current.ID)) {
+      showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
     const nextStart = field === "Shift Start" ? value : (formatTimeDisplay(current["Shift Start"]) || "09:00");
@@ -2797,8 +2937,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
     const current = schedules.find(s => s.ID === schId);
-    if (current && isShiftLocked(current.Date, current["Promoter ID"])) {
-      showToast("This shift is locked because the promoter has already been paid for this date range.", "error");
+    if (current && isShiftLocked(current.ID)) {
+      showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
     const newSchedules = schedules.map(s => s.ID === schId ? { ...s, Remarks: value } : s);
@@ -2812,8 +2952,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
     const current = schedules.find(s => s.ID === shiftId);
-    if (current && isShiftLocked(current.Date, current["Promoter ID"])) {
-      showToast("This shift is locked because the promoter has already been paid for this date range.", "error");
+    if (current && isShiftLocked(current.ID)) {
+      showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
     const newSchedules = schedules.map(s => s.ID === shiftId ? { ...s, [field]: value } : s);
@@ -3082,10 +3222,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const startMs = new Date(printStartDate + "T00:00:00").getTime();
       const endMs = new Date(printEndDate + "T23:59:59").getTime();
 
-      const campaignSchedules = schedules.filter(s => 
+      let campaignSchedules = schedules.filter(s => 
         String(s["Campaign ID"]) === String(printCampaignId) &&
         s.Date >= startMs && s.Date <= endMs
       );
+      if (printPromoterType === "selected" && printSelectedPromoterId) {
+        campaignSchedules = campaignSchedules.filter(s => String(s["Promoter ID"]) === String(printSelectedPromoterId));
+      }
 
       const reportDates: Date[] = [];
       let tempDate = new Date(printStartDate + "T00:00:00");
@@ -3552,10 +3695,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       tempDate.setDate(tempDate.getDate() + 1);
     }
 
-    const campaignSchedules = schedules.filter(s => 
+    let campaignSchedules = schedules.filter(s => 
       String(s["Campaign ID"]) === String(printCampaignId) &&
       s.Date >= startMs && s.Date <= endMs
     );
+    if (printPromoterType === "selected" && printSelectedPromoterId) {
+      campaignSchedules = campaignSchedules.filter(s => String(s["Promoter ID"]) === String(printSelectedPromoterId));
+    }
+
     const activePromoterIds = Array.from(new Set(campaignSchedules.map(s => String(s["Promoter ID"]))));
     const activeCampPromoters = promoters.filter(p => activePromoterIds.includes(String(p.ID)) && !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true")));
 
@@ -3569,7 +3716,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
 
     return { reportDates, promoterChunks, campaignSchedules };
-  }, [selectedPrintLayout, printCampaignId, printStartDate, printEndDate, schedules, promoters]);
+  }, [selectedPrintLayout, printCampaignId, printStartDate, printEndDate, printPromoterType, printSelectedPromoterId, schedules, promoters]);
 
   // 3. Promoter Schedule print data
   const promoterPrintData = React.useMemo(() => {
@@ -3740,7 +3887,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const payoutColumns = React.useMemo(() => [
     { id: "actions", header: "", accessor: "actions" },
     { id: "PromoterName", header: "Promoter Name", accessor: "PromoterName" },
-    { id: "RangeDate", header: "Range Date Payout", accessor: "RangeDate" },
+    { id: "JobDetails", header: "Job Details", accessor: "JobDetails" },
     { id: "TotalPayout", header: "Total Payout", accessor: "TotalPayout" },
     { id: "Status", header: "Status", accessor: "Status" },
     { id: "DatePayout", header: "Date Payout", accessor: "DatePayout" },
@@ -3764,12 +3911,24 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         id: p.ID,
         PromoterName: <span className="font-bold text-zinc-900">{p["Promoter Name"]}</span>,
         PromoterName_raw: p["Promoter Name"] || "",
-        RangeDate: (
-          <span className="font-semibold text-zinc-700">
-            {formatTimestamp(p["Start Date"])} - {formatTimestamp(p["End Date"])}
-          </span>
+        JobDetails: (
+          <button
+            type="button"
+            onClick={() => setViewingJobsPayout(p)}
+            className="px-2.5 py-1 bg-zinc-100 hover:bg-[#D3E3FD] border border-zinc-250 text-zinc-700 hover:text-[#0B57D0] font-bold rounded text-[10px] transition-colors cursor-pointer flex items-center gap-1"
+          >
+            <Eye size={11} />
+            View Jobs ({(() => {
+              try {
+                const details = JSON.parse(p["Payout Details"] || "[]");
+                return details.length;
+              } catch {
+                return 0;
+              }
+            })()})
+          </button>
         ),
-        RangeDate_raw: `${formatTimestamp(p["Start Date"])} - ${formatTimestamp(p["End Date"])}`,
+        JobDetails_raw: p["Payout Details"] || "",
         TotalPayout: <span className="font-bold text-[#0B57D0]">${Number(p["Total Payout"])?.toFixed(2)}</span>,
         TotalPayout_raw: `$${Number(p["Total Payout"])?.toFixed(2)}`,
         Status: (
@@ -3777,10 +3936,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
             isPaid ? "bg-green-50 text-green-700 border border-green-200" : "bg-amber-50 text-amber-700 border border-amber-200"
           )}>
-            {p.Status || "Draft"}
+            {p.Status || "Pending Payout"}
           </span>
         ),
-        Status_raw: p.Status || "Draft",
+        Status_raw: p.Status || "Pending Payout",
         DatePayout: <span className="font-semibold text-zinc-700">{p["Payment Date"] ? formatTimestamp(p["Payment Date"]) : "-"}</span>,
         DatePayout_raw: p["Payment Date"] ? formatTimestamp(p["Payment Date"]) : "-",
         Reference: <span className="font-mono font-bold text-zinc-800">{p["Payment Reference"] || "-"}</span>,
@@ -3806,7 +3965,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     setIsCreatePayoutOpen(true);
                   }}
                   className="p-1 rounded hover:bg-zinc-100 border border-zinc-200 text-zinc-650 hover:text-zinc-900 transition-colors cursor-pointer flex items-center justify-center"
-                  title="Edit Draft"
+                  title="Edit Payout"
                 >
                   <Pencil size={12} />
                 </button>
@@ -3814,7 +3973,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   type="button"
                   onClick={() => handleDeletePayout(p.ID)}
                   className="p-1 rounded hover:bg-red-50 border border-zinc-200 text-red-600 hover:text-red-850 transition-colors cursor-pointer flex items-center justify-center"
-                  title="Delete Draft"
+                  title="Delete Payout"
                 >
                   <Trash2 size={12} />
                 </button>
@@ -4073,7 +4232,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             
                             {dayEvents.length > 0 && (
                               <div className="flex flex-col gap-0.5 mt-1 overflow-hidden">
-                                {dayEvents.slice(0, 2).map((e) => (
+                                {(isSelected ? dayEvents : dayEvents.slice(0, 2)).map((e) => (
                                   <div 
                                     key={e.ID} 
                                     className="text-[8.5px] font-bold px-1 py-0.5 rounded bg-[#0B57D0]/10 text-[#0B57D0] flex flex-col gap-0.5 text-left mb-0.5"
@@ -4083,7 +4242,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     <div className="text-[7.5px] text-[#0B57D0]/80 font-semibold truncate leading-none">{e["Campaign Title"]}</div>
                                   </div>
                                 ))}
-                                {dayEvents.length > 2 && (
+                                {!isSelected && dayEvents.length > 2 && (
                                   <span className="text-[7.5px] font-bold text-zinc-400 pl-1 leading-none">
                                     +{dayEvents.length - 2} more
                                   </span>
@@ -4150,7 +4309,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         }
                         const totalQty = promotingCosts.reduce((acc: number, curr: any) => acc + Number(curr.qty || 0), 0);
                         const totalAmount = promotingCosts.reduce((acc: number, curr: any) => acc + Number(curr.amount || 0), 0);
-                        const promotingCostDone = promotingCosts.length > 0 ? 1 : 0;
+                        const promotingCostDone = (s["Promoting Cost"] !== undefined && s["Promoting Cost"] !== null && s["Promoting Cost"] !== "") ? 1 : 0;
 
                         // Check if it is an other location
                         const isOtherLoc = String(s["Store ID"]).startsWith("OTHER");
@@ -4592,7 +4751,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                               {/* Task 5: Promoting Cost */}
                               {(() => {
-                                const isDone = promotingCosts.length > 0;
+                                const isDone = s["Promoting Cost"] !== undefined && s["Promoting Cost"] !== null && s["Promoting Cost"] !== "";
                                 return (
                                   <div 
                                     className="bg-white border rounded p-2.5 shadow-xs flex flex-col gap-2 border-zinc-200"
@@ -4611,9 +4770,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         <div className="font-bold text-zinc-855 leading-snug text-[10.5px]">Promoting Cost</div>
                                         <div className="mt-1 text-[9.5px] font-semibold">
                                           {isDone ? (
-                                            <span className="text-zinc-555 leading-normal">
-                                              Qty: <span className="text-zinc-850 font-bold">{totalQty}</span> | Amount: <span className="text-[#0B57D0] font-bold">${totalAmount.toFixed(2)}</span>
-                                            </span>
+                                            promotingCosts.length === 0 ? (
+                                              <span className="text-green-600 font-bold uppercase tracking-wider text-[9px]">Zero Cost</span>
+                                            ) : (
+                                              <span className="text-zinc-555 leading-normal">
+                                                Qty: <span className="text-zinc-850 font-bold">{totalQty}</span> | Amount: <span className="text-[#0B57D0] font-bold">${totalAmount.toFixed(2)}</span>
+                                              </span>
+                                            )
                                           ) : (
                                             <span className="text-amber-500 font-bold uppercase tracking-wider text-[8px]">Pending</span>
                                           )}
@@ -6030,6 +6193,47 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             />
                           </div>
                         </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Filter Promoter</label>
+                          <div className="flex items-center gap-4 pl-0.5 py-1">
+                            <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-zinc-700">
+                              <input
+                                type="radio"
+                                name="campaign-print-promoter-type"
+                                checked={printPromoterType === "all"}
+                                onChange={() => setPrintPromoterType("all")}
+                                className="cursor-pointer text-[#0B57D0]"
+                              />
+                              All Promoters
+                            </label>
+                            <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-zinc-700">
+                              <input
+                                type="radio"
+                                name="campaign-print-promoter-type"
+                                checked={printPromoterType === "selected"}
+                                onChange={() => setPrintPromoterType("selected")}
+                                className="cursor-pointer text-[#0B57D0]"
+                              />
+                              Selected Promoter
+                            </label>
+                          </div>
+                        </div>
+
+                        {printPromoterType === "selected" && (
+                          <div className="flex flex-col gap-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Promoter</label>
+                            <select
+                              value={printSelectedPromoterId}
+                              onChange={(e) => setPrintSelectedPromoterId(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none cursor-pointer focus:border-[#0B57D0]"
+                            >
+                              <option value="">-- Choose Promoter --</option>
+                              {promoters.filter(p => !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true"))).map(p => (
+                                <option key={p.ID} value={p.ID}>{p.Name}</option>
+                              ))}
+                            </select>
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center justify-end gap-3 mt-2 pt-3 border-t border-zinc-150">
@@ -6367,7 +6571,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         )}
 
         {activeTab === "payout" && (
-          <div className="flex-1 min-h-0 flex flex-col gap-4">
+          <div className="w-full h-full flex flex-col gap-4 overflow-hidden relative">
             {!isCreatePayoutOpen ? (
               <>
                 {/* Header section */}
@@ -6395,15 +6599,16 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   </button>
                 </div>
 
-                {/* List and Table View */}
-                <DataTable
-                  columns={payoutColumns}
-                  data={mappedPayouts}
-                  height="h-[calc(100vh-220px)]"
-                  title="Promoter Payout Records"
-                  userRole="viewer"
-                  fetching={loadingPayouts}
-                />
+                <div className="flex-1 min-h-0 w-full">
+                  <DataTable
+                    columns={payoutColumns}
+                    data={mappedPayouts}
+                    height="h-full"
+                    title="Promoter Payout Records"
+                    userRole="viewer"
+                    fetching={loadingPayouts}
+                  />
+                </div>
               </>
             ) : (
               <div className="flex-1 min-h-0 flex flex-col gap-4">
@@ -6526,13 +6731,24 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       <div className="bg-zinc-50 px-4 py-2.5 border-b border-zinc-200 flex justify-between items-center">
                         <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Shift Wage Breakdown</span>
                         <span className="text-[10px] font-semibold text-zinc-505">
-                          Total Wages: <span className="font-bold text-[#0B57D0] text-xs">${editedPayoutRows.reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2)}</span>
+                          Total Wages: <span className="font-bold text-[#0B57D0] text-xs">${editedPayoutRows.filter(r => r.selected).reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2)}</span>
                         </span>
                       </div>
                       <div className="flex-1 overflow-auto">
                         <table className="w-full text-left border-collapse text-xs">
                           <thead>
                             <tr className="bg-zinc-50/50 border-b border-zinc-250 text-zinc-650 font-bold uppercase tracking-wider sticky top-0 select-none">
+                              <th className="py-2.5 px-3 w-10 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={editedPayoutRows.filter(r => !r.alreadyPaid).length > 0 && editedPayoutRows.filter(r => !r.alreadyPaid).every(r => r.selected)}
+                                  onChange={(e) => {
+                                    const checked = e.target.checked;
+                                    setEditedPayoutRows(prev => prev.map(r => r.alreadyPaid ? r : { ...r, selected: checked }));
+                                  }}
+                                  className="rounded text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
+                                />
+                              </th>
                               <th className="py-2.5 px-4 w-12 text-center">No.</th>
                               <th className="py-2.5 px-3">Date</th>
                               <th className="py-2.5 px-3">Start Time</th>
@@ -6555,8 +6771,25 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 return `${day}/${month}/${year} (${days[d.getDay()]})`;
                               };
 
+                              const isAlreadyPaid = row.alreadyPaid;
+                              const rowStyle = isAlreadyPaid 
+                                ? "opacity-50 bg-zinc-50/55 select-none" 
+                                : "hover:bg-zinc-50/20 transition-colors";
+
                               return (
-                                <tr key={row.scheduleId} className="hover:bg-zinc-50/20 transition-colors">
+                                <tr key={row.scheduleId} className={rowStyle}>
+                                  <td className="py-2.5 px-3 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={row.selected}
+                                      disabled={isAlreadyPaid}
+                                      onChange={(e) => {
+                                        const checked = e.target.checked;
+                                        setEditedPayoutRows(prev => prev.map(r => r.scheduleId === row.scheduleId ? { ...r, selected: checked } : r));
+                                      }}
+                                      className="rounded text-[#0B57D0] focus:ring-[#0B57D0] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                                    />
+                                  </td>
                                   <td className="py-2.5 px-4 text-center font-bold text-zinc-400">{idx + 1}</td>
                                   <td className="py-2.5 px-3 font-semibold text-zinc-800">{formatRowTimestamp(row.date)}</td>
                                   {row.absent ? (
@@ -6565,8 +6798,44 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     </td>
                                   ) : (
                                     <>
-                                      <td className="py-2.5 px-3 font-semibold text-zinc-700">{row.startTime}</td>
-                                      <td className="py-2.5 px-3 font-semibold text-zinc-700">{row.endTime}</td>
+                                      <td className="py-2.5 px-3">
+                                        <input
+                                          type="time"
+                                          value={row.startTime || ""}
+                                          disabled={isAlreadyPaid}
+                                          onChange={(e) => {
+                                            const newStart = e.target.value;
+                                            const newTotal = calculateHours(newStart, row.endTime);
+                                            const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
+                                              ...r,
+                                              startTime: newStart,
+                                              totalTime: newTotal,
+                                              totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                            } : r);
+                                            setEditedPayoutRows(updated);
+                                          }}
+                                          className="px-2 py-0.5 border border-zinc-200 rounded text-xs font-semibold focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                        />
+                                      </td>
+                                      <td className="py-2.5 px-3">
+                                        <input
+                                          type="time"
+                                          value={row.endTime || ""}
+                                          disabled={isAlreadyPaid}
+                                          onChange={(e) => {
+                                            const newEnd = e.target.value;
+                                            const newTotal = calculateHours(row.startTime, newEnd);
+                                            const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
+                                              ...r,
+                                              endTime: newEnd,
+                                              totalTime: newTotal,
+                                              totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                            } : r);
+                                            setEditedPayoutRows(updated);
+                                          }}
+                                          className="px-2 py-0.5 border border-zinc-200 rounded text-xs font-semibold focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                        />
+                                      </td>
                                       <td className="py-2.5 px-3 font-bold text-zinc-800">{row.totalTime.toFixed(2)} hrs</td>
                                       <td className="py-2.5 px-3 text-center">
                                         <div className="relative inline-block">
@@ -6574,6 +6843,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                           <input
                                             type="number"
                                             value={row.hourlyRate}
+                                            disabled={isAlreadyPaid}
                                             onChange={(e) => {
                                               const newRate = Number(e.target.value);
                                               const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
@@ -6583,7 +6853,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                               } : r);
                                               setEditedPayoutRows(updated);
                                             }}
-                                            className="w-16 pl-4 pr-1.5 py-0.5 border border-zinc-200 rounded-lg text-center text-xs font-semibold focus:border-[#0B57D0] outline-none shadow-2xs"
+                                            className="w-16 pl-4 pr-1.5 py-0.5 border border-zinc-200 rounded-lg text-center text-xs font-semibold focus:border-[#0B57D0] outline-none shadow-2xs disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
                                           />
                                         </div>
                                       </td>
@@ -6616,18 +6886,18 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   <button
                     type="button"
                     onClick={handleSavePayout}
-                    disabled={editedPayoutRows.length === 0 || isPayoutSaving}
+                    disabled={editedPayoutRows.filter(r => r.selected).length === 0 || isPayoutSaving}
                     className="px-5 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isPayoutSaving ? (
                       <>
                         <div className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-zinc-400 border-t-white"></div>
-                        Saving Payout...
+                        Creating Payout Paper...
                       </>
                     ) : (
                       <>
                         <Check size={14} className="stroke-[2.5]" />
-                        Save Payout
+                        Create Payout Paper
                       </>
                     )}
                   </button>
@@ -6738,6 +7008,100 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 </div>
               </div>
             )}
+
+            {/* View Payout Jobs Modal Overlay */}
+            {viewingJobsPayout && (() => {
+              let jobs: any[] = [];
+              try {
+                jobs = JSON.parse(viewingJobsPayout["Payout Details"] || "[]");
+              } catch (e) {
+                jobs = [];
+              }
+
+              const formatRowTimestamp = (ts: any): string => {
+                const d = new Date(Number(ts));
+                if (isNaN(d.getTime())) return "-";
+                const day = String(d.getDate()).padStart(2, "0");
+                const month = String(d.getMonth() + 1).padStart(2, "0");
+                const year = d.getFullYear();
+                const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+                return `${day}/${month}/${year} (${days[d.getDay()]})`;
+              };
+
+              return (
+                <div className="fixed inset-0 bg-black/45 backdrop-blur-xs flex items-center justify-center z-50 animate-in fade-in duration-200">
+                  <div className="w-[700px] max-h-[80vh] bg-white rounded border border-zinc-200 shadow-2xl flex flex-col font-primary animate-in zoom-in-95 duration-150">
+                    {/* Modal Header */}
+                    <div className="bg-zinc-50 px-4 py-3.5 border-b border-zinc-200 flex justify-between items-center select-none shrink-0">
+                      <div className="flex flex-col gap-0.5">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                          Job Details - {viewingJobsPayout["Promoter Name"]}
+                        </h3>
+                        <p className="text-[10px] text-zinc-505 font-medium">
+                          List of shift jobs included in this payout
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setViewingJobsPayout(null)}
+                        className="p-1 hover:bg-zinc-200 rounded text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+
+                    {/* Modal Content */}
+                    <div className="flex-1 overflow-auto p-4 min-h-0">
+                      {jobs.length === 0 ? (
+                        <p className="text-zinc-550 text-xs text-center py-8">No shifts found in this payout.</p>
+                      ) : (
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead>
+                            <tr className="bg-zinc-50 border-b border-zinc-250 text-zinc-650 font-bold uppercase tracking-wider sticky top-0">
+                              <th className="py-2 px-3 w-10 text-center">No.</th>
+                              <th className="py-2 px-3">Date</th>
+                              <th className="py-2 px-3">Actual Hours</th>
+                              <th className="py-2 px-3">Rate</th>
+                              <th className="py-2 px-3">Payout</th>
+                              <th className="py-2 px-3">Task Details</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-100 font-medium">
+                            {jobs.map((job, idx) => (
+                              <tr key={job.scheduleId || idx} className="hover:bg-zinc-50/50">
+                                <td className="py-2 px-3 text-center text-zinc-400 font-bold">{idx + 1}</td>
+                                <td className="py-2 px-3 text-zinc-800 font-semibold">{formatRowTimestamp(job.date)}</td>
+                                <td className="py-2 px-3 text-zinc-700 font-semibold">
+                                  {job.absent ? (
+                                    <span className="text-red-650 font-bold">Absent</span>
+                                  ) : (
+                                    `${job.startTime} - ${job.endTime} (${job.totalTime?.toFixed(2)} hrs)`
+                                  )}
+                                </td>
+                                <td className="py-2 px-3 text-zinc-600">${Number(job.hourlyRate || 0).toFixed(2)}</td>
+                                <td className="py-2 px-3 text-zinc-800 font-bold">${Number(job.totalPayout || 0).toFixed(2)}</td>
+                                <td className="py-2 px-3 text-zinc-505 italic font-semibold">{job.taskDetails}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+
+                    {/* Modal Footer */}
+                    <div className="bg-zinc-50 px-4 py-3 border-t border-zinc-200 flex justify-end shrink-0 select-none">
+                      <button
+                        type="button"
+                        onClick={() => setViewingJobsPayout(null)}
+                        className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-900 text-white font-bold rounded text-xs shadow-sm cursor-pointer transition-colors"
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         )}
 
@@ -6933,6 +7297,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     className="px-4 py-2 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded text-xs cursor-pointer transition-colors shadow-2xs"
                   >
                     Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setPromotingCostItems([]);
+                      const jsonString = "[]";
+                      setSchedules(prev => prev.map(item => String(item.ID) === String(activeShift.ID) ? { ...item, "Promoting Cost": jsonString } : item));
+                      await handleUpdateShiftField(activeShift.ID, "Promoting Cost", jsonString);
+                      setPromotingCostModalShiftId(null);
+                      showToast("Promoting cost saved as zero.", "success");
+                    }}
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded text-xs cursor-pointer transition-all shadow-md flex items-center gap-1.5"
+                  >
+                    Zero Cost
                   </button>
                   <button
                     type="button"
