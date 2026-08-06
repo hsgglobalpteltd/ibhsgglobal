@@ -197,10 +197,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     onConfirm: () => void;
   } | null>(null);
 
-  const [selectedPrintLayout, setSelectedPrintLayout] = React.useState<"master-calendar" | "master-calendar-promoter" | "campaign-schedule" | "promoter-schedule" | "campaign-briefing" | "campaign-reporting" | null>(null);
+  const [selectedPrintLayout, setSelectedPrintLayout] = React.useState<"master-calendar" | "master-calendar-promoter" | "campaign-schedule" | "promoter-schedule" | "campaign-briefing" | "campaign-reporting" | "retailer-schedule" | null>(null);
   const [printMonth, setPrintMonth] = React.useState<number>(new Date().getMonth());
   const [printYear, setPrintYear] = React.useState<number>(new Date().getFullYear());
   const [printCampaignId, setPrintCampaignId] = React.useState<string>("");
+  const [printRetailerId, setPrintRetailerId] = React.useState<string>("");
   const [printPromoterId, setPrintPromoterId] = React.useState<string>("");
   const [printPromoterType, setPrintPromoterType] = React.useState<"all" | "selected">("all");
   const [printSelectedPromoterId, setPrintSelectedPromoterId] = React.useState<string>("");
@@ -3639,6 +3640,239 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const url = URL.createObjectURL(pdfBlob);
       window.open(url, "_blank");
     }
+
+    else if (selectedPrintLayout === "retailer-schedule") {
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4"
+      });
+
+      const startMs = new Date(printStartDate + "T00:00:00").getTime();
+      const endMs = new Date(printEndDate + "T23:59:59").getTime();
+
+      const retailerObj = retailers.find(r => String(r.ID) === String(printRetailerId));
+      const retailerNameLabel = retailerObj ? (retailerObj["Display Name"] || retailerObj.Name || "") : "Retailer";
+
+      // Filter schedules where store matches retailer and date falls inside the range
+      const retailerSchedules = schedules.filter(s => {
+        if (s.Date < startMs || s.Date > endMs) return false;
+        const storeObj = stores.find(st => String(st.ID) === String(s["Store ID"]));
+        const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
+        return String(retId) === String(printRetailerId);
+      });
+
+      const mappedActivations = retailerSchedules.map(sch => {
+        const dateObj = new Date(sch.Date);
+        const storeObj = stores.find(st => String(st.ID) === String(sch["Store ID"]));
+        const storeName = sch["Store Name"] || (storeObj ? storeObj["Display Name"] : "");
+        const storeAddress = storeObj ? storeObj.Address : (sch.Address || sch["Store Address"] || "");
+        
+        // Brand info
+        const campaign = campaigns.find(c => String(c.ID) === String(sch["Campaign ID"]));
+        const brandIds = String(campaign?.Brand || "").split(",").map(id => id.trim()).filter(Boolean);
+        const brandNames = brandIds.map(id => brands.find(b => String(b.ID) === String(id))?.["Display Name"] || id).join(", ");
+        const brandNameText = brandNames || "No Brand";
+        const campaignName = campaign ? (campaign["Campaign Title"] || campaign.Title || "") : "";
+        const shiftRemark = sch.Remarks ? String(sch.Remarks).trim() : "";
+
+        const timeSlotText = `${formatTimeDisplay(sch["Shift Start"])} - ${formatTimeDisplay(sch["Shift End"])}`;
+
+        return {
+          dateVal: sch.Date,
+          dateStr: formatPrintDate(sch.Date),
+          dayName: getPrintDayName(dateObj),
+          storeName,
+          storeAddress,
+          storeId: sch["Store ID"],
+          timeSlot: timeSlotText,
+          brand: brandNameText,
+          promoterId: sch["Promoter ID"],
+          campaignName,
+          shiftRemark,
+        };
+      });
+
+      // Group activations by: dateStr, storeId, timeSlot, brand to aggregate promoters
+      const grouped: { [key: string]: any } = {};
+      mappedActivations.forEach(act => {
+        const key = `${act.dateStr}_${act.storeId}_${act.timeSlot}_${act.brand}`;
+        if (!grouped[key]) {
+          grouped[key] = {
+            dateStr: act.dateStr,
+            dayName: act.dayName,
+            dateVal: act.dateVal,
+            storeName: act.storeName,
+            storeAddress: act.storeAddress,
+            timeSlot: act.timeSlot,
+            brand: act.brand,
+            promoterIds: new Set<string>(),
+            campaignNames: new Set<string>(),
+            shiftRemarks: new Set<string>(),
+          };
+        }
+        if (act.promoterId) {
+          grouped[key].promoterIds.add(String(act.promoterId));
+        }
+        if (act.campaignName) {
+          grouped[key].campaignNames.add(String(act.campaignName));
+        }
+        if (act.shiftRemark) {
+          grouped[key].shiftRemarks.add(String(act.shiftRemark));
+        }
+      });
+
+      const tableRows = Object.values(grouped).map(g => {
+        const remarksList = Array.from(g.shiftRemarks).filter(Boolean);
+        const taskVal = remarksList.length > 0 
+          ? remarksList.join(", ") 
+          : Array.from(g.campaignNames).join(", ");
+
+        return {
+          dateStr: g.dateStr,
+          dayName: g.dayName,
+          dateVal: g.dateVal,
+          locationName: g.storeName,
+          locationAddress: g.storeAddress,
+          timeSlot: g.timeSlot,
+          brand: g.brand,
+          qty: g.promoterIds.size,
+          taskValue: taskVal,
+        };
+      });
+
+      // Sort by date, then by location
+      tableRows.sort((a, b) => {
+        if (a.dateVal !== b.dateVal) return a.dateVal - b.dateVal;
+        return a.locationName.localeCompare(b.locationName);
+      });
+
+      // Title
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(24, 24, 27);
+      doc.text("iB - Retailer Activation Table", 15, 15);
+
+      doc.setFontSize(11);
+      doc.text(retailerNameLabel, 15, 21);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(113, 113, 122);
+      doc.text(`Range: ${formatPrintDate(startMs)} - ${formatPrintDate(endMs)} (Generated: ${formatPrintDate(new Date())})`, 15, 26);
+
+      const tableHeaders = [["Date", "Outlet", "Time Slot", "Brand", "No. of Promoters", "Task"]];
+      
+      if (tableRows.length === 0) {
+        autoTable(doc, {
+          head: tableHeaders,
+          body: [["No activations scheduled within this date range.", "", "", "", "", ""]],
+          startY: 32,
+          margin: { left: 15, right: 15 },
+          theme: "striped",
+          headStyles: {
+            fillColor: [240, 244, 249],
+            textColor: [71, 71, 71],
+            fontStyle: "bold",
+            fontSize: 9,
+          },
+          bodyStyles: {
+            fontSize: 8.5,
+            textColor: [113, 113, 122],
+            fontStyle: "italic",
+          },
+          styles: {
+            font: "helvetica",
+            cellPadding: 3,
+          }
+        });
+      } else {
+        const tableBody = tableRows.map(row => {
+          // Wrap Task/Remark to max 2 lines
+          const wrappedTaskLines = doc.splitTextToSize(row.taskValue, 58);
+          const taskText = wrappedTaskLines.slice(0, 2).join("\n");
+
+          return [
+            `${row.dayName}\n${row.dateStr}`,
+            "", // Outlet column rendered dynamically in didDrawCell
+            row.timeSlot,
+            row.brand,
+            row.qty.toString(),
+            taskText
+          ];
+        });
+
+        autoTable(doc, {
+          head: tableHeaders,
+          body: tableBody,
+          startY: 32,
+          margin: { left: 15, right: 15 },
+          theme: "striped",
+          headStyles: {
+            fillColor: [240, 244, 249],
+            textColor: [71, 71, 71],
+            fontStyle: "bold",
+            fontSize: 9,
+          },
+          bodyStyles: {
+            fontSize: 8.5,
+            textColor: [39, 39, 42],
+          },
+          columnStyles: {
+            0: { cellWidth: 28 }, // Date
+            1: { cellWidth: 70 }, // Outlet
+            2: { cellWidth: 35 }, // Time Slot
+            3: { cellWidth: 40 }, // Brand
+            4: { cellWidth: 32 }, // No. of Promoters
+            5: { cellWidth: 62, fontSize: 7.5 }, // Task (small campaign name wrapped to max 2 lines)
+          },
+          styles: {
+            font: "helvetica",
+            cellPadding: 3,
+            minCellHeight: 11, // Ensure row is tall enough for 2 lines
+          },
+          didDrawCell: (data) => {
+            if (data.section === "body" && data.column.index === 1) {
+              const rowIndex = data.row.index;
+              const row = tableRows[rowIndex];
+              if (row) {
+                const cellX = data.cell.x + data.cell.padding("left");
+                const cellY = data.cell.y + data.cell.padding("top");
+                const cellWidth = data.cell.width - data.cell.padding("left") - data.cell.padding("right");
+
+                // Draw Store Name (bold, normal size)
+                doc.setFont("helvetica", "bold");
+                doc.setFontSize(8.5);
+                doc.setTextColor(24, 24, 27);
+                const nameLines = doc.splitTextToSize(row.locationName, cellWidth);
+                doc.text(nameLines[0] || "", cellX, cellY + 3);
+
+                // Draw Store Address (small font under it)
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(7);
+                doc.setTextColor(113, 113, 122);
+                const addrLines = doc.splitTextToSize(row.locationAddress || "", cellWidth);
+                doc.text(addrLines[0] || "", cellX, cellY + 7);
+              }
+            }
+          }
+        });
+      }
+
+      // Add footer to all pages
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(113, 113, 122);
+        doc.text("iB - HSG Global Internal Bridge", 148.5, 205, { align: "center" });
+      }
+
+      const pdfBlob = doc.output("blob");
+      const url = URL.createObjectURL(pdfBlob);
+      window.open(url, "_blank");
+    }
   };
 
   // Printing helpers
@@ -6558,6 +6792,115 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         >
                           <Printer size={12} className="stroke-[2.5]" />
                           Print Report
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Retailer Schedule Card */}
+                <div
+                  className={cn(
+                    "bg-white border rounded-lg transition-all duration-300 shadow-xs hover:shadow-md select-none flex flex-col justify-between overflow-hidden",
+                    selectedPrintLayout === "retailer-schedule"
+                      ? "w-[480px] min-h-[220px] border-[#0B57D0] scale-[1.01]"
+                      : "group relative w-[240px] h-[180px] border-slate-200 hover:bg-[#D3E3FD] cursor-pointer flex items-center justify-center hover:scale-[1.03]"
+                  )}
+                  onClick={() => {
+                    if (selectedPrintLayout !== "retailer-schedule") {
+                      setSelectedPrintLayout("retailer-schedule");
+                      setPrintRetailerId("");
+                    }
+                  }}
+                >
+                  {selectedPrintLayout !== "retailer-schedule" ? (
+                    <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
+                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                        Print Retailer Activation Table
+                      </span>
+                      <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
+                        Print landscape A4 table for a retailer. Lists dates, locations, time slots, brands, and promoter count.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
+                      <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                          Configure Retailer Table
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPrintLayout(null);
+                          }}
+                          className="p-1 hover:bg-zinc-100 rounded text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+
+                      <div className="flex flex-col gap-3">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Retailer</label>
+                          <select
+                            value={printRetailerId}
+                            onChange={(e) => setPrintRetailerId(e.target.value)}
+                            className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none cursor-pointer focus:border-[#0B57D0]"
+                          >
+                            <option value="">-- Choose Retailer --</option>
+                            {retailers.filter(r => !(r.Archived && (String(r.Archived) === "1" || String(r.Archived) === "true"))).map(r => (
+                              <option key={r.ID} value={r.ID}>{r["Display Name"] || r.Name || r.ID}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex gap-4">
+                          <div className="flex flex-col gap-1 flex-1">
+                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</label>
+                            <input
+                              type="date"
+                              value={printStartDate}
+                              onChange={(e) => setPrintStartDate(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] shadow-xs"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1 flex-1">
+                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">End Date</label>
+                            <input
+                              type="date"
+                              value={printEndDate}
+                              onChange={(e) => setPrintEndDate(e.target.value)}
+                              className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] shadow-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-3 mt-2 pt-3 border-t border-zinc-150">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPrintLayout(null);
+                          }}
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!printRetailerId) {
+                              showToast("Please select a retailer.", "warning");
+                              return;
+                            }
+                            handlePrintReport("A4 landscape");
+                          }}
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                        >
+                          <Printer size={12} className="stroke-[2.5]" />
+                          Print Table
                         </button>
                       </div>
                     </div>
