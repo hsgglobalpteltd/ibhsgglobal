@@ -1361,7 +1361,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
               <Printer size={12} className="text-emerald-700" />
             </button>
 
-            {deal.status === "Draft" && (
+            {(deal.status === "Draft" || !deal.status) && (
               <>
                 <button
                   onClick={() => handleLoadDealForEdit(deal)}
@@ -2509,7 +2509,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             <textarea
               value={termsModalValue}
               onChange={(e) => setTermsModalValue(e.target.value)}
-              disabled={selectedTermsDeal.status !== "Draft" && selectedTermsDeal.status !== undefined}
+              disabled={!(selectedTermsDeal.status === "Draft" || !selectedTermsDeal.status)}
               rows={8}
               placeholder="Enter deal terms & conditions here..."
               className="w-full px-3 py-2 bg-zinc-50 border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:bg-white focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs resize-none disabled:opacity-60"
@@ -2520,9 +2520,9 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 onClick={() => setShowTermsModal(false)}
                 className="px-4 py-2 border border-slate-200 bg-white text-zinc-700 hover:text-zinc-950 hover:bg-slate-100 rounded transition-all cursor-pointer shadow-xs"
               >
-                {selectedTermsDeal.status !== "Draft" && selectedTermsDeal.status !== undefined ? "Close" : "Cancel"}
+                {!(selectedTermsDeal.status === "Draft" || !selectedTermsDeal.status) ? "Close" : "Cancel"}
               </button>
-              {(selectedTermsDeal.status === "Draft" || selectedTermsDeal.status === undefined) && (
+              {(selectedTermsDeal.status === "Draft" || !selectedTermsDeal.status) && (
                 <button
                   onClick={handleSaveTerms}
                   className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded shadow transition-all cursor-pointer shadow-xs"
