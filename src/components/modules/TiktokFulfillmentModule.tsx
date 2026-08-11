@@ -287,7 +287,7 @@ function TerminalModal({ terminal, existingTerminals, onClose, onSave }: Termina
   const [pin, setPin] = React.useState(terminal?.pin || "");
   const [autoPrint, setAutoPrint] = React.useState(!!terminal?.auto_print);
   
-  const pagesList = ["Dashboard", "Orders", "Scan Parcel", "Scan Handover", "Setting"];
+  const pagesList = ["Dashboard", "Orders", "Scan Parcel", "Handover Parcel", "Setting"];
   const [allowedPages, setAllowedPages] = React.useState<string[]>(() => {
     if (terminal?.allowed_pages) {
       try {
