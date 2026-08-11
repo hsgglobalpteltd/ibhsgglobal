@@ -33,7 +33,7 @@ interface MerchUserEditFormProps {
 
 export function MerchUserEditForm({ user, existingUsers, onSave, onCancel }: MerchUserEditFormProps) {
   const isNew = !user;
-  const [idVal, setIdVal] = React.useState(user?.ID || "");
+  const [idVal, setIdVal] = React.useState(user?.id || "");
   const [nameVal, setNameVal] = React.useState(user?.Name || "");
   const [pinVal, setPinVal] = React.useState(user?.PIN || "");
   const [emailVal, setEmailVal] = React.useState(user?.Email || "");
@@ -62,7 +62,7 @@ export function MerchUserEditForm({ user, existingUsers, onSave, onCancel }: Mer
     }
 
     if (isNew) {
-      const exists = existingUsers.some(u => String(u.ID).toLowerCase() === cleanId.toLowerCase());
+      const exists = existingUsers.some(u => String(u.id).toLowerCase() === cleanId.toLowerCase());
       if (exists) {
         showToast("A merchandiser with this ID already exists!", "error");
         return;
@@ -70,7 +70,7 @@ export function MerchUserEditForm({ user, existingUsers, onSave, onCancel }: Mer
     }
 
     onSave({
-      ID: cleanId,
+      id: cleanId,
       Name: cleanName,
       PIN: Number(cleanPin),
       Email: cleanEmail,
@@ -459,8 +459,8 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     if (!store) return "Unknown";
     const retailerId = store["Retailers ID"] || store["Retailer ID"];
     if (!retailerId) return "Unknown";
-    const retailer = retailers.find(r => String(r.ID) === String(retailerId));
-    return retailer ? (retailer["Display Name"] || retailer["ID"]) : String(retailerId);
+    const retailer = retailers.find(r => String(r.id) === String(retailerId));
+    return retailer ? (retailer["Display Name"] || retailer['id']) : String(retailerId);
   }, [retailers]);
 
   // Brand Logo lookup helper
@@ -468,7 +468,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     if (!brandNameOrId) return "";
     const brand = brands.find(b => 
       String(b["Display Name"]).toLowerCase() === String(brandNameOrId).toLowerCase() ||
-      String(b.ID).toLowerCase() === String(brandNameOrId).toLowerCase()
+      String(b.id).toLowerCase() === String(brandNameOrId).toLowerCase()
     );
     return brand ? String(brand["Logo Image"] || "") : "";
   }, [brands]);
@@ -476,13 +476,13 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
   // Brand Name lookup helper
   const getBrandName = React.useCallback((brandId: string): string => {
     if (!brandId || brandId === "Unknown") return "Unknown";
-    const brand = brands.find(b => String(b.ID).toLowerCase() === String(brandId).toLowerCase());
-    return brand ? (brand["Display Name"] || brand.ID) : brandId;
+    const brand = brands.find(b => String(b.id).toLowerCase() === String(brandId).toLowerCase());
+    return brand ? (brand["Display Name"] || brand.id) : brandId;
   }, [brands]);
 
   // Unique list of retailer names for graph & legends
   const uniqueRetailers = React.useMemo(() => {
-    const list = retailers.map(r => r["Display Name"] || r["ID"]).filter(Boolean);
+    const list = retailers.map(r => r["Display Name"] || r['id']).filter(Boolean);
     if (list.length === 0 && stores.length > 0) {
       const storeRets = stores.map(s => s["Retailers ID"] || s["Retailer ID"]).filter(Boolean);
       return Array.from(new Set(storeRets)) as string[];
@@ -492,7 +492,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
 
   // Helper helper to cache and return json
   const fetchSheet = async (sheetName: string) => {
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
     if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
     const json = await res.json();
     const items = Array.isArray(json) ? json : (json.value || []);
@@ -503,7 +503,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
   const fetchFreshData = async (sheetName: string, forceSync = false) => {
     try {
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
       }
       return await fetchSheet(sheetName);
     } catch (e) {
@@ -574,15 +574,15 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
       setFetching(true);
       try {
         await Promise.all([
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Merch_Visit_Product_Audit_Logs`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Merch_Visit_Shelf_Audit_Logs`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Merch_Visit_Setting`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Merch_Users`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Store_Retailer_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=products_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=retailers_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=brands_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Stores_Task_Assigned`, { method: "POST" })
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Product_Audit_Logs`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Shelf_Audit_Logs`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Setting`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Users`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=brands_DB`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Stores_Task_Assigned`, { method: "POST" })
         ]);
 
         const [productLogsVal, shelfLogsVal, settingsVal, usersVal, storesVal, productsVal, retailersVal, brandsVal, tasksVal] = await Promise.all([
@@ -648,8 +648,8 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
       };
 
       const getRetailerNameFromId = (id: string): string => {
-        const ret = retailers.find(r => String(r.ID).toLowerCase() === id.toLowerCase());
-        return ret ? (ret["Display Name"] || ret.ID) : id;
+        const ret = retailers.find(r => String(r.id).toLowerCase() === id.toLowerCase());
+        return ret ? (ret["Display Name"] || ret.id) : id;
       };
 
       const freqObj = settings.find(s => s["ID Setting"] === "Visit Frequency");
@@ -684,9 +684,9 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     const getRetailerIdFromName = (name: string): string => {
       const ret = retailers.find(r => 
         String(r["Display Name"]).toLowerCase() === name.toLowerCase() ||
-        String(r.ID).toLowerCase() === name.toLowerCase()
+        String(r.id).toLowerCase() === name.toLowerCase()
       );
-      return ret ? ret.ID : name;
+      return ret ? ret.id : name;
     };
 
     const focusRetIds = settingFocusRet.map(getRetailerIdFromName);
@@ -699,11 +699,11 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     const payloadAvoidRet = { "ID Setting": "Avoid Retailers", "Input": "Retailer ID's", "Value": avoidRetIds.join(", ") };
 
     const updateRow = async (row: any) => {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Merch_Visit_Setting",
+          table: "Merch_Visit_Setting",
           action: "update",
           data: row
         })
@@ -773,7 +773,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
 
     filteredLogs.forEach((log) => {
       const logDate = parseTimestamp(log.Timestamp);
-      const store = stores.find(s => String(s.ID) === String(log["Retailer Stores ID"]));
+      const store = stores.find(s => String(s.id) === String(log["Retailer Stores ID"]));
       const retName = getRetailerName(store);
 
       if (retName) {
@@ -892,7 +892,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
       
       filteredLogs.forEach(log => {
         const logDate = parseTimestamp(log.Timestamp);
-        const store = stores.find(s => String(s.ID) === String(log["Retailer Stores ID"]));
+        const store = stores.find(s => String(s.id) === String(log["Retailer Stores ID"]));
         const retName = getRetailerName(store);
         
         if (retName) {
@@ -994,7 +994,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
       
       filteredLogs.forEach(log => {
         const logDate = parseTimestamp(log.Timestamp);
-        const store = stores.find(s => String(s.ID) === String(log["Retailer Stores ID"]));
+        const store = stores.find(s => String(s.id) === String(log["Retailer Stores ID"]));
         const retName = getRetailerName(store);
         
         if (retName) {
@@ -1092,11 +1092,11 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     uniqueLogs.sort((a, b) => parseTimestamp(b.Timestamp).getTime() - parseTimestamp(a.Timestamp).getTime());
 
     return uniqueLogs.map((log) => {
-      const store = stores.find(s => String(s.ID) === String(log["Retailer Stores ID"]));
+      const store = stores.find(s => String(s.id) === String(log["Retailer Stores ID"]));
       const storeName = store ? store["Display Name"] : `Store #${log["Retailer Stores ID"]}`;
       const retailerName = store ? getRetailerName(store) : "-";
 
-      // Calculate Brands (Qty SKU)
+      // Calculate Brands (Qty sku)
       const brandSkuCounts: Record<string, { brandId: string; count: number; shelfImage: string }> = {};
       let auditItems: any[] = [];
       try {
@@ -1104,7 +1104,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
       } catch (e) {}
 
       auditItems.forEach((item: any) => {
-        const prod = products.find((p) => String(p.SKU).toLowerCase() === String(item.sku).toLowerCase());
+        const prod = products.find((p) => String(p.sku).toLowerCase() === String(item.sku).toLowerCase());
         const brandId = prod ? prod["Brands ID"] : "Unknown";
         
         if (brandId) {
@@ -1230,11 +1230,11 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     localStorage.setItem("Stores_Task_Assigned_data", JSON.stringify(updated));
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Stores_Task_Assigned",
+          table: "Stores_Task_Assigned",
           action: "update",
           data: {
             "Created Date": Number(task["Created Date"]),
@@ -1295,11 +1295,11 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     setSelectedTask(null);
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Stores_Task_Assigned",
+          table: "Stores_Task_Assigned",
           action: "update",
           data: {
             "Created Date": Number(selectedTask["Created Date"]),
@@ -1338,7 +1338,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     });
 
     return list.map((t) => {
-      const store = stores.find(s => String(s.ID) === String(t["Stores ID"]));
+      const store = stores.find(s => String(s.id) === String(t["Stores ID"]));
       const storeName = store ? store["Display Name"] : `Store #${t["Stores ID"]}`;
 
       let logs: any[] = [];
@@ -1486,7 +1486,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     });
 
     const storeStatusList = filtered.map(store => {
-      const storeId = String(store.ID);
+      const storeId = String(store.id);
       const latestTs = latestVisitsMap[storeId] || 0;
       const hasVisited = latestTs > 0 && (nowTime - latestTs) <= frequencyThresholdMs;
       return {
@@ -1563,7 +1563,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
   const handleAddNew = () => {
     setEditingMerchUser(null);
     // Trigger open creation mode
-    setEditingMerchUser({ ID: "", Name: "", PIN: "", isNew: true });
+    setEditingMerchUser({ id: "", Name: "", PIN: "", isNew: true });
   };
 
   const handleSaveMerchUser = async (cleanData: any, isNew: boolean) => {
@@ -1575,7 +1575,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
       updatedList = [...merchUsers, cleanData];
     } else {
       updatedList = merchUsers.map((item) =>
-        String(item.ID) === String(cleanData.ID) ? { ...item, ...cleanData } : item
+        String(item.id) === String(cleanData.id) ? { ...item, ...cleanData } : item
       );
     }
     setMerchUsers(updatedList);
@@ -1584,11 +1584,11 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     showToast("Saving merchandiser profile...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Merch_Users",
+          table: "Merch_Users",
           action: isNew ? "insert" : "update",
           data: cleanData
         })
@@ -1608,21 +1608,21 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
   };
 
   const handleDeleteMerchUser = async (rowId: string) => {
-    const targetItem = merchUsers.find(item => String(item.ID) === String(rowId));
+    const targetItem = merchUsers.find(item => String(item.id) === String(rowId));
     if (!targetItem) return;
 
     const previousUsers = [...merchUsers];
     showToast("Deleting merchandiser in background...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Merch_Users",
+          table: "Merch_Users",
           action: "delete",
           data: {
-            ID: targetItem.ID
+            id: targetItem.id
           }
         })
       });
@@ -1631,7 +1631,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
       const result = await res.json();
       if (!result.success) throw new Error(result.error || "Failed to delete merchandiser");
 
-      const updatedList = merchUsers.filter(item => String(item.ID) !== String(targetItem.ID));
+      const updatedList = merchUsers.filter(item => String(item.id) !== String(targetItem.id));
       setMerchUsers(updatedList);
       localStorage.setItem("Merch_Users_data", JSON.stringify(updatedList));
 
@@ -1645,7 +1645,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
   };
 
   const merchUserColumns: Column[] = [
-    { id: "ID", header: "Merch ID", accessor: "ID" },
+    { id: 'id', header: "Merch ID", accessor: 'id' },
     { id: "Name", header: "Name", accessor: "Name" },
     { id: "Email", header: "Email", accessor: "Email" },
     { id: "Phone", header: "Phone", accessor: "Phone" },
@@ -2319,7 +2319,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
               <div className="flex flex-col gap-1">
                 <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wide">Target Store</span>
                 <span className="text-xs font-extrabold text-zinc-800">
-                  {stores.find(s => String(s.ID) === String(selectedTask["Stores ID"]))?.["Display Name"] || `Store #${selectedTask["Stores ID"]}`}
+                  {stores.find(s => String(s.id) === String(selectedTask["Stores ID"]))?.["Display Name"] || `Store #${selectedTask["Stores ID"]}`}
                 </span>
                 <span className="text-[10px] text-zinc-500 italic mt-0.5">
                   &ldquo;{selectedTask["Task Description"]}&rdquo;
@@ -2456,7 +2456,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
             {/* Task Info Context */}
             <div className="mx-6 my-4 flex flex-col gap-1 bg-zinc-200/50 border border-zinc-300/50 rounded p-3 text-xs text-zinc-700 flex-shrink-0 font-primary">
               <span className="font-bold text-zinc-800">
-                Store: {stores.find(s => String(s.ID) === String(selectedTask["Stores ID"]))?.["Display Name"] || `Store #${selectedTask["Stores ID"]}`}
+                Store: {stores.find(s => String(s.id) === String(selectedTask["Stores ID"]))?.["Display Name"] || `Store #${selectedTask["Stores ID"]}`}
               </span>
               <p className="text-zinc-500 italic mt-0.5">&ldquo;{selectedTask["Task Description"]}&rdquo;</p>
               <span className="text-[10px] text-zinc-400 font-mono mt-1">

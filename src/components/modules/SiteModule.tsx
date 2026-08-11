@@ -77,7 +77,7 @@ export function SiteModule({ idToken, profile }: SiteModuleProps) {
       // 3. Fetch brands catalog (optional)
       let brandsData = [];
       try {
-        const brandsRes = await fetch(`${WORKER_URL}/api/admin/cache?sheet=brands_DB`, {
+        const brandsRes = await fetch(`${WORKER_URL}/api/admin/db?table=brands_DB`, {
           headers: {
             "Authorization": `Bearer ${idToken}`,
             "X-Session-ID": localStorage.getItem("session_id") || ""
@@ -431,7 +431,7 @@ export function SiteModule({ idToken, profile }: SiteModuleProps) {
                       if (parsedBrands.length === 0) return <span className="italic text-zinc-450">None</span>;
                       
                       const brandNames = parsedBrands.map(id => {
-                        const b = Array.isArray(brands) ? brands.find(x => String(x.ID) === String(id)) : null;
+                        const b = Array.isArray(brands) ? brands.find(x => String(x.id) === String(id)) : null;
                         return b ? (b["Display Name"] || b.Name) : id;
                       });
                       return brandNames.join(", ");
@@ -719,16 +719,16 @@ export function SiteModule({ idToken, profile }: SiteModuleProps) {
                     <p className="text-xs italic text-zinc-400 py-2">No brands found in database.</p>
                   ) : (
                     brands.map((b) => (
-                      <label key={b.ID} className="flex items-center gap-3 p-2 bg-zinc-50/50 border rounded-lg cursor-pointer hover:bg-zinc-100/50 transition-colors">
+                      <label key={b.id} className="flex items-center gap-3 p-2 bg-zinc-50/50 border rounded-lg cursor-pointer hover:bg-zinc-100/50 transition-colors">
                         <input 
                           type="checkbox" 
                           className="w-4 h-4 rounded text-zinc-900 border-zinc-300 focus:ring-zinc-900"
-                          checked={selectedAllowedBrandIds.includes(String(b.ID))}
-                          onChange={() => handleToggleBrandCheckbox(String(b.ID))}
+                          checked={selectedAllowedBrandIds.includes(String(b.id))}
+                          onChange={() => handleToggleBrandCheckbox(String(b.id))}
                         />
                         <div className="flex flex-col">
                           <span className="text-xs font-semibold text-zinc-800">{b["Display Name"] || b.Name || "Unnamed Brand"}</span>
-                          <span className="text-[10px] text-zinc-500">ID: {b.ID}</span>
+                          <span className="text-[10px] text-zinc-500">id: {b.id}</span>
                         </div>
                       </label>
                     ))

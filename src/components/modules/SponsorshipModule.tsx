@@ -247,7 +247,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       if (cachedClaims) {
         const items = JSON.parse(cachedClaims);
         setClaims(items.map((item: any) => ({
-          id: item.ID || item.id,
+          id: item.id || item.id,
           invoiceNumber: item.Invoice_Number || item.invoiceNumber || item["Invoice Number"] || "",
           sponsorName: item.Sponsor_Name || item.sponsorName || item["Sponsor Name"] || "",
           date: parseInt(item.Date || item.date) || Date.now(),
@@ -263,10 +263,10 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       if (cachedCatalog) {
         const items = JSON.parse(cachedCatalog);
         setCatalog(items.map((item: any) => ({
-          id: item.ID || item.id,
+          id: item.id || item.id,
           sponsoredBy: item["Sponsored By"] || item.sponsoredBy || "",
           brandName: item["Brand Name"] || item.brandName,
-          sku: item.SKU || item.sku,
+          sku: item.sku || item.sku,
           productName: item["Product Name"] || item.productName,
           uom: parseInt(item.UOM || item.uom) || 24,
           cost: parseFloat(item.Cost || item.cost) || 0
@@ -275,7 +275,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       if (cachedReceivers) {
         const items = JSON.parse(cachedReceivers);
         setReceivers(items.map((item: any) => ({
-          id: item.ID || item.id,
+          id: item.id || item.id,
           name: item.Name || item.name,
           type: item.Type || item.type,
           limit: item.Limit !== undefined && item.Limit !== null && item.Limit !== "" ? parseFloat(item.Limit || item.limit) : null
@@ -284,7 +284,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       if (cachedTx) {
         const items = JSON.parse(cachedTx);
         setTransactions(items.map((item: any) => ({
-          id: item.ID || item.id,
+          id: item.id || item.id,
           ref: item.Ref || item.ref,
           date: parseInt(item.Date || item.date) || Date.now(),
           receiverId: item["Receiver ID"] || item.receiverId,
@@ -301,11 +301,11 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   // Helper to make updates to server
   const writeToDatabase = async (sheetName: string, action: string, data: any) => {
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: sheetName,
+          table: sheetName,
           action,
           data
         })
@@ -337,14 +337,14 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
         showToast("Updating database caches...", "info");
         await Promise.all(
           sheets.map(sheet => 
-            fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheet}`, { method: "POST" })
+            fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheet}`, { method: "POST" })
           )
         );
       }
 
       const [brands, products, catalogData, receiversData, transactionsData, claimsData] = await Promise.all(
         sheets.map(async sheet => {
-          const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheet}`);
+          const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheet}`);
           if (!res.ok) return [];
           const json = await res.json();
           const items = Array.isArray(json) ? json : (json.value || []);
@@ -357,10 +357,10 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       setProductsList(products);
       
       const newCatalog = catalogData.map((item: any) => ({
-        id: item.ID,
+        id: item.id,
         sponsoredBy: item["Sponsored By"] || "",
         brandName: item["Brand Name"],
-        sku: item.SKU,
+        sku: item.sku,
         productName: item["Product Name"],
         uom: parseInt(item.UOM) || 24,
         cost: parseFloat(item.Cost) || 0
@@ -369,7 +369,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       localStorage.setItem("sponsorship_catalog_data", JSON.stringify(catalogData));
 
       const newReceivers = receiversData.map((item: any) => ({
-        id: item.ID,
+        id: item.id,
         name: item.Name,
         type: item.Type,
         limit: item.Limit !== null && item.Limit !== "" ? parseFloat(item.Limit) : null
@@ -378,7 +378,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       localStorage.setItem("sponsorship_receivers_data", JSON.stringify(receiversData));
 
       const newTransactions = transactionsData.map((item: any) => ({
-        id: item.ID,
+        id: item.id,
         ref: item.Ref,
         date: parseInt(item.Date) || Date.now(),
         receiverId: item["Receiver ID"],
@@ -391,7 +391,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
       if (claimsData) {
         const newClaims = claimsData.map((item: any) => ({
-          id: item.ID || item.id,
+          id: item.id || item.id,
           invoiceNumber: item.Invoice_Number || item.invoiceNumber || item["Invoice Number"] || "",
           sponsorName: item.Sponsor_Name || item.sponsorName || item["Sponsor Name"] || "",
           date: parseInt(item.Date || item.date) || Date.now(),
@@ -462,8 +462,8 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   // --- CATALOG (SPONSORED BY) LOGIC ---
   const filteredProductsSelect = React.useMemo(() => {
     if (!selectedBrand) return [];
-    const targetBrand = brandsList.find(b => String(b.ID) === selectedBrand || b["Display Name"] === selectedBrand);
-    const targetBrandId = targetBrand ? String(targetBrand.ID) : selectedBrand;
+    const targetBrand = brandsList.find(b => String(b.id) === selectedBrand || b["Display Name"] === selectedBrand);
+    const targetBrandId = targetBrand ? String(targetBrand.id) : selectedBrand;
     
     return productsList.filter(p => String(p["Brands ID"]) === targetBrandId || p["Brand Name"] === selectedBrand);
   }, [selectedBrand, productsList, brandsList]);
@@ -478,7 +478,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const brand = brandsList.find(b => 
       b["Display Name"]?.trim().toLowerCase() === item.brandName?.trim().toLowerCase()
     );
-    setSelectedBrand(brand ? String(brand.ID) : item.brandName);
+    setSelectedBrand(brand ? String(brand.id) : item.brandName);
     setSelectedProductSku(item.sku);
     setIsCatalogFormOpen(true);
     showToast("Editing sponsored product entry...", "info");
@@ -502,10 +502,10 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       return;
     }
 
-    const brand = brandsList.find(b => String(b.ID) === selectedBrand || b["Display Name"] === selectedBrand);
+    const brand = brandsList.find(b => String(b.id) === selectedBrand || b["Display Name"] === selectedBrand);
     const brandName = brand ? brand["Display Name"] : selectedBrand;
 
-    const product = productsList.find(p => p.SKU === selectedProductSku);
+    const product = productsList.find(p => p.sku === selectedProductSku);
     if (!product) {
       showToast("Product SKU not found in database.", "error");
       return;
@@ -530,10 +530,10 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const action = isEdit ? "update" : "insert";
 
     const newLinkData = {
-      ID: targetId,
+      id: targetId,
       "Sponsored By": sponsoredBy.trim(),
       "Brand Name": brandName,
-      SKU: selectedProductSku,
+      sku: selectedProductSku,
       "Product Name": product["Display Name"] || "N/A",
       UOM: uom,
       Cost: cost
@@ -565,10 +565,10 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
     setCatalog(updated);
     localStorage.setItem("sponsorship_catalog_data", JSON.stringify(updated.map(c => ({
-      ID: c.id,
+      id: c.id,
       "Sponsored By": c.sponsoredBy,
       "Brand Name": c.brandName,
-      SKU: c.sku,
+      sku: c.sku,
       "Product Name": c.productName,
       UOM: c.uom,
       Cost: c.cost
@@ -601,10 +601,10 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const updated = catalog.filter(c => c.id !== id);
     setCatalog(updated);
     localStorage.setItem("sponsorship_catalog_data", JSON.stringify(updated.map(c => ({
-      ID: c.id,
+      id: c.id,
       "Sponsored By": c.sponsoredBy,
       "Brand Name": c.brandName,
-      SKU: c.sku,
+      sku: c.sku,
       "Product Name": c.productName,
       UOM: c.uom,
       Cost: c.cost
@@ -612,7 +612,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     showToast("Sponsorship deleted.", "success");
 
     // --- SILENT BACKGROUND SAVE ---
-    writeToDatabase("sponsorship_catalog", "delete", { ID: id })
+    writeToDatabase("sponsorship_catalog", "delete", { id: id })
       .catch((err) => {
         showToast("Failed to delete catalog item: " + err.message, "warning");
       });
@@ -685,7 +685,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const action = isEdit ? "update" : "insert";
 
     const newRecData = {
-      ID: targetId,
+      id: targetId,
       Name: recName.trim(),
       Type: recType,
       Limit: limit !== null ? limit : ""
@@ -711,7 +711,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
     setReceivers(updated);
     localStorage.setItem("sponsorship_receivers_data", JSON.stringify(updated.map(r => ({
-      ID: r.id,
+      id: r.id,
       Name: r.name,
       Type: r.type,
       Limit: r.limit !== null ? r.limit : ""
@@ -744,7 +744,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const updated = receivers.filter(r => r.id !== id);
     setReceivers(updated);
     localStorage.setItem("sponsorship_receivers_data", JSON.stringify(updated.map(r => ({
-      ID: r.id,
+      id: r.id,
       Name: r.name,
       Type: r.type,
       Limit: r.limit !== null ? r.limit : ""
@@ -752,7 +752,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     showToast("Receiver removed.", "success");
 
     // --- SILENT BACKGROUND SAVE ---
-    writeToDatabase("sponsorship_receivers", "delete", { ID: id })
+    writeToDatabase("sponsorship_receivers", "delete", { id: id })
       .catch((err) => {
         showToast("Failed to delete receiver: " + err.message, "warning");
       });
@@ -913,7 +913,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       const action = (isEdit && index === 0) ? "update" : "insert";
 
       const txPayload = {
-        ID: targetId,
+        id: targetId,
         Ref: txRef.trim(),
         Date: epochMs,
         "Receiver ID": txReceiverId,
@@ -947,7 +947,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const finalTransactions = [...newTxList, ...updatedTransactions];
     setTransactions(finalTransactions);
     localStorage.setItem("sponsorship_transactions_data", JSON.stringify(finalTransactions.map(t => ({
-      ID: t.id,
+      id: t.id,
       Ref: t.ref,
       Date: t.date,
       "Receiver ID": t.receiverId,
@@ -1028,7 +1028,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const updated = transactions.filter(t => t.id !== id);
     setTransactions(updated);
     localStorage.setItem("sponsorship_transactions_data", JSON.stringify(updated.map(t => ({
-      ID: t.id,
+      id: t.id,
       Ref: t.ref,
       Date: t.date,
       "Receiver ID": t.receiverId,
@@ -1039,7 +1039,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     showToast("Transaction deleted.", "success");
 
     // --- SILENT BACKGROUND SAVE ---
-    writeToDatabase("sponsorship_transactions", "delete", { ID: id })
+    writeToDatabase("sponsorship_transactions", "delete", { id: id })
       .catch((err) => {
         showToast("Failed to delete transaction: " + err.message, "warning");
       });
@@ -1820,7 +1820,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const totalGst = parseFloat(claimTotalAfterGst) || 0;
 
     const newClaimData = {
-      ID: targetId,
+      id: targetId,
       Invoice_Number: claimInvoiceNumber.trim(),
       Sponsor_Name: claimSponsorName.trim(),
       Date: dateVal,
@@ -1855,7 +1855,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
     setClaims(updated);
     localStorage.setItem("sponsorship_claims_data", JSON.stringify(updated.map(c => ({
-      ID: c.id,
+      id: c.id,
       Invoice_Number: c.invoiceNumber,
       Sponsor_Name: c.sponsorName,
       Date: c.date,
@@ -1886,7 +1886,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
     const updated = claims.filter(c => c.id !== id);
     setClaims(updated);
     localStorage.setItem("sponsorship_claims_data", JSON.stringify(updated.map(c => ({
-      ID: c.id,
+      id: c.id,
       Invoice_Number: c.invoiceNumber,
       Sponsor_Name: c.sponsorName,
       Date: c.date,
@@ -1900,7 +1900,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
     showToast("Claim record deleted.", "info");
 
-    writeToDatabase("sponsorship_claims", "delete", { ID: id })
+    writeToDatabase("sponsorship_claims", "delete", { id: id })
       .catch((err) => {
         showToast("Failed to delete claim: " + err.message, "warning");
       });
@@ -1942,11 +1942,11 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   }, [filteredCatalog]);
 
   const brandOptions = React.useMemo(() => {
-    return brandsList.map(b => ({ value: String(b.ID), label: b["Display Name"] }));
+    return brandsList.map(b => ({ value: String(b.id), label: b["Display Name"] }));
   }, [brandsList]);
 
   const productOptions = React.useMemo(() => {
-    return filteredProductsSelect.map(p => ({ value: p.SKU, label: `${p.SKU} - ${p["Display Name"]}` }));
+    return filteredProductsSelect.map(p => ({ value: p.sku, label: `${p.sku} - ${p["Display Name"]}` }));
   }, [filteredProductsSelect]);
 
   // --- DATA TABLE COLUMNS & DATA SOURCES ---
@@ -2004,7 +2004,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   const dashboardColumns: Column[] = React.useMemo(() => [
     { id: "sponsoredBy", header: "Sponsored By", accessor: "sponsoredBy" },
     { id: "brand", header: "Brand Name", accessor: "brand" },
-    { id: "skuCode", header: "SKU", accessor: "skuCode" },
+    { id: "skuCode", header: 'sku', accessor: "skuCode" },
     { id: "skuName", header: "Product Name", accessor: "skuName" },
     { id: "given", header: "Given", accessor: "given" },
     { id: "cost", header: "Est. Cost Value", accessor: "cost" }
@@ -2044,7 +2044,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   const catalogColumns: Column[] = React.useMemo(() => [
     { id: "sponsoredBy", header: "Sponsored By", accessor: "sponsoredBy" },
     { id: "brandName", header: "Brands", accessor: "brandName" },
-    { id: "sku", header: "SKU", accessor: "sku" },
+    { id: "sku", header: 'sku', accessor: "sku" },
     { id: "productName", header: "Product Name", accessor: "productName" },
     { id: "uom", header: "UOM (Pcs/Ctn)", accessor: "uom" },
     { id: "cost", header: "Cost/Pc", accessor: "cost" },
@@ -2555,15 +2555,15 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
                         <span className="font-bold text-[9px] text-zinc-400 uppercase tracking-wider mb-0.5 block">SKU Details</span>
                         <div className="flex justify-between">
                           <span>UOM (Pcs/Ctn):</span>
-                          <span className="text-zinc-900 font-bold">1 x {productsList.find(p => p.SKU === selectedProductSku)?.Carton || 24} pcs</span>
+                          <span className="text-zinc-900 font-bold">1 x {productsList.find(p => p.sku === selectedProductSku)?.Carton || 24} pcs</span>
                         </div>
                         <div className="flex justify-between">
                           <span>Unit Landed Cost:</span>
-                          <span className="text-zinc-900 font-bold">${parseFloat(productsList.find(p => p.SKU === selectedProductSku)?.Cost || "0").toFixed(2)}</span>
+                          <span className="text-zinc-900 font-bold">${parseFloat(productsList.find(p => p.sku === selectedProductSku)?.Cost || "0").toFixed(2)}</span>
                         </div>
                         <div className="flex justify-between border-t border-zinc-200/80 pt-1.5 mt-0.5 text-zinc-900 font-bold text-[10.5px]">
                           <span>Carton Landed Cost:</span>
-                          <span className="text-blue-700">${(parseFloat(productsList.find(p => p.SKU === selectedProductSku)?.Cost || "0") * parseInt(productsList.find(p => p.SKU === selectedProductSku)?.Carton || "24")).toFixed(2)}</span>
+                          <span className="text-blue-700">${(parseFloat(productsList.find(p => p.sku === selectedProductSku)?.Cost || "0") * parseInt(productsList.find(p => p.sku === selectedProductSku)?.Carton || "24")).toFixed(2)}</span>
                         </div>
                       </div>
                     )}

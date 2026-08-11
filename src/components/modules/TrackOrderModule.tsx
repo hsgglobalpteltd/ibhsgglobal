@@ -60,7 +60,7 @@ interface LogEntry {
 }
 
 interface DbOrder {
-  ID: string;
+  id: string;
   DO_Number: string;
   Ref_Number: string;
   Mark: string;
@@ -564,7 +564,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Fetch stores directory from backend
   const fetchStores = async () => {
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Store_Retailer_DB");
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB");
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.value || []);
@@ -573,7 +573,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     } catch (_) {}
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=retailers_DB");
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB");
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.value || []);
@@ -601,7 +601,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // Fetch OneMap API settings
     fetchSettingApi();
     
-    // Quick load from cache for instant UI, followed by live Sheets sync
+    // Quick load from cache for instant UI, followed by live Database sync
     fetchDatabaseOrders(false).then(() => {
       fetchDatabaseOrders(true);
     });
@@ -611,7 +611,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     fetchStores();
   }, []);
 
-  // Polling: fetch data direct from Sheets every 60 seconds (active only while TrackOrderModule is open/mounted)
+  // Polling: fetch data direct from Database every 60 seconds (active only while TrackOrderModule is open/mounted)
   React.useEffect(() => {
     const interval = setInterval(() => {
       console.log("tracking order...... ");
@@ -647,7 +647,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   React.useEffect(() => {
     const handleDbRefresh = async () => {
       try {
-        await fetchDatabaseOrders(true); // force sync from Sheets
+        await fetchDatabaseOrders(true); // force sync from Database
       } catch (err: any) {
         showToast("Refresh failed: " + err.message, "error");
       }
@@ -662,16 +662,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Fetch API Settings from Google Sheets Setting_API
   const fetchSettingApi = async () => {
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Setting_API");
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API");
       if (res.ok) {
         const list = await res.json();
         const array = Array.isArray(list) ? list : (list.value || []);
         if (array.length > 0) {
-          const oneMapApiObj = array.find((a: any) => String(a.ID) === "OneMap_API" || String(a.ID) === "OneMap_Token");
+          const oneMapApiObj = array.find((a: any) => String(a.id) === "OneMap_API" || String(a.id) === "OneMap_Token");
           if (oneMapApiObj && oneMapApiObj.Key) {
             setOneMapToken(oneMapApiObj.Key.trim());
           }
-          const oneMapUrlObj = array.find((a: any) => String(a.ID) === "OneMap_URL");
+          const oneMapUrlObj = array.find((a: any) => String(a.id) === "OneMap_URL");
           if (oneMapUrlObj && oneMapUrlObj.Key) {
             setOneMapUrl(oneMapUrlObj.Key.trim());
           }
@@ -685,11 +685,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     try {
       if (forceSync) {
         // Refresh Workers cache from Google Sheets
-        await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Track_Orders", {
+        await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Track_Orders", {
           method: "POST"
         });
       }
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Track_Orders");
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Track_Orders");
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.value || []);
@@ -707,7 +707,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       try {
         const products = JSON.parse(cached);
         setProductsDb(products);
-        const skus = products.map((p: any) => p.SKU).filter(Boolean);
+        const skus = products.map((p: any) => p.sku).filter(Boolean);
         if (skus.length > 0) {
           setProductSkus(skus);
           return;
@@ -715,13 +715,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       } catch (_) {}
     }
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=products_DB");
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.value || []);
         localStorage.setItem("products_DB_data", JSON.stringify(list));
         setProductsDb(list);
-        const skus = list.map((p: any) => p.SKU).filter(Boolean);
+        const skus = list.map((p: any) => p.sku).filter(Boolean);
         setProductSkus(skus);
       }
     } catch (_) {}
@@ -752,7 +752,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     // Check if Mark is active in pending orders
     const isMarkActive = pendingOrders.some(
-      (o) => String(o.Mark).toUpperCase() === createMark.toUpperCase() && (!editingOrder || o.ID !== editingOrder.ID)
+      (o) => String(o.Mark).toUpperCase() === createMark.toUpperCase() && (!editingOrder || o.id !== editingOrder.id) && o.Status !== "Delivered"
     );
     if (isMarkActive) {
       showToast(`Mark "${createMark}" is currently active in a pending order.`, "error");
@@ -760,9 +760,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
 
     // Validation: check if DO Number is already registered in Drafts, Pending, or Completed lists
-    const inDrafts = drafts.some((d) => d.doNumber === createDoNumber && (!editingOrder || d.id !== editingOrder.ID));
-    const inPending = pendingOrders.some((p) => p.DO_Number === createDoNumber && (!editingOrder || p.ID !== editingOrder.ID));
-    const inCompleted = completedOrders.some((c) => c.DO_Number === createDoNumber && (!editingOrder || c.ID !== editingOrder.ID));
+    const inDrafts = drafts.some((d) => d.doNumber === createDoNumber && (!editingOrder || d.id !== editingOrder.id));
+    const inPending = pendingOrders.some((p) => p.DO_Number === createDoNumber && (!editingOrder || p.id !== editingOrder.id));
+    const inCompleted = completedOrders.some((c) => c.DO_Number === createDoNumber && (!editingOrder || c.id !== editingOrder.id));
 
     if ((!editingOrder && inDrafts) || inPending || inCompleted) {
       showToast(`Warning: Order ${createDoNumber} already registered in system. Please check order.`, "error");
@@ -787,11 +787,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       : 0;
 
     if (editingOrder) {
-      const orderId = editingOrder.ID;
+      const orderId = editingOrder.id;
       let parsedItems: SKUItem[] = createItems.filter(i => i.sku.trim() !== "");
 
       const payloadData: Partial<DbOrder> = {
-        ID: orderId,
+        id: orderId,
         DO_Number: createDoNumber,
         Ref_Number: createRefNumber,
         Mark: createMark,
@@ -824,7 +824,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       payloadData.Logs = JSON.stringify(updatedLogs);
 
       const previousDbOrders = [...dbOrders];
-      setDbOrders(prev => prev.map(o => o.ID === orderId ? { ...o, ...payloadData } as DbOrder : o));
+      setDbOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...payloadData } as DbOrder : o));
 
       setIsCreatePanelOpen(false);
       resetCreateForm();
@@ -832,13 +832,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       showToast(`Order ${createDoNumber} updated successfully.`, "success");
 
       const updatePayload = {
-        sheet: "Track_Orders",
+        table: "Track_Orders",
         action: "update",
         id: orderId,
         data: payloadData
       };
 
-      fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updatePayload)
@@ -965,7 +965,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     if (!storeSearchQuery.trim()) return [];
     const q = storeSearchQuery.toLowerCase();
     return stores.filter(s => 
-      String(s.ID || "").toLowerCase().includes(q) || 
+      String(s.id || "").toLowerCase().includes(q) || 
       String(s["Display Name"] || "").toLowerCase().includes(q) ||
       String(s.Address || "").toLowerCase().includes(q)
     ).slice(0, 10);
@@ -974,16 +974,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Return actions
   const handleDeleteReturnOrder = async (order: DbOrder) => {
     const previousDbOrders = [...dbOrders];
-    setDbOrders((prev) => prev.filter((o) => o.ID !== order.ID));
+    setDbOrders((prev) => prev.filter((o) => o.id !== order.id));
     showToast(`Return order ${order.DO_Number} deleted.`, "info");
 
     const payload = {
-      sheet: "Track_Orders",
+      table: "Track_Orders",
       action: "delete",
-      data: { ID: order.ID }
+      data: { id: order.id }
     };
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1020,7 +1020,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const previousDbOrders = [...dbOrders];
     setDbOrders((prev) =>
       prev.map((o) =>
-        o.ID === order.ID
+        o.id === order.id
           ? { 
               ...o, 
               Completed: "true", 
@@ -1035,10 +1035,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     showToast(`Return order ${order.DO_Number} completed.`, "success");
 
     const payload = {
-      sheet: "Track_Orders",
+      table: "Track_Orders",
       action: "update",
       data: {
-        ID: order.ID,
+        id: order.id,
         Completed: "true",
         Credit_Note_Number: creditNoteNum || "",
         Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
@@ -1047,7 +1047,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     };
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1201,7 +1201,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       String(o.Completed) !== "true" &&
       o.Completed !== true &&
       String(o.Mark).toUpperCase() === finalMark.toUpperCase() &&
-      (!isEdit || o.ID !== editingReturn.ID)
+      (!isEdit || o.id !== editingReturn.id)
     ) || drafts.some(d =>
       d.type === "Return" &&
       String(d.mark).toUpperCase() === finalMark.toUpperCase()
@@ -1212,7 +1212,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       return;
     }
 
-    const orderId = isEdit ? editingReturn.ID : `RET-${Date.now()}`;
+    const orderId = isEdit ? editingReturn.id : `RET-${Date.now()}`;
     const epochDate = new Date(returnCollectBeforeDate).getTime();
     
     const initialLogs: LogEntry[] = isEdit 
@@ -1227,7 +1227,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         ];
         
     const payloadDataTemp: Partial<DbOrder> = {
-      ID: orderId,
+      id: orderId,
       DO_Number: returnRefNumber,
       Ref_Number: returnRefNumber,
       Mark: finalMark,
@@ -1259,18 +1259,18 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       };
 
       const previousDbOrders = [...dbOrders];
-      setDbOrders(prev => prev.map(o => o.ID === orderId ? { ...o, ...payloadData } as DbOrder : o));
+      setDbOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...payloadData } as DbOrder : o));
       setIsReturnPanelOpen(false);
       showToast(`Return order ${returnRefNumber} updated.`, "success");
 
       const payload = {
-        sheet: "Track_Orders",
+        table: "Track_Orders",
         action: "update",
         data: payloadData
       };
 
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
@@ -1426,7 +1426,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const usedMarks = new Set<string>();
     
     currentPending.forEach((o) => {
-      if (o.Mark) {
+      if (o.Mark && o.Status !== "Delivered") {
         usedMarks.add(String(o.Mark).trim().toUpperCase());
       }
     });
@@ -1535,7 +1535,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Carton size lookup helper
   const getCartonSize = (sku: string): number => {
-    const product = productsDb.find((p) => p.SKU === sku);
+    const product = productsDb.find((p) => p.sku === sku);
     if (product && product.Carton) {
       const c = Number(product.Carton);
       return isNaN(c) || c <= 0 ? 0 : c;
@@ -1622,7 +1622,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         }
         
         return {
-          id: o.ID,
+          id: o.id,
           mark: o.Mark,
           poscode: o.Poscode,
           deliverTo: o.Deliver_To,
@@ -1658,7 +1658,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
         if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
           // Try to look up in stores directory
-          const matchedStore = stores.find(s => String(s.ID).trim() === String(o.Poscode).trim());
+          const matchedStore = stores.find(s => String(s.id).trim() === String(o.Poscode).trim());
           if (matchedStore && matchedStore["Pin Locations"]) {
             const parts = matchedStore["Pin Locations"].split(",");
             lat = Number(parts[0]);
@@ -1688,7 +1688,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         }
 
         return {
-          id: o.ID,
+          id: o.id,
           mark: o.Mark,
           poscode: o.Poscode,
           deliverTo: o.Deliver_To,
@@ -1714,7 +1714,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     } catch (_) {}
     setLogsList(list);
     setSelectedOrderMark(order.Mark || "-");
-    setSelectedOrderId(order.ID || "-");
+    setSelectedOrderId(order.id || "-");
     setSelectedOrder(order);
     setIsLogsModalOpen(true);
   }, []);
@@ -1779,7 +1779,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     // Register global window logs click callback
     (window as any).openOrderLogs = (orderId: string) => {
-      const foundOrder = dbOrders.find(o => o.ID === orderId);
+      const foundOrder = dbOrders.find(o => o.id === orderId);
       if (foundOrder) {
         handleOpenLogs(foundOrder);
       }
@@ -1827,7 +1827,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           .bindPopup(popupHtml)
           .addTo(markersGroup)
           .on('click', () => {
-            const foundOrder = dbOrders.find(o => o.ID === pin.id);
+            const foundOrder = dbOrders.find(o => o.id === pin.id);
             if (foundOrder) {
               handleOpenLogs(foundOrder);
             }
@@ -2084,7 +2084,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             String(o.Mark).toUpperCase() === order.mark.toUpperCase()
         )
       : pendingOrders.some(
-          (o) => String(o.Mark).toUpperCase() === order.mark.toUpperCase()
+          (o) => String(o.Mark).toUpperCase() === order.mark.toUpperCase() && o.Status !== "Delivered"
         );
 
     if (isMarkActive) {
@@ -2125,7 +2125,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // --- INSTANT UPDATE (OPTIMISTIC UI) ---
     // Start with local/temporary coordinates/images and let it instantly display
     const newDbOrder: DbOrder = {
-      ID: order.id,
+      id: order.id,
       DO_Number: order.doNumber,
       Ref_Number: order.refNumber || "",
       Mark: order.mark,
@@ -2208,10 +2208,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       // Sync payload to database via Cloudflare Worker
       const payload = {
-        sheet: "Track_Orders",
+        table: "Track_Orders",
         action: "insert",
         data: {
-          ID: order.id,
+          id: order.id,
           DO_Number: order.doNumber,
           Ref_Number: order.refNumber || "",
           Mark: order.mark,
@@ -2237,7 +2237,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       };
 
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
@@ -2269,7 +2269,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     })();
   };
 
-  // Revoke Action: Deletes from Sheets and moves back to drafts
+  // Revoke Action: Deletes from Database and moves back to drafts
   const handleRevokeOrder = (order: DbOrder) => {
     setPendingRevokeOrder(order);
     setIsConfirmRevokeOpen(true);
@@ -2283,7 +2283,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     } catch (_) {}
 
     const restoredDraft: TrackOrderDraft = {
-      id: order.ID,
+      id: order.id,
       doNumber: order.DO_Number,
       refNumber: order.Ref_Number,
       mark: order.Mark,
@@ -2296,19 +2296,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const previousDbOrders = [...dbOrders];
     const previousDrafts = [...drafts];
 
-    setDbOrders((prev) => prev.filter((o) => o.ID !== order.ID));
+    setDbOrders((prev) => prev.filter((o) => o.id !== order.id));
     saveDraftsToStorage([...drafts, restoredDraft]);
 
     showToast(`Order ${order.DO_Number} revoked.`, "info");
 
     // --- SILENT BACKGROUND UPDATE ---
     const payload = {
-      sheet: "Track_Orders",
+      table: "Track_Orders",
       action: "delete",
-      data: { ID: order.ID }
+      data: { id: order.id }
     };
 
-    fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+    fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -2353,7 +2353,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // Update state instantly
     setDbOrders((prev) =>
       prev.map((o) =>
-        o.ID === order.ID
+        o.id === order.id
           ? { 
               ...o, 
               Completed: "true", 
@@ -2369,10 +2369,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     // --- SILENT BACKGROUND UPDATE ---
     const payload = {
-      sheet: "Track_Orders",
+      table: "Track_Orders",
       action: "update",
       data: {
-        ID: order.ID,
+        id: order.id,
         Completed: "true",
         Invoice_Number: invoiceNum || "",
         Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
@@ -2380,7 +2380,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
     };
 
-    fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+    fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -2420,7 +2420,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // Update state instantly (Optimistic UI)
     setDbOrders((prev) =>
       prev.map((o) =>
-        o.ID === order.ID
+        o.id === order.id
           ? { 
               ...o, 
               Completed: "false", 
@@ -2433,17 +2433,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     showToast(`Order ${order.DO_Number} reverted to active deliveries.`, "info");
 
     const payload = {
-      sheet: "Track_Orders",
+      table: "Track_Orders",
       action: "update",
       data: {
-        ID: order.ID,
+        id: order.id,
         Completed: "false",
         Logs: JSON.stringify(updatedLogs)
       }
     };
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2480,7 +2480,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // Update state instantly (Optimistic UI)
     setDbOrders((prev) =>
       prev.map((o) =>
-        o.ID === order.ID
+        o.id === order.id
           ? { 
               ...o, 
               Completed: "false", 
@@ -2493,17 +2493,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     showToast(`Return order ${order.DO_Number} reverted to active returns.`, "info");
 
     const payload = {
-      sheet: "Track_Orders",
+      table: "Track_Orders",
       action: "update",
       data: {
-        ID: order.ID,
+        id: order.id,
         Completed: "false",
         Logs: JSON.stringify(updatedLogs)
       }
     };
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2574,7 +2574,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // Optimistic UI update
     setDbOrders((prev) =>
       prev.map((o) => {
-        if (o.ID === editInvoiceOrder.ID) {
+        if (o.id === editInvoiceOrder.id) {
           if (isReturn) {
             return { 
               ...o, 
@@ -2598,17 +2598,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     showToast(isReturn ? `Credit Note updated for ${editInvoiceOrder.DO_Number}` : `Invoice updated for ${editInvoiceOrder.DO_Number}`, "success");
 
     const payload = {
-      sheet: "Track_Orders",
+      table: "Track_Orders",
       action: "update",
       data: isReturn 
         ? {
-            ID: editInvoiceOrder.ID,
+            id: editInvoiceOrder.id,
             Credit_Note_Number: editInvoiceNum.trim(),
             Invoice_Amount: editInvoiceAmount.trim(),
             Logs: JSON.stringify(updatedLogs)
           }
         : {
-            ID: editInvoiceOrder.ID,
+            id: editInvoiceOrder.id,
             Invoice_Number: editInvoiceNum.trim(),
             Invoice_Amount: editInvoiceAmount.trim(),
             Logs: JSON.stringify(updatedLogs)
@@ -2616,7 +2616,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     };
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2682,7 +2682,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       ];
 
       const payloadData: Partial<DbOrder> = {
-        ID: statusOrder.ID,
+        id: statusOrder.id,
         Status: newStatus,
         Logs: JSON.stringify(updatedLogs)
       };
@@ -2692,20 +2692,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
 
       const previousDbOrders = [...dbOrders];
-      setDbOrders(prev => prev.map(o => o.ID === statusOrder.ID ? { ...o, ...payloadData } as DbOrder : o));
+      setDbOrders(prev => prev.map(o => o.id === statusOrder.id ? { ...o, ...payloadData } as DbOrder : o));
 
       setIsChangeStatusOpen(false);
       setStatusOrder(null);
       showToast(`Status updated to ${newStatus}`, "success");
 
       const payload = {
-        sheet: "Track_Orders",
+        table: "Track_Orders",
         action: "update",
-        id: statusOrder.ID,
+        id: statusOrder.id,
         data: payloadData
       };
 
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -3004,7 +3004,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           }
 
                           return (
-                            <React.Fragment key={`${order.ID}-${idx}`}>
+                            <React.Fragment key={`${order.id}-${idx}`}>
                               {showDivider && (
                                 <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
                                   <td colSpan={10} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
@@ -3083,7 +3083,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                   <button
                                     type="button"
-                                    onClick={() => openItemsPanel("view", order.ID, parsedItems)}
+                                    onClick={() => openItemsPanel("view", order.id, parsedItems)}
                                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
                                   >
                                     <Boxes size={12} className="text-zinc-500" />
@@ -3166,7 +3166,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           }
 
                           return (
-                            <React.Fragment key={order.ID}>
+                            <React.Fragment key={order.id}>
                               {showDivider && (
                                 <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
                                   <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
@@ -3233,7 +3233,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                   <button
                                     type="button"
-                                    onClick={() => openItemsPanel("view", order.ID, parsedItems)}
+                                    onClick={() => openItemsPanel("view", order.id, parsedItems)}
                                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
                                   >
                                     <Boxes size={12} className="text-zinc-500" />
@@ -3354,7 +3354,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                         }
 
                         return (
-                          <React.Fragment key={order.ID}>
+                          <React.Fragment key={order.id}>
                             {showDivider && (
                               <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
                                 <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
@@ -3420,7 +3420,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                 <button
                                   type="button"
-                                  onClick={() => openItemsPanel("view", order.ID, parsedItems)}
+                                  onClick={() => openItemsPanel("view", order.id, parsedItems)}
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
                                 >
                                   <Boxes size={12} className="text-zinc-500" />
@@ -3486,7 +3486,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                         }
 
                         return (
-                          <React.Fragment key={order.ID}>
+                          <React.Fragment key={order.id}>
                             {showDivider && (
                               <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
                                 <td colSpan={9} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
@@ -3561,7 +3561,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                 <button
                                   type="button"
-                                  onClick={() => openItemsPanel("view", order.ID, parsedItems)}
+                                  onClick={() => openItemsPanel("view", order.id, parsedItems)}
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
                                 >
                                   <Boxes size={12} className="text-zinc-500" />
@@ -4273,7 +4273,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       >
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1">
-            <label className="font-bold text-zinc-700">Ref Number (ID) *</label>
+            <label className="font-bold text-zinc-700">Ref Number (id) *</label>
             <input
               type="text"
               maxLength={25}
@@ -4303,12 +4303,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   const trimmed = returnLocation.trim();
                   if (trimmed) {
                     const matchedStore = stores.find(
-                      s => String(s.ID).toLowerCase() === trimmed.toLowerCase() || 
+                      s => String(s.id).toLowerCase() === trimmed.toLowerCase() || 
                            String(s["Display Name"]).toLowerCase() === trimmed.toLowerCase()
                     );
                     if (matchedStore) {
                       const retailerId = matchedStore["Retailers ID"] !== undefined ? matchedStore["Retailers ID"] : matchedStore["Retailer ID"];
-                      const retailer = retailers.find(r => String(r.ID) === String(retailerId));
+                      const retailer = retailers.find(r => String(r.id) === String(retailerId));
                       const retailerName = retailer ? (retailer["Display Name"] || "") : "";
                       const prefix = retailerName ? (retailerName.substring(0, 5) + " - ") : "";
                       setReturnLocation(prefix + (matchedStore["Display Name"] || ""));
@@ -4333,7 +4333,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     onMouseDown={(e) => {
                       e.preventDefault();
                       const retailerId = store["Retailers ID"] !== undefined ? store["Retailers ID"] : store["Retailer ID"];
-                      const retailer = retailers.find(r => String(r.ID) === String(retailerId));
+                      const retailer = retailers.find(r => String(r.id) === String(retailerId));
                       const retailerName = retailer ? (retailer["Display Name"] || "") : "";
                       const prefix = retailerName ? (retailerName.substring(0, 5) + " - ") : "";
                       setReturnLocation(prefix + (store["Display Name"] || ""));

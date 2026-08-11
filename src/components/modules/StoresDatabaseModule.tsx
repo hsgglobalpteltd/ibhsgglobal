@@ -7,14 +7,14 @@ import { Upload, X } from "lucide-react";
 import { NavigationTabs } from "../navigation-tabs";
 
 const defaultRetailerColumns: Column[] = [
-  { id: "ID", header: "ID", accessor: "ID" },
+  { id: 'id', header: 'id', accessor: 'id' },
   { id: "Display Name", header: "Display Name", accessor: "Display Name" },
   { id: "Logo Image", header: "Logo Image", accessor: "Logo Image" },
   { id: "Retailer Group", header: "Retailer Group", accessor: "Retailer Group" }
 ];
 
 const defaultStoreColumns: Column[] = [
-  { id: "ID", header: "ID", accessor: "ID" },
+  { id: 'id', header: 'id', accessor: 'id' },
   { id: "Retailer Name", header: "Retailer Name", accessor: "Retailer Name" },
   { id: "Display Name", header: "Display Name", accessor: "Display Name" },
   { id: "Address", header: "Address", accessor: "Address" }
@@ -57,14 +57,14 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     }
     try {
       if (forceSync) {
-        // Force Cloudflare Worker to update D1 cache from Google Sheets
-        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`, {
+        // Force Cloudflare Worker to update Database from Google Sheets
+        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
           method: "POST"
         });
         if (!syncRes.ok) throw new Error("Failed to refresh server cache");
       }
 
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server returned status ${res.status}`);
       const json = await res.json();
       
@@ -149,12 +149,12 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
   // Preprocess stores list to swap Retailer ID for looked up Retailer Name
   const processedData = React.useMemo(() => {
     if (activeTab === "retailers") {
-      return data.filter(r => !String(r.ID || r.id).startsWith("Group"));
+      return data.filter(r => !String(r.id || r.id).startsWith("Group"));
     }
     const retailersList = getRetailersList();
     return data.map((store) => {
       const retailerId = store["Retailers ID"] || store["Retailer ID"];
-      const retailer = retailersList.find((r) => String(r.ID) === String(retailerId));
+      const retailer = retailersList.find((r) => String(r.id) === String(retailerId));
       return {
         ...store,
         "Retailer Name": retailer ? retailer["Display Name"] : (retailerId || "")
@@ -229,11 +229,11 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
   // Triggered by the "Add New" button in the table header
   const handleAddNew = () => {
     if (activeTab === "retailers") {
-      setEditingRetailer({ isNew: true, ID: "", "Display Name": "", "Logo Image": "", Rank: "" });
+      setEditingRetailer({ isNew: true, id: "", "Display Name": "", "Logo Image": "", Rank: "" });
     } else {
       setEditingStore({
         isNew: true,
-        ID: "",
+        id: "",
         "Retailer ID": "",
         "Retailers ID": "",
         "Display Name": "",
@@ -248,7 +248,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
   // Save changes to GAS (handles updates and additions)
   const handleSaveItem = async (updatedItem: any) => {
     const sheet = activeTab === "retailers" ? "retailers_DB" : "Store_Retailer_DB";
-    const idKey = "ID"; // First column ID is treated as primary key in GAS
+    const idKey = 'id'; // First column ID is treated as primary key in GAS
     const previousData = [...data];
     const isNew = !!updatedItem.isNew;
 
@@ -294,7 +294,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     // 4. Perform network request in background
     (async () => {
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -320,7 +320,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
         const result = await res.json();
         if (!result.success) throw new Error(result.error || "Failed to save record");
 
-        // Silent refresh of D1 cache from server in background
+        // Silent refresh of Database from server in background
         fetchFreshData(sheet, false);
 
       } catch (err: any) {
@@ -335,7 +335,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
   // Handle row deletion
   const handleDeleteRow = async (rowId: string) => {
     const sheet = activeTab === "retailers" ? "retailers_DB" : "Store_Retailer_DB";
-    const idKey = "ID";
+    const idKey = 'id';
 
     const targetItem = data.find(
       (item) => String(item.id || item[idKey]) === String(rowId) || String(item[idKey]) === String(rowId)
@@ -345,7 +345,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
 
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -490,9 +490,9 @@ function RetailerEditForm({ retailer, onSave, onCancel }: { retailer: any; onSav
             <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">ID (Primary Key)</label>
             <input
               type="text"
-              value={formData.ID || ""}
+              value={formData.id || ""}
               disabled={!isNew}
-              onChange={(e) => handleChange("ID", e.target.value)}
+              onChange={(e) => handleChange('id', e.target.value)}
               required
               className={`w-full text-xs rounded px-3 py-2 font-semibold outline-none border ${
                 !isNew 
@@ -564,7 +564,7 @@ function RetailerEditForm({ retailer, onSave, onCancel }: { retailer: any; onSav
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
             .filter((k) => {
-              if (["ID", "Display Name", "Logo Image", "Retailer Group", "id", "isNew"].includes(k)) return false;
+              if (['id', "Display Name", "Logo Image", "Retailer Group", "id", "isNew"].includes(k)) return false;
               const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
                 otherKey !== k && 
                 otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
@@ -675,9 +675,9 @@ function StoreEditForm({ store, retailers, onSave, onCancel }: { store: any; ret
             <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">ID (Primary Key)</label>
             <input
               type="text"
-              value={formData.ID || ""}
+              value={formData.id || ""}
               disabled={!isNew}
-              onChange={(e) => handleChange("ID", e.target.value)}
+              onChange={(e) => handleChange('id', e.target.value)}
               required
               className={`w-full text-xs rounded px-3 py-2 font-semibold outline-none border ${
                 !isNew 
@@ -697,8 +697,8 @@ function StoreEditForm({ store, retailers, onSave, onCancel }: { store: any; ret
             >
               <option value="">-- Select Retailer --</option>
               {retailers.map((r) => (
-                <option key={r.ID} value={r.ID}>
-                  {r["Display Name"] || r.ID} ({r.ID})
+                <option key={r.id} value={r.id}>
+                  {r["Display Name"] || r.id} ({r.id})
                 </option>
               ))}
             </select>
@@ -764,7 +764,7 @@ function StoreEditForm({ store, retailers, onSave, onCancel }: { store: any; ret
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
             .filter((k) => {
-              if (["ID", "Retailers ID", "Retailer ID", "Retailer Name", "Display Name", "Address", "id", "isNew"].includes(k) || k === imgKey) return false;
+              if (['id', "Retailers ID", "Retailer ID", "Retailer Name", "Display Name", "Address", "id", "isNew"].includes(k) || k === imgKey) return false;
               const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
                 otherKey !== k && 
                 otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&

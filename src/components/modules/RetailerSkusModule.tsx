@@ -70,7 +70,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
 
   // Sheet fetching
   const fetchSheet = async (sheetName: string) => {
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${encodeURIComponent(sheetName)}`);
+    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${encodeURIComponent(sheetName)}`);
     if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
     const json = await res.json();
     const items = Array.isArray(json) ? json : (json.value || []);
@@ -81,7 +81,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
   const fetchFreshData = async (sheetName: string, forceSync = false) => {
     try {
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${encodeURIComponent(sheetName)}`, { method: "POST" });
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${encodeURIComponent(sheetName)}`, { method: "POST" });
       }
       return await fetchSheet(sheetName);
     } catch (e) {
@@ -122,9 +122,9 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
       setFetching(true);
       try {
         await Promise.all([
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=retailers_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=products_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Retailers_SKU`, { method: "POST" })
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Retailers_SKU`, { method: "POST" })
         ]);
         const [r, p, s] = await Promise.all([
           fetchSheet("retailers_DB"),
@@ -223,7 +223,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     setNewCostVal("");
 
     // Find original database record to avoid using mapped React elements
-    const originalRecord = skus.find(s => String(s.ID) === String(row.ID)) || row;
+    const originalRecord = skus.find(s => String(s.id) === String(row.id)) || row;
 
     // Parse RSP Tiers from latest log entry
     try {
@@ -287,7 +287,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     setPromoFormItems([{ "Promo Name": "", Price: "", "Range Date Start": "", "Range Date End": "" }]);
 
     setEditingRecord({
-      ID: "",
+      id: "",
       "Retailer ID": selectedRetailerId,
       "SKU Number": "",
       "SKU Name": "",
@@ -304,24 +304,24 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
   };
 
   const handleDeleteRecord = async (rowId: string) => {
-    const targetItem = skus.find(s => String(s.ID) === String(rowId));
+    const targetItem = skus.find(s => String(s.id) === String(rowId));
     if (!targetItem) return;
 
     const previousSkus = [...skus];
-    const updatedList = skus.filter(s => String(s.ID) !== String(targetItem.ID));
+    const updatedList = skus.filter(s => String(s.id) !== String(targetItem.id));
     setSkus(updatedList);
     localStorage.setItem("Retailers_SKU_data", JSON.stringify(updatedList));
 
 
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Retailers_SKU",
+          table: "Retailers_SKU",
           action: "delete",
-          data: { ID: targetItem.ID }
+          data: { id: targetItem.id }
         })
       });
 
@@ -469,7 +469,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     const isRecordActive = editingRecord.Status === true || editingRecord.Status === "TRUE" || editingRecord.Status === "true" || editingRecord.Status === 1 || String(editingRecord.Status) === "1";
 
     const finalRecord = {
-      ID: `${selectedRetailerId}_${skuNumberVal}`,
+      id: `${selectedRetailerId}_${skuNumberVal}`,
       "Retailer ID": selectedRetailerId,
       "SKU Number": skuNumberVal,
       "SKU Name": editingRecord["SKU Name"].trim(),
@@ -489,7 +489,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     if (isNew) {
       updatedList = [...skus, finalRecord];
     } else {
-      updatedList = skus.map(s => String(s.ID) === String(finalRecord.ID) ? finalRecord : s);
+      updatedList = skus.map(s => String(s.id) === String(finalRecord.id) ? finalRecord : s);
     }
 
     setSkus(updatedList);
@@ -499,11 +499,11 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
 
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Retailers_SKU",
+          table: "Retailers_SKU",
           action: isNew ? "insert" : "update",
           data: finalRecord
         })
@@ -527,7 +527,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     retailers.forEach((r) => {
       const group = r["Retailer Group"];
       if (!group || group === "Individual") {
-        optionsMap.set(String(r.ID), r["Display Name"] || String(r.ID));
+        optionsMap.set(String(r.id), r["Display Name"] || String(r.id));
       } else {
         optionsMap.set(String(group), `Retailers ${group}`);
       }
@@ -553,7 +553,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
         : [];
 
       const getProductName = (skuStr: string) => {
-        const prod = products.find(p => String(p.SKU).trim() === String(skuStr).trim());
+        const prod = products.find(p => String(p.sku).trim() === String(skuStr).trim());
         return prod ? prod["Display Name"] || skuStr : skuStr;
       };
 
@@ -794,7 +794,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
             {/* Context Info */}
             <div className="mx-6 my-4 flex flex-col gap-1 bg-[#E8F0FE]/40 border border-[#AECBFA]/40 rounded-lg p-3 text-xs text-zinc-700 flex-shrink-0">
               <span className="font-bold text-[#041E49]">
-                SKU: {activeLogRecord["SKU Number"]} - {activeLogRecord["SKU Name"]}
+                sku: {activeLogRecord["SKU Number"]} - {activeLogRecord["SKU Name"]}
               </span>
             </div>
 
@@ -910,7 +910,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
             <div className="flex flex-col gap-3.5">
               {/* SKU Number */}
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">SKU Number (Integer ID)</label>
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">SKU Number (Integer id)</label>
                 <input
                   type="number"
                   value={editingRecord["SKU Number"]}
@@ -945,7 +945,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
                 <TagInput
                   tags={editingRecord["Link to Product SKU"]}
                   onChange={(newTags) => setEditingRecord({ ...editingRecord, "Link to Product SKU": newTags })}
-                  suggestions={products.map(p => p.SKU)}
+                  suggestions={products.map(p => p.sku)}
                   placeholder="Type product SKU and press Enter"
                   id="sku-links"
                 />

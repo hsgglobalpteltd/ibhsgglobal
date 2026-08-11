@@ -18,7 +18,7 @@ interface Contact {
 }
 
 interface Store {
-  ID: string;
+  id: string;
   "Display Name": string;
 }
 
@@ -75,13 +75,13 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
     try {
       if (forceSync) {
         // Force refresh contacts sheet
-        await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Contacts_Book", {
+        await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Contacts_Book", {
           method: "POST"
         });
       }
 
       // Fetch contacts
-      const contactsRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Contacts_Book");
+      const contactsRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Contacts_Book");
       if (contactsRes.ok) {
         const contactsJson = await contactsRes.json();
         const items = Array.isArray(contactsJson) ? contactsJson : (contactsJson.value || []);
@@ -90,7 +90,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
       }
 
       // Fetch stores (silently populate lookup)
-      const storesRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Store_Retailer_DB");
+      const storesRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB");
       if (storesRes.ok) {
         const storesJson = await storesRes.json();
         const items = Array.isArray(storesJson) ? storesJson : (storesJson.value || []);
@@ -152,7 +152,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
     if (storeId === undefined || storeId === null || storeId === "") return "";
     const storeIdStr = String(storeId).trim().toLowerCase();
     const store = stores.find(
-      (s) => String(s.ID).trim().toLowerCase() === storeIdStr
+      (s) => String(s.id).trim().toLowerCase() === storeIdStr
     );
     return store ? store["Display Name"] : String(storeId);
   };
@@ -267,7 +267,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
       newContactsList = [...contacts, cleanData];
     } else {
       newContactsList = contacts.map((c) => {
-        const matchesID = cleanData.ID !== undefined && c.ID !== undefined && String(c.ID) === String(cleanData.ID);
+        const matchesID = cleanData.id !== undefined && c.id !== undefined && String(c.id) === String(cleanData.id);
         const matchesPhone = String(c.Phone) === String(cleanData[keyColumn]);
         return (matchesID || matchesPhone) ? { ...c, ...cleanData } : c;
       });
@@ -279,13 +279,13 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
 
     // 2. Silent sync
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          sheet: "Contacts_Book",
+          table: "Contacts_Book",
           action: isNew ? "insert" : "update",
           data: cleanData
         })
@@ -312,8 +312,8 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
 
     // 1. Optimistic update
     const newContactsList = contacts.filter((c) =>
-      contact.ID !== undefined && c.ID !== undefined
-        ? String(c.ID) !== String(contact.ID)
+      contact.id !== undefined && c.id !== undefined
+        ? String(c.id) !== String(contact.id)
         : c.Phone !== contact.Phone
     );
     setContacts(newContactsList);
@@ -323,16 +323,16 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
 
     // 2. Silent sync
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          sheet: "Contacts_Book",
+          table: "Contacts_Book",
           action: "delete",
           data: {
-            ID: contact.ID,
+            id: contact.id,
             Phone: contact.Phone
           }
         })

@@ -73,7 +73,7 @@ export function StoreMapConfigModule({ idToken, profile }: StoreMapConfigModuleP
 
       // 2. Fetch sheet caches (Google Sheets)
       const fetchSheet = async (sheetName: string) => {
-        const res = await fetch(`${WORKER_URL}/api/admin/cache?sheet=${sheetName}`);
+        const res = await fetch(`${WORKER_URL}/api/admin/db?table=${sheetName}`);
         if (!res.ok) throw new Error("Failed to fetch " + sheetName);
         const json = await res.json();
         return Array.isArray(json) ? json : (json.value || []);
@@ -94,7 +94,7 @@ export function StoreMapConfigModule({ idToken, profile }: StoreMapConfigModuleP
       setRetailers(rt);
 
       if (b.length > 0) {
-        setSelectedBrandId(String(b[0].ID));
+        setSelectedBrandId(String(b[0].id));
       }
     } catch (err: any) {
       showToast("Failed to load initial map data: " + err.message, "error");
@@ -187,7 +187,7 @@ export function StoreMapConfigModule({ idToken, profile }: StoreMapConfigModuleP
     if (!selectedBrandId || selectedSkus.length === 0 || stores.length === 0) return [];
 
     const lowerSelectedSkus = selectedSkus.map(s => s.toLowerCase());
-    const brandSkus = brandProducts.map((p: any) => String(p.SKU).toLowerCase());
+    const brandSkus = brandProducts.map((p: any) => String(p.sku).toLowerCase());
 
     const resultPins: any[] = [];
 
@@ -201,7 +201,7 @@ export function StoreMapConfigModule({ idToken, profile }: StoreMapConfigModuleP
       // Find logs for this store
       const storeLogs = productLogs.filter((log: any) => {
         const sId = log["Retailer Stores ID"] || log["Store ID"];
-        return String(sId) === String(store.ID);
+        return String(sId) === String(store.id);
       });
 
       if (storeLogs.length === 0) return;
@@ -224,7 +224,7 @@ export function StoreMapConfigModule({ idToken, profile }: StoreMapConfigModuleP
         if (lowerSelectedSkus.includes(sku) && brandSkus.includes(sku)) {
           const qty = Number(auditItem.qty) || 0;
           if (qty > 0) {
-            const prodDetail = brandProducts.find((p: any) => String(p.SKU).toLowerCase() === sku);
+            const prodDetail = brandProducts.find((p: any) => String(p.sku).toLowerCase() === sku);
             stockProducts.push({
               name: prodDetail ? prodDetail["Display Name"] : auditItem.sku,
               qty,
@@ -237,13 +237,13 @@ export function StoreMapConfigModule({ idToken, profile }: StoreMapConfigModuleP
 
       if (hasStock) {
         const retId = store["Retailers ID"] || store["Retailer ID"];
-        const retailer = retailers.find((r: any) => String(r.ID) === String(retId));
+        const retailer = retailers.find((r: any) => String(r.id) === String(retId));
         const retailerName = retailer ? retailer["Display Name"] : "";
-        const storeName = store["Display Name"] || `Store #${store.ID}`;
+        const storeName = store["Display Name"] || `Store #${store.id}`;
         const pinTitle = retailerName ? `${retailerName} - ${storeName}` : storeName;
 
         resultPins.push({
-          id: store.ID,
+          id: store.id,
           name: pinTitle,
           address: store.Address || "",
           lat: coords[0],
@@ -394,7 +394,7 @@ export function StoreMapConfigModule({ idToken, profile }: StoreMapConfigModuleP
   };
 
   const handleSelectAllProducts = () => {
-    const allSkus = brandProducts.map((p: any) => String(p.SKU));
+    const allSkus = brandProducts.map((p: any) => String(p.sku));
     setSelectedSkus(allSkus);
   };
 
@@ -494,7 +494,7 @@ export function StoreMapConfigModule({ idToken, profile }: StoreMapConfigModuleP
             >
               <option value="" disabled>Select a Brand...</option>
               {brands.map((brand: any) => (
-                <option key={brand.ID} value={brand.ID}>
+                <option key={brand.id} value={brand.id}>
                   {brand["Display Name"]}
                 </option>
               ))}
@@ -522,16 +522,16 @@ export function StoreMapConfigModule({ idToken, profile }: StoreMapConfigModuleP
                   <span className="text-xs text-zinc-400 italic text-center my-auto">No products registered under this brand.</span>
                 ) : (
                   brandProducts.map((p: any) => (
-                    <label key={p.SKU} className="flex items-start gap-2.5 p-1.5 hover:bg-zinc-100 rounded-md cursor-pointer select-none">
+                    <label key={p.sku} className="flex items-start gap-2.5 p-1.5 hover:bg-zinc-100 rounded-md cursor-pointer select-none">
                       <input
                         type="checkbox"
                         className="mt-0.5 w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-zinc-300"
-                        checked={selectedSkus.includes(String(p.SKU))}
-                        onChange={() => handleToggleSku(String(p.SKU))}
+                        checked={selectedSkus.includes(String(p.sku))}
+                        onChange={() => handleToggleSku(String(p.sku))}
                       />
                       <div className="flex flex-col">
                         <span className="text-xs font-bold text-zinc-800 leading-tight">{p["Display Name"]}</span>
-                        <span className="text-[10px] text-zinc-500 font-mono mt-0.5">{p.SKU}</span>
+                        <span className="text-[10px] text-zinc-500 font-mono mt-0.5">{p.sku}</span>
                       </div>
                     </label>
                   ))

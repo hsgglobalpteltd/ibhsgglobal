@@ -193,7 +193,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       const data = await fetchSnapDeals();
       setDeals(data.map((deal: any) => ({
         ...deal,
-        id: deal.ID || deal.id
+        id: deal.id || deal.id
       })));
     } catch (err: any) {
       showToast(err.message || "Failed to load snap deals", "error");
@@ -2189,7 +2189,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                             >
                               <span className="font-bold text-zinc-800 truncate">{d.dealing_with}</span>
                               <span className="text-[9.5px] text-zinc-400 font-mono flex items-center justify-between w-full">
-                                <span>ID: {d.id}</span>
+                                <span>id: {d.id}</span>
                                 <span className={`px-1 rounded-full text-[8px] font-black uppercase ${
                                   d.status === "Active" ? "bg-emerald-50 text-emerald-700 border border-emerald-150" : "bg-amber-50 text-amber-700 border border-amber-150"
                                 }`}>
@@ -2320,7 +2320,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
               <div className="flex justify-between items-center border-b border-slate-200 pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-zinc-950 uppercase tracking-wider">Snap Deal Record</h3>
-                  <p className="text-[10px] text-zinc-500 font-medium">Record ID: {selectedDeal.id}</p>
+                  <p className="text-[10px] text-zinc-500 font-medium">Record id: {selectedDeal.id}</p>
                 </div>
                 <button 
                   onClick={() => setDetailPanelOpen(false)}
@@ -2492,7 +2492,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
           <div className="w-full max-w-lg bg-white border border-slate-200 rounded p-5 shadow-xl animate-modalSlideUp">
             <div className="flex justify-between items-center border-b border-slate-200 pb-3 mb-4">
               <h4 className="text-sm font-bold text-zinc-950 uppercase tracking-wider">
-                Terms & Conditions - ID: {selectedTermsDeal.id}
+                Terms & Conditions - id: {selectedTermsDeal.id}
               </h4>
               <button
                 onClick={() => setShowTermsModal(false)}
@@ -2543,7 +2543,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             <div className="flex justify-between items-center border-b border-slate-200 p-5 shrink-0">
               <div>
                 <h3 className="text-sm font-bold text-zinc-950 uppercase tracking-wider">Detailed Deal Profile</h3>
-                <p className="text-[10px] text-zinc-500 font-semibold mt-0.5">Deal Record ID: {selectedViewDeal.id}</p>
+                <p className="text-[10px] text-zinc-500 font-semibold mt-0.5">Deal Record id: {selectedViewDeal.id}</p>
               </div>
               <button
                 onClick={() => setShowViewModal(false)}

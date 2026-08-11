@@ -16,7 +16,7 @@ interface SettingModuleProps {
 }
 
 const apiColumns: Column[] = [
-  { id: "ID", header: "ID", accessor: "ID" },
+  { id: 'id', header: 'id', accessor: 'id' },
   { id: "Name", header: "API Name", accessor: "Name" },
   { id: "Key", header: "API Key", accessor: "Key" }
 ];
@@ -102,13 +102,13 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
     setFetching(true);
     try {
       if (forceSync) {
-        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Setting_API`, {
+        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API`, {
           method: "POST"
         });
         if (!syncRes.ok) throw new Error("Failed to refresh server cache");
       }
 
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Setting_API`);
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API`);
       if (!res.ok) throw new Error(`Server returned status ${res.status}`);
       const json = await res.json();
       const items = Array.isArray(json) ? json : (json.value || []);
@@ -171,7 +171,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
   };
 
   const handleAddNew = () => {
-    setEditingApi({ isNew: true, ID: "", Name: "", Key: "" });
+    setEditingApi({ isNew: true, id: "", Name: "", Key: "" });
   };
 
   const handleSaveItem = async (updatedItem: any) => {
@@ -185,7 +185,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
     delete cleanData.isNew;
 
     // Validate keys
-    if (!cleanData.ID || !String(cleanData.ID).trim()) {
+    if (!cleanData.id || !String(cleanData.id).trim()) {
       showToast("Save failed: ID is required!", "error");
       return;
     }
@@ -196,7 +196,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
 
     if (isNew) {
       const exists = data.some(
-        (item) => String(item.ID).trim().toLowerCase() === String(cleanData.ID).trim().toLowerCase()
+        (item) => String(item.id).trim().toLowerCase() === String(cleanData.id).trim().toLowerCase()
       );
       if (exists) {
         showToast("Save failed: A record with this ID already exists!", "error");
@@ -209,7 +209,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
       updatedList = [...data, cleanData];
     } else {
       updatedList = data.map((item) =>
-        String(item.ID) === String(cleanData.ID) ? { ...item, ...cleanData } : item
+        String(item.id) === String(cleanData.id) ? { ...item, ...cleanData } : item
       );
     }
     setData(updatedList);
@@ -218,11 +218,11 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
     showToast("Saving API record in background...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Setting_API",
+          table: "Setting_API",
           action: isNew ? "insert" : "update",
           data: cleanData
         })
@@ -242,20 +242,20 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
   };
 
   const handleDeleteRow = async (rowId: string) => {
-    const targetItem = data.find((item) => String(item.ID) === String(rowId));
+    const targetItem = data.find((item) => String(item.id) === String(rowId));
     if (!targetItem) return;
 
     const previousData = [...data];
     showToast("Deleting API record from database...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Setting_API",
+          table: "Setting_API",
           action: "delete",
-          data: { ID: targetItem.ID }
+          data: { id: targetItem.id }
         })
       });
 
@@ -263,7 +263,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
       const result = await res.json();
       if (!result.success) throw new Error(result.error || "Failed to delete API record");
 
-      const updatedList = data.filter((item) => String(item.ID) !== String(targetItem.ID));
+      const updatedList = data.filter((item) => String(item.id) !== String(targetItem.id));
       setData(updatedList);
       localStorage.setItem("Setting_API_data", JSON.stringify(updatedList));
 
@@ -414,8 +414,8 @@ function ApiEditForm({ record, onSave, onCancel }: { record: any; onSave: (data:
               type="text"
               required
               disabled={!isNew}
-              value={formData.ID}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, ID: e.target.value }))}
+              value={formData.id}
+              onChange={(e) => setFormData((prev: any) => ({ ...prev, id: e.target.value }))}
               placeholder="e.g. gemini_api"
               className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 disabled:opacity-60 disabled:cursor-not-allowed font-semibold"
             />

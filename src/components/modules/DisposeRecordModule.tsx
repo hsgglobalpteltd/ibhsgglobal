@@ -35,7 +35,7 @@ interface DisposeItem {
 }
 
 interface DisposeRecord {
-  ID: string;
+  id: string;
   Date: number; // Unix epoch ms
   Reference: string;
   Items: string; // JSON string of DisposeItem[]
@@ -80,7 +80,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
 
   // Resolve Product Name by SKU
   const lookupProductName = React.useCallback((sku: string) => {
-    const prod = products.find(p => String(p.SKU || "").trim().toLowerCase() === String(sku).trim().toLowerCase());
+    const prod = products.find(p => String(p.sku || "").trim().toLowerCase() === String(sku).trim().toLowerCase());
     return prod ? (prod["Display Name"] || prod.Display_Name || prod.Name || sku) : sku;
   }, [products]);
 
@@ -95,7 +95,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
         prodList = JSON.parse(cachedProds);
         setProducts(prodList);
       } else {
-        const prodRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=products_DB");
+        const prodRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
         if (prodRes.ok) {
           prodList = await prodRes.json();
           localStorage.setItem("products_DB_data", JSON.stringify(prodList));
@@ -106,11 +106,11 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
       // 2. Load Dispose Records
       const sheetName = "Dispose_Goods";
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`, {
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
           method: "POST"
         });
       }
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (res.ok) {
         const dataList = await res.json();
         localStorage.setItem(`${sheetName}_data`, JSON.stringify(dataList));
@@ -264,7 +264,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     }
     const q = productQuery.toLowerCase();
     const matches = products.filter(p => 
-      String(p.SKU || "").toLowerCase().includes(q) ||
+      String(p.sku || "").toLowerCase().includes(q) ||
       String(p["Display Name"] || p.Display_Name || "").toLowerCase().includes(q)
     );
     setFilteredProducts(matches.slice(0, 10));
@@ -272,13 +272,13 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
 
   const addDisposeItem = (prod: any) => {
     // Check duplicate SKU
-    if (formItems.some(item => item.sku === prod.SKU)) {
+    if (formItems.some(item => item.sku === prod.sku)) {
       showToast("Product is already added to the list.", "warning");
       return;
     }
 
     const newItem: DisposeItem = {
-      sku: prod.SKU,
+      sku: prod.sku,
       qty: 1,
       cost: Number(prod.Cost) || 0
     };
@@ -357,10 +357,10 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     }
 
     const epochDate = new Date(formDate + "T00:00:00").getTime();
-    const recordId = editingRecord ? editingRecord.ID : `disp_${Date.now()}`;
+    const recordId = editingRecord ? editingRecord.id : `disp_${Date.now()}`;
     
     const recordPayload: DisposeRecord = {
-      ID: recordId,
+      id: recordId,
       Date: epochDate,
       Reference: editingRecord ? editingRecord.Reference : "",
       Items: JSON.stringify(formItems),
@@ -374,7 +374,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     const originalRecords = [...records];
     let updatedRecords;
     if (editingRecord) {
-      updatedRecords = records.map(r => r.ID === recordId ? recordPayload : r);
+      updatedRecords = records.map(r => r.id === recordId ? recordPayload : r);
     } else {
       updatedRecords = [recordPayload, ...records];
     }
@@ -385,11 +385,11 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
 
     // Silent background sync
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Dispose_Goods",
+          table: "Dispose_Goods",
           action: editingRecord ? "update" : "insert",
           data: recordPayload
         })
@@ -420,19 +420,19 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
 
     // Optimistic delete
     const originalRecords = [...records];
-    const updatedRecords = records.filter(r => r.ID !== record.ID);
+    const updatedRecords = records.filter(r => r.id !== record.id);
     
     setRecords(updatedRecords);
     localStorage.setItem("Dispose_Goods_data", JSON.stringify(updatedRecords));
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Dispose_Goods",
+          table: "Dispose_Goods",
           action: "delete",
-          data: { ID: record.ID }
+          data: { id: record.id }
         })
       });
 
@@ -459,7 +459,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
 
     const targetRecord = { ...lockingRecord, Reference: lockReference.trim() };
     const originalRecords = [...records];
-    const updatedRecords = records.map(r => r.ID === lockingRecord.ID ? targetRecord : r);
+    const updatedRecords = records.map(r => r.id === lockingRecord.id ? targetRecord : r);
 
     setRecords(updatedRecords);
     localStorage.setItem("Dispose_Goods_data", JSON.stringify(updatedRecords));
@@ -467,11 +467,11 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     setLockReference("");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Dispose_Goods",
+          table: "Dispose_Goods",
           action: "update",
           data: targetRecord
         })
@@ -591,7 +591,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     doc.rect(15, thY, 180, 7);
 
     doc.setFontSize(8.5);
-    doc.text("SKU", 17, thY + 4.5);
+    doc.text('sku', 17, thY + 4.5);
     doc.text("Product Name", 57, thY + 4.5);
     doc.text("Qty", 142, thY + 4.5, { align: "right" });
     doc.text("Cost", 167, thY + 4.5, { align: "right" });
@@ -1065,12 +1065,12 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
                         <div className="absolute left-0 right-0 mt-1 bg-white border border-zinc-200 rounded shadow-lg max-h-48 overflow-y-auto z-10">
                           {filteredProducts.map((p) => (
                             <div
-                              key={p.SKU}
+                              key={p.sku}
                               onClick={() => addDisposeItem(p)}
                               className="px-3 py-2 text-xs hover:bg-zinc-100 cursor-pointer flex justify-between items-center border-b border-zinc-100 last:border-0"
                             >
                               <div className="flex flex-col">
-                                <span className="font-bold text-zinc-800">{p.SKU}</span>
+                                <span className="font-bold text-zinc-800">{p.sku}</span>
                                 <span className="text-[10px] text-zinc-500 font-semibold">{p["Display Name"] || p.Display_Name || p.Name}</span>
                               </div>
                               <span className="text-[10px] font-bold text-[#0B57D0]">${Number(p.Cost || 0).toFixed(2)}</span>

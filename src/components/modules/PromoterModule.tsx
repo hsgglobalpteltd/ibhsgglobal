@@ -237,7 +237,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [otherLocationAddress, setOtherLocationAddress] = React.useState("");
 
   const openPromotingCostModal = (shiftId: string) => {
-    const shift = schedules.find(s => String(s.ID) === String(shiftId));
+    const shift = schedules.find(s => String(s.id) === String(shiftId));
     if (!shift) return;
 
     let items = [];
@@ -265,7 +265,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
       if (updated.type === "Goods") {
         if (field === "sku" || field === "qty" || field === "type") {
-          const prod = products.find(p => String(p.SKU).toLowerCase() === String(updated.sku).toLowerCase());
+          const prod = products.find(p => String(p.sku).toLowerCase() === String(updated.sku).toLowerCase());
           const costPrice = prod ? (Number(prod.Cost) || Number(prod["Cost Price"]) || 0) : 0;
           updated.amount = costPrice * (Number(updated.qty) || 0);
         }
@@ -338,11 +338,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const loadDatabaseData = React.useCallback(async () => {
     try {
       const [resBrands, resProducts, resStores, resLogs, resRetailers] = await Promise.all([
-        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=brands_DB"),
-        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=products_DB"),
-        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Store_Retailer_DB"),
-        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Merch_Visit_Product_Audit_Logs"),
-        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=retailers_DB")
+        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=brands_DB"),
+        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB"),
+        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB"),
+        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Product_Audit_Logs"),
+        fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB")
       ]);
 
       if (resBrands.ok) {
@@ -370,15 +370,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
   }, []);
 
-  // Fetch Promoters from sheets
+  // Fetch Promoters from Database
   const loadPromoters = React.useCallback(async (forceSync = false) => {
     setLoadingPromoters(true);
     try {
       const sheetName = "Promoter_Users";
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
       }
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server status ${res.status}`);
       const json = await res.json();
       setPromoters(Array.isArray(json) ? json : (json.value || []));
@@ -389,15 +389,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
   }, []);
 
-  // Fetch Campaigns from sheets
+  // Fetch Campaigns from Database
   const loadCampaigns = React.useCallback(async (forceSync = false) => {
     setLoadingCampaigns(true);
     try {
       const sheetName = "Promoter_Campaign";
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
       }
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server status ${res.status}`);
       const json = await res.json();
       setCampaigns(Array.isArray(json) ? json : (json.value || []));
@@ -408,15 +408,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
   }, []);
 
-  // Fetch Schedules from sheets
+  // Fetch Schedules from Database
   const loadSchedules = React.useCallback(async (forceSync = false) => {
     setLoadingSchedules(true);
     try {
       const sheetName = "Promoter_Schedule";
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
       }
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server status ${res.status}`);
       const json = await res.json();
       setSchedules(Array.isArray(json) ? json : (json.value || []));
@@ -427,7 +427,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
   }, []);
 
-  // Fetch Payouts from sheets
+  // Fetch Payouts from Database
   const loadPayouts = React.useCallback(async (forceSync = false) => {
     // Load from localStorage cache first
     const cached = localStorage.getItem("ib_promoter_payouts_cache");
@@ -440,9 +440,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     try {
       const sheetName = "Promoter_Payout";
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
       }
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (res.status === 404) {
         setPayouts([]);
         localStorage.removeItem("ib_promoter_payouts_cache");
@@ -469,9 +469,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const getFormattedStoreName = React.useCallback((storeId: any, baseStoreName: string) => {
     if (!storeId || !baseStoreName) return baseStoreName || "";
     if (String(storeId).startsWith("OTHER")) return baseStoreName;
-    const storeObj = stores.find(st => String(st.ID) === String(storeId));
+    const storeObj = stores.find(st => String(st.id) === String(storeId));
     const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
-    const retailerObj = retId ? retailers.find(r => String(r.ID) === String(retId)) : null;
+    const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
     const retailerName = retailerObj ? (retailerObj["Display Name"] || retailerObj.Name || "") : "";
     const retailerPrefix = retailerName ? retailerName.substring(0, 5).toUpperCase() : "";
     return retailerPrefix ? `${retailerPrefix} - ${baseStoreName}` : baseStoreName;
@@ -523,8 +523,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     let shiftId = "";
     if (typeof shiftIdOrObj === "string") {
       shiftId = shiftIdOrObj;
-    } else if (shiftIdOrObj && typeof shiftIdOrObj === "object" && shiftIdOrObj.ID) {
-      shiftId = String(shiftIdOrObj.ID);
+    } else if (shiftIdOrObj && typeof shiftIdOrObj === "object" && shiftIdOrObj.id) {
+      shiftId = String(shiftIdOrObj.id);
     } else {
       return false;
     }
@@ -592,7 +592,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const paidScheduleIds = React.useMemo(() => {
     const ids = new Set<string>();
     payouts.forEach(p => {
-      if (editingPayoutId && p.ID === editingPayoutId) return;
+      if (editingPayoutId && p.id === editingPayoutId) return;
       if (p["Payout Details"]) {
         try {
           const details = JSON.parse(p["Payout Details"]);
@@ -604,7 +604,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             });
           }
         } catch (e) {
-          console.error("Failed to parse Payout Details for", p.ID, e);
+          console.error("Failed to parse Payout Details for", p.id, e);
         }
       }
     });
@@ -649,18 +649,18 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const totalPayout = isAbsent ? 0 : Number((totalTime * rate).toFixed(2));
 
       // Resolve store name
-      const storeObj = stores.find(st => String(st.ID) === String(s["Store ID"]));
+      const storeObj = stores.find(st => String(st.id) === String(s["Store ID"]));
       const storeName = s["Store Name"] || (storeObj ? storeObj["Display Name"] : "");
       const formattedStore = getFormattedStoreName(s["Store ID"], storeName);
 
       // Resolve campaign name
-      const campaign = campaigns.find(c => String(c.ID) === String(s["Campaign ID"]));
+      const campaign = campaigns.find(c => String(c.id) === String(s["Campaign ID"]));
       const campaignTitle = campaign ? campaign["Campaign Title"] : (s["Campaign Title"] || "");
 
-      const isPaid = paidScheduleIds.has(String(s.ID));
+      const isPaid = paidScheduleIds.has(String(s.id));
 
       return {
-        scheduleId: s.ID,
+        scheduleId: s.id,
         date: s.Date,
         startTime: displayStart,
         endTime: displayEnd,
@@ -695,11 +695,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
-    const promoterName = promoters.find(p => String(p.ID) === String(selectedPayoutPromoterId))?.Name || "";
+    const promoterName = promoters.find(p => String(p.id) === String(selectedPayoutPromoterId))?.Name || "";
     const totalSum = Number(selectedRows.reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2));
     
     const payload = {
-      ID: editingPayoutId || `payout_${Date.now()}`,
+      id: editingPayoutId || `payout_${Date.now()}`,
       "Promoter ID": selectedPayoutPromoterId,
       "Promoter Name": promoterName,
       "Start Date": new Date(payoutStartDate + "T00:00:00").getTime(),
@@ -707,10 +707,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       "Hourly Rate": Number(payoutHourlyRate),
       "Total Payout": totalSum,
       "Payout Details": JSON.stringify(selectedRows),
-      Status: editingPayoutId ? (payouts.find(p => p.ID === editingPayoutId)?.Status || "Pending Payout") : "Pending Payout",
-      "Receipt Photo URL": editingPayoutId ? (payouts.find(p => p.ID === editingPayoutId)?.["Receipt Photo URL"] || "") : "",
-      "Payment Reference": editingPayoutId ? (payouts.find(p => p.ID === editingPayoutId)?.["Payment Reference"] || "") : "",
-      "Payment Date": editingPayoutId ? (payouts.find(p => p.ID === editingPayoutId)?.["Payment Date"] || "") : "",
+      Status: editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.Status || "Pending Payout") : "Pending Payout",
+      "Receipt Photo URL": editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.["Receipt Photo URL"] || "") : "",
+      "Payment Reference": editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.["Payment Reference"] || "") : "",
+      "Payment Date": editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.["Payment Date"] || "") : "",
       "Created At": Date.now()
     };
 
@@ -720,7 +720,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     // Optimistically update local state and cache
     let nextPayouts = [...payouts];
-    const idx = nextPayouts.findIndex(p => p.ID === payload.ID);
+    const idx = nextPayouts.findIndex(p => p.id === payload.id);
     if (idx > -1) {
       nextPayouts[idx] = payload;
     } else {
@@ -731,7 +731,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     // Optimistically update schedules locally
     const nextSchedules = schedules.map(s => {
-      const match = selectedRows.find(r => r.scheduleId === s.ID);
+      const match = selectedRows.find(r => r.scheduleId === s.id);
       if (match) {
         return {
           ...s,
@@ -750,11 +750,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     // Silent background sync
     (async () => {
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            sheet: "Promoter_Payout",
+            table: "Promoter_Payout",
             action: editingPayoutId ? "update" : "insert",
             data: payload
           })
@@ -766,7 +766,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
         // Sync updated schedule times to the database
         const updatePromises = selectedRows.map(async (row) => {
-          const originalSchedule = schedulesBeforeSave.find(s => s.ID === row.scheduleId);
+          const originalSchedule = schedulesBeforeSave.find(s => s.id === row.scheduleId);
           if (!originalSchedule) return;
           if (originalSchedule["Actual Start"] !== row.startTime || originalSchedule["Actual End"] !== row.endTime) {
             const updatedSchedule = {
@@ -774,11 +774,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               "Actual Start": row.startTime,
               "Actual End": row.endTime
             };
-            return fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+            return fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                sheet: "Promoter_Schedule",
+                table: "Promoter_Schedule",
                 action: "update",
                 data: updatedSchedule
               })
@@ -788,9 +788,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
         await Promise.all(updatePromises.filter(Boolean));
 
-        // Silent cache bust write
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Promoter_Payout`, { method: "POST" });
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Promoter_Schedule`, { method: "POST" });
+        // Silent database sync write
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Promoter_Payout`, { method: "POST" });
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Promoter_Schedule`, { method: "POST" });
       } catch (err: any) {
         showToast("Failed to save payout. Rolling back changes.", "error");
         setPayouts(payoutsBeforeSave);
@@ -811,26 +811,26 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         const payoutsBeforeDelete = [...payouts];
 
         // Optimistically update local state and cache
-        const nextPayouts = payouts.filter(p => p.ID !== payoutId);
+        const nextPayouts = payouts.filter(p => p.id !== payoutId);
         setPayouts(nextPayouts);
         localStorage.setItem("ib_promoter_payouts_cache", JSON.stringify(nextPayouts));
 
         // Silent background delete
         (async () => {
           try {
-            const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+            const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                sheet: "Promoter_Payout",
+                table: "Promoter_Payout",
                 action: "delete",
-                data: { ID: payoutId }
+                data: { id: payoutId }
               })
             });
             if (!res.ok) throw new Error(`HTTP error ${res.status}`);
 
-            // Silent cache bust write
-            await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Promoter_Payout`, { method: "POST" });
+            // Silent database sync write
+            await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Promoter_Payout`, { method: "POST" });
           } catch (err: any) {
             showToast("Failed to delete payout. Rolling back changes.", "error");
             setPayouts(payoutsBeforeDelete);
@@ -860,7 +860,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     try {
       // 1. Upload receipt to R2
       const extension = paymentReceiptFile.name.split(".").pop() || "jpg";
-      const filename = `Promoters/Payout_Receipts/${paymentModalPayout.ID}_${Date.now()}.${extension}`;
+      const filename = `Promoters/Payout_Receipts/${paymentModalPayout.id}_${Date.now()}.${extension}`;
       
       const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
         method: "POST",
@@ -883,11 +883,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         "Payment Date": new Date(paymentDate + "T12:00:00").getTime()
       };
 
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Promoter_Payout",
+          table: "Promoter_Payout",
           action: "update",
           data: updatedPayout
         })
@@ -936,7 +936,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     // Lookup Promoter details
     const promoterId = payout["Promoter ID"];
-    const promoterObj = promoters.find(p => String(p.ID) === String(promoterId));
+    const promoterObj = promoters.find(p => String(p.id) === String(promoterId));
     const nickname = payout["Promoter Name"] || (promoterObj ? promoterObj.Name : "-");
     const fullname = promoterObj ? (promoterObj["Full Name"] || promoterObj.FullName || "~") : "~";
     const paynowAccount = promoterObj ? (promoterObj["Paynow Account"] || promoterObj.Paynow || "~") : "~";
@@ -964,7 +964,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.setTextColor(113, 113, 122);
     const todayStr = new Date().toLocaleDateString("en-GB");
     doc.text(`Generated: ${todayStr}`, 195, 20, { align: "right" });
-    doc.text(`Document ID: ${payout.ID}`, 15, 25);
+    doc.text(`Document id: ${payout.id}`, 15, 25);
 
     doc.setDrawColor(228, 228, 231);
     doc.line(15, 28, 195, 28);
@@ -1186,7 +1186,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     setHiddenPromoterIds([]);
 
     if (selectedCampaignId && selectedCampaignId !== "all" && selectedCampaignId !== "") {
-      const selectedCamp = campaigns.find(c => String(c.ID) === String(selectedCampaignId));
+      const selectedCamp = campaigns.find(c => String(c.id) === String(selectedCampaignId));
       if (selectedCamp) {
         if (selectedCamp["Start Date"]) {
           setScheduleStartDate(formatEpochToDateInput(selectedCamp["Start Date"]));
@@ -1326,10 +1326,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const endMs = campEndDate ? dateStrToEpoch(campEndDate) : "";
 
     const payload = {
-      sheet: "Promoter_Campaign",
+      table: "Promoter_Campaign",
       action: editingCampaignId ? "update" : "insert",
       data: {
-        ID: campaignId,
+        id: campaignId,
         "Campaign Title": campTitle.trim(),
         "Campaign Description": campDesc.trim(),
         "Campaign Instruction": campInstr.trim(),
@@ -1342,7 +1342,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     // Optimistic Update
     const tempCampaign = {
-      ID: campaignId,
+      id: campaignId,
       "Campaign Title": payload.data["Campaign Title"],
       "Campaign Description": payload.data["Campaign Description"],
       "Campaign Instruction": payload.data["Campaign Instruction"],
@@ -1353,7 +1353,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     };
 
     setCampaigns(prev => {
-      const idx = prev.findIndex(c => c.ID === campaignId);
+      const idx = prev.findIndex(c => c.id === campaignId);
       if (idx > -1) {
         const copy = [...prev];
         copy[idx] = tempCampaign;
@@ -1375,7 +1375,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     showToast("Campaign saved successfully!", "success");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1395,17 +1395,17 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       description: "Are you sure you want to permanently delete this campaign? This action cannot be undone.",
       variant: "danger",
       onConfirm: async () => {
-        setCampaigns(prev => prev.filter(c => c.ID !== campId));
+        setCampaigns(prev => prev.filter(c => c.id !== campId));
         showToast("Campaign deleted successfully", "success");
 
         try {
-          const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+          const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              sheet: "Promoter_Campaign",
+              table: "Promoter_Campaign",
               action: "delete",
-              data: { ID: campId }
+              data: { id: campId }
             })
           });
           if (res.ok) {
@@ -1421,14 +1421,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Toggle Campaign Archive Status
   const handleToggleCampaignArchive = async (campaignId: string, isArchive: boolean) => {
     // Optimistic Update
-    setCampaigns(prev => prev.map(c => c.ID === campaignId ? { ...c, Archived: isArchive ? 1 : "" } : c));
+    setCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, Archived: isArchive ? 1 : "" } : c));
 
     try {
-      const currentCampaign = campaigns.find(c => c.ID === campaignId);
+      const currentCampaign = campaigns.find(c => c.id === campaignId);
       if (!currentCampaign) return;
 
       const payload = {
-        sheet: "Promoter_Campaign",
+        table: "Promoter_Campaign",
         action: "update",
         data: {
           ...currentCampaign,
@@ -1436,7 +1436,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         }
       };
 
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1463,23 +1463,23 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     const id = editingPromoterId || String(promoterId || "").trim() || `prom_${Date.now()}`;
     const payload = {
-      sheet: "Promoter_Users",
+      table: "Promoter_Users",
       action: editingPromoterId ? "update" : "insert",
       data: {
-        ID: id,
+        id: id,
         Name: String(promoterName || "").trim(),
         "Full Name": String(promoterFullName || "").trim(),
         Phone: String(promoterPhone || "").trim(),
         Email: String(promoterEmail || "").trim(),
         "Paynow Account": String(promoterPaynow || "").trim(),
         PIN: String(promoterPin || "").trim(),
-        Archived: editingPromoterId ? (promoters.find(p => p.ID === editingPromoterId)?.Archived || "") : ""
+        Archived: editingPromoterId ? (promoters.find(p => p.id === editingPromoterId)?.Archived || "") : ""
       }
     };
 
     // Optimistic Update
     const tempPromoter = {
-      ID: id,
+      id: id,
       Name: payload.data.Name,
       "Full Name": payload.data["Full Name"],
       Phone: payload.data.Phone,
@@ -1490,7 +1490,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     };
 
     setPromoters(prev => {
-      const idx = prev.findIndex(p => p.ID === id);
+      const idx = prev.findIndex(p => p.id === id);
       if (idx > -1) {
         const copy = [...prev];
         copy[idx] = tempPromoter;
@@ -1512,7 +1512,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     showToast("Promoter saved successfully!", "success");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1529,14 +1529,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Toggle Promoter Archive Status
   const handleTogglePromoterArchive = async (pId: string, isArchive: boolean) => {
     // Optimistic Update
-    setPromoters(prev => prev.map(p => p.ID === pId ? { ...p, Archived: isArchive ? 1 : "" } : p));
+    setPromoters(prev => prev.map(p => p.id === pId ? { ...p, Archived: isArchive ? 1 : "" } : p));
 
     try {
-      const currentPromoter = promoters.find(p => p.ID === pId);
+      const currentPromoter = promoters.find(p => p.id === pId);
       if (!currentPromoter) return;
 
       const payload = {
-        sheet: "Promoter_Users",
+        table: "Promoter_Users",
         action: "update",
         data: {
           ...currentPromoter,
@@ -1544,7 +1544,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         }
       };
 
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1568,17 +1568,17 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       description: "Are you sure you want to permanently delete this promoter from the registry? This action cannot be undone.",
       variant: "danger",
       onConfirm: async () => {
-        setPromoters(prev => prev.filter(p => p.ID !== pId));
+        setPromoters(prev => prev.filter(p => p.id !== pId));
         showToast("Promoter deleted successfully", "success");
 
         try {
-          const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+          const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              sheet: "Promoter_Users",
+              table: "Promoter_Users",
               action: "delete",
-              data: { ID: pId }
+              data: { id: pId }
             })
           });
           if (res.ok) {
@@ -1596,7 +1596,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const handlePrintCampaign = (c: any) => {
     // Find all schedules assigned to this campaign
     const campaignSchedules = schedules.filter(
-      (s) => String(s["Campaign ID"]) === String(c.ID)
+      (s) => String(s["Campaign ID"]) === String(c.id)
     );
 
     // Extract unique promoter IDs and names
@@ -1604,7 +1604,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       new Set(campaignSchedules.map((s) => String(s["Promoter ID"] || "")).filter(Boolean))
     );
     const involvedPromoterNames = uniquePromoterIds.map((id) => {
-      const p = promoters.find((prm) => String(prm.ID) === id);
+      const p = promoters.find((prm) => String(prm.id) === id);
       return p ? p.Name : `Unknown (${id})`;
     }).sort();
 
@@ -1623,12 +1623,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const storeName = String(s["Store Name"] || "");
       const promoterId = String(s["Promoter ID"] || "");
       
-      const storeObj = stores.find(st => String(st.ID) === storeId);
+      const storeObj = stores.find(st => String(st.id) === storeId);
       const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
-      const retailerObj = retId ? retailers.find(r => String(r.ID) === String(retId)) : null;
+      const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
       const retailerName = retailerObj ? (retailerObj["Display Name"] || retailerObj.Name || "OTHERS") : "OTHERS";
 
-      const p = promoters.find((prm) => String(prm.ID) === promoterId);
+      const p = promoters.find((prm) => String(prm.id) === promoterId);
       const promoterName = p ? p.Name : `Unknown (${promoterId})`;
 
       // Date formatting
@@ -1708,7 +1708,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     // Brand info
     const brandName = String(c.Brand || "").split(",")
-      .map(id => brands.find(b => String(b.ID) === String(id.trim()))?.["Display Name"] || id.trim())
+      .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["Display Name"] || id.trim())
       .join(", ");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
@@ -1761,7 +1761,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     if (c.Products && c.Products.trim()) {
       const prodSkus = c.Products.split(",");
       const prodNames = prodSkus.map((sku: string) => {
-        const p = products.find(prod => String(prod.SKU).toLowerCase() === sku.toLowerCase());
+        const p = products.find(prod => String(prod.sku).toLowerCase() === sku.toLowerCase());
         return p ? p["Display Name"] : sku;
       });
       targetProds = prodNames.join(", ");
@@ -1855,7 +1855,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const handlePrintCampaignReport = (c: any) => {
     // Find all schedules assigned to this campaign
     const campaignSchedules = schedules.filter(
-      (s) => String(s["Campaign ID"]) === String(c.ID)
+      (s) => String(s["Campaign ID"]) === String(c.id)
     );
 
     // Extract unique promoter IDs and names
@@ -1863,7 +1863,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       new Set(campaignSchedules.map((s) => String(s["Promoter ID"] || "")).filter(Boolean))
     );
     const involvedPromoterNames = uniquePromoterIds.map((id) => {
-      const p = promoters.find((prm) => String(prm.ID) === id);
+      const p = promoters.find((prm) => String(prm.id) === id);
       return p ? p.Name : `Unknown (${id})`;
     }).sort();
 
@@ -1884,12 +1884,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const storeName = String(s["Store Name"] || "");
       const promoterId = String(s["Promoter ID"] || "");
       
-      const storeObj = stores.find(st => String(st.ID) === storeId);
+      const storeObj = stores.find(st => String(st.id) === storeId);
       const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
-      const retailerObj = retId ? retailers.find(r => String(r.ID) === String(retId)) : null;
+      const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
       const retailerName = retailerObj ? (retailerObj["Display Name"] || retailerObj.Name || "OTHERS") : "OTHERS";
 
-      const p = promoters.find((prm) => String(prm.ID) === promoterId);
+      const p = promoters.find((prm) => String(prm.id) === promoterId);
       const promoterName = p ? p.Name : `Unknown (${promoterId})`;
 
       // Date formatting
@@ -1949,7 +1949,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         try {
           const details = JSON.parse(matchingPayout["Payout Details"] || "[]");
           if (Array.isArray(details)) {
-            const matchRow = details.find((d: any) => String(d.scheduleId) === String(s.ID));
+            const matchRow = details.find((d: any) => String(d.scheduleId) === String(s.id));
             if (matchRow) {
               shiftWage = Number(matchRow.totalPayout || 0);
             }
@@ -2031,7 +2031,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     // Brand info
     const brandName = String(c.Brand || "").split(",")
-      .map(id => brands.find(b => String(b.ID) === String(id.trim()))?.["Display Name"] || id.trim())
+      .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["Display Name"] || id.trim())
       .join(", ");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
@@ -2084,7 +2084,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     if (c.Products && c.Products.trim()) {
       const prodSkus = c.Products.split(",");
       const prodNames = prodSkus.map((sku: string) => {
-        const p = products.find(prod => String(prod.SKU).toLowerCase() === sku.toLowerCase());
+        const p = products.find(prod => String(prod.sku).toLowerCase() === sku.toLowerCase());
         return p ? p["Display Name"] : sku;
       });
       targetProds = prodNames.join(", ");
@@ -2204,7 +2204,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           try {
             const details = JSON.parse(matchingPayout["Payout Details"] || "[]");
             if (Array.isArray(details)) {
-              const matchRow = details.find((d: any) => String(d.scheduleId) === String(s.ID));
+              const matchRow = details.find((d: any) => String(d.scheduleId) === String(s.id));
               if (matchRow) {
                 shiftWage = Number(matchRow.totalPayout || 0);
               }
@@ -2285,12 +2285,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     return list.map(c => {
       const brandName = String(c.Brand || "").split(",")
-        .map(id => brands.find(b => String(b.ID) === String(id.trim()))?.["Display Name"] || id.trim())
+        .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["Display Name"] || id.trim())
         .join(", ");
       const isArchived = c.Archived && (String(c.Archived) === "1" || String(c.Archived) === "true");
 
       return {
-        id: c.ID,
+        id: c.id,
         title: (
           <div className="flex flex-col gap-0.5 select-text">
             <span className="font-bold text-zinc-900">{c["Campaign Title"]}</span>
@@ -2319,7 +2319,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           <div className="flex items-center gap-1.5 w-[110px] shrink-0 select-none">
             <button
               onClick={() => {
-                setEditingCampaignId(c.ID);
+                setEditingCampaignId(c.id);
                 setCampTitle(c["Campaign Title"]);
                 setCampStartDate(c["Start Date"] ? formatEpochToDateInput(c["Start Date"]) : "");
                 setCampEndDate(c["End Date"] ? formatEpochToDateInput(c["End Date"]) : "");
@@ -2339,7 +2339,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <>
                 <button
                   type="button"
-                  onClick={() => handleToggleCampaignArchive(c.ID, false)}
+                  onClick={() => handleToggleCampaignArchive(c.id, false)}
                   className="p-1 rounded bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#0B57D0] hover:text-[#0842A0] transition-colors cursor-pointer flex items-center justify-center"
                   title="Revoke Archive"
                 >
@@ -2347,7 +2347,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDeleteCampaign(c.ID)}
+                  onClick={() => handleDeleteCampaign(c.id)}
                   className="p-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-655 hover:text-red-800 transition-colors cursor-pointer flex items-center justify-center"
                   title="Delete Permanently"
                 >
@@ -2357,7 +2357,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             ) : (
               <button
                 type="button"
-                onClick={() => handleToggleCampaignArchive(c.ID, true)}
+                onClick={() => handleToggleCampaignArchive(c.id, true)}
                 className="p-1 rounded bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 hover:text-amber-900 transition-colors cursor-pointer flex items-center justify-center"
                 title="Archive Campaign"
               >
@@ -2468,7 +2468,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Draft Save Handler (Updates state + pushes to history list)
   const executeSaveSchedule = (payloadData: any) => {
     const tempSchedule = {
-      ID: payloadData.ID,
+      id: payloadData.id,
       Date: payloadData.Date,
       "Campaign ID": payloadData["Campaign ID"],
       "Campaign Title": payloadData["Campaign Title"],
@@ -2488,10 +2488,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
   // Save changes batch deployment handler
   const handleSaveAndDeploy = () => {
-    const added = schedules.filter(s => !schedulesBackup.some(b => b.ID === s.ID));
-    const deleted = schedulesBackup.filter(b => !schedules.some(s => s.ID === b.ID));
+    const added = schedules.filter(s => !schedulesBackup.some(b => b.id === s.id));
+    const deleted = schedulesBackup.filter(b => !schedules.some(s => s.id === b.id));
     const updated = schedules.filter(s => {
-      const backupItem = schedulesBackup.find(b => b.ID === s.ID);
+      const backupItem = schedulesBackup.find(b => b.id === s.id);
       if (!backupItem) return false;
       return (
         formatTimeDisplay(backupItem["Shift Start"]) !== formatTimeDisplay(s["Shift Start"]) ||
@@ -2538,10 +2538,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         // Additions
         for (const item of added) {
           promises.push(
-            fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+            fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sheet: "Promoter_Schedule", action: "insert", data: item })
+              body: JSON.stringify({ table: "Promoter_Schedule", action: "insert", data: item })
             })
           );
         }
@@ -2549,10 +2549,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         // Deletions
         for (const item of deleted) {
           promises.push(
-            fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+            fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sheet: "Promoter_Schedule", action: "delete", data: { ID: item.ID } })
+              body: JSON.stringify({ table: "Promoter_Schedule", action: "delete", data: { id: item.id } })
             })
           );
         }
@@ -2560,10 +2560,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         // Updates
         for (const item of updated) {
           promises.push(
-            fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+            fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ sheet: "Promoter_Schedule", action: "update", data: item })
+              body: JSON.stringify({ table: "Promoter_Schedule", action: "update", data: item })
             })
           );
         }
@@ -2592,8 +2592,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       showToast("Please click 'Edit Mode' to make changes.", "warning");
       return;
     }
-    const sch = schedules.find(s => s.ID === schId);
-    if (sch && isShiftLocked(sch.ID)) {
+    const sch = schedules.find(s => s.id === schId);
+    if (sch && isShiftLocked(sch.id)) {
       showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
@@ -2602,7 +2602,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       description: "Are you sure you want to remove this promoter shift assignment?",
       variant: "danger",
       onConfirm: () => {
-        const newSchedules = schedules.filter(s => s.ID !== schId);
+        const newSchedules = schedules.filter(s => s.id !== schId);
         pushHistory(newSchedules);
         showToast("Shift assignment removed from draft.", "success");
       }
@@ -2628,7 +2628,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const getConflictingShift = (promoterId: string, dateVal: number, newStart: string, newEnd: string, excludeShiftId?: string): any | null => {
     const dateStr = new Date(dateVal).toDateString();
     const conflicting = schedules.find(s => {
-      if (excludeShiftId && s.ID === excludeShiftId) return false;
+      if (excludeShiftId && s.id === excludeShiftId) return false;
       const sDateStr = new Date(s.Date).toDateString();
       if (sDateStr !== dateStr || String(s["Promoter ID"]) !== String(promoterId)) return false;
 
@@ -2672,24 +2672,24 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     if (scheduleId) {
       // Dragged a schedule card to move/duplicate
-      const sch = schedules.find(s => s.ID === scheduleId);
+      const sch = schedules.find(s => s.id === scheduleId);
       if (!sch) return;
 
       const start = formatTimeDisplay(sch["Shift Start"]) || "09:00";
       const end = formatTimeDisplay(sch["Shift End"]) || "17:00";
-      const destPromoter = promoters.find(p => String(p.ID) === String(promoterId));
+      const destPromoter = promoters.find(p => String(p.id) === String(promoterId));
       if (!destPromoter) return;
 
       if (dragAction === "move") {
-        if (isShiftLocked(sch.ID)) {
+        if (isShiftLocked(sch.id)) {
           showToast("Operation blocked: This shift is locked because it is linked to a payout.", "error");
           return;
         }
-        if (!checkAndToastConflict(promoterId, date.getTime(), start, end, sch.ID)) {
+        if (!checkAndToastConflict(promoterId, date.getTime(), start, end, sch.id)) {
           return;
         }
 
-        const newSchedules = schedules.map(s => s.ID === sch.ID ? {
+        const newSchedules = schedules.map(s => s.id === sch.id ? {
           ...s,
           Date: date.getTime(),
           "Promoter ID": String(promoterId),
@@ -2704,7 +2704,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
         const newSch = {
           ...sch,
-          ID: `sch_${Date.now()}`,
+          id: `sch_${Date.now()}`,
           Date: date.getTime(),
           "Promoter ID": String(promoterId),
           "Promoter Name": destPromoter.Name
@@ -2723,8 +2723,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         return;
       }
 
-      const selectedCampaign = campaigns.find(c => c.ID === selectedCampaignId);
-      const selectedPromoter = promoters.find(p => String(p.ID) === String(promoterId));
+      const selectedCampaign = campaigns.find(c => c.id === selectedCampaignId);
+      const selectedPromoter = promoters.find(p => String(p.id) === String(promoterId));
       if (!selectedCampaign || !selectedPromoter) return;
 
       setOtherLocationModalData({ date, promoterId });
@@ -2741,9 +2741,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
-    const selectedCampaign = campaigns.find(c => c.ID === selectedCampaignId);
-    const selectedStore = stores.find(s => String(s.ID) === String(storeId));
-    const selectedPromoter = promoters.find(p => String(p.ID) === String(promoterId));
+    const selectedCampaign = campaigns.find(c => c.id === selectedCampaignId);
+    const selectedStore = stores.find(s => String(s.id) === String(storeId));
+    const selectedPromoter = promoters.find(p => String(p.id) === String(promoterId));
 
     if (!selectedCampaign || !selectedStore || !selectedPromoter) return;
 
@@ -2787,7 +2787,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     // Validation 2: Merchandiser Brand Carry lookup
     const brandIds = String(selectedCampaign.Brand || "").split(",").map(id => id.trim()).filter(Boolean);
-    const brandName = brandIds.map(bId => brands.find(b => String(b.ID) === String(bId))?.["Display Name"] || bId).join(", ");
+    const brandName = brandIds.map(bId => brands.find(b => String(b.id) === String(bId))?.["Display Name"] || bId).join(", ");
 
     const storeLogs = productLogs.filter(log => {
       const logStoreId = log["Retailer Stores ID"] || log["Store ID"];
@@ -2810,7 +2810,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
         const brandSkus = products
           .filter(p => brandIds.includes(String(p["Brands ID"] || p["Brand ID"])))
-          .map(p => String(p.SKU).toLowerCase());
+          .map(p => String(p.sku).toLowerCase());
 
         carriesBrand = auditJson.some((item: any) => {
           const sku = String(item.sku).toLowerCase();
@@ -2820,9 +2820,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
 
     const scheduleData = {
-      ID: `sch_${Date.now()}`,
+      id: `sch_${Date.now()}`,
       Date: date.getTime(),
-      "Campaign ID": selectedCampaign.ID,
+      "Campaign ID": selectedCampaign.id,
       "Campaign Title": selectedCampaign["Campaign Title"],
       "Store ID": String(storeId),
       "Store Name": selectedStore["Display Name"],
@@ -2885,11 +2885,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
-    const selectedPromoter = promoters.find(p => String(p.ID) === String(promoterId));
+    const selectedPromoter = promoters.find(p => String(p.id) === String(promoterId));
     if (!selectedPromoter) return;
 
     const newSch = {
-      ID: `sch_${Date.now()}`,
+      id: `sch_${Date.now()}`,
       Date: date.getTime(),
       "Campaign ID": copiedSchedule["Campaign ID"],
       "Campaign Title": copiedSchedule["Campaign Title"],
@@ -2914,9 +2914,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       showToast("Please click 'Edit Mode' to make changes.", "warning");
       return;
     }
-    const current = schedules.find(s => s.ID === schId);
+    const current = schedules.find(s => s.id === schId);
     if (!current) return;
-    if (isShiftLocked(current.ID)) {
+    if (isShiftLocked(current.id)) {
       showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
@@ -2927,7 +2927,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
-    const newSchedules = schedules.map(s => s.ID === schId ? { ...s, [field]: value } : s);
+    const newSchedules = schedules.map(s => s.id === schId ? { ...s, [field]: value } : s);
     pushHistory(newSchedules);
   };
 
@@ -2937,12 +2937,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       showToast("Please click 'Edit Mode' to make changes.", "warning");
       return;
     }
-    const current = schedules.find(s => s.ID === schId);
-    if (current && isShiftLocked(current.ID)) {
+    const current = schedules.find(s => s.id === schId);
+    if (current && isShiftLocked(current.id)) {
       showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
-    const newSchedules = schedules.map(s => s.ID === schId ? { ...s, Remarks: value } : s);
+    const newSchedules = schedules.map(s => s.id === schId ? { ...s, Remarks: value } : s);
     pushHistory(newSchedules);
   };
 
@@ -2952,18 +2952,18 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       showToast("Please click 'Edit Mode' to make changes.", "warning");
       return;
     }
-    const current = schedules.find(s => s.ID === shiftId);
-    if (current && isShiftLocked(current.ID)) {
+    const current = schedules.find(s => s.id === shiftId);
+    if (current && isShiftLocked(current.id)) {
       showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
-    const newSchedules = schedules.map(s => s.ID === shiftId ? { ...s, [field]: value } : s);
+    const newSchedules = schedules.map(s => s.id === shiftId ? { ...s, [field]: value } : s);
     pushHistory(newSchedules);
   };
 
   const handleAddCustomTask = async (shiftId: string, taskText: string) => {
     if (!taskText.trim()) return;
-    const activeShift = schedules.find(s => s.ID === shiftId);
+    const activeShift = schedules.find(s => s.id === shiftId);
     if (!activeShift) return;
 
     let existingCustomTasks: any[] = [];
@@ -2988,7 +2988,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   };
 
   const handleToggleCustomTask = async (shiftId: string, taskId: string) => {
-    const activeShift = schedules.find(s => s.ID === shiftId);
+    const activeShift = schedules.find(s => s.id === shiftId);
     if (!activeShift) return;
 
     let existingCustomTasks: any[] = [];
@@ -3008,7 +3008,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   };
 
   const handleDeleteCustomTask = async (shiftId: string, taskId: string) => {
-    const activeShift = schedules.find(s => s.ID === shiftId);
+    const activeShift = schedules.find(s => s.id === shiftId);
     if (!activeShift) return;
 
     let existingCustomTasks: any[] = [];
@@ -3182,9 +3182,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             doc.setTextColor(75, 85, 99); // gray-600
             
             // Resolve retailer name
-            const storeObj = stores.find(st => String(st.ID) === String(s["Store ID"]));
+            const storeObj = stores.find(st => String(st.id) === String(s["Store ID"]));
             const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
-            const retailerObj = retId ? retailers.find(r => String(r.ID) === String(retId)) : null;
+            const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
             const retailerName = retailerObj ? (retailerObj["Display Name"] || retailerObj.Name || "") : "";
             const storeName = s["Store Name"] || (storeObj ? storeObj["Display Name"] : "");
             const storeLine = retailerName ? `${retailerName} - ${storeName}` : storeName;
@@ -3243,10 +3243,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         tempDate.setDate(tempDate.getDate() + 1);
       }
 
-      const campaign = campaigns.find(c => String(c.ID) === String(printCampaignId));
+      const campaign = campaigns.find(c => String(c.id) === String(printCampaignId));
       const campaignTitle = campaign ? campaign["Campaign Title"] : "Campaign Schedule";
       const activePromoterIds = Array.from(new Set(campaignSchedules.map(s => String(s["Promoter ID"]))));
-      const activeCampPromoters = promoters.filter(p => activePromoterIds.includes(String(p.ID)) && !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true")));
+      const activeCampPromoters = promoters.filter(p => activePromoterIds.includes(String(p.id)) && !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true")));
 
       const promoterChunks: any[][] = [];
       if (activeCampPromoters.length === 0) {
@@ -3338,7 +3338,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             }
 
             const sch = campaignSchedules.find(s => 
-              String(s["Promoter ID"]) === String(promoter.ID) && 
+              String(s["Promoter ID"]) === String(promoter.id) && 
               new Date(s.Date).toDateString() === date.toDateString()
             );
 
@@ -3468,7 +3468,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const startMs = new Date(printStartDate + "T00:00:00").getTime();
       const endMs = new Date(printEndDate + "T23:59:59").getTime();
 
-      const promoter = promoters.find(p => String(p.ID) === String(printPromoterId));
+      const promoter = promoters.find(p => String(p.id) === String(printPromoterId));
       const promoterNameLabel = promoter ? promoter.Name : "Promoter";
 
       const promoterSchedules = schedules.filter(s => 
@@ -3530,10 +3530,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       } else {
         promoterSchedules.forEach((sch) => {
           const dateObj = new Date(sch.Date);
-          const storeObj = stores.find(st => String(st.ID) === String(sch["Store ID"]));
+          const storeObj = stores.find(st => String(st.id) === String(sch["Store ID"]));
           const storeAddress = storeObj ? storeObj.Address : (sch.Address || sch["Store Address"] || "");
 
-          const campaign = campaigns.find(c => String(c.ID) === String(sch["Campaign ID"]));
+          const campaign = campaigns.find(c => String(c.id) === String(sch["Campaign ID"]));
           const campaignTitle = campaign ? campaign["Campaign Title"] : sch["Campaign Title"];
           const campaignDescLocal = campaign ? campaign["Campaign Description"] : "";
           const campaignInstrLocal = campaign ? campaign["Campaign Instruction"] : "";
@@ -3651,27 +3651,27 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const startMs = new Date(printStartDate + "T00:00:00").getTime();
       const endMs = new Date(printEndDate + "T23:59:59").getTime();
 
-      const retailerObj = retailers.find(r => String(r.ID) === String(printRetailerId));
+      const retailerObj = retailers.find(r => String(r.id) === String(printRetailerId));
       const retailerNameLabel = retailerObj ? (retailerObj["Display Name"] || retailerObj.Name || "") : "Retailer";
 
       // Filter schedules where store matches retailer and date falls inside the range
       const retailerSchedules = schedules.filter(s => {
         if (s.Date < startMs || s.Date > endMs) return false;
-        const storeObj = stores.find(st => String(st.ID) === String(s["Store ID"]));
+        const storeObj = stores.find(st => String(st.id) === String(s["Store ID"]));
         const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
         return String(retId) === String(printRetailerId);
       });
 
       const mappedActivations = retailerSchedules.map(sch => {
         const dateObj = new Date(sch.Date);
-        const storeObj = stores.find(st => String(st.ID) === String(sch["Store ID"]));
+        const storeObj = stores.find(st => String(st.id) === String(sch["Store ID"]));
         const storeName = sch["Store Name"] || (storeObj ? storeObj["Display Name"] : "");
         const storeAddress = storeObj ? storeObj.Address : (sch.Address || sch["Store Address"] || "");
         
         // Brand info
-        const campaign = campaigns.find(c => String(c.ID) === String(sch["Campaign ID"]));
+        const campaign = campaigns.find(c => String(c.id) === String(sch["Campaign ID"]));
         const brandIds = String(campaign?.Brand || "").split(",").map(id => id.trim()).filter(Boolean);
-        const brandNames = brandIds.map(id => brands.find(b => String(b.ID) === String(id))?.["Display Name"] || id).join(", ");
+        const brandNames = brandIds.map(id => brands.find(b => String(b.id) === String(id))?.["Display Name"] || id).join(", ");
         const brandNameText = brandNames || "No Brand";
         const campaignName = campaign ? (campaign["Campaign Title"] || campaign.Title || "") : "";
         const shiftRemark = sch.Remarks ? String(sch.Remarks).trim() : "";
@@ -3890,7 +3890,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   };
 
   const getCampaignTitle = (campaignId: string) => {
-    const campaign = campaigns.find(c => String(c.ID) === String(campaignId));
+    const campaign = campaigns.find(c => String(c.id) === String(campaignId));
     return campaign ? campaign["Campaign Title"] : "Campaign Schedule";
   };
 
@@ -3938,7 +3938,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
 
     const activePromoterIds = Array.from(new Set(campaignSchedules.map(s => String(s["Promoter ID"]))));
-    const activeCampPromoters = promoters.filter(p => activePromoterIds.includes(String(p.ID)) && !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true")));
+    const activeCampPromoters = promoters.filter(p => activePromoterIds.includes(String(p.id)) && !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true")));
 
     const promoterChunks: any[][] = [];
     if (activeCampPromoters.length === 0) {
@@ -3987,8 +3987,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     manuallyAddedPromoterIds.forEach(id => assignedSet.add(id));
 
     return promoters.filter(p => 
-      assignedSet.has(String(p.ID)) && 
-      !hiddenPromoterIds.includes(String(p.ID)) &&
+      assignedSet.has(String(p.id)) && 
+      !hiddenPromoterIds.includes(String(p.id)) &&
       !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true"))
     );
   }, [promoters, schedules, schedulesBackup, selectedCampaignId, manuallyAddedPromoterIds, hiddenPromoterIds]);
@@ -4038,7 +4038,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
   const promotersColumns = React.useMemo(() => [
     { id: "actions", header: "", accessor: "actions" },
-    { id: "ID", header: "ID", accessor: "ID" },
+    { id: 'id_display', header: 'ID', accessor: 'id_display' },
     { id: "Nickname", header: "Nickname", accessor: "Nickname" },
     { id: "FullName", header: "Full Name", accessor: "FullName" },
     { id: "Phone", header: "Phone", accessor: "Phone" },
@@ -4056,8 +4056,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const isArchived = p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true");
 
       return {
-        id: p.ID,
-        ID: <span className="font-bold text-zinc-900">{p.ID}</span>,
+        id: p.id,
+        id_display: <span className="font-bold text-zinc-900">{p.id}</span>,
         Nickname: <span className="font-bold text-zinc-850">{p.Name || "—"}</span>,
         FullName: <span className="font-semibold text-zinc-700">{p["Full Name"] || p.FullName || "—"}</span>,
         Phone: <span className="font-semibold text-zinc-500">{p.Phone || "—"}</span>,
@@ -4067,8 +4067,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           <div className="flex items-center gap-1.5 w-[80px] shrink-0 select-none">
             <button
               onClick={() => {
-                setEditingPromoterId(p.ID);
-                setPromoterId(p.ID);
+                setEditingPromoterId(p.id);
+                setPromoterId(p.id);
                 setPromoterName(p.Name ? String(p.Name) : "");
                 setPromoterFullName(p["Full Name"] ? String(p["Full Name"]) : (p.FullName ? String(p.FullName) : ""));
                 setPromoterPhone(p.Phone ? String(p.Phone) : "");
@@ -4087,7 +4087,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <>
                 <button
                   type="button"
-                  onClick={() => handleTogglePromoterArchive(p.ID, false)}
+                  onClick={() => handleTogglePromoterArchive(p.id, false)}
                   className="p-1 rounded bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#0B57D0] hover:text-[#0842A0] transition-colors cursor-pointer flex items-center justify-center"
                   title="Revoke Archive"
                 >
@@ -4095,7 +4095,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDeletePromoter(p.ID)}
+                  onClick={() => handleDeletePromoter(p.id)}
                   className="p-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-655 hover:text-red-800 transition-colors cursor-pointer flex items-center justify-center"
                   title="Delete Permanently"
                 >
@@ -4105,7 +4105,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             ) : (
               <button
                 type="button"
-                onClick={() => handleTogglePromoterArchive(p.ID, true)}
+                onClick={() => handleTogglePromoterArchive(p.id, true)}
                 className="p-1 rounded bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-700 hover:text-amber-900 transition-colors cursor-pointer flex items-center justify-center"
                 title="Archive Promoter"
               >
@@ -4142,7 +4142,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       };
 
       return {
-        id: p.ID,
+        id: p.id,
         PromoterName: <span className="font-bold text-zinc-900">{p["Promoter Name"]}</span>,
         PromoterName_raw: p["Promoter Name"] || "",
         JobDetails: (
@@ -4185,7 +4185,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    setEditingPayoutId(p.ID);
+                    setEditingPayoutId(p.id);
                     setSelectedPayoutPromoterId(p["Promoter ID"]);
                     setPayoutStartDate(formatDateToYYYYMMDD(p["Start Date"]));
                     setPayoutEndDate(formatDateToYYYYMMDD(p["End Date"]));
@@ -4205,7 +4205,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleDeletePayout(p.ID)}
+                  onClick={() => handleDeletePayout(p.id)}
                   className="p-1 rounded hover:bg-red-50 border border-zinc-200 text-red-600 hover:text-red-850 transition-colors cursor-pointer flex items-center justify-center"
                   title="Delete Payout"
                 >
@@ -4382,7 +4382,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             {campaigns
                               .filter(c => !c.Archived || (String(c.Archived) !== "1" && String(c.Archived) !== "true"))
                               .map((c) => (
-                                <option key={c.ID} value={c.ID}>
+                                <option key={c.id} value={c.id}>
                                   {c["Campaign Title"]}
                                 </option>
                               ))}
@@ -4468,7 +4468,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               <div className="flex flex-col gap-0.5 mt-1 overflow-hidden">
                                 {(isSelected ? dayEvents : dayEvents.slice(0, 2)).map((e) => (
                                   <div 
-                                    key={e.ID} 
+                                    key={e.id} 
                                     className="text-[8.5px] font-bold px-1 py-0.5 rounded bg-[#0B57D0]/10 text-[#0B57D0] flex flex-col gap-0.5 text-left mb-0.5"
                                     title={`${e["Promoter Name"]} @ ${getFormattedStoreName(e["Store ID"], e["Store Name"])} - ${e["Campaign Title"]}`}
                                   >
@@ -4562,14 +4562,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           ? promotingCostDone + actualDone
                           : permDone + stockDone + promotingCostDone + customDoneCount + actualDone;
 
-                        const taskInputText = customTaskTexts[s.ID] || "";
-                        const isScheduleExpanded = expandedScheduleId === s.ID;
+                        const taskInputText = customTaskTexts[s.id] || "";
+                        const isScheduleExpanded = expandedScheduleId === s.id;
 
                         return (
-                          <div key={s.ID} className="flex flex-col select-none font-primary transition-all duration-200">
+                          <div key={s.id} className="flex flex-col select-none font-primary transition-all duration-200">
                             {/* Details Schedule Card Header */}
                             <div 
-                              onClick={() => setExpandedScheduleId(isScheduleExpanded ? null : s.ID)}
+                              onClick={() => setExpandedScheduleId(isScheduleExpanded ? null : s.id)}
                               className={cn(
                                 "bg-zinc-50 border border-zinc-200 p-3 shrink-0 transition-all cursor-pointer hover:bg-zinc-100/50 flex flex-col gap-2 shadow-xs",
                                 isScheduleExpanded ? "rounded-t border-b-0" : "rounded"
@@ -4620,11 +4620,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               {/* Task 1: Store Permission */}
                               {!isOtherLoc && (() => {
                                 const isDone = !!s["Permission By"];
-                                const isExpanded = expandedCardId === `${s.ID}_permission`;
+                                const isExpanded = expandedCardId === `${s.id}_permission`;
                                 const canClick = isEditMode || isDone;
                                 return (
                                   <div 
-                                    onClick={canClick ? () => setExpandedCardId(isExpanded ? null : `${s.ID}_permission`) : undefined}
+                                    onClick={canClick ? () => setExpandedCardId(isExpanded ? null : `${s.id}_permission`) : undefined}
                                     className={cn(
                                       "bg-white border rounded p-2.5 shadow-xs flex flex-col gap-2 transition-all select-none",
                                       canClick ? "cursor-pointer hover:bg-zinc-50/50" : "cursor-default",
@@ -4667,10 +4667,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             value={s["Permission By"] || ""}
                                             onClick={(e) => e.stopPropagation()}
                                             onChange={(e) => {
-                                              setSchedules(prev => prev.map(item => item.ID === s.ID ? { ...item, "Permission By": e.target.value } : item));
+                                              setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "Permission By": e.target.value } : item));
                                             }}
                                             onBlur={(e) => {
-                                              handleUpdateShiftField(s.ID, "Permission By", e.target.value.trim());
+                                              handleUpdateShiftField(s.id, "Permission By", e.target.value.trim());
                                             }}
                                             disabled={!isEditMode}
                                             className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4685,11 +4685,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               {/* Task 2: Check Availability Stock */}
                               {!isOtherLoc && (() => {
                                 const isDone = !!s["Stock Checked"];
-                                const isExpanded = expandedCardId === `${s.ID}_stock`;
+                                const isExpanded = expandedCardId === `${s.id}_stock`;
                                 const canClick = isEditMode || isDone;
                                 return (
                                   <div 
-                                    onClick={canClick ? () => setExpandedCardId(isExpanded ? null : `${s.ID}_stock`) : undefined}
+                                    onClick={canClick ? () => setExpandedCardId(isExpanded ? null : `${s.id}_stock`) : undefined}
                                     className={cn(
                                       "bg-white border rounded p-2.5 shadow-xs flex flex-col gap-2 transition-all select-none",
                                       canClick ? "cursor-pointer hover:bg-zinc-50/50" : "cursor-default",
@@ -4732,10 +4732,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             value={s["Stock Checked"] || ""}
                                             onClick={(e) => e.stopPropagation()}
                                             onChange={(e) => {
-                                              setSchedules(prev => prev.map(item => item.ID === s.ID ? { ...item, "Stock Checked": e.target.value } : item));
+                                              setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "Stock Checked": e.target.value } : item));
                                             }}
                                             onBlur={(e) => {
-                                              handleUpdateShiftField(s.ID, "Stock Checked", e.target.value.trim());
+                                              handleUpdateShiftField(s.id, "Stock Checked", e.target.value.trim());
                                             }}
                                             disabled={!isEditMode}
                                             className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4750,12 +4750,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               {/* Task 3: Custom checklist items */}
                               {!isOtherLoc && customTasks.map((t) => {
                                 const isDone = !!t.answer;
-                                const isExpanded = expandedCardId === `${s.ID}_${t.id}`;
+                                const isExpanded = expandedCardId === `${s.id}_${t.id}`;
                                 const canClick = isEditMode || isDone;
                                 return (
                                   <div 
                                     key={t.id}
-                                    onClick={canClick ? () => setExpandedCardId(isExpanded ? null : `${s.ID}_${t.id}`) : undefined}
+                                    onClick={canClick ? () => setExpandedCardId(isExpanded ? null : `${s.id}_${t.id}`) : undefined}
                                     className={cn(
                                       "bg-white border rounded p-2.5 shadow-xs flex flex-col gap-2 transition-all select-none",
                                       canClick ? "cursor-pointer hover:bg-zinc-50/50" : "cursor-default",
@@ -4789,7 +4789,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            handleDeleteCustomTask(s.ID, t.id);
+                                            handleDeleteCustomTask(s.id, t.id);
                                           }}
                                           className="text-zinc-400 hover:text-red-500 p-0.5 rounded transition-colors cursor-pointer shrink-0"
                                           title="Delete custom task"
@@ -4814,13 +4814,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                               const updatedCustomTasks = customTasks.map((ct: any) =>
                                                 ct.id === t.id ? { ...ct, answer: e.target.value } : ct
                                               );
-                                              setSchedules(prev => prev.map(item => item.ID === s.ID ? { ...item, "Custom Tasks": JSON.stringify(updatedCustomTasks) } : item));
+                                              setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "Custom Tasks": JSON.stringify(updatedCustomTasks) } : item));
                                             }}
                                             onBlur={(e) => {
                                               const updatedCustomTasks = customTasks.map((ct: any) =>
                                                 ct.id === t.id ? { ...ct, answer: e.target.value.trim() } : ct
                                               );
-                                              handleUpdateShiftField(s.ID, "Custom Tasks", JSON.stringify(updatedCustomTasks));
+                                              handleUpdateShiftField(s.id, "Custom Tasks", JSON.stringify(updatedCustomTasks));
                                             }}
                                             disabled={!isEditMode}
                                             className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4835,7 +4835,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               {/* Task 4: Actual Time Log */}
                               {isPastDate && (() => {
                                 const isDone = (!!s["Actual Start"] && !!s["Actual End"]) || s["Actual Start"] === "Absent";
-                                const isExpanded = expandedCardId === `${s.ID}_actual_time`;
+                                const isExpanded = expandedCardId === `${s.id}_actual_time`;
                                 const isAbsent = s["Actual Start"] === "Absent";
                                 const canClick = isEditMode || isDone;
                                 
@@ -4847,7 +4847,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 
                                 return (
                                   <div 
-                                    onClick={canClick ? () => setExpandedCardId(isExpanded ? null : `${s.ID}_actual_time`) : undefined}
+                                    onClick={canClick ? () => setExpandedCardId(isExpanded ? null : `${s.id}_actual_time`) : undefined}
                                     className={cn(
                                       "bg-white border rounded p-2.5 shadow-xs flex flex-col gap-2 transition-all select-none",
                                       canClick ? "cursor-pointer hover:bg-zinc-50/50" : "cursor-default",
@@ -4892,10 +4892,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                 value={s["Actual End"] || ""}
                                                 onClick={(e) => e.stopPropagation()}
                                                 onChange={(e) => {
-                                                  setSchedules(prev => prev.map(item => item.ID === s.ID ? { ...item, "Actual End": e.target.value } : item));
+                                                  setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "Actual End": e.target.value } : item));
                                                 }}
                                                 onBlur={(e) => {
-                                                  handleUpdateShiftField(s.ID, "Actual End", e.target.value.trim());
+                                                  handleUpdateShiftField(s.id, "Actual End", e.target.value.trim());
                                                 }}
                                                 disabled={!isEditMode}
                                                 className="w-full px-2 py-1 bg-white border border-red-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-red-500 transition-all shadow-xs disabled:bg-red-50/50 disabled:cursor-not-allowed"
@@ -4907,7 +4907,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                 onClick={(e) => {
                                                   e.stopPropagation();
                                                   const newSchedules = schedules.map(item => 
-                                                    item.ID === s.ID ? { ...item, "Actual Start": "", "Actual End": "" } : item
+                                                    item.id === s.id ? { ...item, "Actual Start": "", "Actual End": "" } : item
                                                   );
                                                   setSchedules(newSchedules);
                                                   pushHistory(newSchedules);
@@ -4930,7 +4930,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                   value={s["Actual Start"] || ""}
                                                   onClick={(e) => e.stopPropagation()}
                                                   onChange={(e) => {
-                                                    handleUpdateShiftField(s.ID, "Actual Start", e.target.value);
+                                                    handleUpdateShiftField(s.id, "Actual Start", e.target.value);
                                                   }}
                                                   disabled={!isEditMode}
                                                   className="w-full px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-zinc-555 transition-all cursor-pointer shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4946,7 +4946,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                   value={s["Actual End"] || ""}
                                                   onClick={(e) => e.stopPropagation()}
                                                   onChange={(e) => {
-                                                    handleUpdateShiftField(s.ID, "Actual End", e.target.value);
+                                                    handleUpdateShiftField(s.id, "Actual End", e.target.value);
                                                   }}
                                                   disabled={!isEditMode}
                                                   className="w-full px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-zinc-555 transition-all cursor-pointer shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4963,7 +4963,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                     onClick={(e) => {
                                                       e.stopPropagation();
                                                       const newSchedules = schedules.map(item => 
-                                                        item.ID === s.ID ? { ...item, "Actual Start": "Absent", "Actual End": "" } : item
+                                                        item.id === s.id ? { ...item, "Actual Start": "Absent", "Actual End": "" } : item
                                                       );
                                                       setSchedules(newSchedules);
                                                       pushHistory(newSchedules);
@@ -5022,7 +5022,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                           type="button"
                                           onClick={(e) => {
                                             e.stopPropagation();
-                                            openPromotingCostModal(s.ID);
+                                            openPromotingCostModal(s.id);
                                           }}
                                           className="px-2 py-0.5 bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-700 font-bold rounded text-[9.5px] cursor-pointer transition-colors"
                                         >
@@ -5046,12 +5046,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                       value={taskInputText}
                                       onClick={(e) => e.stopPropagation()}
                                       onChange={(e) => {
-                                        setCustomTaskTexts(prev => ({ ...prev, [s.ID]: e.target.value }));
+                                        setCustomTaskTexts(prev => ({ ...prev, [s.id]: e.target.value }));
                                       }}
                                       onKeyDown={(e) => {
                                         if (e.key === "Enter") {
                                           e.stopPropagation();
-                                          handleAddCustomTask(s.ID, taskInputText);
+                                          handleAddCustomTask(s.id, taskInputText);
                                         }
                                       }}
                                       placeholder="Add custom task..."
@@ -5061,7 +5061,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        handleAddCustomTask(s.ID, taskInputText);
+                                        handleAddCustomTask(s.id, taskInputText);
                                       }}
                                       className="px-2.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded font-bold shadow-xs transition-colors cursor-pointer text-xs"
                                     >
@@ -5200,7 +5200,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             {campaigns
                               .filter(c => !c.Archived || (String(c.Archived) !== "1" && String(c.Archived) !== "true"))
                               .map((c) => (
-                                <option key={c.ID} value={c.ID}>
+                                <option key={c.id} value={c.id}>
                                   {c["Campaign Title"]}
                                 </option>
                               ))}
@@ -5265,13 +5265,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               {/* Promoter headers (sticky top) */}
                               {visiblePromoters.map((p) => (
                                 <th 
-                                  key={p.ID} 
+                                  key={p.id} 
                                   className="py-3 px-4 font-bold text-xs text-zinc-700 text-center border-r border-zinc-200 w-[320px] shrink-0 relative group select-none bg-zinc-50 sticky top-0 z-20 border-b border-zinc-200"
                                 >
                                   <span>{p.Name}</span>
                                   {isEditMode && (
                                     <button 
-                                      onClick={() => handleHidePromoter(p.ID)}
+                                      onClick={() => handleHidePromoter(p.id)}
                                       className="absolute right-1 top-1 p-0.5 rounded text-zinc-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
                                       title="Hide column"
                                     >
@@ -5299,20 +5299,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block pb-1 border-b border-zinc-100 mb-1">Show Promoter</span>
                                         {promoters
                                           .filter(p => 
-                                            !visiblePromoters.some(vp => String(vp.ID) === String(p.ID)) &&
+                                            !visiblePromoters.some(vp => String(vp.id) === String(p.id)) &&
                                             !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true"))
                                           )
                                           .map(p => (
                                             <button
-                                              key={p.ID}
-                                              onClick={() => handleShowPromoter(p.ID)}
+                                              key={p.id}
+                                              onClick={() => handleShowPromoter(p.id)}
                                               className="w-full text-left text-xs px-2 py-1 hover:bg-zinc-50 rounded text-zinc-700 hover:text-zinc-955 font-semibold cursor-pointer truncate"
                                             >
                                               {p.Name}
                                             </button>
                                           ))}
                                         {promoters.filter(p => 
-                                          !visiblePromoters.some(vp => String(vp.ID) === String(p.ID)) &&
+                                          !visiblePromoters.some(vp => String(vp.id) === String(p.id)) &&
                                           !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true"))
                                         ).length === 0 && (
                                           <span className="text-[10px] text-zinc-400 italic block p-1">All promoters visible</span>
@@ -5339,18 +5339,18 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                                   {/* Day Planner Droppable cells */}
                                   {visiblePromoters.map((p) => {
-                                    const cellSchedules = getCellSchedules(date, p.ID);
+                                    const cellSchedules = getCellSchedules(date, p.id);
                                     return (
                                       <td
-                                        key={p.ID}
+                                        key={p.id}
                                         onDragOver={(e) => e.preventDefault()}
-                                        onDrop={(e) => handleStoreDrop(e, date, p.ID)}
+                                        onDrop={(e) => handleStoreDrop(e, date, p.id)}
                                         className="py-2.5 px-3 border-r border-zinc-200 w-[320px] shrink-0 min-h-[110px] align-top bg-white relative transition-colors hover:bg-blue-50/5"
                                       >
                                         <div className="flex flex-col gap-2 min-h-[85px] w-full">
                                           {cellSchedules.map((sch) => (
                                             <div 
-                                              key={sch.ID}
+                                              key={sch.id}
                                               className="bg-zinc-50 border border-zinc-200 rounded p-2.5 shadow-xs relative flex gap-2 text-xs font-primary group/card"
                                             >
                                               {/* Left side actions bar (edit only) */}
@@ -5361,7 +5361,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                     draggable
                                                     onDragStart={(e) => {
                                                       e.dataTransfer.setData("dragAction", "move");
-                                                      e.dataTransfer.setData("scheduleId", String(sch.ID));
+                                                      e.dataTransfer.setData("scheduleId", String(sch.id));
                                                     }}
                                                     className="cursor-grab active:cursor-grabbing text-zinc-400 hover:text-zinc-650 p-0.5 rounded hover:bg-zinc-150 transition-all"
                                                     title="Drag to move shift"
@@ -5387,7 +5387,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                     draggable
                                                     onDragStart={(e) => {
                                                       e.dataTransfer.setData("dragAction", "duplicate");
-                                                      e.dataTransfer.setData("scheduleId", String(sch.ID));
+                                                      e.dataTransfer.setData("scheduleId", String(sch.id));
                                                     }}
                                                     className="cursor-grab active:cursor-grabbing text-zinc-400 hover:text-[#0B57D0] p-0.5 rounded hover:bg-zinc-150 transition-all"
                                                     title="Drag to duplicate shift (retains times)"
@@ -5405,7 +5405,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                   </span>
                                                   {isEditMode && (
                                                     <button
-                                                      onClick={() => handleDeleteSchedule(sch.ID)}
+                                                      onClick={() => handleDeleteSchedule(sch.id)}
                                                       className="absolute right-1 top-1 p-0.5 rounded text-zinc-400 hover:text-red-500 opacity-0 group-hover/card:opacity-100 transition-opacity cursor-pointer"
                                                       title="Remove assignment"
                                                     >
@@ -5427,14 +5427,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                         <input
                                                           type="time"
                                                           value={formatTimeDisplay(sch["Shift Start"]) || "09:00"}
-                                                          onChange={(e) => handleUpdateTime(sch.ID, "Shift Start", e.target.value)}
+                                                          onChange={(e) => handleUpdateTime(sch.id, "Shift Start", e.target.value)}
                                                           className="px-1 py-0.5 border border-zinc-200 rounded text-[9.5px] font-semibold text-zinc-850 bg-white outline-none focus:border-zinc-500 cursor-pointer w-[92px]"
                                                         />
                                                         <span className="text-[9px] text-zinc-400 font-bold">-</span>
                                                         <input
                                                           type="time"
                                                           value={formatTimeDisplay(sch["Shift End"]) || "17:00"}
-                                                          onChange={(e) => handleUpdateTime(sch.ID, "Shift End", e.target.value)}
+                                                          onChange={(e) => handleUpdateTime(sch.id, "Shift End", e.target.value)}
                                                           className="px-1 py-0.5 border border-zinc-200 rounded text-[9.5px] font-semibold text-zinc-850 bg-white outline-none focus:border-zinc-500 cursor-pointer w-[92px]"
                                                         />
                                                       </div>
@@ -5442,7 +5442,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                     <textarea
                                                       rows={3}
                                                       value={sch.Remarks || ""}
-                                                      onChange={(e) => handleUpdateRemark(sch.ID, e.target.value)}
+                                                      onChange={(e) => handleUpdateRemark(sch.id, e.target.value)}
                                                       placeholder="Add Remark..."
                                                       className="px-1.5 py-1 border border-zinc-200 rounded text-[9.5px] font-medium text-zinc-800 bg-white outline-none focus:border-zinc-450 w-full resize-none leading-normal"
                                                     />
@@ -5467,7 +5467,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                           {copiedSchedule && isEditMode && (
                                             <button
                                               type="button"
-                                              onClick={() => handlePasteSchedule(date, p.ID)}
+                                              onClick={() => handlePasteSchedule(date, p.id)}
                                               className="w-full py-1 border border-dashed border-[#0B57D0]/40 hover:bg-blue-50/50 hover:border-[#0B57D0] text-[#0B57D0] text-[10px] font-bold rounded flex items-center justify-center gap-1 transition-all cursor-pointer mt-1"
                                               title="Paste copied shift with default times"
                                             >
@@ -5528,7 +5528,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         >
                           <option value="all">All Retailers</option>
                           {retailers.map(r => (
-                            <option key={r.ID} value={r.ID}>
+                            <option key={r.id} value={r.id}>
                               {r["Display Name"]}
                             </option>
                           ))}
@@ -5557,13 +5557,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                           {filteredStores.map((store) => (
                             <div
-                              key={store.ID}
+                              key={store.id}
                               draggable
-                              onDragStart={(e) => e.dataTransfer.setData("storeId", String(store.ID))}
+                              onDragStart={(e) => e.dataTransfer.setData("storeId", String(store.id))}
                               className="bg-zinc-50/40 hover:bg-blue-50/5 border border-zinc-200 hover:border-[#0B57D0] rounded p-3 shadow-xs cursor-grab active:cursor-grabbing select-none transition-all flex flex-col gap-1.5 text-xs font-primary animate-in fade-in duration-200"
                             >
                               <div className="font-bold text-zinc-805 leading-tight">
-                                {getFormattedStoreName(store.ID, store["Display Name"])}
+                                {getFormattedStoreName(store.id, store["Display Name"])}
                               </div>
                               <div className="text-[10.5px] text-zinc-500 font-normal whitespace-normal leading-normal">
                                 {store.Address || "No address listed"}
@@ -5674,9 +5674,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             <span className="text-[10px] text-zinc-455 italic pl-1">No brands found.</span>
                           ) : (
                             brands.map(b => {
-                              const isChecked = campBrand.split(",").map(id => id.trim()).includes(String(b.ID));
+                              const isChecked = campBrand.split(",").map(id => id.trim()).includes(String(b.id));
                               return (
-                                <label key={b.ID} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-zinc-700 hover:text-zinc-955 select-none">
+                                <label key={b.id} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-zinc-700 hover:text-zinc-955 select-none">
                                   <input
                                     type="checkbox"
                                     checked={isChecked}
@@ -5684,9 +5684,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                       const currentBrandIds = campBrand.split(",").map(id => id.trim()).filter(Boolean);
                                       let newBrandIds: string[];
                                       if (e.target.checked) {
-                                        newBrandIds = [...currentBrandIds, String(b.ID)];
+                                        newBrandIds = [...currentBrandIds, String(b.id)];
                                       } else {
-                                        newBrandIds = currentBrandIds.filter(id => id !== String(b.ID));
+                                        newBrandIds = currentBrandIds.filter(id => id !== String(b.id));
                                       }
                                       setCampBrand(newBrandIds.join(","));
                                       setCampProducts([]); // Reset products selection when brands change
@@ -5712,20 +5712,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               <span className="text-[10px] text-zinc-455 italic pl-1">No products found for this brand in the database.</span>
                             ) : (
                               brandProducts.map(p => (
-                                <label key={p.SKU} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-zinc-700 hover:text-zinc-955 select-none">
+                                <label key={p.sku} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-zinc-700 hover:text-zinc-955 select-none">
                                   <input
                                     type="checkbox"
-                                    checked={campProducts.includes(p.SKU)}
+                                    checked={campProducts.includes(p.sku)}
                                     onChange={(e) => {
                                       if (e.target.checked) {
-                                        setCampProducts(prev => [...prev, p.SKU]);
+                                        setCampProducts(prev => [...prev, p.sku]);
                                       } else {
-                                        setCampProducts(prev => prev.filter(sku => sku !== p.SKU));
+                                        setCampProducts(prev => prev.filter(sku => sku !== p.sku));
                                       }
                                     }}
                                     className="rounded border-zinc-300 text-[#0B57D0] focus:ring-[#0B57D0] h-3.5 w-3.5"
                                   />
-                                  <span>{p["Display Name"]} ({p.SKU})</span>
+                                  <span>{p["Display Name"]} ({p.sku})</span>
                                 </label>
                               ))
                             )}
@@ -6092,7 +6092,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       setSelectedPrintLayout("master-calendar");
                       setPrintMonth(new Date().getMonth());
                       setPrintYear(new Date().getFullYear());
-                      setPrintSelectedCampaignIds(campaigns.map(c => String(c.ID)));
+                      setPrintSelectedCampaignIds(campaigns.map(c => String(c.id)));
                     }
                   }}
                 >
@@ -6155,7 +6155,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                const allIds = campaigns.map(c => String(c.ID));
+                                const allIds = campaigns.map(c => String(c.id));
                                 if (printSelectedCampaignIds.length === campaigns.length) {
                                   setPrintSelectedCampaignIds([]);
                                 } else {
@@ -6169,23 +6169,23 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           </div>
                           <div className="w-full h-[120px] overflow-y-auto border border-zinc-200 rounded p-2.5 custom-scrollbar flex flex-col gap-1.5 bg-white shadow-inner">
                             {campaigns.map(c => {
-                              const isChecked = printSelectedCampaignIds.includes(String(c.ID));
+                              const isChecked = printSelectedCampaignIds.includes(String(c.id));
                               return (
-                                <label key={c.ID} className="flex items-center gap-2 cursor-pointer py-0.5 hover:bg-zinc-50 select-none">
+                                <label key={c.id} className="flex items-center gap-2 cursor-pointer py-0.5 hover:bg-zinc-50 select-none">
                                   <input
                                     type="checkbox"
                                     checked={isChecked}
                                     onChange={() => {
                                       if (isChecked) {
-                                        setPrintSelectedCampaignIds(prev => prev.filter(id => id !== String(c.ID)));
+                                        setPrintSelectedCampaignIds(prev => prev.filter(id => id !== String(c.id)));
                                       } else {
-                                        setPrintSelectedCampaignIds(prev => [...prev, String(c.ID)]);
+                                        setPrintSelectedCampaignIds(prev => [...prev, String(c.id)]);
                                       }
                                     }}
                                     className="rounded border-zinc-300 text-[#0B57D0] focus:ring-[#0B57D0] h-3.5 w-3.5 cursor-pointer"
                                   />
-                                  <span className="text-[10px] font-semibold text-zinc-800 leading-tight truncate max-w-[170px]" title={c["Campaign Title"] || c.Title || c.name || c.ID}>
-                                    {c["Campaign Title"] || c.Title || c.name || c.ID}
+                                  <span className="text-[10px] font-semibold text-zinc-800 leading-tight truncate max-w-[170px]" title={c["Campaign Title"] || c.Title || c.name || c.id}>
+                                    {c["Campaign Title"] || c.Title || c.name || c.id}
                                   </span>
                                 </label>
                               );
@@ -6300,17 +6300,17 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5 mb-1">Select Promoters</label>
                           <div className="w-full h-[120px] overflow-y-auto border border-zinc-200 rounded p-2.5 custom-scrollbar flex flex-col gap-1.5 bg-white shadow-inner">
                             {promoters.map(p => {
-                              const isChecked = printSelectedPromoterIds.includes(String(p.ID));
+                              const isChecked = printSelectedPromoterIds.includes(String(p.id));
                               return (
-                                <label key={p.ID} className="flex items-center gap-2 cursor-pointer py-0.5 hover:bg-zinc-50 select-none">
+                                <label key={p.id} className="flex items-center gap-2 cursor-pointer py-0.5 hover:bg-zinc-50 select-none">
                                   <input
                                     type="checkbox"
                                     checked={isChecked}
                                     onChange={() => {
                                       if (isChecked) {
-                                        setPrintSelectedPromoterIds(prev => prev.filter(id => id !== String(p.ID)));
+                                        setPrintSelectedPromoterIds(prev => prev.filter(id => id !== String(p.id)));
                                       } else {
-                                        setPrintSelectedPromoterIds(prev => [...prev, String(p.ID)]);
+                                        setPrintSelectedPromoterIds(prev => [...prev, String(p.id)]);
                                       }
                                     }}
                                     className="rounded border-zinc-300 text-[#0B57D0] focus:ring-[#0B57D0] h-3.5 w-3.5 cursor-pointer"
@@ -6403,7 +6403,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           >
                             <option value="">-- Choose Campaign --</option>
                             {campaigns.filter(c => !(c.Archived && (String(c.Archived) === "1" || String(c.Archived) === "true"))).map(c => (
-                              <option key={c.ID} value={c.ID}>{c["Campaign Title"]}</option>
+                              <option key={c.id} value={c.id}>{c["Campaign Title"]}</option>
                             ))}
                           </select>
                         </div>
@@ -6463,7 +6463,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             >
                               <option value="">-- Choose Promoter --</option>
                               {promoters.filter(p => !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true"))).map(p => (
-                                <option key={p.ID} value={p.ID}>{p.Name}</option>
+                                <option key={p.id} value={p.id}>{p.Name}</option>
                               ))}
                             </select>
                           </div>
@@ -6553,7 +6553,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           >
                             <option value="">-- Choose Promoter --</option>
                             {promoters.filter(p => !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true"))).map(p => (
-                              <option key={p.ID} value={p.ID}>{p.Name}</option>
+                              <option key={p.id} value={p.id}>{p.Name}</option>
                             ))}
                           </select>
                         </div>
@@ -6663,7 +6663,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           {campaigns
                             .filter(c => !(c.Archived && (String(c.Archived) === "1" || String(c.Archived) === "true")))
                             .map(c => (
-                              <option key={c.ID} value={c.ID}>
+                              <option key={c.id} value={c.id}>
                                 {c["Campaign Title"]}
                               </option>
                             ))}
@@ -6689,7 +6689,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               showToast("Please select a campaign.", "warning");
                               return;
                             }
-                            const selectedCamp = campaigns.find(c => String(c.ID) === String(printCampaignId));
+                            const selectedCamp = campaigns.find(c => String(c.id) === String(printCampaignId));
                             if (selectedCamp) {
                               handlePrintCampaign(selectedCamp);
                             }
@@ -6757,7 +6757,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           {campaigns
                             .filter(c => !(c.Archived && (String(c.Archived) === "1" || String(c.Archived) === "true")))
                             .map(c => (
-                              <option key={c.ID} value={c.ID}>
+                              <option key={c.id} value={c.id}>
                                 {c["Campaign Title"]}
                               </option>
                             ))}
@@ -6783,7 +6783,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               showToast("Please select a campaign.", "warning");
                               return;
                             }
-                            const selectedCamp = campaigns.find(c => String(c.ID) === String(printCampaignId));
+                            const selectedCamp = campaigns.find(c => String(c.id) === String(printCampaignId));
                             if (selectedCamp) {
                               handlePrintCampaignReport(selectedCamp);
                             }
@@ -6850,7 +6850,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           >
                             <option value="">-- Choose Retailer --</option>
                             {retailers.filter(r => !(r.Archived && (String(r.Archived) === "1" || String(r.Archived) === "true"))).map(r => (
-                              <option key={r.ID} value={r.ID}>{r["Display Name"] || r.Name || r.ID}</option>
+                              <option key={r.id} value={r.id}>{r["Display Name"] || r.Name || r.id}</option>
                             ))}
                           </select>
                         </div>
@@ -6993,7 +6993,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         >
                           <option value="">-- Choose Promoter --</option>
                           {promoters.filter(p => !(p.Archived && (String(p.Archived) === "1" || String(p.Archived) === "true"))).map(p => (
-                            <option key={p.ID} value={p.ID}>{p.Name}</option>
+                            <option key={p.id} value={p.id}>{p.Name}</option>
                           ))}
                         </select>
                       </div>
@@ -7452,29 +7452,29 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
       {/* Promoting Cost Full-Screen Overlay Modal */}
       {promotingCostModalShiftId && (() => {
-        const activeShift = schedules.find(s => String(s.ID) === String(promotingCostModalShiftId));
+        const activeShift = schedules.find(s => String(s.id) === String(promotingCostModalShiftId));
         if (!activeShift) return null;
 
-        const activeCampaign = campaigns.find(c => String(c.ID) === String(activeShift["Campaign ID"]));
+        const activeCampaign = campaigns.find(c => String(c.id) === String(activeShift["Campaign ID"]));
         const campaignSkus = activeCampaign?.Products
           ? activeCampaign.Products.split(",").map((sku: string) => sku.trim().toLowerCase()).filter(Boolean)
           : [];
         
         const activeCampaignBrandIds = String(activeCampaign?.Brand || "").split(",").map(id => id.trim().toLowerCase()).filter(Boolean);
         const activeCampaignBrandNames = activeCampaignBrandIds.map(id => {
-          const bObj = brands.find(b => String(b.ID).toLowerCase() === id);
+          const bObj = brands.find(b => String(b.id).toLowerCase() === id);
           return bObj ? String(bObj["Display Name"] || bObj.name || "").trim().toLowerCase() : "";
         }).filter(Boolean);
 
         const filteredProducts = products.filter(p => {
           if (campaignSkus.length > 0) {
-            return campaignSkus.includes(String(p.SKU).toLowerCase());
+            return campaignSkus.includes(String(p.sku).toLowerCase());
           }
           if (activeCampaignBrandIds.length === 0) {
             return true;
           }
           const pBrandId = String(p["Brands ID"] || p.Brands_ID || p.brandId || "").trim().toLowerCase();
-          const pBrandObj = brands.find(b => String(b.ID).toLowerCase() === pBrandId);
+          const pBrandObj = brands.find(b => String(b.id).toLowerCase() === pBrandId);
           const pBrandName = pBrandObj ? String(pBrandObj["Display Name"] || pBrandObj.name || "").trim().toLowerCase() : "";
           
           return activeCampaignBrandIds.includes(pBrandId) || (pBrandName && activeCampaignBrandNames.includes(pBrandName));
@@ -7551,8 +7551,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               >
                                 <option value="">-- Choose SKU --</option>
                                 {filteredProducts.map(p => (
-                                  <option key={p.SKU} value={p.SKU}>
-                                    {p.SKU} - {p["Display Name"] || p.Name}
+                                  <option key={p.sku} value={p.sku}>
+                                    {p.sku} - {p["Display Name"] || p.Name}
                                   </option>
                                 ))}
                               </select>
@@ -7646,8 +7646,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     onClick={async () => {
                       setPromotingCostItems([]);
                       const jsonString = "[]";
-                      setSchedules(prev => prev.map(item => String(item.ID) === String(activeShift.ID) ? { ...item, "Promoting Cost": jsonString } : item));
-                      await handleUpdateShiftField(activeShift.ID, "Promoting Cost", jsonString);
+                      setSchedules(prev => prev.map(item => String(item.id) === String(activeShift.id) ? { ...item, "Promoting Cost": jsonString } : item));
+                      await handleUpdateShiftField(activeShift.id, "Promoting Cost", jsonString);
                       setPromotingCostModalShiftId(null);
                       showToast("Promoting cost saved as zero.", "success");
                     }}
@@ -7667,9 +7667,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                       const jsonString = JSON.stringify(cleanItems);
                       
-                      setSchedules(prev => prev.map(item => String(item.ID) === String(activeShift.ID) ? { ...item, "Promoting Cost": jsonString } : item));
+                      setSchedules(prev => prev.map(item => String(item.id) === String(activeShift.id) ? { ...item, "Promoting Cost": jsonString } : item));
                       
-                      await handleUpdateShiftField(activeShift.ID, "Promoting Cost", jsonString);
+                      await handleUpdateShiftField(activeShift.id, "Promoting Cost", jsonString);
 
                       setPromotingCostModalShiftId(null);
                       showToast("Promoting cost saved successfully.", "success");
@@ -7688,7 +7688,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
       {/* Other Custom Location Placement details popup modal overlay */}
       {otherLocationModalData && (() => {
-        const activePromoter = promoters.find(p => String(p.ID) === String(otherLocationModalData.promoterId));
+        const activePromoter = promoters.find(p => String(p.id) === String(otherLocationModalData.promoterId));
         const activeDateStr = (() => {
           const d = new Date(otherLocationModalData.date);
           return isNaN(d.getTime()) ? "" : `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
@@ -7753,8 +7753,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   disabled={!otherLocationTitle.trim() || !otherLocationAddress.trim()}
                   onClick={() => {
                     const { date, promoterId } = otherLocationModalData;
-                    const selectedCampaign = campaigns.find(c => c.ID === selectedCampaignId);
-                    const selectedPromoter = promoters.find(p => String(p.ID) === String(promoterId));
+                    const selectedCampaign = campaigns.find(c => c.id === selectedCampaignId);
+                    const selectedPromoter = promoters.find(p => String(p.id) === String(promoterId));
                     if (!selectedCampaign || !selectedPromoter) return;
 
                     // Calculate shift start/end times dynamically
@@ -7796,9 +7796,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     }
 
                     const scheduleData = {
-                      ID: `sch_${Date.now()}`,
+                      id: `sch_${Date.now()}`,
                       Date: date.getTime(),
-                      "Campaign ID": selectedCampaign.ID,
+                      "Campaign ID": selectedCampaign.id,
                       "Campaign Title": selectedCampaign["Campaign Title"],
                       "Store ID": `OTHER_${Date.now()}`,
                       "Store Name": otherLocationTitle.trim(),

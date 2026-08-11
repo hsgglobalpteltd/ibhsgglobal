@@ -111,7 +111,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
   }, [parseTimestamp]);
 
   const fetchSheet = async (sheetName: string) => {
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
     if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
     const json = await res.json();
     const items = Array.isArray(json) ? json : (json.value || []);
@@ -122,7 +122,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
   const fetchFreshData = async (sheetName: string, forceSync = false) => {
     try {
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
       }
       return await fetchSheet(sheetName);
     } catch (e) {
@@ -169,9 +169,9 @@ export function TaskModule({ profile }: TaskModuleProps) {
       setFetching(true);
       try {
         await Promise.all([
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Stores_Task_Assigned`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=Store_Retailer_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=retailers_DB`, { method: "POST" })
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Stores_Task_Assigned`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB`, { method: "POST" }),
+          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB`, { method: "POST" })
         ]);
         const [t, s, r] = await Promise.all([
           fetchSheet("Stores_Task_Assigned"),
@@ -227,11 +227,11 @@ export function TaskModule({ profile }: TaskModuleProps) {
     showToast("Completing task in background...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Stores_Task_Assigned",
+          table: "Stores_Task_Assigned",
           action: "update",
           data: cleanData
         })
@@ -266,9 +266,9 @@ export function TaskModule({ profile }: TaskModuleProps) {
 
     const previousTasks = [...tasks];
 
-    // Extract store IDs from tags (e.g. "Bibik Express - Store #1 (ID: 339)" -> "339")
+    // Extract store IDs from tags (e.g. "Bibik Express - Store #1 (id: 339)" -> "339")
     const storeIds = storeTags.map(tag => {
-      const match = tag.match(/\(ID:\s*([^)]+)\)$/);
+      const match = tag.match(/\(id:\s*([^)]+)\)$/);
       return match ? match[1] : tag;
     });
 
@@ -299,11 +299,11 @@ export function TaskModule({ profile }: TaskModuleProps) {
       showToast("Updating task in background...", "info");
 
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            sheet: "Stores_Task_Assigned",
+            table: "Stores_Task_Assigned",
             action: "update",
             data: updatedTask
           })
@@ -346,11 +346,11 @@ export function TaskModule({ profile }: TaskModuleProps) {
       try {
         await Promise.all(
           newTasks.map(async (task) => {
-            const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+            const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                sheet: "Stores_Task_Assigned",
+                table: "Stores_Task_Assigned",
                 action: "insert",
                 data: task
               })
@@ -423,11 +423,11 @@ export function TaskModule({ profile }: TaskModuleProps) {
     showToast("Saving log entry...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          sheet: "Stores_Task_Assigned",
+          table: "Stores_Task_Assigned",
           action: "update",
           data: cleanData
         })
@@ -455,7 +455,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
   }, [stores, selectedRetailerId]);
 
   const storeSuggestions = React.useMemo(() => {
-    return selectedRetailerStores.map(s => `${s["Display Name"]} (ID: ${s.ID})`);
+    return selectedRetailerStores.map(s => `${s["Display Name"]} (id: ${s.id})`);
   }, [selectedRetailerStores]);
 
   // Tab mapping calculations
@@ -472,7 +472,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
     });
 
     return list.map((t) => {
-      const store = stores.find(s => String(s.ID) === String(t["Stores ID"]));
+      const store = stores.find(s => String(s.id) === String(t["Stores ID"]));
       const storeName = store ? store["Display Name"] : `Store #${t["Stores ID"]}`;
 
       let logs: any[] = [];
@@ -559,11 +559,11 @@ export function TaskModule({ profile }: TaskModuleProps) {
               onClick={() => {
                 setEditingTask(t);
                 setSelectedRetailerId("");
-                const store = stores.find(s => String(s.ID) === String(t["Stores ID"]));
+                const store = stores.find(s => String(s.id) === String(t["Stores ID"]));
                 if (store) {
                   const retId = store["Retailers ID"] || store["Retailer ID"];
                   setSelectedRetailerId(retId);
-                  setStoreTags([`${store["Display Name"]} (ID: ${store.ID})`]);
+                  setStoreTags([`${store["Display Name"]} (id: ${store.id})`]);
                 } else {
                   setStoreTags([String(t["Stores ID"])]);
                 }
@@ -707,8 +707,8 @@ export function TaskModule({ profile }: TaskModuleProps) {
                 >
                   <option value="">-- Choose Retailer --</option>
                   {retailers.map(r => (
-                    <option key={r.ID} value={r.ID}>
-                      {r["Display Name"] || r.ID}
+                    <option key={r.id} value={r.id}>
+                      {r["Display Name"] || r.id}
                     </option>
                   ))}
                 </select>
@@ -813,7 +813,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
               <div className="flex flex-col gap-1">
                 <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wide">Target Store</span>
                 <span className="text-xs font-extrabold text-zinc-800">
-                  {stores.find(s => String(s.ID) === String(selectedTask["Stores ID"]))?.[ "Display Name" ] || `Store #${selectedTask["Stores ID"]}`}
+                  {stores.find(s => String(s.id) === String(selectedTask["Stores ID"]))?.[ "Display Name" ] || `Store #${selectedTask["Stores ID"]}`}
                 </span>
                 <span className="text-[10px] text-zinc-500 italic mt-0.5">
                   &ldquo;{selectedTask["Task Description"]}&rdquo;
@@ -950,7 +950,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
             {/* Task Info Context */}
             <div className="mx-6 my-4 flex flex-col gap-1 bg-zinc-200/50 border border-zinc-300/50 rounded p-3 text-xs text-zinc-700 flex-shrink-0">
               <span className="font-bold text-zinc-800">
-                Store: {stores.find(s => String(s.ID) === String(selectedTask["Stores ID"]))?.[ "Display Name" ] || `Store #${selectedTask["Stores ID"]}`}
+                Store: {stores.find(s => String(s.id) === String(selectedTask["Stores ID"]))?.[ "Display Name" ] || `Store #${selectedTask["Stores ID"]}`}
               </span>
               <p className="text-zinc-500 italic mt-0.5">&ldquo;{selectedTask["Task Description"]}&rdquo;</p>
               <span className="text-[10px] text-zinc-400 font-mono mt-1">

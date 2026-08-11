@@ -120,7 +120,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
 
   // Helper helper to cache and return json
   const fetchSheet = async (sheetName: string) => {
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
     if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
     const json = await res.json();
     const items = Array.isArray(json) ? json : (json.value || []);
@@ -131,7 +131,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   const fetchFreshData = async (sheetName: string, forceSync = false) => {
     try {
       if (forceSync) {
-        const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}&skipCache=true`);
+        const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}&skipCache=true`);
         if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
         const json = await res.json();
         const items = Array.isArray(json) ? json : (json.value || []);
@@ -183,7 +183,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         setSelectedRetailer("all");
       }
       if (br.length > 0 && !selectedBrand) {
-        setSelectedBrand(String(br[0].ID));
+        setSelectedBrand(String(br[0].id));
       }
     }).catch(err => {
       console.error("Silent background load failed", err);
@@ -298,16 +298,16 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         return String(brandId) === String(selectedBrand);
       });
 
-      const brandSkus = brandProducts.map(p => String(p.SKU).toLowerCase());
+      const brandSkus = brandProducts.map(p => String(p.sku).toLowerCase());
 
       const results = filteredStores.map(store => {
-        const retailer = retailers.find(r => String(r.ID) === String(store["Retailers ID"] || store["Retailer ID"]));
+        const retailer = retailers.find(r => String(r.id) === String(store["Retailers ID"] || store["Retailer ID"]));
         const retailerName = retailer ? retailer["Display Name"] : "";
 
         // Find visits/audits within date range for this store (from Merch_Visit_Product_Audit_Logs)
         const storeProductLogs = productLogs.filter(log => {
           const storeId = log["Retailer Stores ID"] || log["Store ID"];
-          if (String(storeId) !== String(store.ID)) return false;
+          if (String(storeId) !== String(store.id)) return false;
           const timestamp = parseTimestamp(log.Timestamp).getTime();
           return timestamp >= startMs && timestamp <= endMs;
         });
@@ -321,7 +321,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         const storeShelfLogsAllTime = shelfLogs.filter(sl => {
           const storeId = sl["Retailer Stores ID"] || sl["Store ID"];
           const brandId = sl["Brands ID"] || sl["Brand ID"];
-          return String(storeId) === String(store.ID) && String(brandId) === String(selectedBrand);
+          return String(storeId) === String(store.id) && String(brandId) === String(selectedBrand);
         });
 
         // Sort descending to get latest shelf logs
@@ -359,7 +359,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           try {
             auditedSkus = JSON.parse(latestLog["Audit JSON"] || "[]");
           } catch (e) {
-            console.warn("Failed to parse Audit JSON for log ID: " + latestLog.Timestamp);
+            console.warn("Failed to parse Audit JSON for log id: " + latestLog.Timestamp);
           }
 
           auditedSkus.forEach((auditItem: any) => {
@@ -367,7 +367,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             if (brandSkus.includes(sku)) {
               const qty = Number(auditItem.qty) || 0;
               if (qty > 0) {
-                const prodDetail = brandProducts.find(p => String(p.SKU).toLowerCase() === sku);
+                const prodDetail = brandProducts.find(p => String(p.sku).toLowerCase() === sku);
                 const prodName = prodDetail ? prodDetail["Display Name"] : auditItem.sku;
                 
                 carriedProductsList.push({
@@ -384,7 +384,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         const storeShelfLogs = shelfLogs.filter(sl => {
           const storeId = sl["Retailer Stores ID"] || sl["Store ID"];
           const brandId = sl["Brands ID"] || sl["Brand ID"];
-          if (String(storeId) !== String(store.ID)) return false;
+          if (String(storeId) !== String(store.id)) return false;
           if (String(brandId) !== String(selectedBrand)) return false;
           const timestamp = parseTimestamp(sl.Timestamp).getTime();
           return timestamp >= startMs && timestamp <= endMs;
@@ -397,8 +397,8 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         const latestShelfImage = sortedShelfLogs.length > 0 ? (sortedShelfLogs[0]["Image Link"] || sortedShelfLogs[0]["image_link"]) : null;
 
         return {
-          id: store.ID,
-          storeName: store["Display Name"] || `Store #${store.ID}`,
+          id: store.id,
+          storeName: store["Display Name"] || `Store #${store.id}`,
           retailerName,
           address: store.Address || "No address listed",
           activities: latestVisits,
@@ -433,12 +433,12 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
 
   const activeRetailerName = React.useMemo(() => {
     if (selectedRetailer === "all") return "All Retailers";
-    const found = retailers.find(r => String(r.ID) === String(selectedRetailer));
+    const found = retailers.find(r => String(r.id) === String(selectedRetailer));
     return found ? found["Display Name"] : "";
   }, [retailers, selectedRetailer]);
 
   const activeBrandName = React.useMemo(() => {
-    const found = brands.find(b => String(b.ID) === String(selectedBrand));
+    const found = brands.find(b => String(b.id) === String(selectedBrand));
     return found ? found["Display Name"] : "";
   }, [brands, selectedBrand]);
 
@@ -507,7 +507,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                 >
                   <option value="all">All Retailers</option>
                   {retailers.map((r) => (
-                    <option key={r.ID} value={r.ID}>
+                    <option key={r.id} value={r.id}>
                       {r["Display Name"]}
                     </option>
                   ))}
@@ -526,7 +526,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                 >
                   <option value="" disabled>Select Brand...</option>
                   {brands.map((b) => (
-                    <option key={b.ID} value={b.ID}>
+                    <option key={b.id} value={b.id}>
                       {b["Display Name"]}
                     </option>
                   ))}

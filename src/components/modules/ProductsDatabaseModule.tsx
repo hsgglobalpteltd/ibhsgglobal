@@ -7,14 +7,14 @@ import { Upload, X } from "lucide-react";
 import { NavigationTabs } from "../navigation-tabs";
 
 const defaultBrandColumns: Column[] = [
-  { id: "ID", header: "ID", accessor: "ID" },
+  { id: 'id', header: 'id', accessor: 'id' },
   { id: "Display Name", header: "Display Name", accessor: "Display Name" },
   { id: "Logo Image", header: "Logo Image", accessor: "Logo Image" },
   { id: "Rank", header: "Rank", accessor: "Rank" }
 ];
 
 const defaultProductColumns: Column[] = [
-  { id: "SKU", header: "SKU", accessor: "SKU" },
+  { id: 'sku', header: 'sku', accessor: 'sku' },
   { id: "Brand Name", header: "Brand Name", accessor: "Brand Name" },
   { id: "Display Name", header: "Display Name", accessor: "Display Name" },
   { id: "Image", header: "Image", accessor: "Image" },
@@ -67,14 +67,14 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     }
     try {
       if (forceSync) {
-        // Force Cloudflare Worker to update D1 cache from Google Sheets
-        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`, {
+        // Force Cloudflare Worker to update Database from Google Sheets
+        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
           method: "POST"
         });
         if (!syncRes.ok) throw new Error("Failed to refresh server cache");
       }
 
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/cache?sheet=${sheetName}`);
+      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server returned status ${res.status}`);
       const json = await res.json();
       
@@ -153,7 +153,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     const brandsList = getBrandsList();
     return data.map((product) => {
       const brandId = product["Brands ID"];
-      const brand = brandsList.find((b) => String(b.ID) === String(brandId));
+      const brand = brandsList.find((b) => String(b.id) === String(brandId));
       return {
         ...product,
         "Brand Name": brand ? brand["Display Name"] : (brandId || "")
@@ -228,11 +228,11 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
   // Triggered by the "Add New" button in the table header
   const handleAddNew = () => {
     if (activeTab === "brands") {
-      setEditingBrand({ isNew: true, ID: "", "Display Name": "", "Logo Image": "", Rank: "" });
+      setEditingBrand({ isNew: true, id: "", "Display Name": "", "Logo Image": "", Rank: "" });
     } else {
       setEditingProduct({
         isNew: true,
-        SKU: "",
+        sku: "",
         "Brands ID": "",
         "Display Name": "",
         Image: "",
@@ -250,7 +250,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
   // Save changes to GAS (handles both updates and additions)
   const handleSaveItem = async (updatedItem: any) => {
     const sheet = activeTab === "brands" ? "brands_DB" : "products_DB";
-    const idKey = activeTab === "brands" ? "ID" : "SKU";
+    const idKey = activeTab === "brands" ? 'id' : 'sku';
     const previousData = [...data];
     const isNew = !!updatedItem.isNew;
 
@@ -296,7 +296,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     // 4. Perform network request in background
     (async () => {
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -322,7 +322,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
         const result = await res.json();
         if (!result.success) throw new Error(result.error || "Failed to save record");
 
-        // Silent refresh of D1 cache from server in background
+        // Silent refresh of Database from server in background
         fetchFreshData(sheet, false);
 
       } catch (err: any) {
@@ -337,7 +337,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
   // Handle row deletion
   const handleDeleteRow = async (rowId: string) => {
     const sheet = activeTab === "brands" ? "brands_DB" : "products_DB";
-    const idKey = activeTab === "brands" ? "ID" : "SKU";
+    const idKey = activeTab === "brands" ? 'id' : 'sku';
 
     const targetItem = data.find(
       (item) => String(item.id || item[idKey]) === String(rowId) || String(item[idKey]) === String(rowId)
@@ -347,7 +347,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
 
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/update", {
+      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -492,9 +492,9 @@ function BrandEditForm({ brand, onSave, onCancel }: { brand: any; onSave: (data:
             <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">ID (Primary Key)</label>
             <input
               type="text"
-              value={formData.ID || ""}
+              value={formData.id || ""}
               disabled={!isNew}
-              onChange={(e) => handleChange("ID", e.target.value)}
+              onChange={(e) => handleChange('id', e.target.value)}
               required
               className={`w-full text-xs rounded px-3 py-2 font-semibold outline-none border ${
                 !isNew 
@@ -559,7 +559,7 @@ function BrandEditForm({ brand, onSave, onCancel }: { brand: any; onSave: (data:
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
             .filter((k) => {
-              if (["ID", "Display Name", "Logo Image", "Rank", "id", "isNew"].includes(k)) return false;
+              if (['id', "Display Name", "Logo Image", "Rank", "id", "isNew"].includes(k)) return false;
               const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
                 otherKey !== k && 
                 otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
@@ -660,9 +660,9 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
             <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">SKU (Primary Key)</label>
             <input
               type="text"
-              value={formData.SKU || ""}
+              value={formData.sku || ""}
               disabled={!isNew}
-              onChange={(e) => handleChange("SKU", e.target.value)}
+              onChange={(e) => handleChange('sku', e.target.value)}
               required
               className={`w-full text-xs rounded px-3 py-2 font-semibold outline-none border ${
                 !isNew 
@@ -682,8 +682,8 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
             >
               <option value="">-- Select Brand --</option>
               {brands.map((b) => (
-                <option key={b.ID} value={b.ID}>
-                  {b["Display Name"] || b.ID} ({b.ID})
+                <option key={b.id} value={b.id}>
+                  {b["Display Name"] || b.id} ({b.id})
                 </option>
               ))}
             </select>
@@ -849,7 +849,7 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
             .filter((k) => {
-              if (["SKU", "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "Carton H (mm)", "Carton W (mm)", "Carton L (mm)", "id", "isNew"].includes(k)) return false;
+              if (['sku', "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "Carton H (mm)", "Carton W (mm)", "Carton L (mm)", "id", "isNew"].includes(k)) return false;
               const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
                 otherKey !== k && 
                 otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
