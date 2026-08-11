@@ -291,7 +291,11 @@ function TerminalModal({ terminal, existingTerminals, onClose, onSave }: Termina
   const [allowedPages, setAllowedPages] = React.useState<string[]>(() => {
     if (terminal?.allowed_pages) {
       try {
-        return JSON.parse(terminal.allowed_pages);
+        const parsed = JSON.parse(terminal.allowed_pages);
+        if (Array.isArray(parsed)) {
+          return parsed.map(p => p === "Scan Handover" ? "Handover Parcel" : p);
+        }
+        return parsed;
       } catch {}
     }
     return ["Dashboard", "Orders"];
