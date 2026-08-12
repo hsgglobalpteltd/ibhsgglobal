@@ -120,7 +120,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
 
   // Helper helper to cache and return json
   const fetchSheet = async (sheetName: string) => {
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+    const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
     if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
     const json = await res.json();
     const items = Array.isArray(json) ? json : (json.value || []);
@@ -131,7 +131,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   const fetchFreshData = async (sheetName: string, forceSync = false) => {
     try {
       if (forceSync) {
-        const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}&skipCache=true`);
+        const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}&skipCache=true`);
         if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
         const json = await res.json();
         const items = Array.isArray(json) ? json : (json.value || []);

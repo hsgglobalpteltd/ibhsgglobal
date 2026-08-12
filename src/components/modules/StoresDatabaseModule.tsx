@@ -58,13 +58,13 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     try {
       if (forceSync) {
         // Force Cloudflare Worker to update Database from Google Sheets
-        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
+        const syncRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
           method: "POST"
         });
         if (!syncRes.ok) throw new Error("Failed to refresh server cache");
       }
 
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server returned status ${res.status}`);
       const json = await res.json();
       
@@ -149,7 +149,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
   // Preprocess stores list to swap Retailer ID for looked up Retailer Name
   const processedData = React.useMemo(() => {
     if (activeTab === "retailers") {
-      return data.filter(r => !String(r.id || r.id).startsWith("Group"));
+      return data.filter(r => !String(r.id || r.ID).startsWith("Group"));
     }
     const retailersList = getRetailersList();
     return data.map((store) => {
@@ -294,7 +294,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     // 4. Perform network request in background
     (async () => {
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -345,7 +345,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
 
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -449,7 +449,7 @@ function RetailerEditForm({ retailer, onSave, onCancel }: { retailer: any; onSav
     setUploading(true);
     try {
       const filename = `${Date.now()}_${file.name.replace(/\s+/g, "_")}`;
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
         method: "POST",
         headers: {
           "Content-Type": file.type || "application/octet-stream"
@@ -622,7 +622,7 @@ function StoreEditForm({ store, retailers, onSave, onCancel }: { store: any; ret
     setUploading(true);
     try {
       const filename = `${Date.now()}_${file.name.replace(/\s+/g, "_")}`;
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
         method: "POST",
         headers: {
           "Content-Type": file.type || "application/octet-stream"

@@ -492,7 +492,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
 
   // Helper helper to cache and return json
   const fetchSheet = async (sheetName: string) => {
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+    const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
     if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
     const json = await res.json();
     const items = Array.isArray(json) ? json : (json.value || []);
@@ -503,7 +503,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
   const fetchFreshData = async (sheetName: string, forceSync = false) => {
     try {
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
       }
       return await fetchSheet(sheetName);
     } catch (e) {
@@ -574,15 +574,15 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
       setFetching(true);
       try {
         await Promise.all([
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Product_Audit_Logs`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Shelf_Audit_Logs`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Setting`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Users`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=brands_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Stores_Task_Assigned`, { method: "POST" })
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Product_Audit_Logs`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Shelf_Audit_Logs`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Setting`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Users`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=brands_DB`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Stores_Task_Assigned`, { method: "POST" })
         ]);
 
         const [productLogsVal, shelfLogsVal, settingsVal, usersVal, storesVal, productsVal, retailersVal, brandsVal, tasksVal] = await Promise.all([
@@ -699,7 +699,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     const payloadAvoidRet = { "ID Setting": "Avoid Retailers", "Input": "Retailer ID's", "Value": avoidRetIds.join(", ") };
 
     const updateRow = async (row: any) => {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1230,7 +1230,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     localStorage.setItem("Stores_Task_Assigned_data", JSON.stringify(updated));
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1295,7 +1295,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     setSelectedTask(null);
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1584,7 +1584,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     showToast("Saving merchandiser profile...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1615,7 +1615,7 @@ export function MerchandiserModule({ profile }: { profile?: { role: string; name
     showToast("Deleting merchandiser in background...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

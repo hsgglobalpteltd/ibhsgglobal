@@ -10,7 +10,7 @@ interface TenantModuleProps {
   profile?: any;
 }
 
-const WORKER_URL = "https://ib.hsgglobalpteltd.workers.dev";
+const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
 export function TenantModule({ idToken, profile }: TenantModuleProps) {
   const [tenants, setTenants] = React.useState<any[]>([]);

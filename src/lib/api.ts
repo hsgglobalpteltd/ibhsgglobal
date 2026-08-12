@@ -15,7 +15,7 @@ export interface UserProfile {
   contract_signed_at?: number | null;
 }
 
-const WORKER_URL = "https://ib.hsgglobalpteltd.workers.dev";
+const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
 // Resolves a fresh token from Firebase Auth dynamically, falling back to the passed state token
 async function getFreshToken(passedToken?: string): Promise<string> {

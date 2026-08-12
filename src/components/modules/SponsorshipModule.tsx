@@ -247,7 +247,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       if (cachedClaims) {
         const items = JSON.parse(cachedClaims);
         setClaims(items.map((item: any) => ({
-          id: item.id || item.id,
+          id: item.id || item.ID,
           invoiceNumber: item.Invoice_Number || item.invoiceNumber || item["Invoice Number"] || "",
           sponsorName: item.Sponsor_Name || item.sponsorName || item["Sponsor Name"] || "",
           date: parseInt(item.Date || item.date) || Date.now(),
@@ -263,10 +263,10 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       if (cachedCatalog) {
         const items = JSON.parse(cachedCatalog);
         setCatalog(items.map((item: any) => ({
-          id: item.id || item.id,
+          id: item.id || item.ID,
           sponsoredBy: item["Sponsored By"] || item.sponsoredBy || "",
           brandName: item["Brand Name"] || item.brandName,
-          sku: item.sku || item.sku,
+          sku: item.sku || item.SKU,
           productName: item["Product Name"] || item.productName,
           uom: parseInt(item.UOM || item.uom) || 24,
           cost: parseFloat(item.Cost || item.cost) || 0
@@ -275,7 +275,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       if (cachedReceivers) {
         const items = JSON.parse(cachedReceivers);
         setReceivers(items.map((item: any) => ({
-          id: item.id || item.id,
+          id: item.id || item.ID,
           name: item.Name || item.name,
           type: item.Type || item.type,
           limit: item.Limit !== undefined && item.Limit !== null && item.Limit !== "" ? parseFloat(item.Limit || item.limit) : null
@@ -284,7 +284,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
       if (cachedTx) {
         const items = JSON.parse(cachedTx);
         setTransactions(items.map((item: any) => ({
-          id: item.id || item.id,
+          id: item.id || item.ID,
           ref: item.Ref || item.ref,
           date: parseInt(item.Date || item.date) || Date.now(),
           receiverId: item["Receiver ID"] || item.receiverId,
@@ -301,7 +301,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
   // Helper to make updates to server
   const writeToDatabase = async (sheetName: string, action: string, data: any) => {
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -337,14 +337,14 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
         showToast("Updating database caches...", "info");
         await Promise.all(
           sheets.map(sheet => 
-            fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheet}`, { method: "POST" })
+            fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheet}`, { method: "POST" })
           )
         );
       }
 
       const [brands, products, catalogData, receiversData, transactionsData, claimsData] = await Promise.all(
         sheets.map(async sheet => {
-          const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheet}`);
+          const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheet}`);
           if (!res.ok) return [];
           const json = await res.json();
           const items = Array.isArray(json) ? json : (json.value || []);
@@ -391,7 +391,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
       if (claimsData) {
         const newClaims = claimsData.map((item: any) => ({
-          id: item.id || item.id,
+          id: item.id || item.ID,
           invoiceNumber: item.Invoice_Number || item.invoiceNumber || item["Invoice Number"] || "",
           sponsorName: item.Sponsor_Name || item.sponsorName || item["Sponsor Name"] || "",
           date: parseInt(item.Date || item.date) || Date.now(),
@@ -1734,7 +1734,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
 
     try {
       const fileName = `sponsorship_claims/invoice_${Date.now()}_${file.name.replace(/\s+/g, "_")}`;
-      const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+      const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
         method: "POST",
         headers: {
           "Content-Type": file.type || "application/pdf"

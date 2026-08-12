@@ -70,7 +70,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
 
   // Sheet fetching
   const fetchSheet = async (sheetName: string) => {
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${encodeURIComponent(sheetName)}`);
+    const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${encodeURIComponent(sheetName)}`);
     if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
     const json = await res.json();
     const items = Array.isArray(json) ? json : (json.value || []);
@@ -81,7 +81,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
   const fetchFreshData = async (sheetName: string, forceSync = false) => {
     try {
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${encodeURIComponent(sheetName)}`, { method: "POST" });
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${encodeURIComponent(sheetName)}`, { method: "POST" });
       }
       return await fetchSheet(sheetName);
     } catch (e) {
@@ -122,9 +122,9 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
       setFetching(true);
       try {
         await Promise.all([
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Retailers_SKU`, { method: "POST" })
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Retailers_SKU`, { method: "POST" })
         ]);
         const [r, p, s] = await Promise.all([
           fetchSheet("retailers_DB"),
@@ -315,7 +315,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
 
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -499,7 +499,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
 
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

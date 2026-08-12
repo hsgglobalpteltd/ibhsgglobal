@@ -5,7 +5,7 @@ import { DataTable, Column } from "../data-table";
 import { showToast } from "@/lib/toast";
 import { NavigationTabs } from "../navigation-tabs";
 
-const WORKER_URL = "https://ib.hsgglobalpteltd.workers.dev";
+const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
 export function TiktokFulfillmentModule({ profile }: { profile?: any }) {
   const [activeTab, setActiveTab] = React.useState<"Terminal" | "Operator">("Terminal");

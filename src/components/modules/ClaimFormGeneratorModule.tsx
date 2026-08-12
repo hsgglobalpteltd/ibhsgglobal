@@ -235,7 +235,7 @@ export function ClaimFormGeneratorModule() {
     try {
       const base64Data = file.src.split(",")[1];
       const response = await fetch(
-        "https://ib.hsgglobalpteltd.workers.dev/api/admin/ocr",
+        "https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/ocr",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

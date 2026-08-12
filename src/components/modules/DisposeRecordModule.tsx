@@ -95,7 +95,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
         prodList = JSON.parse(cachedProds);
         setProducts(prodList);
       } else {
-        const prodRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
+        const prodRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
         if (prodRes.ok) {
           prodList = await prodRes.json();
           localStorage.setItem("products_DB_data", JSON.stringify(prodList));
@@ -106,11 +106,11 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
       // 2. Load Dispose Records
       const sheetName = "Dispose_Goods";
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
           method: "POST"
         });
       }
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (res.ok) {
         const dataList = await res.json();
         localStorage.setItem(`${sheetName}_data`, JSON.stringify(dataList));
@@ -223,7 +223,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
         setUploadProgress(`Uploading photo ${i + 1} of ${files.length}: ${file.name}...`);
         
         const fileName = `dispose_goods/dispose_${Date.now()}_${compressedFile.name.replace(/\s+/g, "_")}`;
-        const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+        const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
           method: "POST",
           headers: {
             "Content-Type": "image/jpeg"
@@ -385,7 +385,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
 
     // Silent background sync
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -426,7 +426,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     localStorage.setItem("Dispose_Goods_data", JSON.stringify(updatedRecords));
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -467,7 +467,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     setLockReference("");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

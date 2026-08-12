@@ -75,13 +75,13 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
     try {
       if (forceSync) {
         // Force refresh contacts sheet
-        await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Contacts_Book", {
+        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Contacts_Book", {
           method: "POST"
         });
       }
 
       // Fetch contacts
-      const contactsRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Contacts_Book");
+      const contactsRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Contacts_Book");
       if (contactsRes.ok) {
         const contactsJson = await contactsRes.json();
         const items = Array.isArray(contactsJson) ? contactsJson : (contactsJson.value || []);
@@ -90,7 +90,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
       }
 
       // Fetch stores (silently populate lookup)
-      const storesRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB");
+      const storesRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB");
       if (storesRes.ok) {
         const storesJson = await storesRes.json();
         const items = Array.isArray(storesJson) ? storesJson : (storesJson.value || []);
@@ -279,7 +279,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
 
     // 2. Silent sync
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -323,7 +323,7 @@ export function PhonebookModule({ profile }: PhonebookModuleProps) {
 
     // 2. Silent sync
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

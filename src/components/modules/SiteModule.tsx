@@ -11,7 +11,7 @@ interface SiteModuleProps {
   profile?: any;
 }
 
-const WORKER_URL = "https://ib.hsgglobalpteltd.workers.dev";
+const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
 export function SiteModule({ idToken, profile }: SiteModuleProps) {
   const [sites, setSites] = React.useState<any[]>([]);

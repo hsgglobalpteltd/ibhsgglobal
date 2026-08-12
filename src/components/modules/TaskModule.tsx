@@ -111,7 +111,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
   }, [parseTimestamp]);
 
   const fetchSheet = async (sheetName: string) => {
-    const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+    const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
     if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
     const json = await res.json();
     const items = Array.isArray(json) ? json : (json.value || []);
@@ -122,7 +122,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
   const fetchFreshData = async (sheetName: string, forceSync = false) => {
     try {
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
       }
       return await fetchSheet(sheetName);
     } catch (e) {
@@ -169,9 +169,9 @@ export function TaskModule({ profile }: TaskModuleProps) {
       setFetching(true);
       try {
         await Promise.all([
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Stores_Task_Assigned`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB`, { method: "POST" }),
-          fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB`, { method: "POST" })
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Stores_Task_Assigned`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB`, { method: "POST" }),
+          fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB`, { method: "POST" })
         ]);
         const [t, s, r] = await Promise.all([
           fetchSheet("Stores_Task_Assigned"),
@@ -227,7 +227,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
     showToast("Completing task in background...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -299,7 +299,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
       showToast("Updating task in background...", "info");
 
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -346,7 +346,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
       try {
         await Promise.all(
           newTasks.map(async (task) => {
-            const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+            const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -423,7 +423,7 @@ export function TaskModule({ profile }: TaskModuleProps) {
     showToast("Saving log entry...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

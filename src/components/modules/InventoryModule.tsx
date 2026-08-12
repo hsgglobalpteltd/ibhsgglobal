@@ -78,16 +78,16 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
   // Helper to lookup user details by ID/PIN/code
   const lookupUser = React.useCallback((userId: string) => {
     if (!userId || userId === "Unknown") return "Unknown";
-    const user = users.find(u => String(u.id || u.id || u.PIN || u.pin || "").trim().toLowerCase() === String(userId).trim().toLowerCase());
+    const user = users.find(u => String(u.id || u.ID || u.PIN || u.pin || "").trim().toLowerCase() === String(userId).trim().toLowerCase());
     return user ? (user.Name || user.name || userId) : userId;
   }, [users]);
 
   // Helper to lookup product details by SKU
   const lookupProduct = React.useCallback((sku: string) => {
-    const prod = products.find(p => String(p.sku || p.sku || p.Code || "").trim().toLowerCase() === String(sku).trim().toLowerCase());
+    const prod = products.find(p => String(p.sku || p.SKU || p.Code || "").trim().toLowerCase() === String(sku).trim().toLowerCase());
     if (prod) {
       const brandId = prod["Brands ID"] || prod.Brands_ID || prod.brandId || "";
-      const brandObj = brands.find(b => String(b.id || b.id || "").trim() === String(brandId).trim());
+      const brandObj = brands.find(b => String(b.id || b.ID || "").trim() === String(brandId).trim());
       const brandName = brandObj ? (brandObj["Display Name"] || brandObj.Display_Name || brandObj.name || brandId) : "Unbranded";
 
       return {
@@ -160,7 +160,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         brandList = JSON.parse(cachedBrands);
         setBrands(brandList);
       } else {
-        const brandRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=brands_DB");
+        const brandRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=brands_DB");
         if (brandRes.ok) {
           brandList = await brandRes.json();
           localStorage.setItem("brands_DB_data", JSON.stringify(brandList));
@@ -175,7 +175,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         prodList = JSON.parse(cachedProds);
         setProducts(prodList);
       } else {
-        const prodRes = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
+        const prodRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
         if (prodRes.ok) {
           prodList = await prodRes.json();
           localStorage.setItem("products_DB_data", JSON.stringify(prodList));
@@ -186,11 +186,11 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       // 3. Fetch Users mapping table (Stock_Take_Users)
       const usersSheet = "Stock_Take_Users";
       if (forceSync) {
-        await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${usersSheet}`, {
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${usersSheet}`, {
           method: "POST"
         });
       }
-      const usersRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${usersSheet}`);
+      const usersRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${usersSheet}`);
       if (usersRes.ok) {
         const userList = await usersRes.json();
         localStorage.setItem(`${usersSheet}_data`, JSON.stringify(userList));
@@ -200,13 +200,13 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       // 4. Fetch Stock Take Logs
       const logsSheet = "Stock_Take_Log";
       if (forceSync) {
-        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${logsSheet}`, {
+        const syncRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${logsSheet}`, {
           method: "POST"
         });
         if (!syncRes.ok) throw new Error("Failed to refresh server cache");
       }
 
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${logsSheet}`);
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${logsSheet}`);
       if (!res.ok) throw new Error(`Server returned status ${res.status}`);
       const rawData = await res.json();
       
@@ -330,13 +330,13 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
     }>> = {};
 
     products.forEach(p => {
-      const rawSku = p.sku || p.sku || p.Code || "";
+      const rawSku = p.sku || p.SKU || p.Code || "";
       const sku = String(rawSku).trim();
       const normSku = sku.toLowerCase();
 
       // Resolve Brand Name from Brands ID using brands_DB
       const brandId = p["Brands ID"] || p.Brands_ID || p.brandId || "";
-      const brandObj = brands.find(b => String(b.id || b.id || "").trim() === String(brandId).trim());
+      const brandObj = brands.find(b => String(b.id || b.ID || "").trim() === String(brandId).trim());
       const brand = brandObj ? (brandObj["Display Name"] || brandObj.Display_Name || brandObj.name || brandId) : "Unbranded";
 
       const name = p["Display Name"] || p.productName || p.Name || "Unknown Product";

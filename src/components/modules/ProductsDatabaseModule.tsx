@@ -68,13 +68,13 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     try {
       if (forceSync) {
         // Force Cloudflare Worker to update Database from Google Sheets
-        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
+        const syncRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
           method: "POST"
         });
         if (!syncRes.ok) throw new Error("Failed to refresh server cache");
       }
 
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server returned status ${res.status}`);
       const json = await res.json();
       
@@ -296,7 +296,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     // 4. Perform network request in background
     (async () => {
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: {
             "Content-Type": "application/json"
@@ -347,7 +347,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
 
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -451,7 +451,7 @@ function BrandEditForm({ brand, onSave, onCancel }: { brand: any; onSave: (data:
     setUploading(true);
     try {
       const filename = `${Date.now()}_${file.name.replace(/\s+/g, "_")}`;
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
         method: "POST",
         headers: {
           "Content-Type": file.type || "application/octet-stream"
@@ -619,7 +619,7 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
       const filename = `asset/products/${Date.now()}_${file.name.replace(/\s+/g, "_")}`;
       const currentImage = formData["Image"];
       const deleteQuery = currentImage ? `&deleteUrl=${encodeURIComponent(currentImage)}` : "";
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}${deleteQuery}`, {
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}${deleteQuery}`, {
         method: "POST",
         headers: {
           "Content-Type": file.type || "application/octet-stream"

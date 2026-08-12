@@ -11,7 +11,7 @@ interface StoreMapConfigModuleProps {
 }
 
 const getLocalWorkerUrl = () => {
-  if (typeof window === "undefined") return "https://ib.hsgglobalpteltd.workers.dev";
+  if (typeof window === "undefined") return "https://ib-v2.hsgglobalpteltd.workers.dev";
   const hostname = window.location.hostname;
   const isLocal = 
     hostname === "localhost" || 
@@ -19,7 +19,7 @@ const getLocalWorkerUrl = () => {
     hostname.startsWith("192.168.") ||
     hostname.startsWith("10.") ||
     hostname.startsWith("172.");
-  if (!isLocal) return "https://ib.hsgglobalpteltd.workers.dev";
+  if (!isLocal) return "https://ib-v2.hsgglobalpteltd.workers.dev";
   const targetHost = hostname === "localhost" ? "127.0.0.1" : hostname;
   return `http://${targetHost}:8787`;
 };

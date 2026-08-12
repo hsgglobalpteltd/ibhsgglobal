@@ -564,7 +564,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Fetch stores directory from backend
   const fetchStores = async () => {
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB");
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB");
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.value || []);
@@ -573,7 +573,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     } catch (_) {}
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB");
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB");
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.value || []);
@@ -662,7 +662,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Fetch API Settings from Google Sheets Setting_API
   const fetchSettingApi = async () => {
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API");
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API");
       if (res.ok) {
         const list = await res.json();
         const array = Array.isArray(list) ? list : (list.value || []);
@@ -685,11 +685,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     try {
       if (forceSync) {
         // Refresh Workers cache from Google Sheets
-        await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Track_Orders", {
+        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Track_Orders", {
           method: "POST"
         });
       }
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Track_Orders");
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Track_Orders");
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.value || []);
@@ -715,7 +715,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       } catch (_) {}
     }
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.value || []);
@@ -838,7 +838,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         data: payloadData
       };
 
-      fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updatePayload)
@@ -983,7 +983,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       data: { id: order.id }
     };
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1047,7 +1047,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     };
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1270,7 +1270,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       };
 
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
@@ -1893,7 +1893,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         }
 
         try {
-          const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/parse-do", {
+          const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/parse-do", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ pdf: base64String, type: "application/pdf" })
@@ -2186,7 +2186,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             const blob = new Blob([byteArray], { type: "image/jpeg" });
             
             const filename = `Track_Orders/DO_Paper/${order.doNumber}_page_${i + 1}_${Date.now()}.jpg`;
-            const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
+            const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
               method: "POST",
               headers: { "Content-Type": "image/jpeg" },
               body: blob
@@ -2237,7 +2237,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       };
 
       try {
-        const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
@@ -2308,7 +2308,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       data: { id: order.id }
     };
 
-    fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+    fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -2380,7 +2380,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
     };
 
-    fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+    fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -2443,7 +2443,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     };
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2503,7 +2503,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     };
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2616,7 +2616,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     };
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2652,7 +2652,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       if (statusPhotoFile) {
         showToast("Uploading status image...", "info");
         const fileName = `Track_Orders/Status_Overwrite/${statusOrder.DO_Number}_${Date.now()}.jpg`;
-        const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+        const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
           method: "POST",
           headers: { "Content-Type": "image/jpeg" },
           body: statusPhotoFile
@@ -2705,7 +2705,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         data: payloadData
       };
 
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)

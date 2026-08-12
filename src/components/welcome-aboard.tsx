@@ -145,7 +145,7 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, us
       // 2. Upload signed PDF directly to R2
       const pdfBlob = doc.output("blob");
       const uploadFileName = `contract/Signed_Contract/contract_${emailToUse}_${Date.now()}.pdf`;
-      const uploadRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(uploadFileName)}`, {
+      const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(uploadFileName)}`, {
         method: "POST",
         body: pdfBlob,
       });

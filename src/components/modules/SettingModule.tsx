@@ -102,13 +102,13 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
     setFetching(true);
     try {
       if (forceSync) {
-        const syncRes = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API`, {
+        const syncRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API`, {
           method: "POST"
         });
         if (!syncRes.ok) throw new Error("Failed to refresh server cache");
       }
 
-      const res = await fetch(`https://ib.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API`);
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API`);
       if (!res.ok) throw new Error(`Server returned status ${res.status}`);
       const json = await res.json();
       const items = Array.isArray(json) ? json : (json.value || []);
@@ -218,7 +218,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
     showToast("Saving API record in background...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -249,7 +249,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
     showToast("Deleting API record from database...", "info");
 
     try {
-      const res = await fetch("https://ib.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
