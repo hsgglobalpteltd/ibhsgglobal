@@ -700,18 +700,18 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     
     const payload = {
       id: editingPayoutId || `payout_${Date.now()}`,
-      "Promoter ID": selectedPayoutPromoterId,
-      "Promoter Name": promoterName,
-      "Start Date": new Date(payoutStartDate + "T00:00:00").getTime(),
-      "End Date": new Date(payoutEndDate + "T23:59:59").getTime(),
-      "Hourly Rate": Number(payoutHourlyRate),
-      "Total Payout": totalSum,
-      "Payout Details": JSON.stringify(selectedRows),
-      Status: editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.Status || "Pending Payout") : "Pending Payout",
-      "Receipt Photo URL": editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.["receipt_photo_url"] || "") : "",
-      "Payment Reference": editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.["payment_reference"] || "") : "",
-      "Payment Date": editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.["payment_date"] || "") : "",
-      "Created At": Date.now()
+      promoter_id: selectedPayoutPromoterId,
+      promoter_name: promoterName,
+      start_date: new Date(payoutStartDate + "T00:00:00").getTime(),
+      end_date: new Date(payoutEndDate + "T23:59:59").getTime(),
+      hourly_rate: Number(payoutHourlyRate),
+      total_payout: totalSum,
+      payout_details: JSON.stringify(selectedRows),
+      status: editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.status || "Pending Payout") : "Pending Payout",
+      receipt_photo_url: editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.receipt_photo_url || "") : "",
+      payment_reference: editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.payment_reference || "") : "",
+      payment_date: editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.payment_date || "") : "",
+      created_at: Date.now()
     };
 
     // Capture snapshot for rollback
@@ -735,8 +735,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       if (match) {
         return {
           ...s,
-          "Actual Start": match.startTime,
-          "Actual End": match.endTime
+          "actual_start": match.startTime,
+          "actual_end": match.endTime
         };
       }
       return s;
@@ -771,8 +771,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           if (originalSchedule["actual_start"] !== row.startTime || originalSchedule["actual_end"] !== row.endTime) {
             const updatedSchedule = {
               ...originalSchedule,
-              "Actual Start": row.startTime,
-              "Actual End": row.endTime
+              "actual_start": row.startTime,
+              "actual_end": row.endTime
             };
             return fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
               method: "POST",
@@ -877,10 +877,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       // 2. Update payout record
       const updatedPayout = {
         ...paymentModalPayout,
-        Status: "Paid",
-        "Receipt Photo URL": receiptUrl,
-        "Payment Reference": paymentRef,
-        "Payment Date": new Date(paymentDate + "T12:00:00").getTime()
+        status: "Paid",
+        receipt_photo_url: receiptUrl,
+        payment_reference: paymentRef,
+        payment_date: new Date(paymentDate + "T12:00:00").getTime()
       };
 
       const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
@@ -1012,7 +1012,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.text(String(`$${Number(payout["total_payout"])?.toFixed(2)}`), 135, 61);
 
     // PAID Rubber Stamp (red color, angled by -15 degrees)
-    if (payout.Status === "Paid") {
+    if (payout.status === "Paid") {
       doc.saveGraphicsState();
       
       doc.setFont("helvetica", "bold");
@@ -1322,8 +1322,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
 
     const campaignId = editingCampaignId || `camp_${Date.now()}`;
-    const startMs = campStartDate ? dateStrToEpoch(campStartDate) : "";
-    const endMs = campEndDate ? dateStrToEpoch(campEndDate) : "";
+    const startMs = campStartDate ? dateStrToEpoch(campStartDate) : null;
+    const endMs = campEndDate ? dateStrToEpoch(campEndDate) : null;
 
     const payload = {
       table: "Promoter_Campaign",
@@ -1427,7 +1427,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Toggle Campaign Archive Status
   const handleToggleCampaignArchive = async (campaignId: string, isArchive: boolean) => {
     // Optimistic Update
-    setCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, archived: isArchive ? 1 : "" } : c));
+    setCampaigns(prev => prev.map(c => c.id === campaignId ? { ...c, archived: isArchive ? true : false } : c));
 
     try {
       const currentCampaign = campaigns.find(c => c.id === campaignId);
@@ -1438,7 +1438,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         action: "update",
         data: {
           ...currentCampaign,
-          archived: isArchive ? 1 : ""
+          archived: isArchive ? true : false
         }
       };
 
@@ -1479,7 +1479,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         email: String(promoterEmail || "").trim(),
         paynow_account: String(promoterPaynow || "").trim(),
         pin: String(promoterPin || "").trim(),
-        archived: editingPromoterId ? (promoters.find(p => p.id === editingPromoterId)?.archived || "") : ""
+        archived: editingPromoterId ? (promoters.find(p => p.id === editingPromoterId)?.archived || false) : false
       }
     };
 
@@ -1535,7 +1535,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Toggle Promoter Archive Status
   const handleTogglePromoterArchive = async (pId: string, isArchive: boolean) => {
     // Optimistic Update
-    setPromoters(prev => prev.map(p => p.id === pId ? { ...p, archived: isArchive ? 1 : "" } : p));
+    setPromoters(prev => prev.map(p => p.id === pId ? { ...p, archived: isArchive ? true : false } : p));
 
     try {
       const currentPromoter = promoters.find(p => p.id === pId);
@@ -1546,7 +1546,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         action: "update",
         data: {
           ...currentPromoter,
-          archived: isArchive ? 1 : ""
+          archived: isArchive ? true : false
         }
       };
 
@@ -1713,7 +1713,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.text(c["campaign_title"], 14, 32);
 
     // Brand info
-    const brandName = String(c.Brand || "").split(",")
+    const brandName = String(c.brand || "").split(",")
       .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["display_name"] || id.trim())
       .join(", ");
     doc.setFont("helvetica", "bold");
@@ -1764,8 +1764,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.setFontSize(9);
     doc.setTextColor(39, 39, 42);
     let targetProds = "All Products in Brand";
-    if (c.Products && c.Products.trim()) {
-      const prodSkus = c.Products.split(",");
+    if (c.products && c.products.trim()) {
+      const prodSkus = c.products.split(",");
       const prodNames = prodSkus.map((sku: string) => {
         const p = products.find(prod => String(prod.sku).toLowerCase() === sku.toLowerCase());
         return p ? p["display_name"] : sku;
@@ -1967,7 +1967,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           shiftWage = hrs * Number(matchingPayout["hourly_rate"] || 0);
         }
 
-        if (matchingPayout.Status === "Paid") {
+        if (matchingPayout.status === "Paid") {
           payrollText = `$${shiftWage.toFixed(2)} (Paid)`;
           if (matchingPayout["payment_reference"]) {
             payrollText += ` - ${matchingPayout["payment_reference"]}`;
@@ -2036,7 +2036,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.text(c["campaign_title"], 14, 32);
 
     // Brand info
-    const brandName = String(c.Brand || "").split(",")
+    const brandName = String(c.brand || "").split(",")
       .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["display_name"] || id.trim())
       .join(", ");
     doc.setFont("helvetica", "bold");
@@ -2087,8 +2087,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.setFontSize(9);
     doc.setTextColor(39, 39, 42);
     let targetProds = "All Products in Brand";
-    if (c.Products && c.Products.trim()) {
-      const prodSkus = c.Products.split(",");
+    if (c.products && c.products.trim()) {
+      const prodSkus = c.products.split(",");
       const prodNames = prodSkus.map((sku: string) => {
         const p = products.find(prod => String(prod.sku).toLowerCase() === sku.toLowerCase());
         return p ? p["display_name"] : sku;
@@ -2290,7 +2290,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     });
 
     return list.map(c => {
-      const brandName = String(c.Brand || "").split(",")
+      const brandName = String(c.brand || "").split(",")
         .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["display_name"] || id.trim())
         .join(", ");
       const isArchived = c.archived && (String(c.archived) === "1" || String(c.archived) === "true");
@@ -2331,8 +2331,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 setCampEndDate(c["end_date"] ? formatEpochToDateInput(c["end_date"]) : "");
                 setCampDesc(c["campaign_description"] || "");
                 setCampInstr(c["campaign_instruction"] || "");
-                setCampBrand(c.Brand || "");
-                setCampProducts(c.Products ? c.Products.split(",") : []);
+                setCampBrand(c.brand || "");
+                setCampProducts(c.products ? c.products.split(",") : []);
                 setIsCreatingCampaign(true);
               }}
               className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-655 hover:text-zinc-955 transition-colors cursor-pointer flex items-center justify-center"
@@ -2476,15 +2476,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const tempSchedule = {
       id: payloadData.id,
       date: payloadData.date,
-      "Campaign ID": payloadData["campaign_id"],
-      "Campaign Title": payloadData["campaign_title"],
-      "Store ID": payloadData["store_id"],
-      "Store Name": payloadData["store_name"],
-      "Promoter ID": payloadData["promoter_id"],
-      "Promoter Name": payloadData["promoter_name"],
-      "Shift Start": payloadData["shift_start"],
-      "Shift End": payloadData["shift_end"],
-      Remarks: payloadData.Remarks || ""
+      campaign_id: payloadData.campaign_id,
+      campaign_title: payloadData.campaign_title,
+      store_id: payloadData.store_id,
+      store_name: payloadData.store_name,
+      promoter_id: payloadData.promoter_id,
+      promoter_name: payloadData.promoter_name,
+      shift_start: payloadData.shift_start,
+      shift_end: payloadData.shift_end,
+      remarks: payloadData.remarks || payloadData.Remarks || ""
     };
 
     const newSchedules = [tempSchedule, ...schedules];
@@ -2504,13 +2504,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         formatTimeDisplay(backupItem["shift_end"]) !== formatTimeDisplay(s["shift_end"]) ||
         backupItem["permission_by"] !== s["permission_by"] ||
         backupItem["stock_checked"] !== s["stock_checked"] ||
-        backupItem["Promotion Checked"] !== s["Promotion Checked"] ||
-        backupItem["Photo URL"] !== s["Photo URL"] ||
+        backupItem["promotion_checked"] !== s["promotion_checked"] ||
+        backupItem["photo_url"] !== s["photo_url"] ||
         backupItem["actual_start"] !== s["actual_start"] ||
         backupItem["actual_end"] !== s["actual_end"] ||
         backupItem["custom_tasks"] !== s["custom_tasks"] ||
         backupItem["promoting_cost"] !== s["promoting_cost"] ||
-        backupItem.Remarks !== s.Remarks
+        backupItem.remarks !== s.remarks
       );
     });
 
@@ -2828,14 +2828,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const scheduleData = {
       id: `sch_${Date.now()}`,
       date: date.getTime(),
-      "Campaign ID": selectedCampaign.id,
-      "Campaign Title": selectedCampaign["campaign_title"],
-      "Store ID": String(storeId),
-      "Store Name": selectedStore["display_name"],
-      "Promoter ID": String(promoterId),
-      "Promoter Name": selectedPromoter.name,
-      "Shift Start": shiftStart,
-      "Shift End": shiftEnd
+      campaign_id: selectedCampaign.id,
+      campaign_title: selectedCampaign["campaign_title"],
+      store_id: String(storeId),
+      store_name: selectedStore["display_name"],
+      promoter_id: String(promoterId),
+      promoter_name: selectedPromoter.name,
+      shift_start: shiftStart,
+      shift_end: shiftEnd
     };
 
     if (!carriesBrand) {
@@ -2897,15 +2897,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const newSch = {
       id: `sch_${Date.now()}`,
       date: date.getTime(),
-      "Campaign ID": copiedSchedule["campaign_id"],
-      "Campaign Title": copiedSchedule["campaign_title"],
-      "Store ID": copiedSchedule["store_id"],
-      "Store Name": copiedSchedule["store_name"],
-      "Promoter ID": String(promoterId),
-      "Promoter Name": selectedPromoter.name,
-      "Shift Start": shiftStart,
-      "Shift End": shiftEnd,
-      Remarks: copiedSchedule.Remarks || ""
+      campaign_id: copiedSchedule.campaign_id,
+      campaign_title: copiedSchedule.campaign_title,
+      store_id: copiedSchedule.store_id,
+      store_name: copiedSchedule.store_name,
+      promoter_id: String(promoterId),
+      promoter_name: selectedPromoter.name,
+      shift_start: shiftStart,
+      shift_end: shiftEnd,
+      remarks: copiedSchedule.remarks || ""
     };
 
     const newSchedules = [...schedules, newSch];
@@ -2915,7 +2915,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   };
 
   // Inline Shift Time Updates (Campaign Mode)
-  const handleUpdateTime = (schId: string, field: "Shift Start" | "Shift End", value: string) => {
+  const handleUpdateTime = (schId: string, field: "shift_start" | "shift_end", value: string) => {
     if (!isEditMode) {
       showToast("Please click 'Edit Mode' to make changes.", "warning");
       return;
@@ -2926,8 +2926,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
-    const nextStart = field === "Shift Start" ? value : (formatTimeDisplay(current["shift_start"]) || "09:00");
-    const nextEnd = field === "Shift End" ? value : (formatTimeDisplay(current["shift_end"]) || "17:00");
+    const nextStart = field === "shift_start" ? value : (formatTimeDisplay(current["shift_start"]) || "09:00");
+    const nextEnd = field === "shift_end" ? value : (formatTimeDisplay(current["shift_end"]) || "17:00");
 
     if (!checkAndToastConflict(current["promoter_id"], current.date, nextStart, nextEnd, schId)) {
       return;
@@ -2948,7 +2948,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       showToast("This shift is locked because it is linked to a payout.", "error");
       return;
     }
-    const newSchedules = schedules.map(s => s.id === schId ? { ...s, Remarks: value } : s);
+    const newSchedules = schedules.map(s => s.id === schId ? { ...s, remarks: value } : s);
     pushHistory(newSchedules);
   };
 
@@ -2990,7 +2990,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const updatedCustomTasks = [...existingCustomTasks, newTask];
     setCustomTaskTexts(prev => ({ ...prev, [shiftId]: "" }));
 
-    await handleUpdateShiftField(shiftId, "Custom Tasks", JSON.stringify(updatedCustomTasks));
+    await handleUpdateShiftField(shiftId, "custom_tasks", JSON.stringify(updatedCustomTasks));
   };
 
   const handleToggleCustomTask = async (shiftId: string, taskId: string) => {
@@ -3010,7 +3010,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       t.id === taskId ? { ...t, done: t.done === 1 ? 0 : 1 } : t
     );
 
-    await handleUpdateShiftField(shiftId, "Custom Tasks", JSON.stringify(updatedCustomTasks));
+    await handleUpdateShiftField(shiftId, "custom_tasks", JSON.stringify(updatedCustomTasks));
   };
 
   const handleDeleteCustomTask = async (shiftId: string, taskId: string) => {
@@ -3028,7 +3028,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     const updatedCustomTasks = existingCustomTasks.filter((t: any) => t.id !== taskId);
 
-    await handleUpdateShiftField(shiftId, "Custom Tasks", JSON.stringify(updatedCustomTasks));
+    await handleUpdateShiftField(shiftId, "custom_tasks", JSON.stringify(updatedCustomTasks));
   };
 
   // Campaign Mode helper dates (uses the range date inputs selected by user)
@@ -3354,7 +3354,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               const textLines = [
                 getFormattedStoreName(sch["store_id"], sch["store_name"]),
                 `${formatTimeDisplay(sch["shift_start"])} - ${formatTimeDisplay(sch["shift_end"])}`,
-                sch.Remarks || ""
+                sch.remarks || ""
               ].filter(Boolean);
               
               const wrappedText = doc.splitTextToSize(textLines.join("\n"), 52);
@@ -3548,7 +3548,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             `${getDayName(dateObj)}\n${formatPrintDateStr(dateObj)}`,
             `${getFormattedStoreName(sch["store_id"], sch["store_name"])}\n${storeAddress}\n${formatTimeDisplay(sch["shift_start"])} - ${formatTimeDisplay(sch["shift_end"])}`,
             `${campaignTitle}\n${campaignDescLocal}`,
-            `${sch.Remarks ? 'Remarks: ' + sch.Remarks : ''}\n${campaignInstrLocal}`
+            `${sch.remarks ? 'Remarks: ' + sch.remarks : ''}\n${campaignInstrLocal}`
           ];
 
           const wrappedTexts = colTexts.map((txt, idx) => 
@@ -3680,7 +3680,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         const brandNames = brandIds.map(id => brands.find(b => String(b.id) === String(id))?.["display_name"] || id).join(", ");
         const brandNameText = brandNames || "No Brand";
         const campaignName = campaign ? (campaign["campaign_title"] || campaign.Title || "") : "";
-        const shiftRemark = sch.Remarks ? String(sch.Remarks).trim() : "";
+        const shiftRemark = sch.remarks ? String(sch.remarks).trim() : "";
 
         const timeSlotText = `${formatTimeDisplay(sch["shift_start"])} - ${formatTimeDisplay(sch["shift_end"])}`;
 
@@ -4047,8 +4047,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     { id: 'id_display', header: 'ID', accessor: 'id_display' },
     { id: "Nickname", header: "Nickname", accessor: "Nickname" },
     { id: "FullName", header: "Full Name", accessor: "FullName" },
-    { id: "Phone", header: "Phone", accessor: "Phone" },
-    { id: "Email", header: "Email", accessor: "Email" },
+    { id: "phone", header: "Phone", accessor: "phone" },
+    { id: "email", header: "Email", accessor: "email" },
     { id: "Paynow", header: "Paynow Account", accessor: "Paynow" }
   ], []);
 
@@ -4136,7 +4136,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
   const mappedPayouts = React.useMemo(() => {
     return payouts.map((p) => {
-      const isPaid = p.Status === "Paid";
+      const isPaid = p.status === "Paid";
       const formatTimestamp = (ts: any): string => {
         if (!ts) return "-";
         const d = new Date(Number(ts));
@@ -4176,10 +4176,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
             isPaid ? "bg-green-50 text-green-700 border border-green-200" : "bg-amber-50 text-amber-700 border border-amber-200"
           )}>
-            {p.Status || "Pending Payout"}
+            {p.status || "Pending Payout"}
           </span>
         ),
-        Status_raw: p.Status || "Pending Payout",
+        Status_raw: p.status || "Pending Payout",
         DatePayout: <span className="font-semibold text-zinc-700">{p["payment_date"] ? formatTimestamp(p["payment_date"]) : "-"}</span>,
         DatePayout_raw: p["payment_date"] ? formatTimestamp(p["payment_date"]) : "-",
         Reference: <span className="font-mono font-bold text-zinc-800">{p["payment_reference"] || "-"}</span>,
@@ -4673,10 +4673,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             value={s["permission_by"] || ""}
                                             onClick={(e) => e.stopPropagation()}
                                             onChange={(e) => {
-                                              setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "Permission By": e.target.value } : item));
+                                              setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "permission_by": e.target.value } : item));
                                             }}
                                             onBlur={(e) => {
-                                              handleUpdateShiftField(s.id, "Permission By", e.target.value.trim());
+                                              handleUpdateShiftField(s.id, "permission_by", e.target.value.trim());
                                             }}
                                             disabled={!isEditMode}
                                             className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4738,10 +4738,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             value={s["stock_checked"] || ""}
                                             onClick={(e) => e.stopPropagation()}
                                             onChange={(e) => {
-                                              setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "Stock Checked": e.target.value } : item));
+                                              setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "stock_checked": e.target.value } : item));
                                             }}
                                             onBlur={(e) => {
-                                              handleUpdateShiftField(s.id, "Stock Checked", e.target.value.trim());
+                                              handleUpdateShiftField(s.id, "stock_checked", e.target.value.trim());
                                             }}
                                             disabled={!isEditMode}
                                             className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4820,13 +4820,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                               const updatedCustomTasks = customTasks.map((ct: any) =>
                                                 ct.id === t.id ? { ...ct, answer: e.target.value } : ct
                                               );
-                                              setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "Custom Tasks": JSON.stringify(updatedCustomTasks) } : item));
+                                              setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "custom_tasks": JSON.stringify(updatedCustomTasks) } : item));
                                             }}
                                             onBlur={(e) => {
                                               const updatedCustomTasks = customTasks.map((ct: any) =>
                                                 ct.id === t.id ? { ...ct, answer: e.target.value.trim() } : ct
                                               );
-                                              handleUpdateShiftField(s.id, "Custom Tasks", JSON.stringify(updatedCustomTasks));
+                                              handleUpdateShiftField(s.id, "custom_tasks", JSON.stringify(updatedCustomTasks));
                                             }}
                                             disabled={!isEditMode}
                                             className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4898,10 +4898,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                 value={s["actual_end"] || ""}
                                                 onClick={(e) => e.stopPropagation()}
                                                 onChange={(e) => {
-                                                  setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "Actual End": e.target.value } : item));
+                                                  setSchedules(prev => prev.map(item => item.id === s.id ? { ...item, "actual_end": e.target.value } : item));
                                                 }}
                                                 onBlur={(e) => {
-                                                  handleUpdateShiftField(s.id, "Actual End", e.target.value.trim());
+                                                  handleUpdateShiftField(s.id, "actual_end", e.target.value.trim());
                                                 }}
                                                 disabled={!isEditMode}
                                                 className="w-full px-2 py-1 bg-white border border-red-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-red-500 transition-all shadow-xs disabled:bg-red-50/50 disabled:cursor-not-allowed"
@@ -4913,7 +4913,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                 onClick={(e) => {
                                                   e.stopPropagation();
                                                   const newSchedules = schedules.map(item => 
-                                                    item.id === s.id ? { ...item, "Actual Start": "", "Actual End": "" } : item
+                                                    item.id === s.id ? { ...item, "actual_start": "", "actual_end": "" } : item
                                                   );
                                                   setSchedules(newSchedules);
                                                   pushHistory(newSchedules);
@@ -4936,7 +4936,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                   value={s["actual_start"] || ""}
                                                   onClick={(e) => e.stopPropagation()}
                                                   onChange={(e) => {
-                                                    handleUpdateShiftField(s.id, "Actual Start", e.target.value);
+                                                    handleUpdateShiftField(s.id, "actual_start", e.target.value);
                                                   }}
                                                   disabled={!isEditMode}
                                                   className="w-full px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-zinc-555 transition-all cursor-pointer shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4952,7 +4952,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                   value={s["actual_end"] || ""}
                                                   onClick={(e) => e.stopPropagation()}
                                                   onChange={(e) => {
-                                                    handleUpdateShiftField(s.id, "Actual End", e.target.value);
+                                                    handleUpdateShiftField(s.id, "actual_end", e.target.value);
                                                   }}
                                                   disabled={!isEditMode}
                                                   className="w-full px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-zinc-555 transition-all cursor-pointer shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
@@ -4969,7 +4969,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                     onClick={(e) => {
                                                       e.stopPropagation();
                                                       const newSchedules = schedules.map(item => 
-                                                        item.id === s.id ? { ...item, "Actual Start": "Absent", "Actual End": "" } : item
+                                                        item.id === s.id ? { ...item, "actual_start": "Absent", "actual_end": "" } : item
                                                       );
                                                       setSchedules(newSchedules);
                                                       pushHistory(newSchedules);
@@ -5433,21 +5433,21 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                         <input
                                                           type="time"
                                                           value={formatTimeDisplay(sch["shift_start"]) || "09:00"}
-                                                          onChange={(e) => handleUpdateTime(sch.id, "Shift Start", e.target.value)}
+                                                          onChange={(e) => handleUpdateTime(sch.id, "shift_start", e.target.value)}
                                                           className="px-1 py-0.5 border border-zinc-200 rounded text-[9.5px] font-semibold text-zinc-850 bg-white outline-none focus:border-zinc-500 cursor-pointer w-[92px]"
                                                         />
                                                         <span className="text-[9px] text-zinc-400 font-bold">-</span>
                                                         <input
                                                           type="time"
                                                           value={formatTimeDisplay(sch["shift_end"]) || "17:00"}
-                                                          onChange={(e) => handleUpdateTime(sch.id, "Shift End", e.target.value)}
+                                                          onChange={(e) => handleUpdateTime(sch.id, "shift_end", e.target.value)}
                                                           className="px-1 py-0.5 border border-zinc-200 rounded text-[9.5px] font-semibold text-zinc-850 bg-white outline-none focus:border-zinc-500 cursor-pointer w-[92px]"
                                                         />
                                                       </div>
                                                     </div>
                                                     <textarea
                                                       rows={3}
-                                                      value={sch.Remarks || ""}
+                                                      value={sch.remarks || ""}
                                                       onChange={(e) => handleUpdateRemark(sch.id, e.target.value)}
                                                       placeholder="Add Remark..."
                                                       className="px-1.5 py-1 border border-zinc-200 rounded text-[9.5px] font-medium text-zinc-800 bg-white outline-none focus:border-zinc-450 w-full resize-none leading-normal"
@@ -5459,9 +5459,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                       <Clock size={11} className="text-zinc-400 shrink-0" />
                                                       <span>{formatTimeDisplay(sch["shift_start"]) || "09:00"} - {formatTimeDisplay(sch["shift_end"]) || "17:00"}</span>
                                                     </div>
-                                                    {sch.Remarks && (
-                                                      <div className="text-[9.5px] text-zinc-500 italic pl-4 whitespace-pre-wrap leading-tight w-full" title={sch.Remarks}>
-                                                        {sch.Remarks}
+                                                    {sch.remarks && (
+                                                      <div className="text-[9.5px] text-zinc-500 italic pl-4 whitespace-pre-wrap leading-tight w-full" title={sch.remarks}>
+                                                        {sch.remarks}
                                                       </div>
                                                     )}
                                                   </div>
@@ -7635,8 +7635,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     onClick={async () => {
                       setPromotingCostItems([]);
                       const jsonString = "[]";
-                      setSchedules(prev => prev.map(item => String(item.id) === String(activeShift.id) ? { ...item, "Promoting Cost": jsonString } : item));
-                      await handleUpdateShiftField(activeShift.id, "Promoting Cost", jsonString);
+                      setSchedules(prev => prev.map(item => String(item.id) === String(activeShift.id) ? { ...item, "promoting_cost": jsonString } : item));
+                      await handleUpdateShiftField(activeShift.id, "promoting_cost", jsonString);
                       setPromotingCostModalShiftId(null);
                       showToast("Promoting cost saved as zero.", "success");
                     }}
@@ -7656,9 +7656,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                       const jsonString = JSON.stringify(cleanItems);
                       
-                      setSchedules(prev => prev.map(item => String(item.id) === String(activeShift.id) ? { ...item, "Promoting Cost": jsonString } : item));
+                      setSchedules(prev => prev.map(item => String(item.id) === String(activeShift.id) ? { ...item, "promoting_cost": jsonString } : item));
                       
-                      await handleUpdateShiftField(activeShift.id, "Promoting Cost", jsonString);
+                      await handleUpdateShiftField(activeShift.id, "promoting_cost", jsonString);
 
                       setPromotingCostModalShiftId(null);
                       showToast("Promoting cost saved successfully.", "success");
@@ -7787,15 +7787,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     const scheduleData = {
                       id: `sch_${Date.now()}`,
                       date: date.getTime(),
-                      "Campaign ID": selectedCampaign.id,
-                      "Campaign Title": selectedCampaign["campaign_title"],
-                      "Store ID": `OTHER_${Date.now()}`,
-                      "Store Name": otherLocationTitle.trim(),
-                      "Promoter ID": String(promoterId),
-                      "Promoter Name": selectedPromoter.name,
-                      "Shift Start": shiftStart,
-                      "Shift End": shiftEnd,
-                      "Store Address": otherLocationAddress.trim()
+                      campaign_id: selectedCampaign.id,
+                      campaign_title: selectedCampaign["campaign_title"],
+                      store_id: `OTHER_${Date.now()}`,
+                      store_name: otherLocationTitle.trim(),
+                      promoter_id: String(promoterId),
+                      promoter_name: selectedPromoter.name,
+                      shift_start: shiftStart,
+                      shift_end: shiftEnd,
+                      store_address: otherLocationAddress.trim()
                     };
 
                     const newSchedules = [...schedules, scheduleData];

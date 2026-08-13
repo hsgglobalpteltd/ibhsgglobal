@@ -2,11 +2,7 @@
 
 import * as React from "react";
 import { FeatureCard } from "../feature-card";
-import { PromoterModule } from "../modules/PromoterModule";
-import { MerchandiserModule } from "../modules/MerchandiserModule";
-import { TaskModule } from "../modules/TaskModule";
-import { TrackOrderModule } from "../modules/TrackOrderModule";
-import { TiktokFulfillmentModule } from "../modules/TiktokFulfillmentModule";
+import { MaintenanceModule } from "../MaintenanceModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 
 interface FrontlinePageProps {
@@ -112,20 +108,7 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
   };
 
   const renderActiveSubModule = () => {
-    switch (activeSubModule) {
-      case "Promoter":
-        return <PromoterModule profile={profile} />;
-      case "Merchandiser":
-        return <MerchandiserModule profile={profile} />;
-      case "Task":
-        return <TaskModule profile={profile} />;
-      case "Track Order":
-        return <TrackOrderModule profile={profile} />;
-      case "Tiktok Fulfillment":
-        return <TiktokFulfillmentModule profile={profile} />;
-      default:
-        return null;
-    }
+    return <MaintenanceModule title={activeSubModule || ""} />;
   };
 
   return (
