@@ -27,6 +27,78 @@ const defaultColumns: Column[] = [
   { id: "Promotion", header: "Promotions", accessor: "Promotion" }
 ];
 
+function normalizeKeysToPretty(item: any): any {
+  if (!item) return item;
+  const pretty: any = {};
+  const map: Record<string, string> = {
+    id: "id",
+    retailer_id: "Retailer ID",
+    sku_number: "SKU Number",
+    sku_name: "SKU Name",
+    link_to_product_sku: "Link to Product SKU",
+    cost_price_log: "Cost Price Log",
+    rsp_log: "RSP Log",
+    promotion_log: "Promotion Log",
+    margin: "Margin",
+    uom: "UOM",
+    pack: "Pack",
+    status: "Status",
+    remove: "Remove"
+  };
+
+  const isNew = !!item.isNew;
+  for (const [k, v] of Object.entries(item)) {
+    const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+    let matchedKey = k;
+    for (const [mk, mv] of Object.entries(map)) {
+      if (mk.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanK) {
+        matchedKey = mv;
+        break;
+      }
+    }
+    pretty[matchedKey] = v;
+  }
+  if (isNew) {
+    pretty.isNew = true;
+  }
+  return pretty;
+}
+
+function normalizeKeysToRaw(item: any): any {
+  if (!item) return item;
+  const raw: any = {};
+  const map: Record<string, string> = {
+    id: "id",
+    retailerid: "retailer_id",
+    skunumber: "sku_number",
+    skuname: "sku_name",
+    linktoproductsku: "link_to_product_sku",
+    costpricelog: "cost_price_log",
+    rsplog: "rsp_log",
+    promotionlog: "promotion_log",
+    margin: "margin",
+    uom: "uom",
+    pack: "pack",
+    status: "status",
+    remove: "remove"
+  };
+
+  const isNew = !!item.isNew;
+  for (const [k, v] of Object.entries(item)) {
+    if (k === "isNew") continue;
+    const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+    let matchedKey = k.toLowerCase();
+    if (map[cleanK]) {
+      matchedKey = map[cleanK];
+    }
+    raw[matchedKey] = v;
+  }
+  if (isNew) {
+    raw.isNew = true;
+  }
+  return raw;
+}
+
 export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
   const userRole = React.useMemo(() => {
     const role = profile?.role;
@@ -223,7 +295,8 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     setNewCostVal("");
 
     // Find original database record to avoid using mapped React elements
-    const originalRecord = skus.find(s => String(s.id) === String(row.id)) || row;
+    const rawRecord = skus.find(s => String(s.id) === String(row.id)) || row;
+    const originalRecord = normalizeKeysToPretty(rawRecord);
 
     // Parse RSP Tiers from latest log entry
     try {
@@ -358,7 +431,10 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
     }
 
     if (isNew) {
-      const exists = skus.some(s => String(s["Retailer ID"]) === String(selectedRetailerId) && Number(s["SKU Number"]) === skuNumberVal);
+      const exists = skus.some(s => {
+        const rawS = normalizeKeysToRaw(s);
+        return String(rawS.retailer_id) === String(selectedRetailerId) && Number(rawS.sku_number) === skuNumberVal;
+      });
       if (exists) {
         showToast("SKU Number already exists for this Retailer!", "error");
         return;
@@ -484,12 +560,14 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
       Remove: "FALSE"
     };
 
+    const rawFinalRecord = normalizeKeysToRaw(finalRecord);
+
     const previousSkus = [...skus];
     let updatedList;
     if (isNew) {
-      updatedList = [...skus, finalRecord];
+      updatedList = [...skus, rawFinalRecord];
     } else {
-      updatedList = skus.map(s => String(s.id) === String(finalRecord.id) ? finalRecord : s);
+      updatedList = skus.map(s => String(s.id) === String(rawFinalRecord.id) ? rawFinalRecord : s);
     }
 
     setSkus(updatedList);
@@ -505,7 +583,7 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
         body: JSON.stringify({
           table: "Retailers_SKU",
           action: isNew ? "insert" : "update",
-          data: finalRecord
+          data: rawFinalRecord
         })
       });
 
@@ -525,9 +603,10 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
   const retailerDropdownOptions = React.useMemo(() => {
     const optionsMap = new Map<string, string>();
     retailers.forEach((r) => {
-      const group = r["Retailer Group"];
+      const group = r["Retailer Group"] || r.retailer_group;
+      const name = r.display_name || r["Display Name"] || String(r.id);
       if (!group || group === "Individual") {
-        optionsMap.set(String(r.id), r["Display Name"] || String(r.id));
+        optionsMap.set(String(r.id), name);
       } else {
         optionsMap.set(String(group), `Retailers ${group}`);
       }
@@ -539,14 +618,16 @@ export function RetailerSkusModule({ profile }: RetailerSkusModuleProps) {
   const filteredData = React.useMemo(() => {
     if (!selectedRetailerId) return [];
     return skus.filter(s => {
-      if (String(s["Retailer ID"]) !== String(selectedRetailerId)) return false;
-      const isActive = s.Status === true || s.Status === "TRUE" || s.Status === "true" || s.Status === 1 || String(s.Status) === "1";
+      const prettyS = normalizeKeysToPretty(s);
+      if (String(prettyS["Retailer ID"]) !== String(selectedRetailerId)) return false;
+      const isActive = prettyS.Status === true || prettyS.Status === "TRUE" || prettyS.Status === "true" || prettyS.Status === 1 || String(prettyS.Status) === "1";
       return activeTab === "active" ? isActive : !isActive;
     });
   }, [skus, selectedRetailerId, activeTab]);
 
   const rows = React.useMemo(() => {
-    return filteredData.map((item) => {
+    return filteredData.map((rawItem) => {
+      const item = normalizeKeysToPretty(rawItem);
       // Map multiple core SKU links to badges
       const links = item["Link to Product SKU"]
         ? String(item["Link to Product SKU"]).split(",").map((s: any) => s.trim()).filter(Boolean)

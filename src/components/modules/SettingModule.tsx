@@ -39,6 +39,8 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
   const [selectedFileContent, setSelectedFileContent] = React.useState<string>("");
   const [fileName, setFileName] = React.useState<string>("");
   const [uploadingContract, setUploadingContract] = React.useState<boolean>(false);
+  const [showPreview, setShowPreview] = React.useState<boolean>(false);
+  const [showUpload, setShowUpload] = React.useState<boolean>(false);
 
   const loadContract = React.useCallback(async () => {
     try {
@@ -175,13 +177,11 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
   };
 
   const handleSaveItem = async (updatedItem: any) => {
-    const previousData = [...data];
     const isNew = !!updatedItem.isNew;
 
     setEditingApi(null);
 
     const cleanData = { ...updatedItem };
-    delete cleanData.id;
     delete cleanData.isNew;
 
     // Validate keys
@@ -204,18 +204,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
       }
     }
 
-    let updatedList;
-    if (isNew) {
-      updatedList = [...data, cleanData];
-    } else {
-      updatedList = data.map((item) =>
-        String(item.id) === String(cleanData.id) ? { ...item, ...cleanData } : item
-      );
-    }
-    setData(updatedList);
-    localStorage.setItem("Setting_API_data", JSON.stringify(updatedList));
-
-    showToast("Saving API record in background...", "info");
+    showToast("Saving API record...", "info");
 
     try {
       const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
@@ -232,12 +221,21 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
       const result = await res.json();
       if (!result.success) throw new Error(result.error || "Failed to save API record");
 
-      fetchFreshData(false);
       showToast("API record saved successfully!", "success");
+
+      let updatedList;
+      if (isNew) {
+        updatedList = [...data, cleanData];
+      } else {
+        updatedList = data.map((item) =>
+          String(item.id) === String(cleanData.id) ? { ...item, ...cleanData } : item
+        );
+      }
+      setData(updatedList);
+      localStorage.setItem("Setting_API_data", JSON.stringify(updatedList));
+      fetchFreshData(false);
     } catch (err: any) {
-      showToast("Background sync failed: " + err.message + ". Reverting changes...", "error");
-      setData(previousData);
-      localStorage.setItem("Setting_API_data", JSON.stringify(previousData));
+      showToast("Save failed: " + err.message, "error");
     }
   };
 
@@ -245,8 +243,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
     const targetItem = data.find((item) => String(item.id) === String(rowId));
     if (!targetItem) return;
 
-    const previousData = [...data];
-    showToast("Deleting API record from database...", "info");
+    showToast("Deleting API record...", "info");
 
     try {
       const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
@@ -263,15 +260,14 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
       const result = await res.json();
       if (!result.success) throw new Error(result.error || "Failed to delete API record");
 
+      showToast("API record deleted successfully!", "success");
+
       const updatedList = data.filter((item) => String(item.id) !== String(targetItem.id));
       setData(updatedList);
       localStorage.setItem("Setting_API_data", JSON.stringify(updatedList));
-
       fetchFreshData(false);
-      showToast("API record deleted successfully!", "success");
     } catch (err: any) {
       showToast("Delete failed: " + err.message, "error");
-      setData(previousData);
     }
   };
 
@@ -299,63 +295,100 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
         />
       </div>
 
-      <div className="content-body flex-1 w-full overflow-y-auto">
+      <div className="content-body flex-1 w-full overflow-y-auto no-scrollbar">
         {activeTab === "configuration" ? (
-          <div className="flex flex-col gap-6 bg-white border border-slate-200 rounded-lg p-6 shadow-xs">
-            <div className="flex flex-col gap-1 border-b border-slate-200 pb-4">
-              <h3 className="text-lg font-bold text-zinc-900">Sign-Up Contract Management</h3>
-              <p className="text-xs text-zinc-500">
-                Upload a new plain text contract (.txt file). When updated, all users will be prompted to read and sign it on their next login.
-              </p>
-            </div>
- 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Left Column: Current Contract View */}
-              <div className="flex flex-col gap-2">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Active Contract Preview</label>
-                <div className="flex-1 min-h-[250px] max-h-[350px] overflow-y-auto bg-slate-50/50 border border-slate-200 rounded-lg p-4 text-xs leading-relaxed text-zinc-700 whitespace-pre-wrap select-text custom-scrollbar">
-                  {contractText || "No active contract uploaded yet. Fallback standard agreement is being used."}
-                </div>
-                {contractUpdatedAt > 0 && (
-                  <span className="text-[10px] text-zinc-500 italic font-medium">
-                    Last updated: {new Date(contractUpdatedAt).toLocaleDateString("en-GB")} {new Date(contractUpdatedAt).toLocaleTimeString([], { hour12: false })}
-                  </span>
-                )}
+          <div className="flex flex-col gap-4 bg-white border border-slate-200 rounded-lg p-5 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
+              <div className="flex-1 flex flex-col gap-0.5">
+                <h3 className="text-sm font-bold text-zinc-900">Sign-Up Contract Management</h3>
+                <p className="text-[11px] text-zinc-555 leading-relaxed mt-0.5">
+                  Manage the mandatory NDA/Contract users must sign upon registration.
+                </p>
               </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowPreview(true)}
+                  className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-xs font-bold text-zinc-700 rounded-md transition duration-150 cursor-pointer flex items-center gap-1.5 outline-none active:scale-98"
+                >
+                  <svg className="w-3.5 h-3.5 text-zinc-650" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                  </svg>
+                  <span>View Active Contract</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowUpload(!showUpload)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-md transition duration-150 cursor-pointer flex items-center gap-1.5 outline-none border ${
+                    showUpload 
+                      ? "bg-slate-100 border-slate-300 text-zinc-750" 
+                      : "bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] text-white"
+                  }`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  <span>{showUpload ? "Cancel Update" : "Publish New"}</span>
+                </button>
+              </div>
+            </div>
 
-              {/* Right Column: Upload Panel */}
-              <div className="flex flex-col gap-4 bg-[#F0F4F9] border border-transparent rounded-lg p-5">
-                <h4 className="text-sm font-bold text-zinc-800">Publish New Contract</h4>
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Choose Plain Text (.txt) File</label>
-                  <input
-                    type="file"
-                    accept=".txt"
-                    onChange={handleFileChange}
-                    className="w-full text-xs text-zinc-500 file:mr-4 file:py-2 file:px-4 file:rounded file:border-0 file:text-xs file:font-bold file:bg-[#C2E7FF] file:text-[#001D35] hover:file:bg-[#B3DBF2] file:cursor-pointer"
-                  />
+            {/* Collapsible Upload Panel */}
+            {showUpload ? (
+              <div className="flex flex-col gap-3 bg-[#F0F4F9] border border-transparent rounded-lg p-4 animate-in slide-in-from-top-2 duration-150 mt-1">
+                <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+                  <div className="flex-1 flex flex-col gap-1.5">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Choose Plain Text (.txt) File</label>
+                    <input
+                      type="file"
+                      accept=".txt"
+                      onChange={handleFileChange}
+                      className="w-full text-xs text-zinc-500 file:mr-4 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-bold file:bg-[#C2E7FF] file:text-[#001D35] hover:file:bg-[#B3DBF2] file:cursor-pointer"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-2 items-end">
+                    <CustomButton
+                      type="button"
+                      onClick={handleUpdateContract}
+                      disabled={!selectedFileContent || uploadingContract}
+                      className="px-4 h-8 text-[11px] font-bold bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] text-white rounded transition active:scale-98 shadow-sm flex-shrink-0"
+                    >
+                      {uploadingContract ? "Publishing..." : "Update Contract (Force Re-sign)"}
+                    </CustomButton>
+                  </div>
                 </div>
 
                 {fileName && (
-                  <div className="flex flex-col gap-1 bg-white border border-slate-200 rounded p-3">
-                    <span className="text-xs font-bold text-zinc-700 truncate">Selected: {fileName}</span>
+                  <div className="flex flex-col gap-1 bg-white border border-slate-200 rounded-lg p-3">
+                    <span className="text-xs font-bold text-zinc-700 truncate">Selected File: {fileName}</span>
                     <span className="text-[10px] text-zinc-500">Previewing first 200 characters:</span>
-                    <p className="text-[10px] text-zinc-600 italic truncate bg-[#F0F4F9] p-1.5 rounded border border-slate-200 mt-1">
+                    <p className="text-[10px] text-zinc-650 italic truncate bg-[#F0F4F9] p-2 rounded border border-slate-200 mt-1 leading-relaxed">
                       {selectedFileContent.substring(0, 200)}...
                     </p>
                   </div>
                 )}
 
-                <CustomButton
-                  type="button"
-                  onClick={handleUpdateContract}
-                  disabled={!selectedFileContent || uploadingContract}
-                  className="w-full h-10 text-xs mt-2 bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] text-white rounded"
-                >
-                  {uploadingContract ? "Updating Contract..." : "Update Contract (Force Re-sign)"}
-                </CustomButton>
+                {contractUpdatedAt > 0 && (
+                  <div className="border-t border-[#D3E3FD] pt-2 flex justify-end">
+                    <span className="text-[10px] text-zinc-500 italic font-medium select-none">
+                      Active NDA Last Updated: {new Date(contractUpdatedAt).toLocaleDateString("en-GB")} {new Date(contractUpdatedAt).toLocaleTimeString([], { hour12: false })}
+                    </span>
+                  </div>
+                )}
               </div>
-            </div>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-slate-200 rounded-lg p-6 text-center select-none bg-slate-50/20 min-h-[160px]">
+                <svg className="w-8 h-8 text-slate-400 mb-2" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span className="text-xs font-bold text-zinc-750">Active Contract Details</span>
+                <span className="text-[10px] text-zinc-450 mt-1 max-w-[240px] leading-relaxed">
+                  NDA Signature is fully enforced. Click "View Active Contract" to review content or "Publish New" to replace.
+                </span>
+              </div>
+            )}
           </div>
         ) : (
           <DataTable
@@ -380,6 +413,45 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
           onSave={handleSaveItem}
           onCancel={() => setEditingApi(null)}
         />
+      )}
+
+      {/* Contract Modal Popup */}
+      {showPreview && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4 select-none">
+          <div className="bg-white rounded-2xl max-w-3xl w-full p-6 shadow-2xl flex flex-col gap-4 max-h-[80vh] border border-slate-200 animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-start border-b border-slate-200 pb-3">
+              <div>
+                <h3 className="text-sm font-black text-zinc-900 uppercase tracking-wide">Active NDA Contract Text</h3>
+                {contractUpdatedAt > 0 && (
+                  <span className="text-[10px] text-zinc-400 font-bold uppercase block mt-0.5">
+                    Last Updated: {new Date(contractUpdatedAt).toLocaleDateString("en-GB")} {new Date(contractUpdatedAt).toLocaleTimeString([], { hour12: false })}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPreview(false)}
+                className="text-zinc-400 hover:text-zinc-700 text-sm font-bold cursor-pointer transition active:scale-90"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto bg-slate-50 border border-slate-200 rounded-xl p-5 text-xs leading-relaxed text-zinc-700 whitespace-pre-wrap select-text custom-scrollbar min-h-[300px]">
+              {contractText || "No active contract uploaded yet. Fallback standard agreement is being used."}
+            </div>
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setShowPreview(false)}
+                className="px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl text-xs font-black cursor-pointer active:scale-95 transition"
+              >
+                Close Preview
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

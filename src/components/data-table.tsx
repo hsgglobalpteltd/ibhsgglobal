@@ -864,6 +864,13 @@ export function DataTable({
                                 }
                                 return <span className="text-xs text-zinc-400 italic">No Image</span>;
                               }
+                              if (typeof rawVal === "object" && rawVal !== null && !React.isValidElement(rawVal)) {
+                                try {
+                                  return JSON.stringify(rawVal);
+                                } catch (e) {
+                                  return String(rawVal);
+                                }
+                              }
                               return rawVal;
                             })()
                           )}

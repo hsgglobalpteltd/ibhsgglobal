@@ -13,6 +13,84 @@ const defaultBrandColumns: Column[] = [
   { id: "Rank", header: "Rank", accessor: "Rank" }
 ];
 
+function normalizeKeysToPretty(item: any): any {
+  if (!item) return item;
+  const pretty: any = {};
+  const map: Record<string, string> = {
+    sku: "sku",
+    brands_id: "Brands ID",
+    display_name: "Display Name",
+    image: "Image",
+    carton: "Carton",
+    cost: "Cost",
+    rank: "Rank",
+    status: "Status",
+    single_barcode: "Single Barcode",
+    carton_barcode: "Carton Barcode",
+    carton_weight: " Carton Weight",
+    carton_h_mm: "Carton H (mm)",
+    carton_w_mm: "Carton W (mm)",
+    carton_l_mm: "Carton L (mm)",
+    id: "id",
+    logo_image: "Logo Image",
+  };
+
+  const isNew = !!item.isNew;
+  for (const [k, v] of Object.entries(item)) {
+    const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+    let matchedKey = k;
+    for (const [mk, mv] of Object.entries(map)) {
+      if (mk.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanK) {
+        matchedKey = mv;
+        break;
+      }
+    }
+    pretty[matchedKey] = v;
+  }
+  if (isNew) {
+    pretty.isNew = true;
+  }
+  return pretty;
+}
+
+function normalizeKeysToRaw(item: any): any {
+  if (!item) return item;
+  const raw: any = {};
+  const map: Record<string, string> = {
+    sku: "sku",
+    brandsid: "brands_id",
+    displayname: "display_name",
+    image: "image",
+    carton: "carton",
+    cost: "cost",
+    rank: "rank",
+    status: "status",
+    singlebarcode: "single_barcode",
+    cartonbarcode: "carton_barcode",
+    cartonweight: "carton_weight",
+    cartonhmm: "carton_h_mm",
+    cartonwmm: "carton_w_mm",
+    cartonlmm: "carton_l_mm",
+    id: "id",
+    logoimage: "logo_image"
+  };
+
+  const isNew = !!item.isNew;
+  for (const [k, v] of Object.entries(item)) {
+    if (k === "isNew") continue;
+    const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+    let matchedKey = k.toLowerCase();
+    if (map[cleanK]) {
+      matchedKey = map[cleanK];
+    }
+    raw[matchedKey] = v;
+  }
+  if (isNew) {
+    raw.isNew = true;
+  }
+  return raw;
+}
+
 const defaultProductColumns: Column[] = [
   { id: 'sku', header: 'sku', accessor: 'sku' },
   { id: "Brand Name", header: "Brand Name", accessor: "Brand Name" },
@@ -105,6 +183,10 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     if (items.length > 0) {
       const allKeys = Object.keys(items[0]);
       const keys = allKeys.filter(key => {
+        const cleanKey = key.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (cleanKey === "productmeta" || cleanKey === "listincatalog") {
+          return false;
+        }
         const hasUpperCaseEquivalent = allKeys.some(otherKey => 
           otherKey !== key && 
           otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === key.toLowerCase().replace(/[^a-z0-9]/g, '') &&
@@ -264,14 +346,16 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     delete cleanData.isNew;
     delete cleanData["Brand Name"];
 
+    const rawCleanData = normalizeKeysToRaw(cleanData);
+
     // Validation check for duplicates
     if (isNew) {
-      if (!cleanData[idKey] || !String(cleanData[idKey]).trim()) {
+      if (!rawCleanData[idKey] || !String(rawCleanData[idKey]).trim()) {
         showToast(`Save failed: ${idKey} is required!`, "error");
         return;
       }
       const exists = data.some(
-        (item) => String(item[idKey]).trim().toLowerCase() === String(cleanData[idKey]).trim().toLowerCase()
+        (item) => String(item[idKey]).trim().toLowerCase() === String(rawCleanData[idKey]).trim().toLowerCase()
       );
       if (exists) {
         showToast(`Save failed: A record with this ${idKey} already exists!`, "error");
@@ -282,10 +366,10 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     // 3. Optimistically update local state & localStorage
     let updatedList;
     if (isNew) {
-      updatedList = [...data, cleanData];
+      updatedList = [...data, rawCleanData];
     } else {
       updatedList = data.map((item) =>
-        String(item[idKey]) === String(cleanData[idKey]) ? { ...item, ...cleanData } : item
+        String(item[idKey]) === String(rawCleanData[idKey]) ? { ...item, ...rawCleanData } : item
       );
     }
     setData(updatedList);
@@ -304,7 +388,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
           body: JSON.stringify({
             sheet,
             action: isNew ? "insert" : "update",
-            data: cleanData
+            data: rawCleanData
           })
         });
 
@@ -436,7 +520,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
 
 // Brand Form Sub-component
 function BrandEditForm({ brand, onSave, onCancel }: { brand: any; onSave: (data: any) => Promise<void>; onCancel: () => void }) {
-  const [formData, setFormData] = React.useState({ ...brand });
+  const [formData, setFormData] = React.useState(() => normalizeKeysToPretty(brand));
   const [uploading, setUploading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const isNew = !!brand.isNew;
@@ -602,7 +686,7 @@ function BrandEditForm({ brand, onSave, onCancel }: { brand: any; onSave: (data:
 
 // Product Form Sub-component
 function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; brands: any[]; onSave: (data: any) => Promise<void>; onCancel: () => void }) {
-  const [formData, setFormData] = React.useState({ ...product });
+  const [formData, setFormData] = React.useState(() => normalizeKeysToPretty(product));
   const [uploading, setUploading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const isNew = !!product.isNew;
@@ -846,10 +930,11 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
             </div>
           </div>
 
-          {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
             .filter((k) => {
               if (['sku', "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "Carton H (mm)", "Carton W (mm)", "Carton L (mm)", "id", "isNew"].includes(k)) return false;
+              const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+              if (cleanK === "productmeta" || cleanK === "listincatalog") return false;
               const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
                 otherKey !== k && 
                 otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&

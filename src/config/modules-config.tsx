@@ -60,6 +60,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Phonebook",
         description: "Manage contact directories, affiliations, and phone communications registry."
+      },
+      {
+        title: "Employees",
+        description: "Manage employee profiles, credentials, contact information, and application access roles."
       }
     ]
   },
@@ -90,6 +94,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Sponsorship",
         description: "Manage brand sponsorships, output distribution tracking, and receiver limit registries.",
+      },
+      {
+        title: "Direct Order",
+        description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
       }
     ]
   },

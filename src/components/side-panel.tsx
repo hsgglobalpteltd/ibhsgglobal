@@ -99,16 +99,21 @@ export function SidePanel({ activeItem, onSelectMenu, user, profile, onLogout }:
 
         {/* Menu Items Section */}
         <nav className="flex flex-col gap-1.5">
-          {visibleMenuItems.map((item) => (
-            <MenuButton
-              key={item.id}
-              label={item.label}
-              icon={item.icon}
-              isActive={activeItem === item.id}
-              isCollapsed={isCollapsed}
-              onClick={() => handleMenuClick(item.id)}
-            />
-          ))}
+          {visibleMenuItems.map((item) => {
+            const isUnderMaintenance = ["Dashboard", "Stock", "Marketing & Content", "Website", "Administrator"].includes(item.id);
+            return (
+              <MenuButton
+                key={item.id}
+                label={item.label}
+                icon={item.icon}
+                isActive={activeItem === item.id}
+                isCollapsed={isCollapsed}
+                onClick={() => !isUnderMaintenance && handleMenuClick(item.id)}
+                title={isUnderMaintenance ? "This under maintenance" : undefined}
+                className={isUnderMaintenance ? "opacity-50 cursor-not-allowed hover:bg-transparent hover:scale-100 hover:text-[#474747] active:scale-100" : undefined}
+              />
+            );
+          })}
         </nav>
       </div>
 

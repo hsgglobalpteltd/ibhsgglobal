@@ -13,6 +13,8 @@ import { CustomButton } from "@/components/custom-button";
 import { ShieldAlert } from "lucide-react";
 import { WelcomeAboardScreen } from "@/components/welcome-aboard";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { MaintenanceModule } from "@/components/MaintenanceModule";
+import { fetchMaintenanceSettings, getClientIp, checkIsUnderMaintenance, MaintenanceSettings } from "@/lib/maintenance";
 
 export default function Home() {
   const [firebaseUser, setFirebaseUser] = React.useState<any>(null);
@@ -36,6 +38,29 @@ export default function Home() {
     type: "menu" | "back" | "breadcrumb";
     target: any;
   } | null>(null);
+
+  // Maintenance mode states
+  const [maintenanceSettings, setMaintenanceSettings] = React.useState<MaintenanceSettings>({
+    websiteMaintenance: false,
+    allowedIps: [],
+    moduleMaintenance: {}
+  });
+  const [clientIp, setClientIp] = React.useState<string>("");
+
+  // Load client IP and maintenance settings
+  React.useEffect(() => {
+    getClientIp().then(setClientIp);
+    fetchMaintenanceSettings().then(setMaintenanceSettings);
+  }, []);
+
+  // Listen to db refresh to pull latest settings
+  React.useEffect(() => {
+    const handleDbRefresh = () => {
+      fetchMaintenanceSettings().then(setMaintenanceSettings);
+    };
+    window.addEventListener("db-refresh", handleDbRefresh);
+    return () => window.removeEventListener("db-refresh", handleDbRefresh);
+  }, []);
 
   // Load latest contract version to enforce re-signing
   React.useEffect(() => {
@@ -334,6 +359,12 @@ export default function Home() {
   const renderActivePage = () => {
     if (!profile) return null;
 
+    // 0. Module Maintenance Check
+    const activeSubmodule = breadcrumbPath[1] || activeItem;
+    if (checkIsUnderMaintenance(maintenanceSettings, clientIp, activeSubmodule)) {
+      return <MaintenanceModule title={activeSubmodule} />;
+    }
+
     const isAdmin = profile.role === "Administrator";
     const isManager = profile.role === "Manager";
 
@@ -384,6 +415,29 @@ export default function Home() {
           <span className="font-primary text-sm font-semibold text-zinc-600 animate-pulse">
             Connecting to Internal Bridge...
           </span>
+        </div>
+      );
+    }
+
+    // 1.5 Website Global Maintenance Check
+    if (checkIsUnderMaintenance(maintenanceSettings, clientIp)) {
+      return (
+        <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 select-none font-primary text-center">
+          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 shadow-md flex flex-col gap-6 items-center">
+            <div className="h-12 w-12 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shadow-xs">
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-construction animate-bounce"><rect x="2" y="18" width="20" height="4" rx="1"/><path d="M17 14v-4"/><path d="M7 14v-4"/><path d="M13 6h-2"/><path d="m15 10-3-3-3 3"/><path d="M12 18v-4"/></svg>
+            </div>
+            <div className="flex flex-col gap-2">
+              <h2 className="text-xl font-bold text-zinc-950">System Under Maintenance</h2>
+              <p className="text-xs text-zinc-550 font-semibold leading-relaxed">
+                The HSG Global Internal Bridge is undergoing scheduled upgrades. Please try again later.
+              </p>
+            </div>
+            <div className="w-full border-t border-zinc-300/60 my-1" />
+            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
+              Secure System Portals Offline
+            </p>
+          </div>
         </div>
       );
     }

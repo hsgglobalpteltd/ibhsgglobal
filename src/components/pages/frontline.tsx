@@ -2,7 +2,11 @@
 
 import * as React from "react";
 import { FeatureCard } from "../feature-card";
-import { MaintenanceModule } from "../MaintenanceModule";
+import { PromoterModule } from "../modules/PromoterModule";
+import { MerchandiserModule } from "../modules/MerchandiserModule";
+import { TaskModule } from "../modules/TaskModule";
+import { TrackOrderModule } from "../modules/TrackOrderModule";
+import { TiktokFulfillmentModule } from "../modules/TiktokFulfillmentModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 
 interface FrontlinePageProps {
@@ -108,7 +112,20 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
   };
 
   const renderActiveSubModule = () => {
-    return <MaintenanceModule title={activeSubModule || ""} />;
+    switch (activeSubModule) {
+      case "Promoter":
+        return <PromoterModule profile={profile} />;
+      case "Merchandiser":
+        return <MerchandiserModule profile={profile} />;
+      case "Task":
+        return <TaskModule profile={profile} />;
+      case "Track Order":
+        return <TrackOrderModule profile={profile} />;
+      case "Tiktok Fulfillment":
+        return <TiktokFulfillmentModule profile={profile} />;
+      default:
+        return null;
+    }
   };
 
   return (
@@ -136,14 +153,23 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
             </div>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
-              {visibleModules.map((mod) => (
-                <FeatureCard
-                  key={mod.title}
-                  title={mod.title}
-                  description={mod.description}
-                  onClick={() => handleSubModuleSelect(mod.title)}
-                />
-              ))}
+              {visibleModules.map((mod) => {
+                const isUnderMaintenance = mod.title !== "Tiktok Fulfillment";
+                return (
+                  <div
+                    key={mod.title}
+                    title={isUnderMaintenance ? "This under maintenance" : undefined}
+                    className={isUnderMaintenance ? "opacity-50 cursor-not-allowed w-full max-w-[250px] aspect-[4/3]" : "w-full max-w-[250px] aspect-[4/3]"}
+                  >
+                    <FeatureCard
+                      title={mod.title}
+                      description={mod.description}
+                      onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
+                      className={isUnderMaintenance ? "pointer-events-none shadow-none hover:shadow-none hover:scale-100 hover:bg-white" : undefined}
+                    />
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
