@@ -18,7 +18,8 @@ import {
   Plus, 
   Trash2,
   Sliders,
-  List
+  List,
+  Mail
 } from "lucide-react";
 
 interface DirectOrderModuleProps {
@@ -47,7 +48,19 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
   
   // WhatsApp settings
   const [whatsappNumber, setWhatsappNumber] = React.useState("+6583494429");
-  const [savingWhatsapp, setSavingWhatsapp] = React.useState(false);
+
+  // Email & Automation settings
+  const [adminEmail, setAdminEmail] = React.useState("sales@hsgglobal.sg");
+  const [ccEmail1, setCcEmail1] = React.useState("");
+  const [ccEmail2, setCcEmail2] = React.useState("");
+  const [ccEmail3, setCcEmail3] = React.useState("");
+  const [toggleSendEmailBuyer, setToggleSendEmailBuyer] = React.useState(true);
+  const [toggleReminderOrder, setToggleReminderOrder] = React.useState(true);
+  const [toggleOrderSubmissionReceived, setToggleOrderSubmissionReceived] = React.useState(true);
+  const [toggleUpdateOrder, setToggleUpdateOrder] = React.useState(true);
+  const [savingSettings, setSavingSettings] = React.useState(false);
+  const [triggeringReminder, setTriggeringReminder] = React.useState(false);
+  const [testingTemplate, setTestingTemplate] = React.useState<string | null>(null);
 
   // Complete modal state
   const [completingItem, setCompletingItem] = React.useState<any | null>(null);
@@ -55,30 +68,53 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
   const [invoiceAmount, setInvoiceAmount] = React.useState("");
   const [savingCompletion, setSavingCompletion] = React.useState(false);
 
-  // Load WhatsApp settings
+  // Load settings
   const loadSettings = React.useCallback(async () => {
     try {
       const res = await fetch(`${WORKER_URL}/api/admin/db?table=direct_order_settings`);
       if (res.ok) {
         const json = await res.json();
         const list = Array.isArray(json) ? json : [];
+        
         const waRec = list.find((s: any) => s.key === "receiver_order_whatsapp");
-        if (waRec && waRec.value) {
-          setWhatsappNumber(waRec.value);
-        }
+        if (waRec && waRec.value) setWhatsappNumber(waRec.value);
+
+        const emailRec = list.find((s: any) => s.key === "receiver_order_email");
+        if (emailRec && emailRec.value) setAdminEmail(emailRec.value);
+
+        const cc1Rec = list.find((s: any) => s.key === "receiver_order_cc_1");
+        if (cc1Rec && cc1Rec.value) setCcEmail1(cc1Rec.value);
+
+        const cc2Rec = list.find((s: any) => s.key === "receiver_order_cc_2");
+        if (cc2Rec && cc2Rec.value) setCcEmail2(cc2Rec.value);
+
+        const cc3Rec = list.find((s: any) => s.key === "receiver_order_cc_3");
+        if (cc3Rec && cc3Rec.value) setCcEmail3(cc3Rec.value);
+
+        const buyerRec = list.find((s: any) => s.key === "toggle_send_email_buyer");
+        if (buyerRec) setToggleSendEmailBuyer(buyerRec.value === "true");
+
+        const reminderRec = list.find((s: any) => s.key === "toggle_reminder_order");
+        if (reminderRec) setToggleReminderOrder(reminderRec.value === "true");
+
+        const receivedRec = list.find((s: any) => s.key === "toggle_order_submission_received");
+        if (receivedRec) setToggleOrderSubmissionReceived(receivedRec.value === "true");
+
+        const updateRec = list.find((s: any) => s.key === "toggle_update_order");
+        if (updateRec) setToggleUpdateOrder(updateRec.value === "true");
       }
     } catch (err) {
-      console.error("Failed to load WhatsApp settings:", err);
+      console.error("Failed to load settings:", err);
     }
   }, []);
 
-  // Save WhatsApp settings
-  const handleSaveWhatsapp = async () => {
+  // Save Notification & Automation settings
+  const handleSaveSettings = async () => {
     if (!whatsappNumber.trim()) {
       showToast("WhatsApp phone number is required", "warning");
       return;
     }
-    setSavingWhatsapp(true);
+    setSavingSettings(true);
     try {
       const res = await fetch(`${WORKER_URL}/api/admin/db-write`, {
         method: "POST",
@@ -86,10 +122,17 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
         body: JSON.stringify({
           table: "direct_order_settings",
           action: "upsert",
-          data: {
-            key: "receiver_order_whatsapp",
-            value: whatsappNumber.trim()
-          }
+          data: [
+            { key: "receiver_order_whatsapp", value: whatsappNumber.trim() },
+            { key: "receiver_order_email", value: adminEmail.trim() },
+            { key: "receiver_order_cc_1", value: ccEmail1.trim() },
+            { key: "receiver_order_cc_2", value: ccEmail2.trim() },
+            { key: "receiver_order_cc_3", value: ccEmail3.trim() },
+            { key: "toggle_send_email_buyer", value: String(toggleSendEmailBuyer) },
+            { key: "toggle_reminder_order", value: String(toggleReminderOrder) },
+            { key: "toggle_order_submission_received", value: String(toggleOrderSubmissionReceived) },
+            { key: "toggle_update_order", value: String(toggleUpdateOrder) }
+          ]
         })
       });
 
@@ -97,11 +140,56 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
       const result = await res.json();
       if (!result.success) throw new Error(result.error || "Save failed");
 
-      showToast("WhatsApp phone number updated successfully!", "success");
+      showToast("Notification and automation settings updated successfully!", "success");
     } catch (err: any) {
       showToast("Failed to save settings: " + err.message, "error");
     } finally {
-      setSavingWhatsapp(false);
+      setSavingSettings(false);
+    }
+  };
+
+  // Trigger manual reminder
+  const handleTriggerReminder = async () => {
+    setTriggeringReminder(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/public/order/trigger-reminder`, {
+        method: "POST"
+      });
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error || "Trigger failed");
+      showToast(`Reminder run completed! Processed: ${result.processed || 0} reminders.`, "success");
+    } catch (err: any) {
+      showToast("Failed to trigger reminder: " + err.message, "error");
+    } finally {
+      setTriggeringReminder(false);
+    }
+  };
+
+  // Send test template email
+  const handleTestTemplate = async (templateType: string) => {
+    if (!adminEmail.trim()) {
+      showToast("Please input Sales Admin Email first", "warning");
+      return;
+    }
+    setTestingTemplate(templateType);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/public/order/test-template`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          templateType,
+          adminEmail: adminEmail.trim()
+        })
+      });
+      if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed to send test email");
+      showToast(`Test email sent to ${adminEmail}`, "success");
+    } catch (err: any) {
+      showToast("Test failed: " + err.message, "error");
+    } finally {
+      setTestingTemplate(null);
     }
   };
 
@@ -772,31 +860,283 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
         )}
 
         {activeMainTab === "setting" && (
-          <div className="flex-1 overflow-auto p-4 max-w-lg mx-auto w-full flex flex-col gap-6">
-            <div className="bg-white border border-zinc-200 rounded-xl shadow-xs p-6 flex flex-col gap-4">
-              <div className="flex flex-col gap-1 border-b border-zinc-100 pb-3">
-                <h3 className="text-base font-bold text-zinc-800">WhatsApp Notification Settings</h3>
-                <p className="text-xs text-zinc-500">Configure the phone number that receives notifications when new orders or quotations are placed.</p>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Receiver Phone Number</label>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    className="flex-1 text-sm border border-zinc-300 rounded px-3 py-2 outline-none focus:border-orange-500 font-semibold"
-                    value={whatsappNumber}
-                    onChange={(e) => setWhatsappNumber(e.target.value)}
-                    placeholder="+65xxxxxxxx"
-                  />
-                  <button
-                    onClick={handleSaveWhatsapp}
-                    disabled={savingWhatsapp}
-                    className="px-4 py-2 bg-zinc-800 text-white font-semibold text-xs rounded hover:bg-zinc-900 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
-                  >
-                    {savingWhatsapp ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-                    Save Setting
-                  </button>
+          <div className="flex-1 overflow-auto p-6 pb-24 max-w-6xl mx-auto w-full">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+              <div className="flex flex-col gap-6">
+                {/* Unified Notification Settings Card */}
+                <div className="bg-white border border-zinc-200 rounded-xl shadow-xs p-6 flex flex-col gap-5">
+                  <div className="flex flex-col gap-1 border-b border-zinc-100 pb-3">
+                    <h3 className="text-base font-bold text-zinc-800">Notification Settings</h3>
+                    <p className="text-xs text-zinc-500">Configure destination channels for direct sales notifications and order alerts.</p>
+                  </div>
+
+                  <div className="flex flex-col gap-4">
+                    {/* Receiver Phone Number */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Receiver Phone Number</label>
+                      <input
+                        type="text"
+                        className="w-full text-sm border border-zinc-300 rounded px-3 py-2 outline-none focus:border-orange-500 font-semibold"
+                        value={whatsappNumber}
+                        onChange={(e) => setWhatsappNumber(e.target.value)}
+                        placeholder="+65xxxxxxxx"
+                      />
+                      <span className="text-[10px] text-zinc-400 leading-normal">
+                        Configure the phone number that receives WhatsApp notifications when new orders or quotations are placed.
+                      </span>
+                    </div>
+
+                    {/* Sales Admin Email */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Sales Admin Email</label>
+                      <input
+                        type="email"
+                        className="w-full text-sm border border-zinc-300 rounded px-3 py-2 outline-none focus:border-orange-500 font-semibold"
+                        value={adminEmail}
+                        onChange={(e) => setAdminEmail(e.target.value)}
+                        placeholder="sales@company.com"
+                      />
+                      <span className="text-[10px] text-zinc-400 leading-normal">
+                        Configure primary recipient email for order alerts and invoice requests.
+                      </span>
+                    </div>
+
+                    {/* CC Emails */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">CC Emails (Up to 3)</label>
+                      <div className="flex flex-col gap-2">
+                        <input
+                          type="email"
+                          className="w-full text-sm border border-zinc-300 rounded px-3 py-2 outline-none focus:border-orange-500 font-semibold"
+                          value={ccEmail1}
+                          onChange={(e) => setCcEmail1(e.target.value)}
+                          placeholder="CC Recipient 1"
+                        />
+                        <input
+                          type="email"
+                          className="w-full text-sm border border-zinc-300 rounded px-3 py-2 outline-none focus:border-orange-500 font-semibold"
+                          value={ccEmail2}
+                          onChange={(e) => setCcEmail2(e.target.value)}
+                          placeholder="CC Recipient 2"
+                        />
+                        <input
+                          type="email"
+                          className="w-full text-sm border border-zinc-300 rounded px-3 py-2 outline-none focus:border-orange-500 font-semibold"
+                          value={ccEmail3}
+                          onChange={(e) => setCcEmail3(e.target.value)}
+                          placeholder="CC Recipient 3"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-2 border-t border-zinc-100 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => handleTestTemplate("test_connection")}
+                        disabled={testingTemplate !== null || !adminEmail.trim()}
+                        className="px-4 py-2 border border-zinc-300 hover:border-zinc-800 text-zinc-700 hover:text-zinc-950 font-bold text-xs rounded transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+                      >
+                        {testingTemplate === "test_connection" && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                        Send Test Email
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveSettings}
+                        disabled={savingSettings}
+                        className="px-4 py-2 bg-zinc-800 text-white font-semibold text-xs rounded hover:bg-zinc-900 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        {savingSettings ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                        Save Settings
+                      </button>
+                    </div>
+                  </div>
                 </div>
+              </div>
+
+              {/* Right Column: Toggles and Triggers */}
+              <div className="flex flex-col gap-6">
+                {/* Automation & Events Card */}
+                <div className="bg-white border border-zinc-200 rounded-xl shadow-xs p-6 flex flex-col gap-4">
+                  <div className="flex items-start justify-between border-b border-zinc-100 pb-3 gap-4">
+                    <div className="flex flex-col gap-1">
+                      <h3 className="text-base font-bold text-zinc-800">Automation & Email Triggers</h3>
+                      <p className="text-xs text-zinc-500">Toggle automatic system triggers and send context-aware test emails.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleTriggerReminder}
+                      disabled={triggeringReminder || !toggleReminderOrder}
+                      className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 text-white font-bold text-[10px] uppercase tracking-wider rounded transition-all flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0 mt-0.5 disabled:opacity-50"
+                      title={!toggleReminderOrder ? "Please enable 'Reminder to Order' toggle to run this automation." : "Force execute the inactivity check and dispatch reminder emails immediately."}
+                    >
+                      {triggeringReminder ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Mail className="w-3 h-3" />}
+                      Send Reminder
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col">
+                    {/* Send Email to Buyer */}
+                    <div className="flex items-center justify-between py-3 border-b border-zinc-100 gap-4">
+                      <div className="flex flex-col gap-0.5 flex-1 pr-2">
+                        <span className="text-sm font-semibold text-zinc-700">Send Email to Buyer</span>
+                        <span className="text-xs text-zinc-400">Send order copy to the buyer email automatically.</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleTestTemplate("new_order")}
+                          disabled={testingTemplate !== null}
+                          className="px-2.5 py-1.5 border border-zinc-200 hover:border-zinc-800 text-zinc-600 hover:text-zinc-950 font-bold text-[10px] rounded transition-all flex items-center gap-1 shadow-xs cursor-pointer disabled:opacity-50"
+                        >
+                          {testingTemplate === "new_order" && <RefreshCw className="w-2.5 h-2.5 animate-spin" />}
+                          Test Send
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setToggleSendEmailBuyer(!toggleSendEmailBuyer)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer focus:outline-none ${
+                            toggleSendEmailBuyer ? "bg-orange-600" : "bg-zinc-200"
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              toggleSendEmailBuyer ? "translate-x-6" : "translate-x-1"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Reminder to Order */}
+                    <div className="flex items-center justify-between py-3 border-b border-zinc-100 gap-4">
+                      <div className="flex flex-col gap-0.5 flex-1 pr-2">
+                        <span className="text-sm font-semibold text-zinc-700">Reminder to Order</span>
+                        <span className="text-xs text-zinc-400">Enable automatic order reminders for inactive buyers.</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleTestTemplate("reminder_1")}
+                            disabled={testingTemplate !== null}
+                            className="px-2 py-1 border border-zinc-200 hover:border-zinc-800 text-zinc-600 hover:text-zinc-950 font-bold text-[9px] rounded transition-all cursor-pointer disabled:opacity-50"
+                            title="Test Reminder 1 (Day 14)"
+                          >
+                            Test R1
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleTestTemplate("reminder_2")}
+                            disabled={testingTemplate !== null}
+                            className="px-2 py-1 border border-zinc-200 hover:border-zinc-800 text-zinc-600 hover:text-zinc-950 font-bold text-[9px] rounded transition-all cursor-pointer disabled:opacity-50"
+                            title="Test Reminder 2 (Day 19)"
+                          >
+                            Test R2
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleTestTemplate("reminder_3")}
+                            disabled={testingTemplate !== null}
+                            className="px-2 py-1 border border-zinc-200 hover:border-zinc-800 text-zinc-600 hover:text-zinc-950 font-bold text-[9px] rounded transition-all cursor-pointer disabled:opacity-50"
+                            title="Test Reminder 3 / Escalation (Day 24)"
+                          >
+                            Test R3
+                          </button>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setToggleReminderOrder(!toggleReminderOrder)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer focus:outline-none ${
+                            toggleReminderOrder ? "bg-orange-600" : "bg-zinc-200"
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              toggleReminderOrder ? "translate-x-6" : "translate-x-1"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Order Submission Received */}
+                    <div className="flex items-center justify-between py-3 border-b border-zinc-100 gap-4">
+                      <div className="flex flex-col gap-0.5 flex-1 pr-2">
+                        <span className="text-sm font-semibold text-zinc-700">Order Submission Received</span>
+                        <span className="text-xs text-zinc-400">Notify Sales Admin immediately upon order receipt.</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleTestTemplate("new_order")}
+                          disabled={testingTemplate !== null}
+                          className="px-2.5 py-1.5 border border-zinc-200 hover:border-zinc-800 text-zinc-600 hover:text-zinc-950 font-bold text-[10px] rounded transition-all flex items-center gap-1 shadow-xs cursor-pointer disabled:opacity-50"
+                        >
+                          {testingTemplate === "new_order" && <RefreshCw className="w-2.5 h-2.5 animate-spin" />}
+                          Test Send
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setToggleOrderSubmissionReceived(!toggleOrderSubmissionReceived)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer focus:outline-none ${
+                            toggleOrderSubmissionReceived ? "bg-orange-600" : "bg-zinc-200"
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              toggleOrderSubmissionReceived ? "translate-x-6" : "translate-x-1"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Update Order */}
+                    <div className="flex items-center justify-between py-3 gap-4">
+                      <div className="flex flex-col gap-0.5 flex-1 pr-2">
+                        <span className="text-sm font-semibold text-zinc-700">Update Order</span>
+                        <span className="text-xs text-zinc-400">Notify buyer/admin when status gets updated.</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleTestTemplate("update_order")}
+                          disabled={testingTemplate !== null}
+                          className="px-2.5 py-1.5 border border-zinc-200 hover:border-zinc-800 text-zinc-600 hover:text-zinc-950 font-bold text-[10px] rounded transition-all flex items-center gap-1 shadow-xs cursor-pointer disabled:opacity-50"
+                        >
+                          {testingTemplate === "update_order" && <RefreshCw className="w-2.5 h-2.5 animate-spin" />}
+                          Test Send
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setToggleUpdateOrder(!toggleUpdateOrder)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer focus:outline-none ${
+                            toggleUpdateOrder ? "bg-orange-600" : "bg-zinc-200"
+                          }`}
+                        >
+                          <span
+                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                              toggleUpdateOrder ? "translate-x-6" : "translate-x-1"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex justify-end pt-3 border-t border-zinc-100 mt-2">
+                      <button
+                        type="button"
+                        onClick={handleSaveSettings}
+                        disabled={savingSettings}
+                        className="px-4 py-2 bg-zinc-800 text-white font-semibold text-xs rounded hover:bg-zinc-900 disabled:opacity-50 transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        {savingSettings ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                        Save Automation Settings
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
               </div>
             </div>
           </div>

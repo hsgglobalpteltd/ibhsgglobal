@@ -10,7 +10,8 @@ const defaultRetailerColumns: Column[] = [
   { id: 'id', header: 'id', accessor: 'id' },
   { id: "Display Name", header: "Display Name", accessor: "Display Name" },
   { id: "Logo Image", header: "Logo Image", accessor: "Logo Image" },
-  { id: "Retailer Group", header: "Retailer Group", accessor: "Retailer Group" }
+  { id: "Retailer Group", header: "Retailer Group", accessor: "Retailer Group" },
+  { id: "Email", header: "Email", accessor: "Email" }
 ];
 
 const defaultStoreColumns: Column[] = [
@@ -560,11 +561,22 @@ function RetailerEditForm({ retailer, onSave, onCancel }: { retailer: any; onSav
               <option value="Group E">Group E</option>
             </select>
           </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Email</label>
+            <input
+              type="email"
+              value={formData["Email"] || ""}
+              onChange={(e) => handleChange("Email", e.target.value)}
+              placeholder="e.g. buyer@retailer.com"
+              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+            />
+          </div>
           
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
             .filter((k) => {
-              if (['id', "Display Name", "Logo Image", "Retailer Group", "id", "isNew"].includes(k)) return false;
+              if (['id', "Display Name", "Logo Image", "Retailer Group", "Email", "id", "isNew"].includes(k)) return false;
               const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
                 otherKey !== k && 
                 otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
