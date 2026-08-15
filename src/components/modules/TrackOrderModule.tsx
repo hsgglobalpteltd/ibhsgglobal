@@ -61,33 +61,33 @@ interface LogEntry {
 
 interface DbOrder {
   id: string;
-  DO_Number: string;
-  Ref_Number: string;
-  Mark: string;
-  Type: string;
-  Deliver_To: string;
-  Poscode: string;
-  Items: string; // JSON string of SKUItem[]
-  Status: string; // Ready to Pick, Picking, Ready to Deliver, Load, Out for Delivery, Delivered
-  Logs: string; // JSON string of LogEntry[]
-  Timestamp: number; // Created timestamp
-  Delivered_At?: number | string; // Delivered timestamp
-  Completed?: string | boolean; // "true" or true when archived by admin
-  Deadline?: number | string;
-  Deliver_Method?: string;
-  Latitude?: number | string;
-  Longitude?: number | string;
-  Photo_DO_Paper?: string;
-  Photo_DO_Paper_Signed?: string;
-  Photo_Delivered_Proof?: string;
-  Photo_Handover_Proof?: string;
-  Photo_Picker_Proof?: string;
-  Photo_Return_Paper?: string;
-  Photo_Return_Paper_Admin?: string;
-  Driver?: string;
-  Invoice_Number?: string;
-  Credit_Note_Number?: string;
-  Invoice_Amount?: string;
+  do_number: string;
+  ref_number: string;
+  mark: string;
+  type: string;
+  deliver_to: string;
+  poscode: string;
+  items: string; // JSON string of SKUItem[]
+  status: string; // Ready to Pick, Picking, Ready to Deliver, Load, Out for Delivery, Delivered
+  logs: string; // JSON string of LogEntry[]
+  timestamp: number; // Created timestamp
+  delivered_at?: number | string; // Delivered timestamp
+  completed?: string | boolean; // "true" or true when archived by admin
+  deadline?: number | string;
+  deliver_method?: string;
+  latitude?: number | string;
+  longitude?: number | string;
+  photo_do_paper?: string;
+  photo_do_paper_signed?: string;
+  photo_delivered_proof?: string;
+  photo_handover_proof?: string;
+  photo_picker_proof?: string;
+  photo_return_paper?: string;
+  photo_return_paper_admin?: string;
+  driver?: string;
+  invoice_number?: string;
+  credit_note_number?: string;
+  invoice_amount?: string;
 }
 
 interface TrackOrderModuleProps {
@@ -215,19 +215,19 @@ function getLogImagesForAction(action: string, order: DbOrder, logPhotoUrl?: str
     const act = String(action || "").toLowerCase();
     
     if (act.includes("created") || act.includes("imported") || act.includes("sent")) {
-      val = order.Photo_DO_Paper;
+      val = order.photo_do_paper;
     } else if (act.includes("picked") || act.includes("proof")) {
-      val = order.Photo_Picker_Proof;
+      val = order.photo_picker_proof;
     } else if (act.includes("delivered")) {
-      val = order.Photo_Delivered_Proof;
+      val = order.photo_delivered_proof;
     } else if (act.includes("handover")) {
-      val = order.Photo_Handover_Proof;
+      val = order.photo_handover_proof;
     } else if (act.includes("signed")) {
-      val = order.Photo_DO_Paper_Signed;
+      val = order.photo_do_paper_signed;
     } else if (act.includes("pick return") || act.includes("return paper")) {
-      val = order.Photo_Return_Paper;
+      val = order.photo_return_paper;
     } else if (act.includes("unpick return") || act.includes("return paper admin")) {
-      val = order.Photo_Return_Paper_Admin;
+      val = order.photo_return_paper_admin;
     }
   }
   
@@ -368,26 +368,26 @@ function SlidePanel({ isOpen, onClose, title, children, footer }: SlidePanelProp
 const getOrderEditsRemark = (oldOrder: DbOrder, newFields: Partial<DbOrder>): string => {
   const changes: string[] = [];
 
-  if (newFields.Mark !== undefined && String(newFields.Mark || "").trim() !== String(oldOrder.Mark || "").trim()) {
-    changes.push(`Mark "${String(oldOrder.Mark || "").trim()}" -> "${String(newFields.Mark || "").trim()}"`);
+  if (newFields.mark !== undefined && String(newFields.mark || "").trim() !== String(oldOrder.mark || "").trim()) {
+    changes.push(`Mark "${String(oldOrder.mark || "").trim()}" -> "${String(newFields.mark || "").trim()}"`);
   }
-  if (newFields.Poscode !== undefined && String(newFields.Poscode || "").trim() !== String(oldOrder.Poscode || "").trim()) {
-    changes.push(`Poscode "${String(oldOrder.Poscode || "").trim()}" -> "${String(newFields.Poscode || "").trim()}"`);
+  if (newFields.poscode !== undefined && String(newFields.poscode || "").trim() !== String(oldOrder.poscode || "").trim()) {
+    changes.push(`Poscode "${String(oldOrder.poscode || "").trim()}" -> "${String(newFields.poscode || "").trim()}"`);
   }
-  if (newFields.Deliver_To !== undefined && String(newFields.Deliver_To || "").trim() !== String(oldOrder.Deliver_To || "").trim()) {
+  if (newFields.deliver_to !== undefined && String(newFields.deliver_to || "").trim() !== String(oldOrder.deliver_to || "").trim()) {
     changes.push(`Address changed`);
   }
-  if (newFields.Deliver_Method !== undefined && String(newFields.Deliver_Method || "").trim() !== String(oldOrder.Deliver_Method || "").trim()) {
-    changes.push(`Method "${String(oldOrder.Deliver_Method || "").trim()}" -> "${String(newFields.Deliver_Method || "").trim()}"`);
+  if (newFields.deliver_method !== undefined && String(newFields.deliver_method || "").trim() !== String(oldOrder.deliver_method || "").trim()) {
+    changes.push(`Method "${String(oldOrder.deliver_method || "").trim()}" -> "${String(newFields.deliver_method || "").trim()}"`);
   }
-  if (newFields.Type !== undefined && String(newFields.Type || "").trim() !== String(oldOrder.Type || "").trim()) {
-    changes.push(`Type "${String(oldOrder.Type || "").trim()}" -> "${String(newFields.Type || "").trim()}"`);
+  if (newFields.type !== undefined && String(newFields.type || "").trim() !== String(oldOrder.type || "").trim()) {
+    changes.push(`Type "${String(oldOrder.type || "").trim()}" -> "${String(newFields.type || "").trim()}"`);
   }
 
-  if (newFields.Items !== undefined) {
+  if (newFields.items !== undefined) {
     try {
-      const oldItems: SKUItem[] = typeof oldOrder.Items === "string" ? JSON.parse(oldOrder.Items) : oldOrder.Items;
-      const newItems: SKUItem[] = typeof newFields.Items === "string" ? JSON.parse(newFields.Items) : newFields.Items;
+      const oldItems: SKUItem[] = typeof oldOrder.items === "string" ? JSON.parse(oldOrder.items) : oldOrder.items;
+      const newItems: SKUItem[] = typeof newFields.items === "string" ? JSON.parse(newFields.items) : newFields.items;
 
       const oldMap = new Map(oldItems.map(i => [i.sku, i.qty]));
       const newMap = new Map(newItems.map(i => [i.sku, i.qty]));
@@ -426,6 +426,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [drafts, setDrafts] = React.useState<TrackOrderDraft[]>([]);
   const [dbOrders, setDbOrders] = React.useState<DbOrder[]>([]);
   const [pdfLoading, setPdfLoading] = React.useState<boolean>(false);
+  const [invoiceLoading, setInvoiceLoading] = React.useState<boolean>(false);
   const [sendingDraftIds, setSendingDraftIds] = React.useState<Record<string, boolean>>({});
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -685,11 +686,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     try {
       if (forceSync) {
         // Refresh Workers cache from Google Sheets
-        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Track_Orders", {
+        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
           method: "POST"
         });
       }
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Track_Orders");
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders");
       if (res.ok) {
         const data = await res.json();
         const list = Array.isArray(data) ? data : (data.value || []);
@@ -752,7 +753,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     // Check if Mark is active in pending orders
     const isMarkActive = pendingOrders.some(
-      (o) => String(o.Mark).toUpperCase() === createMark.toUpperCase() && (!editingOrder || o.id !== editingOrder.id) && o.Status !== "Delivered"
+      (o) => String(o.mark).toUpperCase() === createMark.toUpperCase() && (!editingOrder || o.id !== editingOrder.id) && o.status !== "Delivered"
     );
     if (isMarkActive) {
       showToast(`Mark "${createMark}" is currently active in a pending order.`, "error");
@@ -761,8 +762,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     // Validation: check if DO Number is already registered in Drafts, Pending, or Completed lists
     const inDrafts = drafts.some((d) => d.doNumber === createDoNumber && (!editingOrder || d.id !== editingOrder.id));
-    const inPending = pendingOrders.some((p) => p.DO_Number === createDoNumber && (!editingOrder || p.id !== editingOrder.id));
-    const inCompleted = completedOrders.some((c) => c.DO_Number === createDoNumber && (!editingOrder || c.id !== editingOrder.id));
+    const inPending = pendingOrders.some((p) => p.do_number === createDoNumber && (!editingOrder || p.id !== editingOrder.id));
+    const inCompleted = completedOrders.some((c) => c.do_number === createDoNumber && (!editingOrder || c.id !== editingOrder.id));
 
     if ((!editingOrder && inDrafts) || inPending || inCompleted) {
       showToast(`Warning: Order ${createDoNumber} already registered in system. Please check order.`, "error");
@@ -792,22 +793,22 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       const payloadData: Partial<DbOrder> = {
         id: orderId,
-        DO_Number: createDoNumber,
-        Ref_Number: createRefNumber,
-        Mark: createMark,
-        Type: createType,
-        Deliver_To: createDeliverTo,
-        Deliver_Method: createDeliverMethod,
-        Poscode: String(createPoscode || "").trim(),
-        Items: JSON.stringify(parsedItems),
-        Deadline: deadlineVal
+        do_number: createDoNumber,
+        ref_number: createRefNumber,
+        mark: createMark,
+        type: createType,
+        deliver_to: createDeliverTo,
+        deliver_method: createDeliverMethod,
+        poscode: String(createPoscode || "").trim(),
+        items: JSON.stringify(parsedItems),
+        deadline: deadlineVal
       };
 
       const remarkText = getOrderEditsRemark(editingOrder, payloadData);
 
       let currentLogs: LogEntry[] = [];
       try {
-        currentLogs = typeof editingOrder.Logs === "string" ? JSON.parse(editingOrder.Logs) : editingOrder.Logs;
+        currentLogs = typeof editingOrder.logs === "string" ? JSON.parse(editingOrder.logs) : editingOrder.logs;
       } catch (_) {}
       if (!Array.isArray(currentLogs)) currentLogs = [];
 
@@ -821,7 +822,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         }
       ];
 
-      payloadData.Logs = JSON.stringify(updatedLogs);
+      payloadData.logs = JSON.stringify(updatedLogs);
 
       const previousDbOrders = [...dbOrders];
       setDbOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...payloadData } as DbOrder : o));
@@ -838,7 +839,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         data: payloadData
       };
 
-      fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updatePayload)
@@ -882,16 +883,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Filter orders for Pending and Complete lists
   const pendingOrders = React.useMemo(() => {
     return dbOrders.filter(
-      (o) => (String(o.Completed) !== "true" && o.Completed !== true) && o.Type !== "Return"
+      (o) => (String(o.completed) !== "true" && o.completed !== true) && o.type !== "Return"
     );
   }, [dbOrders]);
 
   const completedOrders = React.useMemo(() => {
     return dbOrders.filter(
-      (o) => (String(o.Completed) === "true" || o.Completed === true) && o.Type !== "Return"
+      (o) => (String(o.completed) === "true" || o.completed === true) && o.type !== "Return"
     ).sort((a, b) => {
-      const timeA = Number(a.Timestamp) || 0;
-      const timeB = Number(b.Timestamp) || 0;
+      const timeA = Number(a.timestamp) || 0;
+      const timeB = Number(b.timestamp) || 0;
       return timeB - timeA;
     });
   }, [dbOrders]);
@@ -904,13 +905,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     dbOrders.forEach((o) => {
       // Check if this order is delivered, collected, or complete
-      const isDelivered = o.Type !== "Return" && (o.Status === "Delivered" || String(o.Completed) === "true" || o.Completed === true);
-      const isCollected = o.Type === "Return" && (o.Status === "Collected" || o.Status === "Return Collected" || String(o.Completed) === "true" || o.Completed === true);
+      const isDelivered = o.type !== "Return" && (o.status === "Delivered" || String(o.completed) === "true" || o.completed === true);
+      const isCollected = o.type === "Return" && (o.status === "Collected" || o.status === "Return Collected" || String(o.completed) === "true" || o.completed === true);
 
       if (isDelivered || isCollected) {
         let completedToday = false;
         try {
-          const logs = typeof o.Logs === "string" ? JSON.parse(o.Logs) : o.Logs;
+          const logs = typeof o.logs === "string" ? JSON.parse(o.logs) : o.logs;
           if (Array.isArray(logs)) {
             // Find any log entry of delivery (Delivered/Completed) or collection (Collected/Return Collected/Completed) that happened today
             const compLog = logs.find((l: any) => {
@@ -919,16 +920,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             });
             if (compLog && Number(compLog.timestamp) >= startOfTodayMs) {
               completedToday = true;
-            } else if (!compLog && o.Timestamp && Number(o.Timestamp) >= startOfTodayMs) {
+            } else if (!compLog && o.timestamp && Number(o.timestamp) >= startOfTodayMs) {
               completedToday = true;
             }
           } else {
-            if (o.Timestamp && Number(o.Timestamp) >= startOfTodayMs) {
+            if (o.timestamp && Number(o.timestamp) >= startOfTodayMs) {
               completedToday = true;
             }
           }
         } catch (_) {
-          if (o.Timestamp && Number(o.Timestamp) >= startOfTodayMs) {
+          if (o.timestamp && Number(o.timestamp) >= startOfTodayMs) {
             completedToday = true;
           }
         }
@@ -944,19 +945,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Return Orders filtered lists
   const returnOrders = React.useMemo(() => {
     return dbOrders.filter((o) => {
-      if (o.Type !== "Return") return false;
+      if (o.type !== "Return") return false;
       if (activeReturnTab === "complete") {
-        return String(o.Completed) === "true" || o.Completed === true;
+        return String(o.completed) === "true" || o.completed === true;
       } else {
-        return String(o.Completed) !== "true" && o.Completed !== true;
+        return String(o.completed) !== "true" && o.completed !== true;
       }
     });
   }, [dbOrders, activeReturnTab]);
 
   const sortedReturnOrders = React.useMemo(() => {
     return [...returnOrders].sort((a, b) => {
-      const timeA = Number(a.Timestamp) || 0;
-      const timeB = Number(b.Timestamp) || 0;
+      const timeA = Number(a.timestamp) || 0;
+      const timeB = Number(b.timestamp) || 0;
       return timeB - timeA;
     });
   }, [returnOrders]);
@@ -975,7 +976,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const handleDeleteReturnOrder = async (order: DbOrder) => {
     const previousDbOrders = [...dbOrders];
     setDbOrders((prev) => prev.filter((o) => o.id !== order.id));
-    showToast(`Return order ${order.DO_Number} deleted.`, "info");
+    showToast(`Return order ${order.do_number} deleted.`, "info");
 
     const payload = {
       table: "Track_Orders",
@@ -983,7 +984,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       data: { id: order.id }
     };
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1002,7 +1003,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const handleCompleteReturnOrder = async (order: DbOrder, creditNoteNum?: string, invoiceAmount?: number | string) => {
     let currentLogs: LogEntry[] = [];
     try {
-      currentLogs = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+      currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
     } catch (_) {}
 
     const updatedLogs = [
@@ -1023,31 +1024,31 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         o.id === order.id
           ? { 
               ...o, 
-              Completed: "true", 
-              Credit_Note_Number: creditNoteNum || "", 
-              Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
-              Logs: JSON.stringify(updatedLogs) 
+              completed: "true", 
+              credit_note_number: creditNoteNum || "", 
+              invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+              logs: JSON.stringify(updatedLogs) 
             }
           : o
       )
     );
 
-    showToast(`Return order ${order.DO_Number} completed.`, "success");
+    showToast(`Return order ${order.do_number} completed.`, "success");
 
     const payload = {
       table: "Track_Orders",
       action: "update",
       data: {
         id: order.id,
-        Completed: "true",
-        Credit_Note_Number: creditNoteNum || "",
-        Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
-        Logs: JSON.stringify(updatedLogs)
+        completed: "true",
+        credit_note_number: creditNoteNum || "",
+        invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+        logs: JSON.stringify(updatedLogs)
       }
     };
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1077,12 +1078,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   const openEditReturnPanel = (order: DbOrder) => {
     setEditingReturn(order);
-    setReturnRefNumber(String(order.Ref_Number || order.DO_Number || ""));
-    setReturnLocation(String(order.Deliver_To || ""));
-    setReturnPoscode(String(order.Poscode || ""));
+    setReturnRefNumber(String(order.ref_number || order.do_number || ""));
+    setReturnLocation(String(order.deliver_to || ""));
+    setReturnPoscode(String(order.poscode || ""));
     
-    if (order.Deadline) {
-      const d = new Date(Number(order.Deadline));
+    if (order.deadline) {
+      const d = new Date(Number(order.deadline));
       const yyyy = d.getFullYear();
       const mm = String(d.getMonth() + 1).padStart(2, "0");
       const dd = String(d.getDate()).padStart(2, "0");
@@ -1091,25 +1092,25 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       setReturnCollectBeforeDate("");
     }
     
-    const markVal = String(order.Mark || "");
+    const markVal = String(order.mark || "");
     setReturnMark(markVal.startsWith("R") ? markVal.substring(1) : markVal);
     
     let itemsList: SKUItem[] = [];
     try {
-      itemsList = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+      itemsList = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
     } catch (_) {}
     setReturnItems(itemsList || []);
-    setReturnCollectMethod(order.Deliver_Method || "Company Vehicle");
+    setReturnCollectMethod(order.deliver_method || "Company Vehicle");
     setIsReturnPanelOpen(true);
   };
 
   const openEditOrderPanel = (order: DbOrder) => {
     setEditingOrder(order);
-    setCreateDoNumber(String(order.DO_Number || ""));
-    setCreateRefNumber(String(order.Ref_Number || ""));
-    setCreateMark(String(order.Mark || ""));
+    setCreateDoNumber(String(order.do_number || ""));
+    setCreateRefNumber(String(order.ref_number || ""));
+    setCreateMark(String(order.mark || ""));
     
-    const typeStr = String(order.Type || "Normal");
+    const typeStr = String(order.type || "Normal");
     let parsedType: "Normal" | "Urgent" | "Appointment" = "Normal";
     if (typeStr.startsWith("Appointment")) {
       parsedType = "Appointment";
@@ -1118,18 +1119,18 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
     setCreateType(parsedType);
     
-    setCreateDeliverTo(String(order.Deliver_To || ""));
-    setCreatePoscode(String(order.Poscode || ""));
-    setCreateDeliverMethod(String(order.Deliver_Method || "Company Delivery"));
+    setCreateDeliverTo(String(order.deliver_to || ""));
+    setCreatePoscode(String(order.poscode || ""));
+    setCreateDeliverMethod(String(order.deliver_method || "Company Delivery"));
     
     let parsedItems: SKUItem[] = [];
     try {
-      parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+      parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
     } catch (_) {}
     setCreateItems(parsedItems || []);
     
-    if (parsedType === "Appointment" && order.Deadline) {
-      const dt = new Date(Number(order.Deadline));
+    if (parsedType === "Appointment" && order.deadline) {
+      const dt = new Date(Number(order.deadline));
       const yyyy = dt.getFullYear();
       const mm = String(dt.getMonth() + 1).padStart(2, '0');
       const dd = String(dt.getDate()).padStart(2, '0');
@@ -1194,13 +1195,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // Validation: Mark cannot be the same if still pending/collected
     const isEdit = !!editingReturn;
     const isMarkActive = dbOrders.some(o => 
-      o.Type === "Return" && 
-      o.Status !== "Complete" && 
-      o.Status !== "Collected" && 
-      o.Status !== "Return Collected" && 
-      String(o.Completed) !== "true" &&
-      o.Completed !== true &&
-      String(o.Mark).toUpperCase() === finalMark.toUpperCase() &&
+      o.type === "Return" && 
+      o.status !== "Complete" && 
+      o.status !== "Collected" && 
+      o.status !== "Return Collected" && 
+      String(o.completed) !== "true" &&
+      o.completed !== true &&
+      String(o.mark).toUpperCase() === finalMark.toUpperCase() &&
       (!isEdit || o.id !== editingReturn.id)
     ) || drafts.some(d =>
       d.type === "Return" &&
@@ -1216,7 +1217,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const epochDate = new Date(returnCollectBeforeDate).getTime();
     
     const initialLogs: LogEntry[] = isEdit 
-      ? (typeof editingReturn.Logs === "string" ? JSON.parse(editingReturn.Logs) : editingReturn.Logs)
+      ? (typeof editingReturn.logs === "string" ? JSON.parse(editingReturn.logs) : editingReturn.logs)
       : [
           {
             action: "Created Return",
@@ -1228,20 +1229,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         
     const payloadDataTemp: Partial<DbOrder> = {
       id: orderId,
-      DO_Number: returnRefNumber,
-      Ref_Number: returnRefNumber,
-      Mark: finalMark,
-      Type: "Return",
-      Deliver_To: returnLocation,
-      Deliver_Method: returnCollectMethod,
-      Poscode: returnPoscode.trim(),
-      Items: JSON.stringify(returnItems.filter(i => i.sku.trim() !== "")),
-      Status: isEdit ? editingReturn.Status : "Pending",
-      Timestamp: isEdit ? editingReturn.Timestamp : Date.now(),
-      Deadline: epochDate,
-      Completed: isEdit ? editingReturn.Completed : "false",
-      Latitude: lat,
-      Longitude: lng
+      do_number: returnRefNumber,
+      ref_number: returnRefNumber,
+      mark: finalMark,
+      type: "Return",
+      deliver_to: returnLocation,
+      deliver_method: returnCollectMethod,
+      poscode: returnPoscode.trim(),
+      items: JSON.stringify(returnItems.filter(i => i.sku.trim() !== "")),
+      status: isEdit ? editingReturn.status : "Pending",
+      timestamp: isEdit ? editingReturn.timestamp : Date.now(),
+      deadline: epochDate,
+      completed: isEdit ? editingReturn.completed : "false",
+      latitude: lat,
+      longitude: lng
     };
         
     if (isEdit) {
@@ -1255,7 +1256,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       const payloadData = {
         ...payloadDataTemp,
-        Logs: JSON.stringify(initialLogs)
+        logs: JSON.stringify(initialLogs)
       };
 
       const previousDbOrders = [...dbOrders];
@@ -1270,7 +1271,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       };
 
       try {
-        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
@@ -1309,8 +1310,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Render countdown cell badge
   const renderCountdownCell = (order: DbOrder) => {
-    if (!order.Deadline) return <span className="text-zinc-400">—</span>;
-    const deadline = Number(order.Deadline);
+    if (!order.deadline) return <span className="text-zinc-400">—</span>;
+    const deadline = Number(order.deadline);
     if (isNaN(deadline) || deadline <= 0) return <span className="text-zinc-400">—</span>;
 
     const now = Date.now();
@@ -1351,12 +1352,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Render type cell badge or clock icon
   const renderTypeCell = (order: DbOrder) => {
-    const val = order.Type || "Normal";
+    const val = order.type || "Normal";
     
     // Calculate countdown string
     let countdownText = "";
-    if (order.Deadline) {
-      const deadline = Number(order.Deadline);
+    if (order.deadline) {
+      const deadline = Number(order.deadline);
       if (!isNaN(deadline) && deadline > 0) {
         const now = Date.now();
         const diff = deadline - now;
@@ -1426,8 +1427,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const usedMarks = new Set<string>();
     
     currentPending.forEach((o) => {
-      if (o.Mark && o.Status !== "Delivered") {
-        usedMarks.add(String(o.Mark).trim().toUpperCase());
+      if (o.mark && o.status !== "Delivered") {
+        usedMarks.add(String(o.mark).trim().toUpperCase());
       }
     });
 
@@ -1461,15 +1462,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     
     currentDbOrders.forEach((o) => {
       if (
-        o.Mark && 
-        o.Type === "Return" && 
-        o.Status !== "Complete" && 
-        o.Status !== "Collected" && 
-        o.Status !== "Return Collected" && 
-        String(o.Completed) !== "true" && 
-        o.Completed !== true
+        o.mark && 
+        o.type === "Return" && 
+        o.status !== "Complete" && 
+        o.status !== "Collected" && 
+        o.status !== "Return Collected" && 
+        String(o.completed) !== "true" && 
+        o.completed !== true
       ) {
-        usedMarks.add(String(o.Mark).trim().toUpperCase());
+        usedMarks.add(String(o.mark).trim().toUpperCase());
       }
     });
 
@@ -1573,27 +1574,59 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Singapore Map Pin Construction
   const activePins = React.useMemo(() => {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const startOfTodayMs = startOfToday.getTime();
+
+    const isDoneToday = (order: DbOrder) => {
+      let completedToday = false;
+      try {
+        const logs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
+        if (Array.isArray(logs)) {
+          // Find any log entry of delivery (Delivered/Completed) or collection (Collected/Return Collected/Completed) that happened today
+          const compLog = logs.find((l: any) => {
+            const act = String(l.action || "").toLowerCase();
+            return (act.includes("delivered") || act.includes("collected") || act.includes("completed") || act.includes("complete"));
+          });
+          if (compLog && Number(compLog.timestamp) >= startOfTodayMs) {
+            completedToday = true;
+          } else if (!compLog && order.timestamp && Number(order.timestamp) >= startOfTodayMs) {
+            completedToday = true;
+          }
+        } else {
+          if (order.timestamp && Number(order.timestamp) >= startOfTodayMs) {
+            completedToday = true;
+          }
+        }
+      } catch (_) {
+        if (order.timestamp && Number(order.timestamp) >= startOfTodayMs) {
+          completedToday = true;
+        }
+      }
+      return completedToday;
+    };
+
     // 1. Deliveries (Type !== "Return")
     const targetDeliveries = dbOrders.filter((o) => {
-      if (o.Type === "Return") return false;
-      if (String(o.Completed) === "true" || o.Completed === true) return false;
+      if (o.type === "Return") return false;
       
       if (mapFilter === "pending") {
-        return o.Status !== "Delivered";
+        if (String(o.completed) === "true" || o.completed === true) return false;
+        return o.status !== "Delivered";
       } else {
-        return o.Status === "Delivered";
+        return o.status === "Delivered" && isDoneToday(o);
       }
     });
 
     const deliveryPins = targetDeliveries
-      .filter((o) => o.Poscode && validatePoscode(o.Poscode))
+      .filter((o) => o.poscode && validatePoscode(o.poscode))
       .map((o) => {
-        let lat = Number(o.Latitude);
-        let lng = Number(o.Longitude);
+        let lat = Number(o.latitude);
+        let lng = Number(o.longitude);
 
         // Fallback to static mapping if exact coords not saved or invalid
         if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-          const coords = getSingaporeLatLng(o.Poscode);
+          const coords = getSingaporeLatLng(o.poscode);
           lat = coords.lat;
           lng = coords.lng;
         }
@@ -1603,19 +1636,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         let textColor = "#18181B"; // Dark text
         let displayStatus = "Preparing Goods";
 
-        if (o.Status === "Ready to Pick" || o.Status === "Picking") {
+        if (o.status === "Ready to Pick" || o.status === "Picking") {
           color = "#D47A8E"; // Dusty Rose
           textColor = "#FFFFFF";
           displayStatus = "Preparing Goods";
-        } else if (o.Status === "Ready to Deliver") {
+        } else if (o.status === "Ready to Deliver") {
           color = "#E28B54"; // Soft Orange
           textColor = "#FFFFFF";
           displayStatus = "Goods Ready";
-        } else if (o.Status === "Load" || o.Status === "Out for Delivery") {
+        } else if (o.status === "Load" || o.status === "Out for Delivery") {
           color = "#007A87"; // Teal Blue
           textColor = "#FFFFFF";
-          displayStatus = o.Status === "Load" ? "Goods Ready" : "Driver Deliver or Collect Goods";
-        } else if (o.Status === "Delivered") {
+          displayStatus = o.status === "Load" ? "Goods Ready" : "Driver Deliver or Collect Goods";
+        } else if (o.status === "Delivered") {
           color = "#14532D"; // Deep Forest Green
           textColor = "#FFFFFF";
           displayStatus = "Complete Job";
@@ -1623,42 +1656,42 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         
         return {
           id: o.id,
-          mark: o.Mark,
-          poscode: o.Poscode,
-          deliverTo: o.Deliver_To,
+          mark: o.mark,
+          poscode: o.poscode,
+          deliverTo: o.deliver_to,
           status: displayStatus,
           color,
           textColor,
           lat,
           lng,
           isReturn: false,
-          typeDisplay: o.Type || "Normal",
-          deliverMethod: o.Deliver_Method || "Company Delivery"
+          typeDisplay: o.type || "Normal",
+          deliverMethod: o.deliver_method || "Company Delivery"
         };
       });
 
     // 2. Returns (Type === "Return")
     const targetReturns = dbOrders.filter((o) => {
-      if (o.Type !== "Return") return false;
-      if (String(o.Completed) === "true" || o.Completed === true) return false;
-      if (o.Status === "Complete") return false; // Exclude complete status as requested
+      if (o.type !== "Return") return false;
+      if (o.status === "Complete") return false; // Exclude complete status as requested
 
       if (mapFilter === "pending") {
-        return o.Status !== "Collected" && o.Status !== "Return Collected";
+        if (String(o.completed) === "true" || o.completed === true) return false;
+        return o.status !== "Collected" && o.status !== "Return Collected";
       } else {
-        return o.Status === "Collected" || o.Status === "Return Collected";
+        return (o.status === "Collected" || o.status === "Return Collected") && isDoneToday(o);
       }
     });
 
     const returnPins = targetReturns
-      .filter((o) => o.Poscode)
+      .filter((o) => o.poscode)
       .map((o) => {
-        let lat = Number(o.Latitude);
-        let lng = Number(o.Longitude);
+        let lat = Number(o.latitude);
+        let lng = Number(o.longitude);
 
         if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
           // Try to look up in stores directory
-          const matchedStore = stores.find(s => String(s.id).trim() === String(o.Poscode).trim());
+          const matchedStore = stores.find(s => String(s.id).trim() === String(o.poscode).trim());
           if (matchedStore && matchedStore["Pin Locations"]) {
             const parts = matchedStore["Pin Locations"].split(",");
             lat = Number(parts[0]);
@@ -1666,7 +1699,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           }
           
           if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-            const coords = getSingaporeLatLng(o.Poscode);
+            const coords = getSingaporeLatLng(o.poscode);
             lat = coords.lat;
             lng = coords.lng;
           }
@@ -1677,7 +1710,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         let textColor = "#FFFFFF";
         let displayStatus = "Driver Deliver or Collect Goods";
 
-        if (o.Status === "Collected" || o.Status === "Return Collected") {
+        if (o.status === "Collected" || o.status === "Return Collected") {
           color = "#14532D"; // Deep Forest Green
           textColor = "#FFFFFF";
           displayStatus = "Complete Job";
@@ -1689,9 +1722,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
         return {
           id: o.id,
-          mark: o.Mark,
-          poscode: o.Poscode,
-          deliverTo: o.Deliver_To,
+          mark: o.mark,
+          poscode: o.poscode,
+          deliverTo: o.deliver_to,
           status: displayStatus,
           color,
           textColor,
@@ -1699,7 +1732,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           lng,
           isReturn: true,
           typeDisplay: "Normal",
-          deliverMethod: o.Deliver_Method || "Company Vehicle"
+          deliverMethod: o.deliver_method || "Company Vehicle"
         };
       });
 
@@ -1710,10 +1743,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const handleOpenLogs = React.useCallback((order: DbOrder) => {
     let list: LogEntry[] = [];
     try {
-      list = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+      list = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
     } catch (_) {}
     setLogsList(list);
-    setSelectedOrderMark(order.Mark || "-");
+    setSelectedOrderMark(order.mark || "-");
     setSelectedOrderId(order.id || "-");
     setSelectedOrder(order);
     setIsLogsModalOpen(true);
@@ -1842,6 +1875,136 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     localStorage.setItem("track_order_drafts", JSON.stringify(updatedDrafts));
   };
 
+  // Handle Bulk Invoice PDF Upload & Completion
+  const handleBulkInvoiceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== "application/pdf") {
+      showToast("Please upload a valid PDF file", "error");
+      return;
+    }
+
+    setInvoiceLoading(true);
+    showToast("Processing bulk invoices...", "info");
+
+    try {
+      // Convert file to base64
+      const base64String = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = (err) => reject(err);
+      });
+
+      // Call the Gemini invoice parser backend
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/parse-invoice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdf: base64String, type: "application/pdf" })
+      });
+
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        throw new Error(errBody.error || `Server error status ${res.status}`);
+      }
+
+      const parsed = await res.json();
+      const parsedInvoices = parsed.data;
+
+      if (!parsed.success || !Array.isArray(parsedInvoices)) {
+        throw new Error("Invalid response format from invoice parser.");
+      }
+
+      showToast(`Parsed ${parsedInvoices.length} invoices. Matching references...`, "info");
+
+      let matchedCount = 0;
+      let ignoredBlankRef = 0;
+      let noMatchCount = 0;
+
+      for (const inv of parsedInvoices) {
+        const { invoiceNumber, poRef, invoiceAmount } = inv;
+
+        if (!poRef || !poRef.trim()) {
+          ignoredBlankRef++;
+          continue;
+        }
+
+        // Find matching order in dbOrders based on ref_number
+        const matchedOrder = dbOrders.find(
+          (o) => String(o.ref_number).trim().toLowerCase() === String(poRef).trim().toLowerCase()
+        );
+
+        if (!matchedOrder) {
+          noMatchCount++;
+          continue;
+        }
+
+        matchedCount++;
+
+        let currentLogs: LogEntry[] = [];
+        try {
+          currentLogs = typeof matchedOrder.logs === "string" ? JSON.parse(matchedOrder.logs) : matchedOrder.logs;
+        } catch (_) {}
+        if (!Array.isArray(currentLogs)) currentLogs = [];
+
+        const updatedLogs = [
+          ...currentLogs,
+          {
+            action: "Completed by Admin",
+            actionBy: profile?.name || "Admin",
+            remark: `Archived & Verified in Bulk (Invoice: ${invoiceNumber}, Amount: ${invoiceAmount})`,
+            timestamp: Date.now()
+          }
+        ];
+
+        // 1. Silent Background API request
+        const payload = {
+          action: "update",
+          data: {
+            id: matchedOrder.id,
+            completed: "true",
+            invoice_number: invoiceNumber || "",
+            invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+            logs: JSON.stringify(updatedLogs)
+          }
+        };
+
+        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }).catch((err) => console.error("Failed to sync bulk completed order:", matchedOrder.id, err));
+
+        // 2. Update state instantly for UI responsiveness
+        setDbOrders((prev) =>
+          prev.map((o) =>
+            o.id === matchedOrder.id
+              ? {
+                  ...o,
+                  completed: "true",
+                  invoice_number: invoiceNumber || "",
+                  invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+                  logs: JSON.stringify(updatedLogs)
+                }
+              : o
+          )
+        );
+      }
+
+      showToast(
+        `Bulk completion complete! ${matchedCount} matched, ${ignoredBlankRef} ignored (blank ref), ${noMatchCount} not matched.`,
+        "success"
+      );
+
+    } catch (err: any) {
+      showToast(err.message || "Failed to process bulk invoices.", "error");
+    } finally {
+      setInvoiceLoading(false);
+      e.target.value = "";
+    }
+  };
+
   // Handle DO PDF Upload & Parsing
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -1927,8 +2090,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               
               // Validation: check if DO Number is already registered in Drafts, Pending, or Completed lists
               const inDrafts = drafts.some((d) => d.doNumber === doNum);
-              const inPending = pendingOrders.some((p) => p.DO_Number === doNum);
-              const inCompleted = completedOrders.some((c) => c.DO_Number === doNum);
+              const inPending = pendingOrders.some((p) => p.do_number === doNum);
+              const inCompleted = completedOrders.some((c) => c.do_number === doNum);
 
               if (inDrafts || inPending || inCompleted) {
                 duplicates.push(doNum);
@@ -2075,16 +2238,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const isMarkActive = isReturn
       ? dbOrders.some(
           (o) =>
-            o.Type === "Return" &&
-            o.Status !== "Complete" &&
-            o.Status !== "Collected" &&
-            o.Status !== "Return Collected" &&
-            String(o.Completed) !== "true" &&
-            o.Completed !== true &&
-            String(o.Mark).toUpperCase() === order.mark.toUpperCase()
+            o.type === "Return" &&
+            o.status !== "Complete" &&
+            o.status !== "Collected" &&
+            o.status !== "Return Collected" &&
+            String(o.completed) !== "true" &&
+            o.completed !== true &&
+            String(o.mark).toUpperCase() === order.mark.toUpperCase()
         )
       : pendingOrders.some(
-          (o) => String(o.Mark).toUpperCase() === order.mark.toUpperCase() && o.Status !== "Delivered"
+          (o) => String(o.mark).toUpperCase() === order.mark.toUpperCase() && o.status !== "Delivered"
         );
 
     if (isMarkActive) {
@@ -2126,27 +2289,27 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // Start with local/temporary coordinates/images and let it instantly display
     const newDbOrder: DbOrder = {
       id: order.id,
-      DO_Number: order.doNumber,
-      Ref_Number: order.refNumber || "",
-      Mark: order.mark,
-      Type: finalType,
-      Deliver_To: order.deliverTo,
-      Poscode: order.poscode,
-      Items: JSON.stringify(order.items),
-      Status: initialStatus,
-      Logs: JSON.stringify(initialLogs),
-      Timestamp: Date.now(),
-      Delivered_At: "",
-      Completed: "false",
-      Deadline: deadlineVal || "",
-      Deliver_Method: order.deliverMethod || defaultMethod,
-      Latitude: order.latitude || "",
-      Longitude: order.longitude || "",
-      Photo_DO_Paper: "",
-      Photo_DO_Paper_Signed: "",
-      Photo_Delivered_Proof: "",
-      Photo_Handover_Proof: "",
-      Photo_Picker_Proof: ""
+      do_number: order.doNumber,
+      ref_number: order.refNumber || "",
+      mark: order.mark,
+      type: finalType,
+      deliver_to: order.deliverTo,
+      poscode: order.poscode,
+      items: JSON.stringify(order.items),
+      status: initialStatus,
+      logs: JSON.stringify(initialLogs),
+      timestamp: Date.now(),
+      delivered_at: "",
+      completed: "false",
+      deadline: deadlineVal || "",
+      deliver_method: order.deliverMethod || defaultMethod,
+      latitude: order.latitude || "",
+      longitude: order.longitude || "",
+      photo_do_paper: "",
+      photo_do_paper_signed: "",
+      photo_delivered_proof: "",
+      photo_handover_proof: "",
+      photo_picker_proof: ""
     };
 
     // Update state instantly
@@ -2212,32 +2375,32 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         action: "insert",
         data: {
           id: order.id,
-          DO_Number: order.doNumber,
-          Ref_Number: order.refNumber || "",
-          Mark: order.mark,
-          Type: finalType,
-          Deliver_To: order.deliverTo,
-          Poscode: order.poscode,
-          Items: JSON.stringify(order.items),
-          Status: initialStatus,
-          Logs: JSON.stringify(initialLogs),
-          Timestamp: Date.now(),
-          Delivered_At: "",
-          Completed: "false",
-          Deadline: deadlineVal || "",
-          Deliver_Method: order.deliverMethod || defaultMethod,
-          Latitude: lat,
-          Longitude: lng,
-          Photo_DO_Paper: photoDoPaperUrl,
-          Photo_DO_Paper_Signed: "",
-          Photo_Delivered_Proof: "",
-          Photo_Handover_Proof: "",
-          Photo_Picker_Proof: ""
+          do_number: order.doNumber,
+          ref_number: order.refNumber || "",
+          mark: order.mark,
+          type: finalType,
+          deliver_to: order.deliverTo,
+          poscode: order.poscode,
+          items: JSON.stringify(order.items),
+          status: initialStatus,
+          logs: JSON.stringify(initialLogs),
+          timestamp: Date.now(),
+          delivered_at: "",
+          completed: "false",
+          deadline: deadlineVal || "",
+          deliver_method: order.deliverMethod || defaultMethod,
+          latitude: lat,
+          longitude: lng,
+          photo_do_paper: photoDoPaperUrl,
+          photo_do_paper_signed: "",
+          photo_delivered_proof: "",
+          photo_handover_proof: "",
+          photo_picker_proof: ""
         }
       };
 
       try {
-        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
@@ -2279,17 +2442,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // --- INSTANT UPDATE (OPTIMISTIC UI) ---
     let parsedItems: SKUItem[] = [];
     try {
-      parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+      parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
     } catch (_) {}
 
     const restoredDraft: TrackOrderDraft = {
       id: order.id,
-      doNumber: order.DO_Number,
-      refNumber: order.Ref_Number,
-      mark: order.Mark,
-      type: (order.Type as any) || "Normal",
-      deliverTo: order.Deliver_To,
-      poscode: order.Poscode,
+      doNumber: order.do_number,
+      refNumber: order.ref_number,
+      mark: order.mark,
+      type: (order.type as any) || "Normal",
+      deliverTo: order.deliver_to,
+      poscode: order.poscode,
       items: parsedItems
     };
 
@@ -2299,7 +2462,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     setDbOrders((prev) => prev.filter((o) => o.id !== order.id));
     saveDraftsToStorage([...drafts, restoredDraft]);
 
-    showToast(`Order ${order.DO_Number} revoked.`, "info");
+    showToast(`Order ${order.do_number} revoked.`, "info");
 
     // --- SILENT BACKGROUND UPDATE ---
     const payload = {
@@ -2308,7 +2471,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       data: { id: order.id }
     };
 
-    fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+    fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -2333,7 +2496,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // --- INSTANT UPDATE (OPTIMISTIC UI) ---
     let currentLogs: LogEntry[] = [];
     try {
-      currentLogs = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+      currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
     } catch (_) {}
 
     const updatedLogs = [
@@ -2356,16 +2519,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         o.id === order.id
           ? { 
               ...o, 
-              Completed: "true", 
-              Invoice_Number: invoiceNum || "", 
-              Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
-              Logs: JSON.stringify(updatedLogs) 
+              completed: "true", 
+              invoice_number: invoiceNum || "", 
+              invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+              logs: JSON.stringify(updatedLogs) 
             }
           : o
       )
     );
 
-    showToast(`Order ${order.DO_Number} archived.`, "info");
+    showToast(`Order ${order.do_number} archived.`, "info");
 
     // --- SILENT BACKGROUND UPDATE ---
     const payload = {
@@ -2373,14 +2536,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       action: "update",
       data: {
         id: order.id,
-        Completed: "true",
-        Invoice_Number: invoiceNum || "",
-        Invoice_Amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
-        Logs: JSON.stringify(updatedLogs)
+        completed: "true",
+        invoice_number: invoiceNum || "",
+        invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+        logs: JSON.stringify(updatedLogs)
       }
     };
 
-    fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+    fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -2402,7 +2565,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const handleRevokeCompleteOrder = async (order: DbOrder) => {
     let currentLogs: LogEntry[] = [];
     try {
-      currentLogs = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+      currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
     } catch (_) {}
 
     const updatedLogs = [
@@ -2423,27 +2586,27 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         o.id === order.id
           ? { 
               ...o, 
-              Completed: "false", 
-              Logs: JSON.stringify(updatedLogs) 
+              completed: "false", 
+              logs: JSON.stringify(updatedLogs) 
             }
           : o
       )
     );
 
-    showToast(`Order ${order.DO_Number} reverted to active deliveries.`, "info");
+    showToast(`Order ${order.do_number} reverted to active deliveries.`, "info");
 
     const payload = {
       table: "Track_Orders",
       action: "update",
       data: {
         id: order.id,
-        Completed: "false",
-        Logs: JSON.stringify(updatedLogs)
+        completed: "false",
+        logs: JSON.stringify(updatedLogs)
       }
     };
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2462,7 +2625,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const handleRevokeCompleteReturnOrder = async (order: DbOrder) => {
     let currentLogs: LogEntry[] = [];
     try {
-      currentLogs = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+      currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
     } catch (_) {}
 
     const updatedLogs = [
@@ -2483,27 +2646,27 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         o.id === order.id
           ? { 
               ...o, 
-              Completed: "false", 
-              Logs: JSON.stringify(updatedLogs) 
+              completed: "false", 
+              logs: JSON.stringify(updatedLogs) 
             }
           : o
       )
     );
 
-    showToast(`Return order ${order.DO_Number} reverted to active returns.`, "info");
+    showToast(`Return order ${order.do_number} reverted to active returns.`, "info");
 
     const payload = {
       table: "Track_Orders",
       action: "update",
       data: {
         id: order.id,
-        Completed: "false",
-        Logs: JSON.stringify(updatedLogs)
+        completed: "false",
+        logs: JSON.stringify(updatedLogs)
       }
     };
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2530,7 +2693,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const order = pendingRevokeCompleteOrder;
     setPendingRevokeCompleteOrder(null);
 
-    if (order.Type === "Return") {
+    if (order.type === "Return") {
       await handleRevokeCompleteReturnOrder(order);
     } else {
       await handleRevokeCompleteOrder(order);
@@ -2539,10 +2702,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   const handleOpenEditInvoice = (order: DbOrder) => {
     setEditInvoiceOrder(order);
-    const isReturn = order.Type === "Return";
-    const num = isReturn ? order.Credit_Note_Number : order.Invoice_Number;
+    const isReturn = order.type === "Return";
+    const num = isReturn ? order.credit_note_number : order.invoice_number;
     setEditInvoiceNum(num !== undefined && num !== null ? String(num) : "");
-    setEditInvoiceAmount(order.Invoice_Amount !== undefined && order.Invoice_Amount !== null ? String(order.Invoice_Amount) : "");
+    setEditInvoiceAmount(order.invoice_amount !== undefined && order.invoice_amount !== null ? String(order.invoice_amount) : "");
     setIsEditInvoiceModalOpen(true);
   };
 
@@ -2552,10 +2715,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     let currentLogs: LogEntry[] = [];
     try {
-      currentLogs = typeof editInvoiceOrder.Logs === "string" ? JSON.parse(editInvoiceOrder.Logs) : editInvoiceOrder.Logs;
+      currentLogs = typeof editInvoiceOrder.logs === "string" ? JSON.parse(editInvoiceOrder.logs) : editInvoiceOrder.logs;
     } catch (_) {}
 
-    const isReturn = editInvoiceOrder.Type === "Return";
+    const isReturn = editInvoiceOrder.type === "Return";
 
     const updatedLogs = [
       ...currentLogs,
@@ -2578,16 +2741,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           if (isReturn) {
             return { 
               ...o, 
-              Credit_Note_Number: editInvoiceNum.trim(),
-              Invoice_Amount: editInvoiceAmount.trim(),
-              Logs: JSON.stringify(updatedLogs) 
+              credit_note_number: editInvoiceNum.trim(),
+              invoice_amount: editInvoiceAmount.trim(),
+              logs: JSON.stringify(updatedLogs) 
             };
           } else {
             return { 
               ...o, 
-              Invoice_Number: editInvoiceNum.trim(),
-              Invoice_Amount: editInvoiceAmount.trim(),
-              Logs: JSON.stringify(updatedLogs) 
+              invoice_number: editInvoiceNum.trim(),
+              invoice_amount: editInvoiceAmount.trim(),
+              logs: JSON.stringify(updatedLogs) 
             };
           }
         }
@@ -2595,7 +2758,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       })
     );
 
-    showToast(isReturn ? `Credit Note updated for ${editInvoiceOrder.DO_Number}` : `Invoice updated for ${editInvoiceOrder.DO_Number}`, "success");
+    showToast(isReturn ? `Credit Note updated for ${editInvoiceOrder.do_number}` : `Invoice updated for ${editInvoiceOrder.do_number}`, "success");
 
     const payload = {
       table: "Track_Orders",
@@ -2603,20 +2766,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       data: isReturn 
         ? {
             id: editInvoiceOrder.id,
-            Credit_Note_Number: editInvoiceNum.trim(),
-            Invoice_Amount: editInvoiceAmount.trim(),
-            Logs: JSON.stringify(updatedLogs)
+            credit_note_number: editInvoiceNum.trim(),
+            invoice_amount: editInvoiceAmount.trim(),
+            logs: JSON.stringify(updatedLogs)
           }
         : {
             id: editInvoiceOrder.id,
-            Invoice_Number: editInvoiceNum.trim(),
-            Invoice_Amount: editInvoiceAmount.trim(),
-            Logs: JSON.stringify(updatedLogs)
+            invoice_number: editInvoiceNum.trim(),
+            invoice_amount: editInvoiceAmount.trim(),
+            logs: JSON.stringify(updatedLogs)
           }
     };
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2632,7 +2795,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   const handleTriggerChangeStatus = (order: DbOrder) => {
     setStatusOrder(order);
-    setNewStatus(order.Status || "");
+    setNewStatus(order.status || "");
     setStatusRemark("");
     setStatusPhotoFile(null);
     setIsChangeStatusOpen(true);
@@ -2651,7 +2814,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     try {
       if (statusPhotoFile) {
         showToast("Uploading status image...", "info");
-        const fileName = `Track_Orders/Status_Overwrite/${statusOrder.DO_Number}_${Date.now()}.jpg`;
+        const fileName = `Track_Orders/Status_Overwrite/${statusOrder.do_number}_${Date.now()}.jpg`;
         const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
           method: "POST",
           headers: { "Content-Type": "image/jpeg" },
@@ -2666,7 +2829,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       let currentLogs: LogEntry[] = [];
       try {
-        currentLogs = typeof statusOrder.Logs === "string" ? JSON.parse(statusOrder.Logs) : statusOrder.Logs;
+        currentLogs = typeof statusOrder.logs === "string" ? JSON.parse(statusOrder.logs) : statusOrder.logs;
       } catch (_) {}
       if (!Array.isArray(currentLogs)) currentLogs = [];
 
@@ -2683,12 +2846,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       const payloadData: Partial<DbOrder> = {
         id: statusOrder.id,
-        Status: newStatus,
-        Logs: JSON.stringify(updatedLogs)
+        status: newStatus,
+        logs: JSON.stringify(updatedLogs)
       };
 
       if (newStatus === "Delivered" || newStatus === "Return Collected") {
-        payloadData.Delivered_At = Date.now();
+        payloadData.delivered_at = Date.now();
       }
 
       const previousDbOrders = [...dbOrders];
@@ -2705,7 +2868,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         data: payloadData
       };
 
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2742,7 +2905,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     if (!pendingCompleteOrder) return;
     setIsCompleteConfirmOpen(false);
     
-    if (pendingCompleteOrder.Type === "Return") {
+    if (pendingCompleteOrder.type === "Return") {
       handleCompleteReturnOrder(pendingCompleteOrder, creditNoteInput.trim(), invoiceAmountInput.trim());
     } else {
       handleCompleteOrder(pendingCompleteOrder, invoiceNumberInput.trim(), invoiceAmountInput.trim());
@@ -2796,8 +2959,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Sort Pending Orders alphabetically by Mark A-Z
   const sortedPendingOrders = React.useMemo(() => {
     return [...pendingOrders].sort((a, b) => {
-      const timeA = Number(a.Timestamp) || 0;
-      const timeB = Number(b.Timestamp) || 0;
+      const timeA = Number(a.timestamp) || 0;
+      const timeB = Number(b.timestamp) || 0;
       return timeB - timeA;
     });
   }, [pendingOrders]);
@@ -2838,7 +3001,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Delivery</span>
                 <span className="text-3xl font-bold text-zinc-950 mt-1">
-                  {pendingOrders.filter((o) => o.Status !== "Delivered").length}
+                  {pendingOrders.filter((o) => o.status !== "Delivered").length}
                 </span>
               </div>
               <div className="h-10 w-10 bg-[#E8F0FE] rounded flex items-center justify-center text-[#0B57D0]">
@@ -2851,7 +3014,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               <div className="flex flex-col">
                 <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Return</span>
                 <span className="text-3xl font-bold text-zinc-950 mt-1">
-                  {dbOrders.filter((o) => o.Type === "Return" && String(o.Completed) !== "true" && o.Completed !== true && o.Status !== "Collected" && o.Status !== "Return Collected").length}
+                  {dbOrders.filter((o) => o.type === "Return" && String(o.completed) !== "true" && o.completed !== true && o.status !== "Collected" && o.status !== "Return Collected").length}
                 </span>
               </div>
               <div className="h-10 w-10 bg-[#FCE8E6] rounded flex items-center justify-center text-[#C5221F]">
@@ -2940,6 +3103,23 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               >
                 Complete
               </button>
+
+              <label className={`ml-4 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${invoiceLoading ? "opacity-50 cursor-not-allowed" : ""}`}>
+                <Upload size={14} />
+                Bulk Invoices Upload
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  onChange={handleBulkInvoiceUpload}
+                  className="hidden"
+                  disabled={invoiceLoading}
+                />
+              </label>
+              {invoiceLoading && (
+                <span className="text-xs text-zinc-500 font-medium animate-pulse">
+                  Processing invoices...
+                </span>
+              )}
             </div>
             <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-zinc-600 self-end sm:self-auto">
               {activeDeliveryTab === "pending" ? sortedPendingOrders.length : completedOrders.length} Orders
@@ -2976,7 +3156,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       {(() => {
                         let lastDate = "";
                         return sortedPendingOrders.map((order, idx) => {
-                          const dateStr = formatDateStr(order.Timestamp);
+                          const dateStr = formatDateStr(order.timestamp);
                           const showDivider = dateStr !== lastDate;
                           if (showDivider) {
                             lastDate = dateStr;
@@ -2984,22 +3164,22 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           let itemsCount = 0;
                           let parsedItems: SKUItem[] = [];
                           try {
-                            parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+                            parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
                             itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
                           } catch (_) {}
 
                           let statusBadge = "bg-zinc-100 text-zinc-700 border-zinc-300";
-                          if (order.Status === "Ready to Pick") {
+                          if (order.status === "Ready to Pick") {
                             statusBadge = "bg-blue-50 text-blue-700 border-blue-200";
-                          } else if (order.Status === "Picking") {
+                          } else if (order.status === "Picking") {
                             statusBadge = "bg-amber-50 text-amber-700 border-amber-200";
-                          } else if (order.Status === "Ready to Deliver") {
+                          } else if (order.status === "Ready to Deliver") {
                             statusBadge = "bg-indigo-50 text-indigo-700 border-indigo-200";
-                          } else if (order.Status === "Load") {
+                          } else if (order.status === "Load") {
                             statusBadge = "bg-purple-50 text-purple-700 border-purple-200";
-                          } else if (order.Status === "Out for Delivery") {
+                          } else if (order.status === "Out for Delivery") {
                             statusBadge = "bg-pink-50 text-pink-700 border-pink-200";
-                          } else if (order.Status === "Delivered") {
+                          } else if (order.status === "Delivered") {
                             statusBadge = "bg-emerald-50 text-emerald-700 border-emerald-200";
                           }
 
@@ -3022,18 +3202,18 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                     <CustomButton
                                       variant="secondary"
                                       onClick={() => handleRevokeOrder(order)}
-                                      title={order.Status === "Delivered" ? "Cannot revoke a delivered order" : "Revoke and send back to drafts"}
+                                      title={order.status === "Delivered" ? "Cannot revoke a delivered order" : "Revoke and send back to drafts"}
                                       className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
-                                      disabled={order.Status === "Delivered"}
+                                      disabled={order.status === "Delivered"}
                                     >
                                       <Undo size={12} className="text-zinc-600" />
                                     </CustomButton>
                                     <CustomButton
                                       variant="secondary"
                                       onClick={() => openEditOrderPanel(order)}
-                                      title={order.Status === "Delivered" ? "Cannot edit a delivered order" : "Edit Order"}
+                                      title={order.status === "Delivered" ? "Cannot edit a delivered order" : "Edit Order"}
                                       className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
-                                      disabled={order.Status === "Delivered"}
+                                      disabled={order.status === "Delivered"}
                                     >
                                       <Pencil size={12} className="text-zinc-600" />
                                     </CustomButton>
@@ -3048,8 +3228,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                     <CustomButton
                                       variant="default"
                                       onClick={() => handleTriggerCompleteOrder(order)}
-                                      disabled={order.Status !== "Delivered"}
-                                      title={order.Status !== "Delivered" ? "Cannot complete until status is Delivered" : "Verify and archive"}
+                                      disabled={order.status !== "Delivered"}
+                                      title={order.status !== "Delivered" ? "Cannot complete until status is Delivered" : "Verify and archive"}
                                       className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
                                     >
                                       <CheckCircle size={12} className="text-emerald-600" />
@@ -3058,27 +3238,27 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
                                   <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold ${statusBadge}`}>
-                                    {order.Status || "Ready to Pick"}
+                                    {order.status || "Ready to Pick"}
                                   </span>
                                 </td>
                                 <td className="p-3 w-16 text-center font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                                  {order.Mark}
+                                  {order.mark}
                                 </td>
                                 <td className="p-3 w-56 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                                  {order.DO_Number}
-                                  {order.Ref_Number ? `_${order.Ref_Number}` : ""}
+                                  {order.do_number}
+                                  {order.ref_number ? `_${order.ref_number}` : ""}
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
                                   {renderTypeCell(order)}
                                 </td>
-                                <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
-                                  {order.Deliver_To}
+                                <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
+                                  {order.deliver_to}
                                 </td>
                                 <td className="p-3 w-28 text-center text-zinc-500 align-middle border-b border-zinc-200">
-                                  {renderPoscodeCell(order.Poscode)}
+                                  {renderPoscodeCell(order.poscode)}
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
-                                  {order.Deliver_Method || "Company Delivery"}
+                                  {order.deliver_method || "Company Delivery"}
                                 </td>
                                 <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                   <button
@@ -3140,7 +3320,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       {(() => {
                         let lastDate = "";
                         return completedOrders.map((order, idx) => {
-                          const dateStr = formatDateStr(order.Timestamp);
+                          const dateStr = formatDateStr(order.timestamp);
                           const showDivider = dateStr !== lastDate;
                           if (showDivider) {
                             lastDate = dateStr;
@@ -3148,21 +3328,21 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           let itemsCount = 0;
                           let parsedItems: SKUItem[] = [];
                           try {
-                            parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+                            parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
                             itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
                           } catch (_) {}
 
-                          let deliveredTs = order.Delivered_At;
+                          let deliveredTs = order.delivered_at;
                           if (!deliveredTs) {
                             let logsArr: LogEntry[] = [];
                             try {
-                              logsArr = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+                              logsArr = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
                               const match = logsArr.find((l) => l.action.toLowerCase() === "delivered" || l.action.includes("Delivered"));
                               if (match) deliveredTs = match.timestamp;
                             } catch (_) {}
                           }
                           if (!deliveredTs) {
-                            deliveredTs = order.Timestamp; 
+                            deliveredTs = order.timestamp; 
                           }
 
                           return (
@@ -3201,10 +3381,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   {formatTimestamp(deliveredTs)}
                                 </td>
                                 <td className="p-3 w-36 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
-                                  {order.Driver || "-"}
+                                  {order.driver || "-"}
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                                  {order.Invoice_Number ? (
+                                  {order.invoice_number ? (
                                     <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
                                       Invoiced
                                     </span>
@@ -3215,20 +3395,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   )}
                                 </td>
                                 <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
-                                  {order.DO_Number}
-                                  {order.Ref_Number ? `_${order.Ref_Number}` : ""}
+                                  {order.do_number}
+                                  {order.ref_number ? `_${order.ref_number}` : ""}
                                 </td>
-                                <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
-                                  {order.Deliver_To}
+                                <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
+                                  {order.deliver_to}
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
-                                  {order.Deliver_Method || "Company Delivery"}
+                                  {order.deliver_method || "Company Delivery"}
                                 </td>
                                 <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                                  {order.Invoice_Number || "-"}
+                                  {order.invoice_number || "-"}
                                 </td>
                                 <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                                  {order.Invoice_Amount ? `$${Number(order.Invoice_Amount).toFixed(2)}` : "-"}
+                                  {order.invoice_amount ? `$${Number(order.invoice_amount).toFixed(2)}` : "-"}
                                 </td>
                                 <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                   <button
@@ -3328,7 +3508,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     {(() => {
                       let lastDate = "";
                       return sortedReturnOrders.map((order, idx) => {
-                        const dateStr = formatDateStr(order.Timestamp);
+                        const dateStr = formatDateStr(order.timestamp);
                         const showDivider = dateStr !== lastDate;
                         if (showDivider) {
                           lastDate = dateStr;
@@ -3336,21 +3516,21 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                         let itemsCount = 0;
                         let parsedItems: SKUItem[] = [];
                         try {
-                          parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+                          parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
                           itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
                         } catch (_) {}
 
-                        let deliveredTs = order.Delivered_At;
+                        let deliveredTs = order.delivered_at;
                         if (!deliveredTs) {
                           let logsArr: LogEntry[] = [];
                           try {
-                            logsArr = typeof order.Logs === "string" ? JSON.parse(order.Logs) : order.Logs;
+                            logsArr = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
                             const match = logsArr.find((l) => l.action.toLowerCase() === "completed" || l.action.includes("Completed") || l.action.toLowerCase() === "complete" || l.action.includes("Complete"));
                             if (match) deliveredTs = match.timestamp;
                           } catch (_) {}
                         }
                         if (!deliveredTs) {
-                          deliveredTs = order.Timestamp; 
+                          deliveredTs = order.timestamp; 
                         }
 
                         return (
@@ -3389,10 +3569,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 {formatTimestamp(deliveredTs)}
                               </td>
                               <td className="p-3 w-36 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
-                                {order.Driver || "-"}
+                                {order.driver || "-"}
                               </td>
                               <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                                {order.Credit_Note_Number ? (
+                                {order.credit_note_number ? (
                                   <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
                                     Credit Noted
                                   </span>
@@ -3403,19 +3583,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 )}
                               </td>
                               <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
-                                {order.Ref_Number || order.DO_Number}
+                                {order.ref_number || order.do_number}
                               </td>
-                              <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
-                                {order.Deliver_To}
+                              <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
+                                {order.deliver_to}
                               </td>
                               <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
-                                {order.Deliver_Method || "Company Vehicle"}
+                                {order.deliver_method || "Company Vehicle"}
                               </td>
                               <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                                {order.Credit_Note_Number || "-"}
+                                {order.credit_note_number || "-"}
                               </td>
                               <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                                {order.Invoice_Amount ? `$${Number(order.Invoice_Amount).toFixed(2)}` : "-"}
+                                {order.invoice_amount ? `$${Number(order.invoice_amount).toFixed(2)}` : "-"}
                               </td>
                               <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                 <button
@@ -3464,7 +3644,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     {(() => {
                       let lastDate = "";
                       return sortedReturnOrders.map((order, idx) => {
-                        const dateStr = formatDateStr(order.Timestamp);
+                        const dateStr = formatDateStr(order.timestamp);
                         const showDivider = dateStr !== lastDate;
                         if (showDivider) {
                           lastDate = dateStr;
@@ -3472,16 +3652,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                         let itemsCount = 0;
                         let parsedItems: SKUItem[] = [];
                         try {
-                          parsedItems = typeof order.Items === "string" ? JSON.parse(order.Items) : order.Items;
+                          parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
                           itemsCount = parsedItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0);
                         } catch (_) {}
 
                         let statusBadge = "bg-zinc-100 text-zinc-700 border-zinc-300";
-                        if (order.Status === "Pending") {
+                        if (order.status === "Pending") {
                           statusBadge = "bg-amber-50 text-amber-700 border-amber-200";
-                        } else if (order.Status === "Collected" || order.Status === "Return Collected") {
+                        } else if (order.status === "Collected" || order.status === "Return Collected") {
                           statusBadge = "bg-blue-50 text-blue-700 border-blue-200";
-                        } else if (order.Status === "Complete") {
+                        } else if (order.status === "Complete") {
                           statusBadge = "bg-emerald-50 text-emerald-700 border-emerald-200";
                         }
 
@@ -3527,10 +3707,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 <button
                                   type="button"
                                   onClick={() => handleTriggerCompleteReturnOrder(order)}
-                                  disabled={order.Status !== "Collected" && order.Status !== "Return Collected"}
-                                  title={order.Status !== "Collected" && order.Status !== "Return Collected" ? "Cannot complete until status is Collected" : "Mark as Complete"}
+                                  disabled={order.status !== "Collected" && order.status !== "Return Collected"}
+                                  title={order.status !== "Collected" && order.status !== "Return Collected" ? "Cannot complete until status is Collected" : "Mark as Complete"}
                                   className={`w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border transition-all outline-none ${
-                                    order.Status !== "Collected" && order.Status !== "Return Collected" 
+                                    order.status !== "Collected" && order.status !== "Return Collected" 
                                       ? "border-zinc-200 bg-zinc-50 text-zinc-400 cursor-not-allowed opacity-50"
                                       : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 cursor-pointer"
                                   }`}
@@ -3539,24 +3719,24 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 </button>
                               </td>
                               <td className="p-3 w-16 text-center font-bold text-zinc-800 align-middle border-b border-zinc-200">
-                                {order.Mark}
+                                {order.mark}
                               </td>
                               <td className="p-3 w-32 align-middle border-b border-zinc-200">
                                 <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold ${statusBadge}`}>
-                                  {order.Status || "Pending"}
+                                  {order.status || "Pending"}
                                 </span>
                               </td>
                               <td className="p-3 w-44 font-semibold text-zinc-850 align-middle border-b border-zinc-200">
-                                {order.Ref_Number || order.DO_Number}
+                                {order.ref_number || order.do_number}
                               </td>
-                              <td className="p-3 w-56 text-zinc-700 font-semibold align-middle border-b border-zinc-200 whitespace-nowrap" title={order.Deliver_To}>
-                                {order.Deliver_To}
+                              <td className="p-3 w-56 text-zinc-700 font-semibold align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
+                                {order.deliver_to}
                               </td>
-                              <td className="p-3 w-36 text-zinc-700 font-semibold align-middle border-b border-zinc-200" title={order.Deliver_Method}>
-                                {order.Deliver_Method || "—"}
+                              <td className="p-3 w-36 text-zinc-700 font-semibold align-middle border-b border-zinc-200" title={order.deliver_method}>
+                                {order.deliver_method || "—"}
                               </td>
                               <td className="p-3 w-32 text-zinc-700 font-semibold align-middle border-b border-zinc-200">
-                                {formatDateStr(order.Deadline)}
+                                {formatDateStr(order.deadline)}
                               </td>
                               <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                 <button
@@ -4501,7 +4681,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         open={isConfirmRevokeOpen}
         onOpenChange={setIsConfirmRevokeOpen}
         title="Revoke Order Confirmation"
-        description={`This order (${pendingRevokeOrder?.DO_Number || "N/A"}) is currently "${pendingRevokeOrder?.Status || ""}" (in progress or completed by picker). Revoking it will delete the order and return it to Drafts. Are you sure you want to revoke this order?`}
+        description={`This order (${pendingRevokeOrder?.do_number || "N/A"}) is currently "${pendingRevokeOrder?.status || ""}" (in progress or completed by picker). Revoking it will delete the order and return it to Drafts. Are you sure you want to revoke this order?`}
         confirmText="Revoke Order"
         cancelText="Keep Order"
         variant="danger"
@@ -4521,7 +4701,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/50 backdrop-blur-xs font-primary p-4">
           <div className="bg-white rounded-xl shadow-lg border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
             <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <span className="font-bold text-sm text-zinc-800">Change Status : {statusOrder.DO_Number}</span>
+              <span className="font-bold text-sm text-zinc-800">Change Status : {statusOrder.do_number}</span>
               <button 
                 onClick={() => setIsChangeStatusOpen(false)}
                 className="text-zinc-400 hover:text-zinc-600 focus:outline-none cursor-pointer"
@@ -4538,7 +4718,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   className="h-9 px-2.5 rounded-lg border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
                 >
                   <option value="" disabled>Select Status</option>
-                  {statusOrder.Type === "Return" ? (
+                  {statusOrder.type === "Return" ? (
                     <>
                       <option value="Pending">Pending</option>
                       <option value="Return Collected">Return Collected</option>
@@ -4619,7 +4799,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           <div className="bg-white rounded border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
             <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <span className="font-bold text-sm text-zinc-800">
-                {pendingCompleteOrder.Type === "Return" ? "Complete Return Order" : "Complete Delivery Order"}
+                {pendingCompleteOrder.type === "Return" ? "Complete Return Order" : "Complete Delivery Order"}
               </span>
               <button 
                 onClick={() => setIsCompleteConfirmOpen(false)}
@@ -4630,17 +4810,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             </div>
             <div className="p-5 flex flex-col gap-4 text-xs">
               <p className="text-zinc-600 font-medium leading-relaxed">
-                {pendingCompleteOrder.Type === "Return"
-                  ? `Are you sure you want to mark return order ${pendingCompleteOrder.DO_Number} as complete?`
-                  : `Are you sure you want to archive and complete order ${pendingCompleteOrder.DO_Number}?`}
+                {pendingCompleteOrder.type === "Return"
+                  ? `Are you sure you want to mark return order ${pendingCompleteOrder.do_number} as complete?`
+                  : `Are you sure you want to archive and complete order ${pendingCompleteOrder.do_number}?`}
               </p>
               
               <div className="flex flex-col gap-3 mt-1">
                 <div className="flex flex-col gap-1.5">
                   <label className="font-bold text-zinc-700">
-                    {pendingCompleteOrder.Type === "Return" ? "Credit Note Number *" : "Invoice Number *"}
+                    {pendingCompleteOrder.type === "Return" ? "Credit Note Number *" : "Invoice Number *"}
                   </label>
-                  {pendingCompleteOrder.Type === "Return" ? (
+                  {pendingCompleteOrder.type === "Return" ? (
                     <input
                       type="text"
                       placeholder="e.g. CN-98765"
@@ -4686,7 +4866,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 variant="dark" 
                 onClick={handleContinueComplete}
                 disabled={
-                  pendingCompleteOrder.Type === "Return" 
+                  pendingCompleteOrder.type === "Return" 
                     ? (!creditNoteInput.trim() || !invoiceAmountInput.trim()) 
                     : (!invoiceNumberInput.trim() || !invoiceAmountInput.trim())
                 }
@@ -4773,7 +4953,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             </div>
             <div className="p-5 flex flex-col gap-3 text-xs">
               <p className="text-zinc-600 font-medium leading-relaxed">
-                Are you sure you want to revoke completion for order <strong>{pendingRevokeCompleteOrder.DO_Number}</strong>? 
+                Are you sure you want to revoke completion for order <strong>{pendingRevokeCompleteOrder.do_number}</strong>? 
                 This will move the order back to active/pending status.
               </p>
             </div>

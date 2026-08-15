@@ -154,7 +154,7 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
               {visibleModules.map((mod) => {
-                const isUnderMaintenance = mod.title !== "Tiktok Fulfillment";
+                const isUnderMaintenance = mod.title !== "Tiktok Fulfillment" && mod.title !== "Track Order";
                 return (
                   <div
                     key={mod.title}
