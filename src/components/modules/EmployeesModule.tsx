@@ -20,7 +20,7 @@ interface Employee {
   type: "Fulltime" | "Partimer";
   name: string;
   full_name?: string;
-  fin: string;
+  in: string;
   pin: string;
   phone?: string;
   email?: string;
@@ -48,7 +48,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
     { id: "actions", header: "", accessor: "actions" },
     { id: "name", header: "Name", accessor: "name_display" },
     { id: "full_name", header: "Full Name", accessor: "full_name" },
-    { id: "fin", header: "FIN", accessor: "fin" },
+    { id: "in", header: "Identity Number (IN)", accessor: "in" },
     { id: "phone", header: "Phone", accessor: "phone" },
     { id: "email", header: "Email", accessor: "email" },
     { id: "paynow_number", header: "PayNow Number", accessor: "paynow_number" },
@@ -61,7 +61,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
       setFetching(true);
     }
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=employees");
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/employees");
       if (!res.ok) throw new Error(`Server returned status ${res.status}`);
       const json = await res.json();
       const list = Array.isArray(json) ? json : [];
@@ -111,7 +111,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
       type: updatedEmp.type,
       name: String(updatedEmp.name || "").trim(),
       full_name: String(updatedEmp.full_name || "").trim(),
-      fin: String(updatedEmp.fin || "").trim().toUpperCase(),
+      in: String(updatedEmp.in || "").trim().toUpperCase(),
       pin: pin,
       phone: String(updatedEmp.phone || "").trim(),
       email: String(updatedEmp.email || "").trim(),
@@ -141,7 +141,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
           { key: "type", label: "Contract Type" },
           { key: "name", label: "Display Name" },
           { key: "full_name", label: "Full Legal Name" },
-          { key: "fin", label: "FIN" },
+          { key: "in", label: "Identity Number (IN)" },
           { key: "pin", label: "App PIN" },
           { key: "phone", label: "Phone" },
           { key: "email", label: "Email" },
@@ -211,7 +211,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
     showToast("Saving employee details...", "info");
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write-v2", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/employees", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -246,7 +246,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
     showToast("Deleting employee...", "info");
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write-v2", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/employees", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -272,7 +272,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
     showToast(toArchive ? "Deactivating employee..." : "Activating employee...", "info");
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write-v2", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/employees", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -330,7 +330,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
     }
 
     try {
-      await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write-v2", {
+      await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/employees", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -459,7 +459,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
         />
         {isAdminOrManager && (
           <CustomButton
-            onClick={() => setEditingEmployee({ isNew: true, type: activeTab === "Deactive" ? "Fulltime" : activeTab, name: "", full_name: "", fin: "", pin: "", phone: "", email: "", paynow_number: "", photo_url: "", address: "", note: "", role: [] })}
+            onClick={() => setEditingEmployee({ isNew: true, type: activeTab === "Deactive" ? "Fulltime" : activeTab, name: "", full_name: "", in: "", pin: "", phone: "", email: "", paynow_number: "", photo_url: "", address: "", note: "", role: [] })}
             className="h-8 text-[11.5px] bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] text-white rounded font-bold flex items-center gap-1.5 cursor-pointer shadow-sm select-none"
           >
             <UserPlus size={13} />
@@ -523,7 +523,7 @@ function EmployeeEditModal({ record, onSave, onDelete, onClose }: EditModalProps
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name.trim()) return showToast("Name is required!", "error");
-    if (!formData.fin.trim()) return showToast("FIN is required!", "error");
+    if (!formData.in.trim()) return showToast("Identity Number (IN) is required!", "error");
     if (!/^\d{4}$/.test(formData.pin)) return showToast("PIN code must be exactly 4 digits!", "error");
     onSave(formData);
   };
@@ -675,13 +675,13 @@ function EmployeeEditModal({ record, onSave, onDelete, onClose }: EditModalProps
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">FIN/NRIC Number*</label>
+            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Identity Number (IN)*</label>
             <input
               type="text"
               required
-              value={formData.fin}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, fin: e.target.value }))}
-              placeholder="e.g. F9876543N"
+              value={formData.in}
+              onChange={(e) => setFormData((prev: any) => ({ ...prev, in: e.target.value }))}
+              placeholder="e.g. S9876543A / F9876543N"
               className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
             />
           </div>
@@ -897,8 +897,8 @@ function EmployeeCardModal({ employee, onViewPin, onClose }: CardModalProps) {
             )}
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">FIN/NRIC</span>
-                <span className="font-mono font-bold text-zinc-800">{employee.fin}</span>
+                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">Identity Number (IN)</span>
+                <span className="font-mono font-bold text-zinc-800">{employee.in}</span>
               </div>
               <div className="flex flex-col gap-0.5">
                 <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">App PIN Code</span>

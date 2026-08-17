@@ -338,11 +338,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const loadDatabaseData = React.useCallback(async () => {
     try {
       const [resBrands, resProducts, resStores, resLogs, resRetailers] = await Promise.all([
-        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=brands_DB"),
-        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB"),
-        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Store_Retailer_DB"),
-        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Merch_Visit_Product_Audit_Logs"),
-        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=retailers_DB")
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=brands_DB"),
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=products_DB"),
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=Store_Retailer_DB"),
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=Merch_Visit_Product_Audit_Logs"),
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=retailers_DB")
       ]);
 
       if (resBrands.ok) {
@@ -376,9 +376,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     try {
       const sheetName = "Promoter_Users";
       if (forceSync) {
-        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`, { method: "POST" });
       }
-      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server status ${res.status}`);
       const json = await res.json();
       setPromoters(Array.isArray(json) ? json : (json.value || []));
@@ -395,9 +395,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     try {
       const sheetName = "Promoter_Campaign";
       if (forceSync) {
-        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`, { method: "POST" });
       }
-      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server status ${res.status}`);
       const json = await res.json();
       setCampaigns(Array.isArray(json) ? json : (json.value || []));
@@ -414,9 +414,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     try {
       const sheetName = "Promoter_Schedule";
       if (forceSync) {
-        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`, { method: "POST" });
       }
-      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server status ${res.status}`);
       const json = await res.json();
       setSchedules(Array.isArray(json) ? json : (json.value || []));
@@ -440,9 +440,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     try {
       const sheetName = "Promoter_Payout";
       if (forceSync) {
-        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, { method: "POST" });
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`, { method: "POST" });
       }
-      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`);
       if (res.status === 404) {
         setPayouts([]);
         localStorage.removeItem("ib_promoter_payouts_cache");
@@ -750,7 +750,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     // Silent background sync
     (async () => {
       try {
-        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -774,7 +774,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               "actual_start": row.startTime,
               "actual_end": row.endTime
             };
-            return fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+            return fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -789,8 +789,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         await Promise.all(updatePromises.filter(Boolean));
 
         // Silent database sync write
-        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Promoter_Payout`, { method: "POST" });
-        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Promoter_Schedule`, { method: "POST" });
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=Promoter_Payout`, { method: "POST" });
+        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=Promoter_Schedule`, { method: "POST" });
       } catch (err: any) {
         showToast("Failed to save payout. Rolling back changes.", "error");
         setPayouts(payoutsBeforeSave);
@@ -818,7 +818,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         // Silent background delete
         (async () => {
           try {
-            const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+            const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -830,7 +830,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             if (!res.ok) throw new Error(`HTTP error ${res.status}`);
 
             // Silent database sync write
-            await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Promoter_Payout`, { method: "POST" });
+            await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=Promoter_Payout`, { method: "POST" });
           } catch (err: any) {
             showToast("Failed to delete payout. Rolling back changes.", "error");
             setPayouts(payoutsBeforeDelete);
@@ -883,7 +883,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         payment_date: new Date(paymentDate + "T12:00:00").getTime()
       };
 
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1375,7 +1375,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     showToast("Campaign saved successfully!", "success");
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1402,7 +1402,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         showToast("Campaign deleted successfully", "success");
 
         try {
-          const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+          const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -1442,7 +1442,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         }
       };
 
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1518,7 +1518,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     showToast("Promoter saved successfully!", "success");
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1550,7 +1550,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         }
       };
 
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1578,7 +1578,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         showToast("Promoter deleted successfully", "success");
 
         try {
-          const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+          const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -2544,7 +2544,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         // Additions
         for (const item of added) {
           promises.push(
-            fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+            fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ table: "Promoter_Schedule", action: "insert", data: item })
@@ -2555,7 +2555,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         // Deletions
         for (const item of deleted) {
           promises.push(
-            fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+            fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ table: "Promoter_Schedule", action: "delete", data: { id: item.id } })
@@ -2566,7 +2566,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         // Updates
         for (const item of updated) {
           promises.push(
-            fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+            fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ table: "Promoter_Schedule", action: "update", data: item })
