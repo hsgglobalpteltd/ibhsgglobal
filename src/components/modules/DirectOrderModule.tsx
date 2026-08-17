@@ -71,7 +71,7 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
   // Load settings
   const loadSettings = React.useCallback(async () => {
     try {
-      const res = await fetch(`${WORKER_URL}/api/admin/db?table=direct_order_settings`);
+      const res = await fetch(`${WORKER_URL}/api/directorder/settings`);
       if (res.ok) {
         const json = await res.json();
         const list = Array.isArray(json) ? json : [];
@@ -116,12 +116,10 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
     }
     setSavingSettings(true);
     try {
-      const res = await fetch(`${WORKER_URL}/api/admin/db-write`, {
+      const res = await fetch(`${WORKER_URL}/api/directorder/settings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          table: "direct_order_settings",
-          action: "upsert",
           data: [
             { key: "receiver_order_whatsapp", value: whatsappNumber.trim() },
             { key: "receiver_order_email", value: adminEmail.trim() },
@@ -198,7 +196,7 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
     setFetching(true);
     try {
       // 1. Fetch Orders
-      const orderRes = await fetch(`${WORKER_URL}/api/admin/db?table=direct_orders`);
+      const orderRes = await fetch(`${WORKER_URL}/api/directorder/orders`);
       if (orderRes.ok) {
         const json = await orderRes.json();
         const list = Array.isArray(json) ? json : [];
@@ -232,7 +230,7 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
       }
 
       // 2. Fetch Quotes
-      const quoteRes = await fetch(`${WORKER_URL}/api/admin/db?table=direct_quotes`);
+      const quoteRes = await fetch(`${WORKER_URL}/api/directorder/quotes`);
       if (quoteRes.ok) {
         const json = await quoteRes.json();
         const list = Array.isArray(json) ? json : [];
@@ -262,7 +260,7 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
       }
 
       // 3. Fetch Products
-      const prodRes = await fetch(`${WORKER_URL}/api/admin/db?table=products_DB`);
+      const prodRes = await fetch(`${WORKER_URL}/api/directorder/products`);
       if (prodRes.ok) {
         const json = await prodRes.json();
         const list = Array.isArray(json) ? json : [];
@@ -270,7 +268,7 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
       }
 
       // 4. Fetch Brands
-      const brandRes = await fetch(`${WORKER_URL}/api/admin/db?table=brands_DB`);
+      const brandRes = await fetch(`${WORKER_URL}/api/directorder/brands`);
       if (brandRes.ok) {
         const json = await brandRes.json();
         const list = Array.isArray(json) ? json : [];
@@ -311,12 +309,10 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
     setProducts(prev => prev.map(p => p.sku === product.sku ? { ...p, list_in_catalog: nextValue } : p));
     
     try {
-      const res = await fetch(`${WORKER_URL}/api/admin/db-write`, {
+      const res = await fetch(`${WORKER_URL}/api/directorder/catalog/visibility`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          table: "products_db",
-          action: "update",
           data: {
             sku: product.sku,
             list_in_catalog: nextValue
@@ -344,12 +340,10 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
     setEditingProduct(null);
 
     try {
-      const res = await fetch(`${WORKER_URL}/api/admin/db-write`, {
+      const res = await fetch(`${WORKER_URL}/api/directorder/catalog/metadata`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          table: "products_db",
-          action: "update",
           data: {
             sku: updatedProduct.sku,
             image: updatedProduct.image,
@@ -393,12 +387,10 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
     const targetTable = isQuote ? "direct_quotes" : "direct_orders";
 
     try {
-      const res = await fetch(`${WORKER_URL}/api/admin/db-write`, {
+      const res = await fetch(`${WORKER_URL}/api/directorder/${isQuote ? "quotes" : "orders"}/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          table: targetTable,
-          action: "update",
           data: {
             id: completingItem.id,
             status: "complete",

@@ -27,6 +27,7 @@ import {
   BarChart3,
   Loader2
 } from "lucide-react";
+import * as XLSX from "xlsx";
 
 interface SKUItem {
   sku: string;
@@ -429,6 +430,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [invoiceLoading, setInvoiceLoading] = React.useState<boolean>(false);
   const [sendingDraftIds, setSendingDraftIds] = React.useState<Record<string, boolean>>({});
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const invoicePdfInputRef = React.useRef<HTMLInputElement>(null);
+  const invoiceExcelInputRef = React.useRef<HTMLInputElement>(null);
+  const doExcelInputRef = React.useRef<HTMLInputElement>(null);
+
+  const [isInvoiceUploadChoiceOpen, setIsInvoiceUploadChoiceOpen] = React.useState(false);
+  const [isDoUploadChoiceOpen, setIsDoUploadChoiceOpen] = React.useState(false);
 
   // Detail panel / Drawer states
   const [isPanelOpen, setIsPanelOpen] = React.useState<boolean>(false);
@@ -2005,6 +2012,238 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   };
 
+  // Handle Bulk Invoice Excel/CSV Upload
+  const handleBulkInvoiceExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setInvoiceLoading(true);
+    showToast("Processing invoice spreadsheet...", "info");
+
+    try {
+      const data = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsArrayBuffer(file);
+        reader.onload = () => resolve(reader.result as ArrayBuffer);
+        reader.onerror = (err) => reject(err);
+      });
+
+      const workbook = XLSX.read(data, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const sheetData = XLSX.utils.sheet_to_json<any>(worksheet, { header: 1 });
+
+      if (sheetData.length < 2) {
+        throw new Error("The uploaded sheet has no data rows.");
+      }
+
+      // Parse headers
+      const rawHeaders = sheetData[0] as any[];
+      const headers = rawHeaders.map((h: any) => String(h || "").trim().toLowerCase().replace(/[\s_]+/g, ""));
+      
+      const invIdx = headers.findIndex(h => h === "invoice" || h === "invoicenumber" || h === "invoiceno");
+      const refIdx = headers.findIndex(h => h === "refnumber" || h === "poref" || h === "reference");
+      const amtIdx = headers.findIndex(h => h === "amount" || h === "invoiceamount" || h === "totalamount");
+
+      if (invIdx === -1 || refIdx === -1 || amtIdx === -1) {
+        throw new Error("Sheet must contain 'Invoice', 'Ref Number', and 'Amount' column headers.");
+      }
+
+      const parsedInvoices = [];
+      for (let i = 1; i < sheetData.length; i++) {
+        const row = sheetData[i] as any[];
+        if (!row || row.length === 0) continue;
+        const invoiceNumber = String(row[invIdx] || "").trim();
+        const poRef = String(row[refIdx] || "").trim();
+        const invoiceAmount = row[amtIdx] !== undefined && row[amtIdx] !== null ? String(row[amtIdx]).trim() : "";
+        if (!invoiceNumber && !poRef) continue;
+        parsedInvoices.push({ invoiceNumber, poRef, invoiceAmount });
+      }
+
+      showToast(`Parsed ${parsedInvoices.length} invoices. Matching references...`, "info");
+
+      let matchedCount = 0;
+      let ignoredBlankRef = 0;
+      let noMatchCount = 0;
+
+      for (const inv of parsedInvoices) {
+        const { invoiceNumber, poRef, invoiceAmount } = inv;
+
+        if (!poRef || !poRef.trim()) {
+          ignoredBlankRef++;
+          continue;
+        }
+
+        const matchedOrder = dbOrders.find(
+          (o) => String(o.ref_number).trim().toLowerCase() === String(poRef).trim().toLowerCase()
+        );
+
+        if (!matchedOrder) {
+          noMatchCount++;
+          continue;
+        }
+
+        matchedCount++;
+
+        let currentLogs: LogEntry[] = [];
+        try {
+          currentLogs = typeof matchedOrder.logs === "string" ? JSON.parse(matchedOrder.logs) : matchedOrder.logs;
+        } catch (_) {}
+        if (!Array.isArray(currentLogs)) currentLogs = [];
+
+        const updatedLogs = [
+          ...currentLogs,
+          {
+            action: "Completed by Admin",
+            actionBy: profile?.name || "Admin",
+            remark: `Archived & Verified in Bulk (Invoice: ${invoiceNumber}, Amount: ${invoiceAmount})`,
+            timestamp: Date.now()
+          }
+        ];
+
+        const payload = {
+          action: "update",
+          data: {
+            id: matchedOrder.id,
+            completed: "true",
+            invoice_number: invoiceNumber || "",
+            invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+            logs: JSON.stringify(updatedLogs)
+          }
+        };
+
+        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }).catch((err) => console.error("Failed to sync bulk completed order:", matchedOrder.id, err));
+
+        setDbOrders((prev) =>
+          prev.map((o) =>
+            o.id === matchedOrder.id
+              ? {
+                  ...o,
+                  completed: "true",
+                  invoice_number: invoiceNumber || "",
+                  invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+                  logs: JSON.stringify(updatedLogs)
+                }
+              : o
+          )
+        );
+      }
+
+      showToast(
+        `Bulk completion complete! ${matchedCount} matched, ${ignoredBlankRef} ignored (blank ref), ${noMatchCount} not matched.`,
+        "success"
+      );
+    } catch (err: any) {
+      showToast(err.message || "Failed to process bulk invoices.", "error");
+    } finally {
+      setInvoiceLoading(false);
+      e.target.value = "";
+    }
+  };
+
+  // Handle DO Excel/CSV Upload (skips items)
+  const handleDoExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setPdfLoading(true);
+    showToast("Processing order spreadsheet...", "info");
+
+    try {
+      const data = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsArrayBuffer(file);
+        reader.onload = () => resolve(reader.result as ArrayBuffer);
+        reader.onerror = (err) => reject(err);
+      });
+
+      const workbook = XLSX.read(data, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const sheetData = XLSX.utils.sheet_to_json<any>(worksheet, { header: 1 });
+
+      if (sheetData.length < 2) {
+        throw new Error("The uploaded sheet has no data rows.");
+      }
+
+      // Parse headers
+      const rawHeaders = sheetData[0] as any[];
+      const headers = rawHeaders.map((h: any) => String(h || "").trim().toLowerCase().replace(/[\s_]+/g, ""));
+      
+      const doIdx = headers.findIndex(h => h === "deliveryordernumber" || h === "donumber" || h === "do" || h === "invoicenumber" || h === "invoice");
+      const refIdx = headers.findIndex(h => h === "refnumber" || h === "poref" || h === "reference" || h === "referenceo" || h === "ref");
+      const deliverToIdx = headers.findIndex(h => h === "deliverto" || h === "delivertoaddress" || h === "deliveryaddress" || h === "address");
+      const poscodeIdx = headers.findIndex(h => h === "poscode" || h === "postcode" || h === "postalcode" || h === "postal");
+
+      if (doIdx === -1) {
+        throw new Error("Sheet must contain 'Delivery Order Number' or 'DO Number' or 'Invoice' column header.");
+      }
+
+      const duplicates: string[] = [];
+      const uniqueNewDrafts: TrackOrderDraft[] = [];
+      const tempAssignedMarks: string[] = [];
+
+      for (let i = 1; i < sheetData.length; i++) {
+        const row = sheetData[i] as any[];
+        if (!row || row.length === 0) continue;
+
+        const doNum = String(row[doIdx] || "").trim();
+        if (!doNum) continue;
+
+        const inDrafts = drafts.some((d) => d.doNumber === doNum);
+        const inPending = pendingOrders.some((p) => p.do_number === doNum);
+        const inCompleted = completedOrders.some((c) => c.do_number === doNum);
+
+        if (inDrafts || inPending || inCompleted) {
+          duplicates.push(doNum);
+        } else {
+          const refNum = refIdx !== -1 ? String(row[refIdx] || "").trim() : "";
+          const deliverTo = deliverToIdx !== -1 ? String(row[deliverToIdx] || "").trim() : "Singapore Address";
+          const poscode = poscodeIdx !== -1 ? String(row[poscodeIdx] || "").trim() : "";
+
+          const assignedMark = getNextAvailableMark(drafts, pendingOrders, tempAssignedMarks);
+          if (assignedMark) {
+            tempAssignedMarks.push(assignedMark);
+          }
+
+          uniqueNewDrafts.push({
+            id: `${doNum}_${refNum || "NA"}`,
+            doNumber: doNum,
+            refNumber: refNum,
+            mark: assignedMark,
+            type: "Normal",
+            deliverTo: deliverTo,
+            poscode: poscode,
+            items: [], // Skip items as requested
+            appointmentDate: undefined,
+            appointmentTimeWindow: undefined,
+            deliverMethod: "Company Delivery",
+            pdfImages: []
+          });
+        }
+      }
+
+      if (duplicates.length > 0) {
+        showToast(`Warning: Order(s) ${duplicates.join(", ")} already registered in system.`, "warning");
+      }
+
+      if (uniqueNewDrafts.length > 0) {
+        const mergedDrafts = [...drafts, ...uniqueNewDrafts];
+        saveDraftsToStorage(mergedDrafts);
+        showToast(`Successfully read spreadsheet. Added ${uniqueNewDrafts.length} orders to drafts.`, "success");
+      }
+    } catch (err: any) {
+      showToast("Failed to read spreadsheet: " + err.message, "error");
+    } finally {
+      setPdfLoading(false);
+      e.target.value = "";
+    }
+  };
+
   // Handle DO PDF Upload & Parsing
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -3104,17 +3343,32 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 Complete
               </button>
 
-              <label className={`ml-4 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${invoiceLoading ? "opacity-50 cursor-not-allowed" : ""}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!invoiceLoading) setIsInvoiceUploadChoiceOpen(true);
+                }}
+                className={`ml-4 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${invoiceLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+              >
                 <Upload size={14} />
                 Bulk Invoices Upload
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  onChange={handleBulkInvoiceUpload}
-                  className="hidden"
-                  disabled={invoiceLoading}
-                />
-              </label>
+              </button>
+              <input
+                type="file"
+                ref={invoicePdfInputRef}
+                accept="application/pdf"
+                onChange={handleBulkInvoiceUpload}
+                className="hidden"
+                disabled={invoiceLoading}
+              />
+              <input
+                type="file"
+                ref={invoiceExcelInputRef}
+                accept="text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+                onChange={handleBulkInvoiceExcelUpload}
+                className="hidden"
+                disabled={invoiceLoading}
+              />
               {invoiceLoading && (
                 <span className="text-xs text-zinc-500 font-medium animate-pulse">
                   Processing invoices...
@@ -3782,9 +4036,18 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               className="hidden"
               onChange={handleFileUpload}
             />
+            <input
+              type="file"
+              ref={doExcelInputRef}
+              accept="text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+              className="hidden"
+              onChange={handleDoExcelUpload}
+            />
             <CustomButton 
               variant="secondary"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => {
+                if (!pdfLoading) setIsDoUploadChoiceOpen(true);
+              }}
               disabled={pdfLoading}
               className="h-10 text-xs font-bold uppercase tracking-wider relative overflow-hidden"
             >
@@ -4059,24 +4322,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     <div key={idx} className={`flex flex-col p-2.5 rounded border shadow-xs transition-all ${cardClass}`}>
                       <div className="flex gap-2 items-center">
                         <div className="flex-1 min-w-0">
-                          {item.sku ? (
-                            <span className="text-xs font-semibold text-zinc-800 block truncate" title={item.sku}>
-                              {item.sku}
-                            </span>
-                          ) : (
-                            <select
+                            <input
+                              type="text"
+                              list="sku-datalist"
                               value={item.sku}
+                              placeholder="Select SKU or enter custom item..."
                               onChange={(e) => handleUpdatePanelItemRow(idx, "sku", e.target.value)}
                               className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
-                            >
-                              <option value="">Select SKU...</option>
-                              {productSkus.map((sku) => (
-                                <option key={sku} value={sku}>
-                                  {sku}
-                                </option>
-                              ))}
-                            </select>
-                          )}
+                            />
                         </div>
                         <div className="w-16 flex-shrink-0">
                           <input
@@ -4367,36 +4620,18 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               {createItems.map((item, idx) => (
                 <div key={idx} className="flex gap-1.5 items-center bg-white p-2 rounded border border-zinc-300 shadow-xs">
                   <div className="flex-1 min-w-0">
-                    {productSkus.length === 0 ? (
-                      <input
-                        type="text"
-                        value={item.sku}
-                        placeholder="SKU Name"
-                        onChange={(e) => {
-                          const updated = [...createItems];
-                          updated[idx].sku = e.target.value;
-                          setCreateItems(updated);
-                        }}
-                        className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
-                      />
-                    ) : (
-                      <select
-                        value={item.sku}
-                        onChange={(e) => {
-                          const updated = [...createItems];
-                          updated[idx].sku = e.target.value;
-                          setCreateItems(updated);
-                        }}
-                        className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white text-zinc-850 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
-                      >
-                        <option value="">Select SKU...</option>
-                        {productSkus.map((sku) => (
-                          <option key={sku} value={sku}>
-                            {sku}
-                          </option>
-                        ))}
-                      </select>
-                    )}
+                    <input
+                      type="text"
+                      list="sku-datalist"
+                      value={item.sku}
+                      placeholder="SKU/Item Name"
+                      onChange={(e) => {
+                        const updated = [...createItems];
+                        updated[idx].sku = e.target.value;
+                        setCreateItems(updated);
+                      }}
+                      className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+                    />
                   </div>
                   <div className="w-16">
                     <input
@@ -4613,36 +4848,18 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               {returnItems.map((item, idx) => (
                 <div key={idx} className="flex gap-1.5 items-center bg-white p-2 rounded border border-zinc-300 shadow-xs">
                   <div className="flex-1 min-w-0">
-                    {productSkus.length === 0 ? (
-                      <input
-                        type="text"
-                        value={item.sku}
-                        placeholder="SKU Name"
-                        onChange={(e) => {
-                          const updated = [...returnItems];
-                          updated[idx].sku = e.target.value;
-                          setReturnItems(updated);
-                        }}
-                        className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
-                      />
-                    ) : (
-                      <select
-                        value={item.sku}
-                        onChange={(e) => {
-                          const updated = [...returnItems];
-                          updated[idx].sku = e.target.value;
-                          setReturnItems(updated);
-                        }}
-                        className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white text-zinc-850 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
-                      >
-                        <option value="">Select SKU...</option>
-                        {productSkus.map((sku) => (
-                          <option key={sku} value={sku}>
-                            {sku}
-                          </option>
-                        ))}
-                      </select>
-                    )}
+                    <input
+                      type="text"
+                      list="sku-datalist"
+                      value={item.sku}
+                      placeholder="SKU/Item Name"
+                      onChange={(e) => {
+                        const updated = [...returnItems];
+                        updated[idx].sku = e.target.value;
+                        setReturnItems(updated);
+                      }}
+                      className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+                    />
                   </div>
                   <div className="w-16">
                     <input
@@ -5011,6 +5228,92 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               >
                 <Eye size={14} /> Open in New Tab
               </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <datalist id="sku-datalist">
+        {productSkus.map((sku) => (
+          <option key={sku} value={sku} />
+        ))}
+      </datalist>
+
+      {isInvoiceUploadChoiceOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center z-50 font-primary">
+          <div className="bg-white rounded-lg p-5 w-full max-w-sm shadow-xl border border-slate-200 animate-zoom-in">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-200">
+              <h3 className="text-sm font-bold text-zinc-850">Upload Invoice</h3>
+              <button 
+                onClick={() => setIsInvoiceUploadChoiceOpen(false)} 
+                className="text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="py-4 flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsInvoiceUploadChoiceOpen(false);
+                  invoicePdfInputRef.current?.click();
+                }}
+                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+              >
+                <FileText size={16} />
+                Upload PDF Invoice
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsInvoiceUploadChoiceOpen(false);
+                  invoiceExcelInputRef.current?.click();
+                }}
+                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-[#0B57D0] text-[#0B57D0] rounded text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+              >
+                <Boxes size={16} />
+                Upload Excel / CSV Invoice
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isDoUploadChoiceOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center z-50 font-primary">
+          <div className="bg-white rounded-lg p-5 w-full max-w-sm shadow-xl border border-slate-200 animate-zoom-in">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-200">
+              <h3 className="text-sm font-bold text-zinc-850">Upload Delivery Order</h3>
+              <button 
+                onClick={() => setIsDoUploadChoiceOpen(false)} 
+                className="text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="py-4 flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDoUploadChoiceOpen(false);
+                  fileInputRef.current?.click();
+                }}
+                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+              >
+                <FileText size={16} />
+                Upload PDF DO
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDoUploadChoiceOpen(false);
+                  doExcelInputRef.current?.click();
+                }}
+                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-[#0B57D0] text-[#0B57D0] rounded text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+              >
+                <Boxes size={16} />
+                Upload Excel / CSV DO
+              </button>
             </div>
           </div>
         </div>
