@@ -31,6 +31,9 @@ function normalizeKeysToPretty(item: any): any {
     carton_h_mm: "Carton H (mm)",
     carton_w_mm: "Carton W (mm)",
     carton_l_mm: "Carton L (mm)",
+    pallet_ctn: "Pallet CTN",
+    storage_condition: "Storage Condition",
+    shelf_life: "Shelf Life",
     id: "id",
     logo_image: "Logo Image",
   };
@@ -71,6 +74,9 @@ function normalizeKeysToRaw(item: any): any {
     cartonhmm: "carton_h_mm",
     cartonwmm: "carton_w_mm",
     cartonlmm: "carton_l_mm",
+    palletctn: "pallet_ctn",
+    storagecondition: "storage_condition",
+    shelflife: "shelf_life",
     id: "id",
     logoimage: "logo_image"
   };
@@ -105,7 +111,10 @@ const defaultProductColumns: Column[] = [
   { id: " Carton Weight", header: "Carton Weight", accessor: " Carton Weight" },
   { id: "Carton H (mm)", header: "Carton H (mm)", accessor: "Carton H (mm)" },
   { id: "Carton W (mm)", header: "Carton W (mm)", accessor: "Carton W (mm)" },
-  { id: "Carton L (mm)", header: "Carton L (mm)", accessor: "Carton L (mm)" }
+  { id: "Carton L (mm)", header: "Carton L (mm)", accessor: "Carton L (mm)" },
+  { id: "Pallet CTN", header: "Pallet CTN", accessor: "Pallet CTN" },
+  { id: "Storage Condition", header: "Storage Condition", accessor: "Storage Condition" },
+  { id: "Shelf Life", header: "Shelf Life", accessor: "Shelf Life" }
 ];
 
 interface ProductsDatabaseModuleProps {

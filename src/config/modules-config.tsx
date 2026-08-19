@@ -34,10 +34,6 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Track Order",
         description: "Monitor and manage delivery orders, vehicle routing tracks, and real-time delivery logs.",
-      },
-      {
-        title: "Tiktok Fulfillment",
-        description: "Manage Tiktok fulfillment terminals, IP verification configurations, and operator registries.",
       }
     ]
   },
@@ -162,6 +158,20 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Site",
         description: "Create website folders and allocate them to approved portal users (supports multi-user binding).",
+      }
+    ]
+  },
+  {
+    id: "Tiktok",
+    label: "Tiktok",
+    modules: [
+      {
+        title: "Tiktok Orders",
+        description: "Monitor and manage TikTok shop orders, AWB generation, print queues, and status synchronizations.",
+      },
+      {
+        title: "Tiktok Terminal",
+        description: "Manage Tiktok fulfillment terminals, IP verification configurations, and station permissions.",
       }
     ]
   },

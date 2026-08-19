@@ -6,7 +6,6 @@ import { PromoterModule } from "../modules/PromoterModule";
 import { MerchandiserModule } from "../modules/MerchandiserModule";
 import { TaskModule } from "../modules/TaskModule";
 import { TrackOrderModule } from "../modules/TrackOrderModule";
-import { TiktokFulfillmentModule } from "../modules/TiktokFulfillmentModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 
 interface FrontlinePageProps {
@@ -121,8 +120,6 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
         return <TaskModule profile={profile} />;
       case "Track Order":
         return <TrackOrderModule profile={profile} />;
-      case "Tiktok Fulfillment":
-        return <TiktokFulfillmentModule profile={profile} />;
       default:
         return null;
     }

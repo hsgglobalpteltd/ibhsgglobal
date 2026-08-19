@@ -3,24 +3,15 @@
 import * as React from "react";
 import { DataTable, Column } from "../data-table";
 import { showToast } from "@/lib/toast";
-import { NavigationTabs } from "../navigation-tabs";
 
 const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
-export function TiktokFulfillmentModule({ profile }: { profile?: any }) {
-  const [activeTab, setActiveTab] = React.useState<"Terminal" | "Operator">("Terminal");
-  
+export function TiktokTerminalModule({ profile }: { profile?: any }) {
   // Terminal states
   const [terminals, setTerminals] = React.useState<any[]>([]);
   const [fetchingTerminals, setFetchingTerminals] = React.useState(true);
   const [editingTerminal, setEditingTerminal] = React.useState<any | null>(null);
   const [showAddTerminal, setShowAddTerminal] = React.useState(false);
-
-  // Operator states
-  const [operators, setOperators] = React.useState<any[]>([]);
-  const [fetchingOperators, setFetchingOperators] = React.useState(true);
-  const [editingOperator, setEditingOperator] = React.useState<any | null>(null);
-  const [showAddOperator, setShowAddOperator] = React.useState(false);
 
   const terminalColumns: Column[] = [
     { id: "ip", header: "IP Address", accessor: "ip" },
@@ -28,12 +19,6 @@ export function TiktokFulfillmentModule({ profile }: { profile?: any }) {
     { id: "pin", header: "PIN Code (4-digit)", accessor: "pin" },
     { id: "allowed_pages_label", header: "Allowed Pages", accessor: "allowed_pages_label" },
     { id: "auto_print_label", header: "Auto Print AWB", accessor: "auto_print_label" },
-  ];
-
-  const operatorColumns: Column[] = [
-    { id: "id", header: "Operator ID", accessor: "id" },
-    { id: "name", header: "Operator Name", accessor: "name" },
-    { id: "pin", header: "PIN Code (4-digit)", accessor: "pin" },
   ];
 
   const loadTerminals = React.useCallback(async () => {
@@ -55,40 +40,18 @@ export function TiktokFulfillmentModule({ profile }: { profile?: any }) {
     }
   }, []);
 
-  const loadOperators = React.useCallback(async () => {
-    setFetchingOperators(true);
-    try {
-      const res = await fetch(`${WORKER_URL}/api/tiktok/operators`);
-      if (!res.ok) throw new Error("Failed to fetch operators");
-      const data = (await res.json()) as any[];
-      setOperators(data.map(op => ({
-        ...op,
-        id: op.id
-      })));
-    } catch (err: any) {
-      showToast(err.message, "error");
-    } finally {
-      setFetchingOperators(false);
-    }
-  }, []);
-
   React.useEffect(() => {
-    if (activeTab === "Terminal") {
-      loadTerminals();
-    } else {
-      loadOperators();
-    }
-  }, [activeTab, loadTerminals, loadOperators]);
+    loadTerminals();
+  }, [loadTerminals]);
 
   // Global db-refresh listener
   React.useEffect(() => {
     const handleDbRefresh = () => {
-      if (activeTab === "Terminal") loadTerminals();
-      else loadOperators();
+      loadTerminals();
     };
     window.addEventListener("db-refresh", handleDbRefresh);
     return () => window.removeEventListener("db-refresh", handleDbRefresh);
-  }, [activeTab, loadTerminals, loadOperators]);
+  }, [loadTerminals]);
 
   // Terminal API operations
   const handleSaveTerminal = async (terminalData: any, isEdit: boolean) => {
@@ -140,109 +103,36 @@ export function TiktokFulfillmentModule({ profile }: { profile?: any }) {
     }
   };
 
-  // Operator API operations
-  const handleSaveOperator = async (operatorData: any, isEdit: boolean) => {
-    try {
-      const res = await fetch(`${WORKER_URL}/api/tiktok/operators`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: isEdit ? "edit" : "add",
-          operator: {
-            id: operatorData.id,
-            name: operatorData.name,
-            pin: operatorData.pin
-          }
-        })
-      });
-      if (!res.ok) throw new Error(await res.text());
-      showToast(`Operator ${isEdit ? "updated" : "added"} successfully`, "success");
-      setEditingOperator(null);
-      setShowAddOperator(false);
-      loadOperators();
-    } catch (err: any) {
-      showToast(err.message || "Failed to save operator", "error");
-    }
-  };
-
-  const handleDeleteOperator = async (row: any) => {
-    const id = typeof row === "string" ? row : row?.id;
-    if (!id) {
-      showToast("Cannot delete operator: missing ID", "error");
-      return;
-    }
-    try {
-      const res = await fetch(`${WORKER_URL}/api/tiktok/operators`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "delete",
-          operator: { id }
-        })
-      });
-      if (!res.ok) throw new Error(await res.text());
-      showToast("Operator deleted successfully", "success");
-      loadOperators();
-    } catch (err: any) {
-      showToast(err.message || "Failed to delete operator", "error");
-    }
-  };
-
-  const tabs = [
-    { id: "Terminal", label: "Terminals", desc: "Configure authorized computer terminals, IP addresses, screen permissions, and Auto Print." },
-    { id: "Operator", label: "Operators", desc: "Manage operator names and 4-digit mobile scanner log PINs." }
-  ];
-
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] min-w-0">
       <div className="content-header flex justify-between items-center pr-2">
-        <NavigationTabs 
-          tabs={tabs}
-          activeTabId={activeTab}
-          onTabSelect={(tabId) => setActiveTab(tabId as any)}
-          titleSuffix="Registry"
-        />
-        {activeTab === "Terminal" ? (
-          <button 
-            onClick={() => setShowAddTerminal(true)}
-            className="px-3 py-1.5 bg-[#0b57d0] text-white text-xs font-bold rounded-lg hover:bg-[#0842a0] transition duration-150 shadow-sm"
-          >
-            + Add Terminal
-          </button>
-        ) : (
-          <button 
-            onClick={() => setShowAddOperator(true)}
-            className="px-3 py-1.5 bg-[#0b57d0] text-white text-xs font-bold rounded-lg hover:bg-[#0842a0] transition duration-150 shadow-sm"
-          >
-            + Add Operator
-          </button>
-        )}
+        <div className="flex flex-col gap-0.5">
+          <h3 className="font-primary text-base font-bold text-zinc-900">
+            Tiktok Terminals
+          </h3>
+          <p className="font-primary text-xs text-zinc-500">
+            Configure authorized computer terminals, IP addresses, screen permissions, and Auto Print.
+          </p>
+        </div>
+        <button 
+          onClick={() => setShowAddTerminal(true)}
+          className="px-3 py-1.5 bg-[#0b57d0] text-white text-xs font-bold rounded-lg hover:bg-[#0842a0] transition duration-150 shadow-sm"
+        >
+          + Add Terminal
+        </button>
       </div>
 
       <div className="content-body flex-1 w-full overflow-hidden">
-        {activeTab === "Terminal" ? (
-          <DataTable
-            columns={terminalColumns}
-            data={terminals}
-            userRole="admin"
-            title="Authorized Terminals"
-            fetching={fetchingTerminals}
-            onEditRow={(row) => setEditingTerminal(row)}
-            onDeleteRow={handleDeleteTerminal}
-            height="h-full"
-          />
-        ) : (
-          <DataTable
-            columns={operatorColumns}
-            data={operators}
-            userRole="admin"
-            title="Authorized Scanning Operators"
-            fetching={fetchingOperators}
-            onEditRow={(row) => setEditingOperator(row)}
-            onDeleteRow={handleDeleteOperator}
-            height="h-full"
-          />
-        )}
+        <DataTable
+          columns={terminalColumns}
+          data={terminals}
+          userRole="admin"
+          title="Authorized Terminals"
+          fetching={fetchingTerminals}
+          onEditRow={(row) => setEditingTerminal(row)}
+          onDeleteRow={handleDeleteTerminal}
+          height="h-full"
+        />
       </div>
 
       {/* Add/Edit Terminal Modal */}
@@ -255,18 +145,6 @@ export function TiktokFulfillmentModule({ profile }: { profile?: any }) {
             setShowAddTerminal(false);
           }}
           onSave={(data) => handleSaveTerminal(data, !!editingTerminal)}
-        />
-      )}
-
-      {/* Add/Edit Operator Modal */}
-      {(showAddOperator || editingOperator) && (
-        <OperatorModal 
-          operator={editingOperator}
-          onClose={() => {
-            setEditingOperator(null);
-            setShowAddOperator(false);
-          }}
-          onSave={(data) => handleSaveOperator(data, !!editingOperator)}
         />
       )}
     </div>
@@ -418,100 +296,6 @@ function TerminalModal({ terminal, existingTerminals, onClose, onSave }: Termina
               className="px-4 py-2 bg-[#0b57d0] text-white text-xs font-bold rounded-lg hover:bg-[#0842a0] transition"
             >
               Save Terminal
-            </button>
-          </footer>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// Operator Modal Component
-interface OperatorModalProps {
-  operator?: any;
-  onClose: () => void;
-  onSave: (data: any) => void;
-}
-
-function OperatorModal({ operator, onClose, onSave }: OperatorModalProps) {
-  const [id, setId] = React.useState(operator?.id || "");
-  const [name, setName] = React.useState(operator?.name || "");
-  const [pin, setPin] = React.useState(operator?.pin || "");
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!id.trim() || !name.trim() || !pin.trim()) {
-      showToast("Please fill all required fields", "warning");
-      return;
-    }
-    if (pin.length !== 4 || isNaN(Number(pin))) {
-      showToast("PIN must be exactly a 4-digit number", "warning");
-      return;
-    }
-    onSave({ id, name, pin });
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden font-primary animate-in fade-in zoom-in-95 duration-150">
-        <header className="px-6 py-4 bg-[#f8f9fa] border-b border-zinc-200 flex justify-between items-center">
-          <h3 className="text-sm font-bold text-[#1f1f1f]">
-            {operator ? "Edit Operator Details" : "Register New Operator"}
-          </h3>
-          <button type="button" onClick={onClose} className="text-zinc-400 hover:text-zinc-600 transition">
-            ✕
-          </button>
-        </header>
-        <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-bold text-zinc-500 uppercase">Operator ID</label>
-            <input 
-              type="text" 
-              value={id}
-              onChange={(e) => setId(e.target.value)}
-              disabled={!!operator}
-              placeholder="e.g. op003"
-              className="px-3 py-2 border border-zinc-300 rounded-lg text-sm bg-zinc-50 disabled:bg-zinc-100 disabled:text-zinc-500 focus:outline-none focus:border-[#0b57d0]"
-              required
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-bold text-zinc-500 uppercase">Operator Name</label>
-            <input 
-              type="text" 
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. John Doe"
-              className="px-3 py-2 border border-zinc-300 rounded-lg text-sm focus:outline-none focus:border-[#0b57d0]"
-              required
-            />
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-bold text-zinc-500 uppercase">4-Digit PIN Scanner Log</label>
-            <input 
-              type="text" 
-              maxLength={4}
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
-              placeholder="e.g. 9999"
-              className="px-3 py-2 border border-zinc-300 rounded-lg text-sm focus:outline-none focus:border-[#0b57d0]"
-              required
-            />
-          </div>
-
-          <footer className="mt-4 flex justify-end gap-2">
-            <button 
-              type="button" 
-              onClick={onClose}
-              className="px-4 py-2 border border-zinc-300 text-zinc-700 text-xs font-bold rounded-lg hover:bg-zinc-50 transition"
-            >
-              Cancel
-            </button>
-            <button 
-              type="submit"
-              className="px-4 py-2 bg-[#0b57d0] text-white text-xs font-bold rounded-lg hover:bg-[#0842a0] transition"
-            >
-              Save Operator
             </button>
           </footer>
         </form>
