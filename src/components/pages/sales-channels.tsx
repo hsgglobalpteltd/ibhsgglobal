@@ -9,6 +9,7 @@ import { SnapDealsModule } from "../modules/SnapDealsModule";
 import { StoresVisibilityModule } from "../modules/StoresVisibilityModule";
 import { SponsorshipModule } from "../modules/SponsorshipModule";
 import { DirectOrderModule } from "../modules/DirectOrderModule";
+import { CustomerServiceModule } from "../modules/CustomerServiceModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 
 interface SalesChannelsPageProps {
@@ -76,6 +77,8 @@ export function SalesChannelsPage({ profile }: SalesChannelsPageProps) {
         return <SponsorshipModule profile={profile} />;
       case "Direct Order":
         return <DirectOrderModule profile={profile} />;
+      case "Customer Service":
+        return <CustomerServiceModule profile={profile} />;
       default:
         return null;
     }
@@ -107,7 +110,7 @@ export function SalesChannelsPage({ profile }: SalesChannelsPageProps) {
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
               {visibleModules.map((mod) => {
-                const isUnderMaintenance = mod.title !== "Direct Order" && mod.title !== "Snap Deals";
+                const isUnderMaintenance = mod.title !== "Direct Order" && mod.title !== "Snap Deals" && mod.title !== "Customer Service";
                 return (
                   <div
                     key={mod.title}

@@ -94,6 +94,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Direct Order",
         description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
+      },
+      {
+        title: "Customer Service",
+        description: "Manage customer service knowledge base context, configure delivery & MOQ rules, and review visitor chat logs.",
       }
     ]
   },

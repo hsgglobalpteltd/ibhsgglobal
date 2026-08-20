@@ -25,13 +25,46 @@ import {
   Calendar,
   ClipboardCheck,
   BarChart3,
-  Loader2
+  Loader2,
+  Truck,
+  Route,
+  CheckCircle2,
+  AlertTriangle,
+  ArrowRight,
+  ExternalLink,
+  Square
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
 interface SKUItem {
   sku: string;
   qty: number;
+}
+
+export interface DriverLogDiscrepancy {
+  sku: string;
+  qty_ordered: number;
+  qty_delivered: number;
+  remark?: string;
+}
+
+export interface DriverLogCompletedEntry {
+  id: string; // e.g. "DO002140_SC14-PO-216173"
+  timestamp: number;
+  signed_paper_img?: string;
+  supporting_images?: string[];
+  discrepancies?: DriverLogDiscrepancy[];
+}
+
+export interface DriverLogRecord {
+  id: string; // e.g. "JOB-1787106787169"
+  driver: string;
+  status: "ON" | "OFF" | string;
+  start_time: number | string;
+  end_time?: number | string;
+  active_orders: string; // JSON string array of IDs
+  driver_logs: string; // JSON string array of DriverLogCompletedEntry
+  outsource_driver_details?: string;
 }
 
 interface TrackOrderDraft {
@@ -415,11 +448,41 @@ const getOrderEditsRemark = (oldOrder: DbOrder, newFields: Partial<DbOrder>): st
 };
 
 export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
+  const [driverLogs, setDriverLogs] = React.useState<DriverLogRecord[]>([]);
+  const [activeDriverLogSubTab, setActiveDriverLogSubTab] = React.useState<"online" | "closed">("online");
+  const [selectedRouteLogRecord, setSelectedRouteLogRecord] = React.useState<DriverLogRecord | null>(null);
+  const [isRouteLogModalOpen, setIsRouteLogModalOpen] = React.useState<boolean>(false);
+  const [forceCloseDriverJob, setForceCloseDriverJob] = React.useState<DriverLogRecord | null>(null);
+  const [isForceCloseModalOpen, setIsForceCloseModalOpen] = React.useState<boolean>(false);
+  const [forceCloseLoading, setForceCloseLoading] = React.useState<boolean>(false);
+
+  const onlineDrivers = React.useMemo(() => {
+    return driverLogs.filter((d) => (d.status || "").trim().toUpperCase() === "ON");
+  }, [driverLogs]);
+
+  const closedDriverJobs = React.useMemo(() => {
+    return driverLogs
+      .filter((d) => (d.status || "").trim().toUpperCase() === "OFF")
+      .sort((a, b) => {
+        const tA = Number(a.start_time) || 0;
+        const tB = Number(b.start_time) || 0;
+        return tB - tA;
+      });
+  }, [driverLogs]);
+
+  // Auto switch subtab to closed if no online drivers
+  React.useEffect(() => {
+    if (onlineDrivers.length === 0 && activeDriverLogSubTab === "online") {
+      setActiveDriverLogSubTab("closed");
+    }
+  }, [onlineDrivers.length, activeDriverLogSubTab]);
+
   const tabs = [
     { id: "dashboard", label: "Dashboard" },
     { id: "delivery", label: "Delivery Order" },
     { id: "return", label: "Return Order" },
-    { id: "create", label: "Create Order" }
+    { id: "create", label: "Create Order" },
+    { id: "driver_log", label: "Driver Log" }
   ];
 
   const [activeTab, setActiveTab] = React.useState<string>("dashboard");
@@ -590,12 +653,36 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     } catch (_) {}
   };
 
+  // Fetch driver logs from backend
+  const fetchDriverLogs = async () => {
+    try {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Driver_Log");
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data.value || []);
+        const normalized: DriverLogRecord[] = list.map((item: any) => ({
+          id: String(item.ID || item.id || ""),
+          driver: String(item.Driver || item.driver || ""),
+          status: String(item.Status || item.status || "OFF"),
+          start_time: item.Start_Time || item.start_time || 0,
+          end_time: item.End_Time || item.end_time || "",
+          active_orders: typeof item.Active_Orders === "string" ? item.Active_Orders : JSON.stringify(item.Active_Orders || item.active_orders || []),
+          driver_logs: typeof item.Driver_Logs === "string" ? item.Driver_Logs : JSON.stringify(item.Driver_Logs || item.driver_logs || []),
+          outsource_driver_details: item.Outsource_Driver_Details || item.outsource_driver_details || ""
+        }));
+        setDriverLogs(normalized);
+      }
+    } catch (err) {
+      console.error("Failed to fetch Driver_Log:", err);
+    }
+  };
+
   // Current User Info
   const currentUser = React.useMemo(() => {
     return profile?.name || profile?.email || "Admin";
   }, [profile]);
 
-  // Fetch drafts, API settings, and product SKUs on mount
+  // Fetch drafts, API settings, product SKUs, and driver logs on mount
   React.useEffect(() => {
     const cachedDrafts = localStorage.getItem("track_order_drafts");
     if (cachedDrafts) {
@@ -617,6 +704,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // Load product SKUs for manual order creation
     fetchProductSkus();
     fetchStores();
+    fetchDriverLogs();
   }, []);
 
   // Polling: fetch data direct from Database every 60 seconds (active only while TrackOrderModule is open/mounted)
@@ -624,6 +712,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const interval = setInterval(() => {
       console.log("tracking order...... ");
       fetchDatabaseOrders(true);
+      fetchDriverLogs();
     }, 60 * 1000);
 
     return () => clearInterval(interval);
@@ -2174,14 +2263,76 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       const rawHeaders = sheetData[0] as any[];
       const headers = rawHeaders.map((h: any) => String(h || "").trim().toLowerCase().replace(/[\s_]+/g, ""));
       
-      const doIdx = headers.findIndex(h => h === "deliveryordernumber" || h === "donumber" || h === "do" || h === "invoicenumber" || h === "invoice");
-      const refIdx = headers.findIndex(h => h === "refnumber" || h === "poref" || h === "reference" || h === "referenceo" || h === "ref");
-      const deliverToIdx = headers.findIndex(h => h === "deliverto" || h === "delivertoaddress" || h === "deliveryaddress" || h === "address");
-      const poscodeIdx = headers.findIndex(h => h === "poscode" || h === "postcode" || h === "postalcode" || h === "postal");
+      const doIdx = headers.findIndex(h => h === "deliveryordernumber" || h === "donumber" || h === "do" || h === "invoicenumber" || h === "invoice" || h === "dono" || h === "deliveryorder");
+      const refIdx = headers.findIndex(h => h === "refnumber" || h === "poref" || h === "reference" || h === "referenceo" || h === "ref" || h === "refno");
+      const deliverToIdx = headers.findIndex(h => h === "address" || h === "deliverto" || h === "delivertoaddress" || h === "deliveryaddress" || h === "addres");
+      const poscodeIdx = headers.findIndex(h => h === "pscode" || h === "poscode" || h === "postcode" || h === "postalcode" || h === "postal" || h === "postalno");
+      const methodIdx = headers.findIndex(h => h === "metheod" || h === "method" || h === "delivermethod" || h === "deliverymethod" || h === "delivmethod");
+      const itemsIdx = headers.findIndex(h => h === "items" || h === "item" || h === "skus" || h === "sku" || h === "skuitems" || h === "products");
 
       if (doIdx === -1) {
         throw new Error("Sheet must contain 'Delivery Order Number' or 'DO Number' or 'Invoice' column header.");
       }
+
+      // Helper to parse items string e.g. "SKUA(or custom),1,SKUB,45,SKUC,35"
+      const parseItemsValue = (raw: any): SKUItem[] => {
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw;
+        const str = String(raw).trim();
+        if (!str) return [];
+
+        // Check if JSON array string
+        if (str.startsWith("[") && str.endsWith("]")) {
+          try {
+            const parsed = JSON.parse(str);
+            if (Array.isArray(parsed)) {
+              return parsed.map((it: any) => ({
+                sku: String(it.sku || it.name || it.item || "Unknown SKU").trim(),
+                qty: Number(it.qty || it.quantity || 1) || 1
+              }));
+            }
+          } catch (_) {}
+        }
+
+        const itemsList: SKUItem[] = [];
+        const entries = str.split(/[\r\n;]+/).map((s: string) => s.trim()).filter(Boolean);
+
+        for (const entry of entries) {
+          if (entry.includes(":") || / [xX*] \d+/.test(entry)) {
+            const parts = entry.split(/[:xX*]/);
+            if (parts.length >= 2) {
+              const sku = parts[0].trim();
+              const qty = parseInt(parts[parts.length - 1].trim(), 10) || 1;
+              if (sku) {
+                itemsList.push({ sku, qty });
+                continue;
+              }
+            }
+          }
+
+          const tokens = entry.split(",").map((t: string) => t.trim()).filter(Boolean);
+          let i = 0;
+          while (i < tokens.length) {
+            const current = tokens[i];
+            const next = tokens[i + 1];
+            if (next !== undefined && /^\d+(\.\d+)?$/.test(next)) {
+              itemsList.push({
+                sku: current,
+                qty: Number(next) || 1
+              });
+              i += 2;
+            } else {
+              itemsList.push({
+                sku: current,
+                qty: 1
+              });
+              i += 1;
+            }
+          }
+        }
+
+        return itemsList;
+      };
 
       const duplicates: string[] = [];
       const uniqueNewDrafts: TrackOrderDraft[] = [];
@@ -2202,8 +2353,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           duplicates.push(doNum);
         } else {
           const refNum = refIdx !== -1 ? String(row[refIdx] || "").trim() : "";
-          const deliverTo = deliverToIdx !== -1 ? String(row[deliverToIdx] || "").trim() : "Singapore Address";
+          const deliverTo = deliverToIdx !== -1 && String(row[deliverToIdx] || "").trim() ? String(row[deliverToIdx] || "").trim() : "Singapore Address";
           const poscode = poscodeIdx !== -1 ? String(row[poscodeIdx] || "").trim() : "";
+          const deliverMethod = methodIdx !== -1 && String(row[methodIdx] || "").trim() ? String(row[methodIdx] || "").trim() : "Company Delivery";
+          const parsedItems = itemsIdx !== -1 ? parseItemsValue(row[itemsIdx]) : [];
 
           const assignedMark = getNextAvailableMark(drafts, pendingOrders, tempAssignedMarks);
           if (assignedMark) {
@@ -2218,10 +2371,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             type: "Normal",
             deliverTo: deliverTo,
             poscode: poscode,
-            items: [], // Skip items as requested
+            items: parsedItems,
             appointmentDate: undefined,
             appointmentTimeWindow: undefined,
-            deliverMethod: "Company Delivery",
+            deliverMethod: deliverMethod,
             pdfImages: []
           });
         }
@@ -3217,6 +3370,241 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     if (!text) return "";
     if (text.length <= limit) return text;
     return text.substring(0, limit) + "...";
+  };
+
+  // Helper to calculate distance in KM between 2 lat/lng points
+  const calculateDistanceKm = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos((lat1 * Math.PI) / 180) *
+        Math.cos((lat2 * Math.PI) / 180) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  const getOrderLatLng = (o: DbOrder): [number, number] => {
+    let lat = Number(o.latitude);
+    let lng = Number(o.longitude);
+    if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+      const coords = getSingaporeLatLng(o.poscode);
+      lat = coords.lat;
+      lng = coords.lng;
+    }
+    return [lat, lng];
+  };
+
+  const sortOrdersByNearestRoute = (startLatLng: [number, number], orders: DbOrder[]): DbOrder[] => {
+    const unvisited = [...orders];
+    const path: DbOrder[] = [];
+    let currentLatLng = startLatLng;
+
+    // 1. Prioritize Urgent
+    const urgents = unvisited.filter((o) => (o.type || "").trim().toLowerCase() === "urgent");
+    while (urgents.length > 0) {
+      let minDistance = Infinity;
+      let nearestIndex = 0;
+      for (let i = 0; i < urgents.length; i++) {
+        const coords = getOrderLatLng(urgents[i]);
+        const dist = calculateDistanceKm(currentLatLng[0], currentLatLng[1], coords[0], coords[1]);
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestIndex = i;
+        }
+      }
+      const nearest = urgents[nearestIndex];
+      path.push(nearest);
+      urgents.splice(nearestIndex, 1);
+      const unvIdx = unvisited.indexOf(nearest);
+      if (unvIdx > -1) unvisited.splice(unvIdx, 1);
+      currentLatLng = getOrderLatLng(nearest);
+    }
+
+    // 2. Prioritize Appointments
+    const appts = unvisited.filter((o) => (o.type || "").trim().toLowerCase().startsWith("appointment"));
+    while (appts.length > 0) {
+      let minDistance = Infinity;
+      let nearestIndex = 0;
+      for (let i = 0; i < appts.length; i++) {
+        const coords = getOrderLatLng(appts[i]);
+        const dist = calculateDistanceKm(currentLatLng[0], currentLatLng[1], coords[0], coords[1]);
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestIndex = i;
+        }
+      }
+      const nearest = appts[nearestIndex];
+      path.push(nearest);
+      appts.splice(nearestIndex, 1);
+      const unvIdx = unvisited.indexOf(nearest);
+      if (unvIdx > -1) unvisited.splice(unvIdx, 1);
+      currentLatLng = getOrderLatLng(nearest);
+    }
+
+    // 3. Normal / Remaining
+    while (unvisited.length > 0) {
+      let minDistance = Infinity;
+      let nearestIndex = 0;
+      for (let i = 0; i < unvisited.length; i++) {
+        const coords = getOrderLatLng(unvisited[i]);
+        const dist = calculateDistanceKm(currentLatLng[0], currentLatLng[1], coords[0], coords[1]);
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestIndex = i;
+        }
+      }
+      const nearest = unvisited[nearestIndex];
+      path.push(nearest);
+      const unvIdx = unvisited.indexOf(nearest);
+      if (unvIdx > -1) unvisited.splice(unvIdx, 1);
+      currentLatLng = getOrderLatLng(nearest);
+    }
+
+    return path;
+  };
+
+  const formatShiftDuration = (startTime: any, endTime: any): string => {
+    const s = Number(startTime);
+    const e = Number(endTime) || Date.now();
+    if (!s || isNaN(s) || s <= 0) return "—";
+    const diffMs = Math.max(0, e - s);
+    const totalMins = Math.floor(diffMs / 60000);
+    const hrs = Math.floor(totalMins / 60);
+    const mins = totalMins % 60;
+    if (hrs > 0) return `${hrs}h ${mins}m`;
+    return `${mins}m`;
+  };
+
+  const parseDriverCompletedLogs = (rawLogs: string): DriverLogCompletedEntry[] => {
+    try {
+      const parsed = typeof rawLogs === "string" ? JSON.parse(rawLogs || "[]") : rawLogs;
+      if (Array.isArray(parsed)) {
+        return parsed.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+      }
+    } catch (_) {}
+    return [];
+  };
+
+  const parseDriverActiveOrderIds = (rawActive: string): string[] => {
+    try {
+      const parsed = typeof rawActive === "string" ? JSON.parse(rawActive || "[]") : rawActive;
+      if (Array.isArray(parsed)) return parsed;
+    } catch (_) {}
+    return [];
+  };
+
+  const resolveOrder = (orderIdOrDo: string): DbOrder | undefined => {
+    const clean = String(orderIdOrDo || "").trim().toLowerCase();
+    return dbOrders.find(
+      (o) =>
+        String(o.id || "").trim().toLowerCase() === clean ||
+        String(o.do_number || "").trim().toLowerCase() === clean ||
+        `${String(o.do_number || "").trim()}_${String(o.ref_number || "").trim()}`.toLowerCase() === clean
+    );
+  };
+
+  const handleConfirmForceCloseJob = async () => {
+    if (!forceCloseDriverJob) return;
+    setForceCloseLoading(true);
+    try {
+      showToast("Closing driver shift...", "info");
+
+      const completedLogs = parseDriverCompletedLogs(forceCloseDriverJob.driver_logs);
+      let lastDoneTimestamp = 0;
+      if (completedLogs.length > 0) {
+        lastDoneTimestamp = Math.max(...completedLogs.map((l) => Number(l.timestamp) || 0));
+      }
+      const computedEndTime =
+        lastDoneTimestamp > 0
+          ? lastDoneTimestamp + 5 * 60 * 1000
+          : (Number(forceCloseDriverJob.start_time) || Date.now()) + 5 * 60 * 1000;
+
+      // Identify active undelivered orders
+      const activeIds = parseDriverActiveOrderIds(forceCloseDriverJob.active_orders);
+      const ordersToRevert = dbOrders.filter((o) => {
+        const orderId = String(o.id || "");
+        const doNum = String(o.do_number || "");
+        const combined = `${doNum}_${String(o.ref_number || "")}`;
+        const isMatchedId = activeIds.includes(orderId) || activeIds.includes(doNum) || activeIds.includes(combined);
+        const isOutForDelivery = (o.status || "").trim().toLowerCase() === "out for delivery";
+        const isAssignedDriver = (o.driver || "").trim().toLowerCase() === (forceCloseDriverJob.driver || "").trim().toLowerCase();
+        return isMatchedId || (isOutForDelivery && isAssignedDriver);
+      });
+
+      // 1. Revert remaining orders from "Out for Delivery" to "Ready to Deliver"
+      for (const order of ordersToRevert) {
+        let currentLogs: LogEntry[] = [];
+        try {
+          currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs || "[]") : order.logs || [];
+        } catch (_) {}
+        if (!Array.isArray(currentLogs)) currentLogs = [];
+
+        const updatedLogs = [
+          ...currentLogs,
+          {
+            action: "Shift Closed: Reverted to Ready to Deliver",
+            actionBy: currentUser,
+            remark: `Admin closed shift ${forceCloseDriverJob.id}. Reverted status from Out for Delivery to Ready to Deliver.`,
+            timestamp: Date.now()
+          }
+        ];
+
+        const payload = {
+          table: "Track_Orders",
+          action: "update",
+          id: order.id,
+          data: {
+            id: order.id,
+            status: "Ready to Deliver",
+            logs: JSON.stringify(updatedLogs)
+          }
+        };
+
+        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      }
+
+      // 2. Update Driver_Log record to "OFF"
+      const driverLogPayload = {
+        table: "Driver_Log",
+        action: "update",
+        id: forceCloseDriverJob.id,
+        data: {
+          id: forceCloseDriverJob.id,
+          status: "OFF",
+          end_time: computedEndTime,
+          active_orders: JSON.stringify([])
+        }
+      };
+
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(driverLogPayload)
+      });
+
+      if (!res.ok) throw new Error("Failed to close driver job in database");
+
+      showToast(`Shift closed for ${forceCloseDriverJob.driver}`, "success");
+      setIsForceCloseModalOpen(false);
+      setForceCloseDriverJob(null);
+
+      // Refresh both
+      fetchDriverLogs();
+      fetchDatabaseOrders(true);
+    } catch (err: any) {
+      console.error("Force close job error:", err);
+      showToast("Error closing shift: " + err.message, "error");
+    } finally {
+      setForceCloseLoading(false);
+    }
   };
 
   return (
@@ -4262,6 +4650,452 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
         </div>
       )}
+
+      {/* TAB CONTENT: DRIVER LOG */}
+      {activeTab === "driver_log" && (
+        <div className="flex flex-col gap-4 animate-tableFadeInOnly">
+          {/* Sub-tabs Switch Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
+            <div className="flex items-center gap-2">
+              {onlineDrivers.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActiveDriverLogSubTab("online")}
+                  className={`flex items-center gap-2 px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
+                    activeDriverLogSubTab === "online"
+                      ? "border-[#0B57D0] text-[#0B57D0]"
+                      : "border-transparent text-zinc-400 hover:text-zinc-700"
+                  }`}
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  Online ({onlineDrivers.length})
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setActiveDriverLogSubTab("closed")}
+                className={`px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
+                  activeDriverLogSubTab === "closed"
+                    ? "border-[#0B57D0] text-[#0B57D0]"
+                    : "border-transparent text-zinc-400 hover:text-zinc-700"
+                }`}
+              >
+                Job Closed ({closedDriverJobs.length})
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2 self-end sm:self-auto">
+              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-zinc-600">
+                {activeDriverLogSubTab === "online"
+                  ? `${onlineDrivers.length} Online Drivers`
+                  : `${closedDriverJobs.length} Shift Records`}
+              </span>
+            </div>
+          </div>
+
+          {/* ONLINE DRIVERS VIEW (3 Column Grid of Cards) */}
+          {activeDriverLogSubTab === "online" && (
+            <div className="h-[calc(100vh-220px)] min-h-[400px] w-full overflow-y-auto pr-1">
+              {onlineDrivers.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
+                  <Truck size={40} className="text-zinc-400 mb-3" />
+                  <span className="font-primary text-sm text-zinc-500 font-medium">
+                    No drivers are currently online.
+                  </span>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-6">
+                  {onlineDrivers.map((driverJob) => {
+                    const completedLogs = parseDriverCompletedLogs(driverJob.driver_logs);
+                    const activeIds = parseDriverActiveOrderIds(driverJob.active_orders);
+                    
+                    // Match and resolve order objects
+                    const remainingOrders: DbOrder[] = activeIds
+                      .map((id) => resolveOrder(id))
+                      .filter(Boolean) as DbOrder[];
+
+                    // Calculate total issues/discrepancies count
+                    const totalDiscrepancies = completedLogs.reduce(
+                      (acc, curr) => acc + (curr.discrepancies ? curr.discrepancies.length : 0),
+                      0
+                    );
+
+                    // Starting point from office (409461)
+                    const startCoords: [number, number] = [1.3197, 103.8962];
+                    
+                    // Sort remaining active orders by nearest neighbor
+                    const sortedRemaining = sortOrdersByNearestRoute(startCoords, remainingOrders);
+
+                    const totalStops = completedLogs.length + remainingOrders.length;
+                    const completionPct = totalStops > 0 ? Math.round((completedLogs.length / totalStops) * 100) : 0;
+
+                    let runningCoords = startCoords;
+
+                    return (
+                      <div
+                        key={driverJob.id}
+                        className="bg-white border border-slate-200 rounded-lg flex flex-col shadow-xs overflow-hidden h-[calc(100vh-270px)] min-h-[480px]"
+                      >
+                        {/* Driver Card Header */}
+                        <div className="bg-slate-50 border-b border-slate-200 p-3.5 flex flex-col gap-2 flex-shrink-0">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-full bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex items-center justify-center text-[#0B57D0]">
+                                <Truck size={16} />
+                              </div>
+                              <div>
+                                <h4 className="font-primary text-sm font-bold text-zinc-900 leading-tight">
+                                  {driverJob.driver}
+                                </h4>
+                                <span className="text-[10px] text-zinc-500 font-medium">
+                                  Shift ID: {driverJob.id}
+                                </span>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setForceCloseDriverJob(driverJob);
+                                setIsForceCloseModalOpen(true);
+                              }}
+                              title="End Driver Shift"
+                              className="p-1.5 rounded hover:bg-red-50 text-red-600 hover:text-red-700 transition-colors cursor-pointer flex items-center justify-center"
+                            >
+                              <Square size={14} fill="currentColor" />
+                            </button>
+                          </div>
+
+                          {/* Shift Started & Stats bar */}
+                          <div className="flex items-center justify-between text-[11px] font-medium text-zinc-600 bg-white px-2.5 py-1.5 rounded border border-slate-200">
+                            <div className="flex items-center gap-1">
+                              <Clock size={12} className="text-zinc-400" />
+                              <span>Start: {formatTimestamp(driverJob.start_time)}</span>
+                            </div>
+                            <span className="font-semibold text-zinc-800">
+                              {completedLogs.length}/{totalStops} Done ({completionPct}%)
+                            </span>
+                          </div>
+
+                          {/* Issues Badge if any */}
+                          {totalDiscrepancies > 0 && (
+                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold">
+                              <AlertTriangle size={13} className="text-amber-600" />
+                              <span>{totalDiscrepancies} Discrepanc{totalDiscrepancies > 1 ? "ies" : "y"} / Remark Reported</span>
+                            </div>
+                          )}
+
+                          {driverJob.outsource_driver_details && (
+                            <div className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 font-semibold truncate">
+                              ℹ️ Outsource: {driverJob.outsource_driver_details}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Route Timeline List (Scrollable) */}
+                        <div className="p-3.5 flex-1 overflow-y-auto flex flex-col gap-0 font-primary text-xs">
+                          {/* Node 0: Office / Warehouse Start */}
+                          <div className="flex items-start gap-2.5">
+                            <div className="flex flex-col items-center">
+                              <div className="w-6 h-6 rounded-full bg-zinc-800 text-white flex items-center justify-center text-[10px] font-bold shadow-xs flex-shrink-0">
+                                🏢
+                              </div>
+                            </div>
+                            <div className="flex-1 min-w-0 pt-0.5">
+                              <div className="font-bold text-zinc-900 text-xs">
+                                Start: Office / Warehouse
+                              </div>
+                              <div className="text-[10px] text-zinc-500">
+                                Poscode: 409461 — Central Zone
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Completed Stops (Green Nodes) */}
+                          {completedLogs.map((logEntry, logIdx) => {
+                            const matchedOrder = resolveOrder(logEntry.id);
+                            const orderPoscode = matchedOrder?.poscode || "";
+                            const orderAddress = matchedOrder?.deliver_to || "Singapore Address";
+                            const orderMark = matchedOrder?.mark || "✓";
+
+                            const orderCoords = matchedOrder ? getOrderLatLng(matchedOrder) : startCoords;
+                            const distance = calculateDistanceKm(
+                              runningCoords[0],
+                              runningCoords[1],
+                              orderCoords[0],
+                              orderCoords[1]
+                            );
+                            runningCoords = orderCoords;
+
+                            const hasDiscrepancies = logEntry.discrepancies && logEntry.discrepancies.length > 0;
+
+                            return (
+                              <React.Fragment key={`log-${logIdx}-${logEntry.id}`}>
+                                {/* Vertical dotted line connecting nodes */}
+                                <div className="flex items-center gap-2.5 h-6 ml-3 my-0.5">
+                                  <div className="w-[2px] h-full border-l-2 border-dashed border-emerald-300" />
+                                  <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                                    +{distance.toFixed(1)} km
+                                  </span>
+                                </div>
+
+                                <div className="flex items-start gap-2.5 bg-emerald-50/50 border border-emerald-200 rounded-lg p-2.5 my-0.5 shadow-xs">
+                                  <div className="flex flex-col items-center">
+                                    <div className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold shadow-xs flex-shrink-0">
+                                      <Check size={13} strokeWidth={3} />
+                                    </div>
+                                  </div>
+
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between gap-1">
+                                      <div className="font-bold text-emerald-950 text-xs truncate">
+                                        [{orderMark}] {logEntry.id}
+                                      </div>
+                                      <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded flex-shrink-0">
+                                        {formatTimestamp(logEntry.timestamp)}
+                                      </span>
+                                    </div>
+
+                                    <div className="text-[11px] text-zinc-600 font-medium truncate mt-0.5" title={orderAddress}>
+                                      {orderAddress}
+                                    </div>
+
+                                    {orderPoscode && (
+                                      <div className="mt-1">
+                                        {renderPoscodeCell(orderPoscode)}
+                                      </div>
+                                    )}
+
+                                    {/* Signed DO Proof Thumbnail */}
+                                    {logEntry.signed_paper_img && (
+                                      <div className="mt-2 flex items-center gap-2">
+                                        <div
+                                          onClick={() => setActiveLightboxImage(logEntry.signed_paper_img || null)}
+                                          className="relative w-12 h-12 rounded border border-emerald-300 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity bg-white flex-shrink-0 shadow-2xs"
+                                          title="Click to view signed DO full screen"
+                                        >
+                                          <img
+                                            src={logEntry.signed_paper_img}
+                                            alt="Signed DO Proof"
+                                            className="w-full h-full object-cover"
+                                          />
+                                        </div>
+                                        <span className="text-[10px] text-emerald-700 font-semibold">
+                                          Signed DO Attached
+                                        </span>
+                                      </div>
+                                    )}
+
+                                    {/* Discrepancy / Issues Callout */}
+                                    {hasDiscrepancies && (
+                                      <div className="mt-2 bg-amber-50 border border-amber-300 rounded p-2 text-[10px] flex flex-col gap-1">
+                                        <div className="flex items-center gap-1 font-bold text-amber-900">
+                                          <AlertTriangle size={11} className="text-amber-600 flex-shrink-0" />
+                                          <span>Discrepancy / Issue:</span>
+                                        </div>
+                                        {logEntry.discrepancies?.map((disc, dIdx) => (
+                                          <div key={dIdx} className="text-amber-800 pl-3">
+                                            • <span className="font-semibold">{disc.sku}</span>: Ordered {disc.qty_ordered}, Delivered {disc.qty_delivered}
+                                            {disc.remark && (
+                                              <div className="text-zinc-600 italic">
+                                                Remark: "{disc.remark}"
+                                              </div>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </React.Fragment>
+                            );
+                          })}
+
+                          {/* Active / Remaining Stops (Blue/Slate Nodes) */}
+                          {sortedRemaining.map((activeOrder, aIdx) => {
+                            const orderCoords = getOrderLatLng(activeOrder);
+                            const distance = calculateDistanceKm(
+                              runningCoords[0],
+                              runningCoords[1],
+                              orderCoords[0],
+                              orderCoords[1]
+                            );
+                            runningCoords = orderCoords;
+
+                            let itemsCount = 0;
+                            try {
+                              const pItems = typeof activeOrder.items === "string" ? JSON.parse(activeOrder.items) : activeOrder.items;
+                              itemsCount = Array.isArray(pItems) ? pItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0) : 0;
+                            } catch (_) {}
+
+                            return (
+                              <React.Fragment key={`active-${activeOrder.id}-${aIdx}`}>
+                                {/* Vertical dotted line connecting nodes */}
+                                <div className="flex items-center gap-2.5 h-6 ml-3 my-0.5">
+                                  <div className="w-[2px] h-full border-l-2 border-dashed border-blue-300" />
+                                  <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">
+                                    +{distance.toFixed(1)} km
+                                  </span>
+                                </div>
+
+                                <div className="flex items-start gap-2.5 bg-blue-50/30 border border-blue-200 rounded-lg p-2.5 my-0.5 shadow-xs">
+                                  <div className="flex flex-col items-center">
+                                    <div className="w-6 h-6 rounded-full bg-[#0B57D0] text-white flex items-center justify-center text-[10px] font-bold shadow-xs flex-shrink-0">
+                                      {completedLogs.length + aIdx + 1}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center justify-between gap-1">
+                                      <div className="font-bold text-blue-950 text-xs truncate">
+                                        [{activeOrder.mark}] {activeOrder.do_number}_{activeOrder.ref_number || "NA"}
+                                      </div>
+                                      <span className="text-[9px] font-bold text-blue-800 bg-blue-100 px-1.5 py-0.5 rounded flex-shrink-0">
+                                        Out for Delivery
+                                      </span>
+                                    </div>
+
+                                    <div className="text-[11px] text-zinc-600 font-medium truncate mt-0.5" title={activeOrder.deliver_to}>
+                                      {activeOrder.deliver_to}
+                                    </div>
+
+                                    <div className="mt-1 flex items-center gap-2">
+                                      {renderPoscodeCell(activeOrder.poscode)}
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border border-slate-200 text-[9px] font-bold text-zinc-600">
+                                        <Boxes size={10} className="text-zinc-400" /> {itemsCount} items
+                                      </span>
+                                    </div>
+
+                                    {activeOrder.type === "Urgent" && (
+                                      <div className="mt-1.5 text-[9px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded flex items-center gap-1">
+                                        <Clock size={10} className="text-red-500 animate-pulse" /> Urgent Delivery by 6:00 PM
+                                      </div>
+                                    )}
+
+                                    {activeOrder.type?.startsWith("Appointment") && (
+                                      <div className="mt-1.5 text-[9px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded flex items-center gap-1">
+                                        <Clock size={10} className="text-blue-500 animate-pulse" /> Appointment: {formatDateStr(activeOrder.deadline)}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* JOB CLOSED TABLE VIEW */}
+          {activeDriverLogSubTab === "closed" && (
+            <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
+              {closedDriverJobs.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
+                  <ClipboardCheck size={40} className="text-zinc-400 mb-3" />
+                  <span className="font-primary text-sm text-zinc-500 font-medium">
+                    No closed driver shifts recorded yet.
+                  </span>
+                </div>
+              ) : (
+                <div className="h-full overflow-auto border border-slate-200 rounded bg-white">
+                  <table className="w-full text-left font-primary text-xs border-collapse">
+                    <thead>
+                      <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
+                        <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Route Log</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Job ID</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Driver Name</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Shift Started</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Shift Ended</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-28 align-middle z-10">Duration</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Completed Stops</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Discrepancies</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-zinc-200">
+                      {closedDriverJobs.map((record, idx) => {
+                        const logs = parseDriverCompletedLogs(record.driver_logs);
+                        const totalIssues = logs.reduce(
+                          (acc, curr) => acc + (curr.discrepancies ? curr.discrepancies.length : 0),
+                          0
+                        );
+
+                        return (
+                          <tr
+                            key={record.id}
+                            className={`transition-all h-14 ${
+                              idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
+                            } hover:bg-slate-50`}
+                          >
+                            <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedRouteLogRecord(record);
+                                  setIsRouteLogModalOpen(true);
+                                }}
+                                title="View Complete Route Timeline Log"
+                                className="w-8 h-8 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-[#0B57D0]/30 bg-[#0B57D0]/5 hover:bg-[#0B57D0] text-[#0B57D0] hover:text-white cursor-pointer transition-all outline-none mx-auto shadow-2xs"
+                              >
+                                <Route size={14} />
+                              </button>
+                            </td>
+                            <td className="p-3 w-40 font-mono font-bold text-zinc-900 align-middle border-b border-zinc-200">
+                              {record.id}
+                            </td>
+                            <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                              {record.driver}
+                              {record.outsource_driver_details && (
+                                <div className="text-[10px] text-zinc-400 font-normal truncate">
+                                  {record.outsource_driver_details}
+                                </div>
+                              )}
+                            </td>
+                            <td className="p-3 w-40 text-zinc-600 align-middle border-b border-zinc-200">
+                              {formatTimestamp(record.start_time)}
+                            </td>
+                            <td className="p-3 w-40 text-zinc-600 align-middle border-b border-zinc-200">
+                              {formatTimestamp(record.end_time)}
+                            </td>
+                            <td className="p-3 w-28 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                              {formatShiftDuration(record.start_time, record.end_time)}
+                            </td>
+                            <td className="p-3 w-28 text-center align-middle border-b border-zinc-200">
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs">
+                                <Check size={11} strokeWidth={3} />
+                                {logs.length}
+                              </span>
+                            </td>
+                            <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                              {totalIssues > 0 ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[10px]">
+                                  <AlertTriangle size={11} className="text-amber-600" />
+                                  {totalIssues} Issue{totalIssues > 1 ? "s" : ""}
+                                </span>
+                              ) : (
+                                <span className="text-zinc-400 font-normal text-[11px]">
+                                  Clean (0)
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       </div>
 
       {/* RIGHT SLIDE-IN PANEL (Drawer) */}
@@ -5186,6 +6020,310 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 onClick={handleConfirmRevokeComplete}
               >
                 Confirm Revoke
+              </CustomButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM FORCE CLOSE JOB CONFIRMATION MODAL */}
+      {isForceCloseModalOpen && forceCloseDriverJob && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-primary">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md flex flex-col overflow-hidden animate-zoom-in">
+            {/* Header */}
+            <div className="px-5 py-4 bg-red-50/70 border-b border-red-100 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-red-100 border border-red-200 flex items-center justify-center text-red-600">
+                  <Square size={14} fill="currentColor" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-red-950">
+                    Close Driver Shift
+                  </h3>
+                  <p className="text-[11px] text-red-700 font-medium">
+                    {forceCloseDriverJob.driver} ({forceCloseDriverJob.id})
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!forceCloseLoading) {
+                    setIsForceCloseModalOpen(false);
+                    setForceCloseDriverJob(null);
+                  }
+                }}
+                className="text-zinc-400 hover:text-zinc-700 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Content */}
+            {(() => {
+              const completedLogs = parseDriverCompletedLogs(forceCloseDriverJob.driver_logs);
+              const activeIds = parseDriverActiveOrderIds(forceCloseDriverJob.active_orders);
+              let lastDoneTimestamp = 0;
+              if (completedLogs.length > 0) {
+                lastDoneTimestamp = Math.max(...completedLogs.map((l) => Number(l.timestamp) || 0));
+              }
+              const computedEndTime =
+                lastDoneTimestamp > 0
+                  ? lastDoneTimestamp + 5 * 60 * 1000
+                  : (Number(forceCloseDriverJob.start_time) || Date.now()) + 5 * 60 * 1000;
+
+              return (
+                <div className="p-5 flex flex-col gap-3.5 text-xs text-zinc-700">
+                  <p className="leading-relaxed text-zinc-600">
+                    Are you sure you want to end this driver's active shift?
+                  </p>
+
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex flex-col gap-2">
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="text-zinc-500 font-medium">Shift Start Time:</span>
+                      <span className="font-semibold text-zinc-800">{formatTimestamp(forceCloseDriverJob.start_time)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="text-zinc-500 font-medium">Calculated End Time (Last Done + 5 min):</span>
+                      <span className="font-bold text-emerald-700">{formatTimestamp(computedEndTime)}</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="text-zinc-500 font-medium">Completed Deliveries:</span>
+                      <span className="font-semibold text-emerald-700">{completedLogs.length} Completed</span>
+                    </div>
+                    <div className="flex justify-between items-center text-[11px]">
+                      <span className="text-zinc-500 font-medium">Unfinished Active Orders:</span>
+                      <span className="font-semibold text-amber-700">{activeIds.length} Remaining</span>
+                    </div>
+                  </div>
+
+                  {activeIds.length > 0 && (
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-[11px] text-amber-850 flex items-start gap-2">
+                      <AlertTriangle size={14} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                      <span>
+                        <strong>{activeIds.length} unfinished order(s)</strong> will automatically have their status reverted from <strong>"Out for Delivery"</strong> to <strong>"Ready to Deliver"</strong>.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* Footer */}
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+              <CustomButton
+                variant="secondary"
+                disabled={forceCloseLoading}
+                onClick={() => {
+                  setIsForceCloseModalOpen(false);
+                  setForceCloseDriverJob(null);
+                }}
+              >
+                Cancel
+              </CustomButton>
+              <CustomButton
+                variant="danger"
+                disabled={forceCloseLoading}
+                onClick={handleConfirmForceCloseJob}
+                className="flex items-center gap-1.5"
+              >
+                {forceCloseLoading ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin" />
+                    Closing Shift...
+                  </>
+                ) : (
+                  <>
+                    <Square size={10} fill="currentColor" />
+                    Confirm End Shift
+                  </>
+                )}
+              </CustomButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ROUTE TIMELINE LOG MODAL */}
+      {isRouteLogModalOpen && selectedRouteLogRecord && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-primary">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-zoom-in">
+            {/* Modal Header */}
+            <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-lg bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex items-center justify-center text-[#0B57D0]">
+                  <Route size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-900 leading-tight">
+                    Route Timeline Log — {selectedRouteLogRecord.driver}
+                  </h3>
+                  <div className="text-[11px] text-zinc-500 font-mono">
+                    Shift ID: {selectedRouteLogRecord.id} • Duration: {formatShiftDuration(selectedRouteLogRecord.start_time, selectedRouteLogRecord.end_time)}
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsRouteLogModalOpen(false);
+                  setSelectedRouteLogRecord(null);
+                }}
+                className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-slate-200/60 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Modal Body: Route Timeline */}
+            <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-0 text-xs">
+              {/* Start Point */}
+              <div className="flex items-start gap-3">
+                <div className="w-7 h-7 rounded-full bg-zinc-800 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-xs">
+                  🏢
+                </div>
+                <div className="flex-1 pt-1">
+                  <div className="font-bold text-zinc-900 text-xs">
+                    Start: Office / Warehouse (409461)
+                  </div>
+                  <div className="text-[11px] text-zinc-500">
+                    Shift Started: {formatTimestamp(selectedRouteLogRecord.start_time)}
+                  </div>
+                </div>
+              </div>
+
+              {/* Waypoints from Driver_Logs */}
+              {(() => {
+                const logs = parseDriverCompletedLogs(selectedRouteLogRecord.driver_logs);
+                if (logs.length === 0) {
+                  return (
+                    <div className="py-8 text-center text-zinc-400 italic">
+                      No delivery waypoint logs were recorded during this shift.
+                    </div>
+                  );
+                }
+
+                let lastCoords: [number, number] = [1.3197, 103.8962];
+
+                return logs.map((log, lIdx) => {
+                  const matched = resolveOrder(log.id);
+                  const orderCoords = matched ? getOrderLatLng(matched) : [1.3197, 103.8962];
+                  const dist = calculateDistanceKm(lastCoords[0], lastCoords[1], orderCoords[0], orderCoords[1]);
+                  lastCoords = orderCoords as [number, number];
+
+                  const hasDisc = log.discrepancies && log.discrepancies.length > 0;
+
+                  return (
+                    <React.Fragment key={`modal-log-${lIdx}-${log.id}`}>
+                      {/* Dotted Line */}
+                      <div className="flex items-center gap-3 h-7 ml-3.5 my-0.5">
+                        <div className="w-[2px] h-full border-l-2 border-dashed border-emerald-300" />
+                        <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                          +{dist.toFixed(1)} km
+                        </span>
+                      </div>
+
+                      {/* Waypoint Box */}
+                      <div className="flex items-start gap-3 bg-emerald-50/40 border border-emerald-200 rounded-lg p-3 my-0.5 shadow-xs">
+                        <div className="w-7 h-7 rounded-full bg-emerald-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-xs">
+                          <Check size={14} strokeWidth={3} />
+                        </div>
+
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="font-bold text-emerald-950 text-xs truncate">
+                              Stop #{lIdx + 1}: {log.id}
+                            </div>
+                            <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                              {formatTimestamp(log.timestamp)}
+                            </span>
+                          </div>
+
+                          <div className="text-zinc-600 font-medium mt-1">
+                            {matched?.deliver_to || "Singapore Address"}
+                          </div>
+
+                          {matched?.poscode && (
+                            <div className="mt-1">
+                              {renderPoscodeCell(matched.poscode)}
+                            </div>
+                          )}
+
+                          {/* Proof Thumbnail */}
+                          {log.signed_paper_img && (
+                            <div className="mt-2.5 flex items-center gap-2.5">
+                              <div
+                                onClick={() => setActiveLightboxImage(log.signed_paper_img || null)}
+                                className="relative w-14 h-14 rounded border border-emerald-300 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity bg-white shadow-2xs flex-shrink-0"
+                                title="Click to view signed DO full size"
+                              >
+                                <img
+                                  src={log.signed_paper_img}
+                                  alt="Signed DO Paper"
+                                  className="w-full h-full object-cover"
+                                />
+                              </div>
+                              <span className="text-[11px] text-emerald-800 font-semibold">
+                                Signed Delivery Order Attached
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Discrepancies */}
+                          {hasDisc && (
+                            <div className="mt-2.5 bg-amber-50 border border-amber-300 rounded p-2.5 text-[11px] flex flex-col gap-1">
+                              <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                                <AlertTriangle size={12} className="text-amber-600 flex-shrink-0" />
+                                <span>Reported Discrepancy / Remarks:</span>
+                              </div>
+                              {log.discrepancies?.map((d, dIdx) => (
+                                <div key={dIdx} className="text-amber-800 pl-3">
+                                  • SKU <span className="font-semibold">{d.sku}</span>: Ordered {d.qty_ordered}, Delivered {d.qty_delivered}
+                                  {d.remark && (
+                                    <div className="text-zinc-700 italic mt-0.5">
+                                      Driver Note: "{d.remark}"
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </React.Fragment>
+                  );
+                });
+              })()}
+
+              {/* End of Shift Node */}
+              {selectedRouteLogRecord.end_time && (
+                <div className="mt-3 flex items-start gap-3 pt-2 border-t border-slate-200">
+                  <div className="w-7 h-7 rounded-full bg-zinc-700 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-xs">
+                    🏁
+                  </div>
+                  <div className="flex-1 pt-1">
+                    <div className="font-bold text-zinc-900 text-xs">
+                      Route Completed / Job Closed
+                    </div>
+                    <div className="text-[11px] text-zinc-500">
+                      Ended: {formatTimestamp(selectedRouteLogRecord.end_time)}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <CustomButton
+                variant="secondary"
+                onClick={() => {
+                  setIsRouteLogModalOpen(false);
+                  setSelectedRouteLogRecord(null);
+                }}
+              >
+                Close
               </CustomButton>
             </div>
           </div>
