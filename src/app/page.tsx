@@ -39,6 +39,33 @@ export default function Home() {
     target: any;
   } | null>(null);
 
+  const [isFullscreen, setIsFullscreen] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    const handleFullscreenChange = () => {
+      const doc = document as any;
+      const isFull = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+      setIsFullscreen(isFull);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
+    document.addEventListener("MSFullscreenChange", handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+    };
+  }, []);
+
   // Maintenance mode states
   const [maintenanceSettings, setMaintenanceSettings] = React.useState<MaintenanceSettings>({
     websiteMaintenance: false,
@@ -550,13 +577,15 @@ export default function Home() {
 
         {/* Desktop/Tablet View */}
         <div className="hidden md:flex print:flex h-screen w-full bg-[#F8F9FC] overflow-hidden">
-          <SidePanel 
-            activeItem={activeItem} 
-            onSelectMenu={handleMenuSelect} 
-            user={firebaseUser}
-            profile={profile}
-            onLogout={handleLogout}
-          />
+          {!isFullscreen && (
+            <SidePanel 
+              activeItem={activeItem} 
+              onSelectMenu={handleMenuSelect} 
+              user={firebaseUser}
+              profile={profile}
+              onLogout={handleLogout}
+            />
+          )}
           <div className="workspace-wrapper flex flex-col flex-1 h-screen overflow-hidden min-w-0">
             <TopBar 
               breadcrumbPath={breadcrumbPath} 

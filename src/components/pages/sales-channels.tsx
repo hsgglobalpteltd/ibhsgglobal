@@ -110,7 +110,7 @@ export function SalesChannelsPage({ profile }: SalesChannelsPageProps) {
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
               {visibleModules.map((mod) => {
-                const isUnderMaintenance = mod.title !== "Direct Order" && mod.title !== "Snap Deals" && mod.title !== "Customer Service";
+                const isUnderMaintenance = mod.title !== "Direct Order" && mod.title !== "Snap Deals" && mod.title !== "Customer Service" && mod.title !== "Stores Visibility";
                 return (
                   <div
                     key={mod.title}

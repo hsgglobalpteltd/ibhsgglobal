@@ -5,6 +5,107 @@ import { showToast } from "@/lib/toast";
 import { X, Calendar, Filter, Layers, HelpCircle, Printer, Search } from "lucide-react";
 import { CustomButton } from "../custom-button";
 
+const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
+
+interface Retailer {
+  id: string | number;
+  display_name: string;
+  logo_image?: string;
+  rank?: string | number;
+  retailer_group?: string;
+}
+
+interface Brand {
+  id: string | number;
+  display_name: string;
+  logo_image?: string;
+  rank?: string | number;
+}
+
+interface Store {
+  id: string | number;
+  retailers_id?: string | number;
+  retailer_id?: string | number;
+  display_name?: string;
+  address?: string;
+  pin_locations?: string;
+  zones?: string;
+  status?: string;
+  store_rank?: string | number;
+}
+
+interface Product {
+  sku: string;
+  brands_id?: string | number;
+  brand_id?: string | number;
+  display_name?: string;
+  image?: string;
+  status?: string;
+}
+
+interface ProductLog {
+  id?: string | number;
+  timestamp?: any;
+  merch_id?: string | number;
+  retailer_stores_id?: string | number;
+  store_id?: string | number;
+  remark?: string;
+  audit_json?: string;
+}
+
+interface ShelfLog {
+  id?: string | number;
+  timestamp?: any;
+  merch_id?: string | number;
+  retailer_stores_id?: string | number;
+  store_id?: string | number;
+  brands_id?: string | number;
+  brand_id?: string | number;
+  image_link?: string;
+  remark?: string;
+}
+
+interface Contact {
+  id?: string | number;
+  name?: string;
+  phone?: string;
+  position?: string;
+  gender?: string;
+  group_link?: string;
+  id_link?: string;
+  email?: string;
+}
+
+interface StoreContactItem {
+  honorific: string;
+  name: string;
+  phone: string;
+  position?: string;
+}
+
+interface StoresVisibilityData {
+  retailers: Retailer[];
+  brands: Brand[];
+  stores: Store[];
+  products: Product[];
+  product_logs: ProductLog[];
+  shelf_logs: ShelfLog[];
+  contacts?: Contact[];
+}
+
+interface ExtractedStoreItem {
+  id: string | number;
+  storeName: string;
+  retailerName: string;
+  address: string;
+  contacts: StoreContactItem[];
+  activities: { date: string; remark: string }[];
+  products: { name: string; qty: number }[];
+  shelfImage: string | null;
+  carriesBrand: boolean;
+  latestAuditTime: number;
+}
+
 interface StoresVisibilityModuleProps {
   profile?: {
     role: string;
@@ -13,13 +114,14 @@ interface StoresVisibilityModuleProps {
 }
 
 export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps) {
-  // DB states
-  const [retailers, setRetailers] = React.useState<any[]>([]);
-  const [brands, setBrands] = React.useState<any[]>([]);
-  const [stores, setStores] = React.useState<any[]>([]);
-  const [products, setProducts] = React.useState<any[]>([]);
-  const [productLogs, setProductLogs] = React.useState<any[]>([]);
-  const [shelfLogs, setShelfLogs] = React.useState<any[]>([]);
+  // DB states in pure snake_case
+  const [retailers, setRetailers] = React.useState<Retailer[]>([]);
+  const [brands, setBrands] = React.useState<Brand[]>([]);
+  const [stores, setStores] = React.useState<Store[]>([]);
+  const [products, setProducts] = React.useState<Product[]>([]);
+  const [productLogs, setProductLogs] = React.useState<ProductLog[]>([]);
+  const [shelfLogs, setShelfLogs] = React.useState<ShelfLog[]>([]);
+  const [contacts, setContacts] = React.useState<Contact[]>([]);
 
   // UI state
   const [fetching, setFetching] = React.useState(false);
@@ -44,19 +146,23 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   });
 
   // Results state
-  const [extractedStores, setExtractedStores] = React.useState<any[]>([]);
+  const [extractedStores, setExtractedStores] = React.useState<ExtractedStoreItem[]>([]);
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const displayedStores = React.useMemo(() => {
     if (!searchQuery.trim()) return extractedStores;
     const q = searchQuery.toLowerCase().trim();
     return extractedStores.filter(item => 
       item.storeName.toLowerCase().includes(q) || 
-      item.address.toLowerCase().includes(q)
+      item.address.toLowerCase().includes(q) ||
+      item.contacts.some(c => 
+        c.name.toLowerCase().includes(q) || 
+        c.phone.toLowerCase().includes(q)
+      )
     );
   }, [extractedStores, searchQuery]);
   const [selectedImage, setSelectedImage] = React.useState<string | null>(null);
 
-  // Parser helper to safely handle Unix Epoch and ISO date strings
+  // Parser helper to safely handle Unix Epoch milliseconds, seconds, and ISO date strings
   const parseTimestamp = React.useCallback((timestamp: any): Date => {
     if (timestamp instanceof Date) return timestamp;
     if (typeof timestamp === "number") {
@@ -76,7 +182,6 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       return new Date(num < 10000000000 ? num * 1000 : num);
     }
 
-    // Natively parse ISO format (containing T or Z) first to preserve UTC timezone offsets
     if (str.includes("T") || str.includes("Z")) {
       const parsed = new Date(str);
       if (!isNaN(parsed.getTime())) return parsed;
@@ -118,85 +223,74 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
     return `${day}/${month}/${year}`;
   }, [parseTimestamp]);
 
-  // Helper helper to cache and return json
-  const fetchSheet = async (sheetName: string) => {
-    const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
-    if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
-    const json = await res.json();
-    const items = Array.isArray(json) ? json : (json.value || []);
-    localStorage.setItem(`${sheetName}_data`, JSON.stringify(items));
-    return items;
-  };
-
-  const fetchFreshData = async (sheetName: string, forceSync = false) => {
-    try {
-      if (forceSync) {
-        const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}&skipCache=true`);
-        if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
-        const json = await res.json();
-        const items = Array.isArray(json) ? json : (json.value || []);
-        localStorage.setItem(`${sheetName}_data`, JSON.stringify(items));
-        return items;
-      }
-      return await fetchSheet(sheetName);
-    } catch (e) {
-      console.warn("Background fetch failed for " + sheetName, e);
-      return [];
+  // Fetch all visibility data via dedicated API module endpoint
+  const fetchAllVisibilityData = async (forceRefresh = false): Promise<StoresVisibilityData> => {
+    const url = `${WORKER_URL}/api/stores-visibility${forceRefresh ? "?skipCache=true" : ""}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch stores visibility data (${res.status})`);
     }
+    const data: StoresVisibilityData = await res.json();
+    
+    // Cache to localStorage
+    if (data && typeof window !== "undefined") {
+      try {
+        localStorage.setItem("ib_stores_visibility_cache", JSON.stringify(data));
+      } catch (e) {
+        console.warn("Failed to write stores visibility to localStorage cache:", e);
+      }
+    }
+    return data;
   };
 
   // Load cache on mount & silent refresh
   React.useEffect(() => {
-    const pLogsCached = localStorage.getItem("Merch_Visit_Product_Audit_Logs_data");
-    const sLogsCached = localStorage.getItem("Merch_Visit_Shelf_Audit_Logs_data");
-    const storesCached = localStorage.getItem("Store_Retailer_DB_data");
-    const productsCached = localStorage.getItem("products_DB_data");
-    const retailersCached = localStorage.getItem("retailers_DB_data");
-    const brandsCached = localStorage.getItem("brands_DB_data");
-
-    if (pLogsCached) setProductLogs(JSON.parse(pLogsCached));
-    if (sLogsCached) setShelfLogs(JSON.parse(sLogsCached));
-    if (storesCached) setStores(JSON.parse(storesCached));
-    if (productsCached) setProducts(JSON.parse(productsCached));
-    if (retailersCached) setRetailers(JSON.parse(retailersCached));
-    if (brandsCached) setBrands(JSON.parse(brandsCached));
+    const cachedStr = typeof window !== "undefined" ? localStorage.getItem("ib_stores_visibility_cache") : null;
+    if (cachedStr) {
+      try {
+        const cached: StoresVisibilityData = JSON.parse(cachedStr);
+        if (cached.retailers) setRetailers(cached.retailers);
+        if (cached.brands) setBrands(cached.brands);
+        if (cached.stores) setStores(cached.stores);
+        if (cached.products) setProducts(cached.products);
+        if (cached.product_logs) setProductLogs(cached.product_logs);
+        if (cached.shelf_logs) setShelfLogs(cached.shelf_logs);
+        if (cached.contacts) setContacts(cached.contacts);
+        if (cached.brands && cached.brands.length > 0 && !selectedBrand) {
+          setSelectedBrand(String(cached.brands[0].id));
+        }
+      } catch (e) {
+        console.warn("Failed parsing cached visibility data:", e);
+      }
+    }
 
     setFetching(true);
-    Promise.all([
-      fetchSheet("Merch_Visit_Product_Audit_Logs"),
-      fetchSheet("Merch_Visit_Shelf_Audit_Logs"),
-      fetchSheet("Store_Retailer_DB"),
-      fetchSheet("products_DB"),
-      fetchSheet("retailers_DB"),
-      fetchSheet("brands_DB")
-    ]).then(([p, s, st, pr, rt, br]) => {
-      setProductLogs(p);
-      setShelfLogs(s);
-      setStores(st);
-      setProducts(pr);
-      setRetailers(rt);
-      setBrands(br);
-      setSyncStatus("synced");
-      
-      // Auto-select first options if available
-      if (!selectedRetailer) {
-        setSelectedRetailer("all");
-      }
-      if (br.length > 0 && !selectedBrand) {
-        setSelectedBrand(String(br[0].id));
-      }
-    }).catch(err => {
-      console.error("Silent background load failed", err);
-      showToast("Offline mode: Using locally cached data", "info");
-    }).finally(() => {
-      setFetching(false);
-    });
+    fetchAllVisibilityData(false)
+      .then((data) => {
+        setRetailers(data.retailers || []);
+        setBrands(data.brands || []);
+        setStores(data.stores || []);
+        setProducts(data.products || []);
+        setProductLogs(data.product_logs || []);
+        setShelfLogs(data.shelf_logs || []);
+        setContacts(data.contacts || []);
+        setSyncStatus("synced");
 
-    // Trigger silent background sync after mount
-    const timer = setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("db-refresh"));
-    }, 150);
-    return () => clearTimeout(timer);
+        if (data.brands && data.brands.length > 0 && !selectedBrand) {
+          setSelectedBrand(String(data.brands[0].id));
+        }
+      })
+      .catch((err) => {
+        console.error("Initial stores visibility load failed:", err);
+        if (!cachedStr) {
+          showToast("Failed to load visibility data: " + err.message, "error");
+        } else {
+          showToast("Using locally cached visibility data", "info");
+        }
+      })
+      .finally(() => {
+        setFetching(false);
+      });
   }, []);
 
   // Listen for the global db-refresh event
@@ -205,20 +299,14 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       setSyncStatus("syncing");
       setFetching(true);
       try {
-        const [p, s, st, pr, rt, br] = await Promise.all([
-          fetchFreshData("Merch_Visit_Product_Audit_Logs", true),
-          fetchFreshData("Merch_Visit_Shelf_Audit_Logs", true),
-          fetchFreshData("Store_Retailer_DB", true),
-          fetchFreshData("products_DB", true),
-          fetchFreshData("retailers_DB", true),
-          fetchFreshData("brands_DB", true)
-        ]);
-        setProductLogs(p);
-        setShelfLogs(s);
-        setStores(st);
-        setProducts(pr);
-        setRetailers(rt);
-        setBrands(br);
+        const data = await fetchAllVisibilityData(true);
+        setRetailers(data.retailers || []);
+        setBrands(data.brands || []);
+        setStores(data.stores || []);
+        setProducts(data.products || []);
+        setProductLogs(data.product_logs || []);
+        setShelfLogs(data.shelf_logs || []);
+        setContacts(data.contacts || []);
         setSyncStatus("synced");
       } catch (err: any) {
         showToast("Failed to refresh database: " + err.message, "error");
@@ -261,7 +349,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
     if (selectedRetailer && selectedBrand && stores.length > 0) {
       handleExtract();
     }
-  }, [selectedRetailer, selectedBrand, startDate, endDate, includeNotCarry, stores, productLogs, shelfLogs]);
+  }, [selectedRetailer, selectedBrand, startDate, endDate, includeNotCarry, stores, productLogs, shelfLogs, products, retailers, contacts]);
 
   const handleExtract = () => {
     if (!selectedRetailer) {
@@ -284,62 +372,87 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       const startMs = new Date(sYear, sMonth - 1, sDay, 0, 0, 0, 0).getTime();
       const endMs = new Date(eYear, eMonth - 1, eDay, 23, 59, 59, 999).getTime();
 
-      // Find stores belonging to the selected Retailer
+      // Find stores belonging to the selected Retailer (pure snake_case)
       const filteredStores = selectedRetailer === "all"
         ? stores
         : stores.filter(store => {
-            const retId = store["Retailers ID"] || store["Retailer ID"];
+            const retId = store.retailers_id !== undefined ? store.retailers_id : store.retailer_id;
             return String(retId) === String(selectedRetailer);
           });
 
-      // Filter products belonging to the selected Brand
+      // Filter products belonging to the selected Brand (pure snake_case)
       const brandProducts = products.filter(p => {
-        const brandId = p["Brands ID"] || p["Brand ID"];
+        const brandId = p.brands_id !== undefined ? p.brands_id : p.brand_id;
         return String(brandId) === String(selectedBrand);
       });
 
-      const brandSkus = brandProducts.map(p => String(p.sku).toLowerCase());
+      const brandSkus = brandProducts.map(p => String(p.sku || "").toLowerCase());
 
-      const results = filteredStores.map(store => {
-        const retailer = retailers.find(r => String(r.id) === String(store["Retailers ID"] || store["Retailer ID"]));
-        const retailerName = retailer ? retailer["Display Name"] : "";
+      const results: ExtractedStoreItem[] = filteredStores.map(store => {
+        const storeRetailerId = store.retailers_id !== undefined ? store.retailers_id : store.retailer_id;
+        const retailer = retailers.find(r => String(r.id) === String(storeRetailerId));
+        const retailerName = retailer ? (retailer.display_name || "") : "";
 
-        // Find visits/audits within date range for this store (from Merch_Visit_Product_Audit_Logs)
+        // Find store contacts from contacts_book: Group Link = 'Stores', ID Link = store id (max 3)
+        const storeContacts: StoreContactItem[] = contacts
+          .filter(c => {
+            const grp = String(c.group_link || "").trim().toLowerCase();
+            const idLink = String(c.id_link || "").trim();
+            return grp === "stores" && idLink === String(store.id).trim();
+          })
+          .slice(0, 3)
+          .map(c => {
+            const genderLower = String(c.gender || "").trim().toLowerCase();
+            let honorific = "";
+            if (genderLower === "male" || genderLower === "m") {
+              honorific = "Mr.";
+            } else if (genderLower === "female" || genderLower === "f") {
+              honorific = "Ms.";
+            }
+            return {
+              honorific,
+              name: c.name || "",
+              phone: c.phone || "",
+              position: c.position || ""
+            };
+          });
+
+        // Find visits/audits within date range for this store (from product_logs)
         const storeProductLogs = productLogs.filter(log => {
-          const storeId = log["Retailer Stores ID"] || log["Store ID"];
+          const storeId = log.retailer_stores_id !== undefined ? log.retailer_stores_id : log.store_id;
           if (String(storeId) !== String(store.id)) return false;
-          const timestamp = parseTimestamp(log.Timestamp).getTime();
+          const timestamp = parseTimestamp(log.timestamp).getTime();
           return timestamp >= startMs && timestamp <= endMs;
         });
 
         // Sort descending to get latest visits within date range
         const sortedProductLogs = [...storeProductLogs].sort((a, b) => {
-          return parseTimestamp(b.Timestamp).getTime() - parseTimestamp(a.Timestamp).getTime();
+          return parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime();
         });
 
-        // Find all shelf logs for this store and brand (ignoring date range)
+        // Find all shelf logs for this store and brand (ignoring date range for full visit history)
         const storeShelfLogsAllTime = shelfLogs.filter(sl => {
-          const storeId = sl["Retailer Stores ID"] || sl["Store ID"];
-          const brandId = sl["Brands ID"] || sl["Brand ID"];
+          const storeId = sl.retailer_stores_id !== undefined ? sl.retailer_stores_id : sl.store_id;
+          const brandId = sl.brands_id !== undefined ? sl.brands_id : sl.brand_id;
           return String(storeId) === String(store.id) && String(brandId) === String(selectedBrand);
         });
 
         // Sort descending to get latest shelf logs
         const sortedShelfLogsAllTime = [...storeShelfLogsAllTime].sort((a, b) => {
-          return parseTimestamp(b.Timestamp).getTime() - parseTimestamp(a.Timestamp).getTime();
+          return parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime();
         });
 
         // The latest audit time of all time for sorting
         const latestAuditTime = sortedShelfLogsAllTime.length > 0
-          ? parseTimestamp(sortedShelfLogsAllTime[0].Timestamp).getTime()
+          ? parseTimestamp(sortedShelfLogsAllTime[0].timestamp).getTime()
           : 0;
 
         // Deduplicate all-time visits by formatted date string, keeping the latest visit for each unique date
-        const uniqueDateVisitsMap = new Map<string, any>();
+        const uniqueDateVisitsMap = new Map<string, { date: string; remark: string }>();
         sortedShelfLogsAllTime.forEach(log => {
-          const formattedDate = formatDate(log.Timestamp);
+          const formattedDate = formatDate(log.timestamp);
           if (!uniqueDateVisitsMap.has(formattedDate)) {
-            const rawRemark = String(log.Remark ?? log.remark ?? "").trim();
+            const rawRemark = String(log.remark ?? "").trim();
             uniqueDateVisitsMap.set(formattedDate, {
               date: formattedDate,
               remark: rawRemark === "No remark" || !rawRemark ? "" : rawRemark
@@ -357,18 +470,22 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           const latestLog = sortedProductLogs[0];
           let auditedSkus: any[] = [];
           try {
-            auditedSkus = JSON.parse(latestLog["Audit JSON"] || "[]");
+            if (typeof latestLog.audit_json === "string") {
+              auditedSkus = JSON.parse(latestLog.audit_json || "[]");
+            } else if (Array.isArray(latestLog.audit_json)) {
+              auditedSkus = latestLog.audit_json;
+            }
           } catch (e) {
-            console.warn("Failed to parse Audit JSON for log id: " + latestLog.Timestamp);
+            console.warn("Failed to parse audit_json for log:", latestLog);
           }
 
           auditedSkus.forEach((auditItem: any) => {
-            const sku = String(auditItem.sku).toLowerCase();
+            const sku = String(auditItem.sku || "").toLowerCase();
             if (brandSkus.includes(sku)) {
-              const qty = Number(auditItem.qty) || 0;
+              const qty = Number(auditItem.qty || auditItem.quantity) || 0;
               if (qty > 0) {
-                const prodDetail = brandProducts.find(p => String(p.sku).toLowerCase() === sku);
-                const prodName = prodDetail ? prodDetail["Display Name"] : auditItem.sku;
+                const prodDetail = brandProducts.find(p => String(p.sku || "").toLowerCase() === sku);
+                const prodName = prodDetail ? (prodDetail.display_name || prodDetail.sku) : auditItem.sku;
                 
                 carriedProductsList.push({
                   name: prodName,
@@ -382,25 +499,26 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
 
         // Shelf visibility image for selected store and brand in date range
         const storeShelfLogs = shelfLogs.filter(sl => {
-          const storeId = sl["Retailer Stores ID"] || sl["Store ID"];
-          const brandId = sl["Brands ID"] || sl["Brand ID"];
+          const storeId = sl.retailer_stores_id !== undefined ? sl.retailer_stores_id : sl.store_id;
+          const brandId = sl.brands_id !== undefined ? sl.brands_id : sl.brand_id;
           if (String(storeId) !== String(store.id)) return false;
           if (String(brandId) !== String(selectedBrand)) return false;
-          const timestamp = parseTimestamp(sl.Timestamp).getTime();
+          const timestamp = parseTimestamp(sl.timestamp).getTime();
           return timestamp >= startMs && timestamp <= endMs;
         });
 
         const sortedShelfLogs = [...storeShelfLogs].sort((a, b) => {
-          return parseTimestamp(b.Timestamp).getTime() - parseTimestamp(a.Timestamp).getTime();
+          return parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime();
         });
 
-        const latestShelfImage = sortedShelfLogs.length > 0 ? (sortedShelfLogs[0]["Image Link"] || sortedShelfLogs[0]["image_link"]) : null;
+        const latestShelfImage = sortedShelfLogs.length > 0 ? (sortedShelfLogs[0].image_link || null) : null;
 
         return {
           id: store.id,
-          storeName: store["Display Name"] || `Store #${store.id}`,
+          storeName: store.display_name || `Store #${store.id}`,
           retailerName,
-          address: store.Address || "No address listed",
+          address: store.address || "No address listed",
+          contacts: storeContacts,
           activities: latestVisits,
           products: carriedProductsList,
           shelfImage: latestShelfImage,
@@ -434,12 +552,12 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   const activeRetailerName = React.useMemo(() => {
     if (selectedRetailer === "all") return "All Retailers";
     const found = retailers.find(r => String(r.id) === String(selectedRetailer));
-    return found ? found["Display Name"] : "";
+    return found ? found.display_name : "";
   }, [retailers, selectedRetailer]);
 
   const activeBrandName = React.useMemo(() => {
     const found = brands.find(b => String(b.id) === String(selectedBrand));
-    return found ? found["Display Name"] : "";
+    return found ? found.display_name : "";
   }, [brands, selectedBrand]);
 
   const handlePrint = () => {
@@ -479,6 +597,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           }
         }
       `}} />
+
       {/* Sticky Header Wrapper */}
       <div className={`sticky-header-module bg-[#F8F9FC] z-20 pt-0 pb-2.5 flex flex-col gap-2.5 transition-all duration-500 print:relative print:top-auto print:bg-transparent print:pt-0 print:pb-0 ${
         isScrolled ? "shadow-xs border-b border-zinc-300/80 mb-2" : "border-b border-zinc-300/40"
@@ -508,7 +627,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                   <option value="all">All Retailers</option>
                   {retailers.map((r) => (
                     <option key={r.id} value={r.id}>
-                      {r["Display Name"]}
+                      {r.display_name}
                     </option>
                   ))}
                 </select>
@@ -527,7 +646,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                   <option value="" disabled>Select Brand...</option>
                   {brands.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b["Display Name"]}
+                      {b.display_name}
                     </option>
                   ))}
                 </select>
@@ -689,9 +808,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           </div>
         ) : (
           <div className={`flex flex-col gap-4 animate-tableFadeInOnly transition-opacity duration-200 ${extracting ? "opacity-60" : "opacity-100"}`}>
- 
-            {/* Visual summary bar removed (rendered in sticky header) */}
- 
+
             {/* Result Table */}
             {extractedStores.length === 0 ? (
               <div className="bg-[#E5E5E5]/40 border border-dashed border-zinc-300 rounded p-10 flex flex-col items-center justify-center text-center h-48">
@@ -727,116 +844,138 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                           key={item.id} 
                           className="hover:bg-zinc-100/50 transition-colors align-top print:hover:bg-transparent"
                         >
-                        {/* Store Details (Fixed 20% width) */}
-                        <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
-                          <div className="w-full overflow-hidden">
-                            {item.retailerName && (
-                              <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide mb-0.5">
-                                {item.retailerName}
+                          {/* Store Details (Fixed 20% width) */}
+                          <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
+                            <div className="w-full overflow-hidden">
+                              {item.retailerName && (
+                                <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide mb-0.5">
+                                  {item.retailerName}
+                                </div>
+                              )}
+                              <div className="font-bold text-zinc-950 whitespace-normal break-words">
+                                {item.storeName}
                               </div>
-                            )}
-                            <div className="font-bold text-zinc-950 whitespace-normal break-words">
-                              {item.storeName}
-                            </div>
-                            <div className="text-zinc-500 mt-1 whitespace-normal break-words leading-relaxed">
-                              {item.address}
-                            </div>
-                          </div>
-                        </td>
+                              <div className="text-zinc-500 mt-1 whitespace-normal break-words leading-relaxed">
+                                {item.address}
+                              </div>
 
-                        {/* Recent Visit (Fixed 40% width) */}
-                        <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>
-                          <div className="w-full overflow-hidden">
-                            {item.activities.length === 0 ? (
-                              <span className="text-zinc-400 italic">
-                                No visits recorded
-                              </span>
-                            ) : (
-                              <div className="flex flex-col gap-4 py-0.5">
-                                {item.activities.map((visit: any, index: number) => (
-                                  <div 
-                                    key={index}
-                                    className="relative pl-5 whitespace-normal break-words"
-                                  >
-                                    {/* Timeline connector line */}
-                                    {index < item.activities.length - 1 && (
-                                      <div className="absolute left-1.5 top-3.5 bottom-[-16px] w-[2px] bg-zinc-200 print:bg-zinc-300" />
-                                    )}
-                                    
-                                    {/* Timeline Dot */}
-                                    <div className="absolute left-0.5 top-1.5 h-2.5 w-2.5 rounded-full bg-[#0B57D0] border border-white shadow-3xs" />
-                                    
-                                    {/* Date Badge */}
-                                    <div className="flex items-center select-none">
-                                      <span className="inline-flex items-center bg-[#E8F0FE] border border-[#D2E3FC] text-[#0B57D0] text-[10px] font-extrabold px-1.5 py-0.5 rounded tracking-wide leading-none">
-                                        {visit.date}
+                              {/* Store Contacts (Maximum 3 with Mr. / Ms. gender prefix) */}
+                              {item.contacts && item.contacts.length > 0 && (
+                                <div className="mt-2.5 flex flex-col gap-1 border-t border-slate-200/60 pt-1.5">
+                                  {item.contacts.map((c, cIdx) => (
+                                    <div key={cIdx} className="flex items-center gap-1.5 text-[10.5px] leading-tight flex-wrap">
+                                      <span className="font-semibold text-zinc-800 select-text">
+                                        {c.honorific ? `${c.honorific} ${c.name}` : c.name}
+                                        {c.position && (
+                                          <span className="text-zinc-400 font-normal text-[9.5px]"> ({c.position})</span>
+                                        )}
+                                      </span>
+                                      {c.phone && (
+                                        <span className="text-zinc-600 font-mono text-[10px] bg-zinc-100 px-1 py-0.5 rounded border border-zinc-200/70 select-text">
+                                          {c.phone}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Recent Visit (Fixed 40% width) */}
+                          <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>
+                            <div className="w-full overflow-hidden">
+                              {item.activities.length === 0 ? (
+                                <span className="text-zinc-400 italic">
+                                  No visits recorded
+                                </span>
+                              ) : (
+                                <div className="flex flex-col gap-4 py-0.5">
+                                  {item.activities.map((visit, index) => (
+                                    <div 
+                                      key={index}
+                                      className="relative pl-5 whitespace-normal break-words"
+                                    >
+                                      {/* Timeline connector line */}
+                                      {index < item.activities.length - 1 && (
+                                        <div className="absolute left-1.5 top-3.5 bottom-[-16px] w-[2px] bg-zinc-200 print:bg-zinc-300" />
+                                      )}
+                                      
+                                      {/* Timeline Dot */}
+                                      <div className="absolute left-0.5 top-1.5 h-2.5 w-2.5 rounded-full bg-[#0B57D0] border border-white shadow-3xs" />
+                                      
+                                      {/* Date Badge */}
+                                      <div className="flex items-center select-none">
+                                        <span className="inline-flex items-center bg-[#E8F0FE] border border-[#D2E3FC] text-[#0B57D0] text-[10px] font-extrabold px-1.5 py-0.5 rounded tracking-wide leading-none">
+                                          {visit.date}
+                                        </span>
+                                      </div>
+
+                                      {/* Remark */}
+                                      {visit.remark && (
+                                        <div className="text-zinc-600 font-medium mt-1 leading-relaxed">
+                                          {visit.remark}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Products (Fixed 20% width) */}
+                          <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
+                            <div className="w-full overflow-hidden">
+                              {item.products.length === 0 ? (
+                                <span className="text-zinc-400 italic">
+                                  No products carry
+                                </span>
+                              ) : (
+                                <div className="space-y-1">
+                                  {item.products.map((prod, index) => (
+                                    <div 
+                                      key={index}
+                                      className="flex justify-between items-baseline gap-2 w-full overflow-hidden"
+                                    >
+                                      <span className="text-zinc-700 truncate" title={prod.name}>
+                                        {prod.name}
+                                      </span>
+                                      <span className="font-bold text-zinc-950 tabular-nums flex-shrink-0">
+                                        {prod.qty}
                                       </span>
                                     </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </td>
 
-                                    {/* Remark */}
-                                    {visit.remark && (
-                                      <div className="text-zinc-600 font-medium mt-1 leading-relaxed">
-                                        {visit.remark}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Products (Fixed 20% width) */}
-                        <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
-                          <div className="w-full overflow-hidden">
-                            {item.products.length === 0 ? (
-                              <span className="text-zinc-400 italic">
-                                No products carry
-                              </span>
-                            ) : (
-                              <div className="space-y-1">
-                                {item.products.map((prod: any, index: number) => (
-                                  <div 
-                                    key={index}
-                                    className="flex justify-between items-baseline gap-2 w-full overflow-hidden"
-                                  >
-                                    <span className="text-zinc-700 truncate" title={prod.name}>
-                                      {prod.name}
-                                    </span>
-                                    <span className="font-bold text-zinc-950 tabular-nums flex-shrink-0">
-                                      {prod.qty}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Shelf Visibility (Fixed 20% width) */}
-                        <td className="px-4 py-3.5 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
-                          <div className="w-full overflow-hidden">
-                            {item.shelfImage ? (
-                              <div 
-                                onClick={() => setSelectedImage(item.shelfImage)}
-                                className="relative aspect-[4/5] w-24 border border-slate-200 rounded overflow-hidden bg-zinc-100 cursor-zoom-in group shadow-3xs hover:shadow-2xs select-none"
-                              >
-                                <img 
-                                  src={item.shelfImage} 
-                                  alt="Shelf compliance check" 
-                                  className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
-                                  onError={(e) => {
-                                    (e.target as HTMLImageElement).src = "https://placehold.co/400x500?text=Load+Error";
-                                  }}
-                                />
-                              </div>
-                            ) : (
-                              <span className="text-zinc-400 italic">No Photo</span>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )))}
+                          {/* Shelf Visibility (Fixed 20% width) */}
+                          <td className="px-4 py-3.5 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
+                            <div className="w-full overflow-hidden">
+                              {item.shelfImage ? (
+                                <div 
+                                  onClick={() => setSelectedImage(item.shelfImage)}
+                                  className="relative aspect-[4/5] w-24 border border-slate-200 rounded overflow-hidden bg-zinc-100 cursor-zoom-in group shadow-3xs hover:shadow-2xs select-none"
+                                >
+                                  <img 
+                                    src={item.shelfImage} 
+                                    alt="Shelf compliance check" 
+                                    className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).src = "https://placehold.co/400x500?text=Load+Error";
+                                    }}
+                                  />
+                                </div>
+                              ) : (
+                                <span className="text-zinc-400 italic">No Photo</span>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -955,7 +1094,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
 
           th, td {
             border: 1px solid #d4d4d8 !important; /* zinc-300 */
-          }          /* Exact background color printing */
+          }
           .bg-zinc-200 {
             background-color: #F0F4F9 !important;
           }

@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { RefreshCw, Download } from "lucide-react";
+import { RefreshCw, Download, Maximize, X } from "lucide-react";
 import { usePWA } from "@/lib/usePWA";
 import { cn } from "@/lib/utils";
 import { TabItem } from "./navigation-tabs";
@@ -16,12 +16,70 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
   const { isInstallable, installApp } = usePWA();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [lastUpdated, setLastUpdated] = React.useState<string>("");
+  const [isFullscreen, setIsFullscreen] = React.useState(false);
   
   const [tabs, setTabs] = React.useState<TabItem[]>([]);
   const [activeTabId, setActiveTabId] = React.useState<string>("");
   
   const lastClickTimeRef = React.useRef<number>(Date.now());
   const isRefreshingRef = React.useRef(isRefreshing);
+
+  React.useEffect(() => {
+    const handleFullscreenChange = () => {
+      const doc = document as any;
+      const isFull = !!(
+        doc.fullscreenElement ||
+        doc.webkitFullscreenElement ||
+        doc.mozFullScreenElement ||
+        doc.msFullscreenElement
+      );
+      setIsFullscreen(isFull);
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
+    document.addEventListener("MSFullscreenChange", handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+    };
+  }, []);
+
+  const toggleFullscreen = React.useCallback(() => {
+    const doc = document as any;
+    const elem = document.documentElement as any;
+
+    if (
+      !doc.fullscreenElement &&
+      !doc.webkitFullscreenElement &&
+      !doc.mozFullScreenElement &&
+      !doc.msFullscreenElement
+    ) {
+      if (elem.requestFullscreen) {
+        elem.requestFullscreen().catch((err: any) => console.error("Fullscreen request failed:", err));
+      } else if (elem.webkitRequestFullscreen) {
+        elem.webkitRequestFullscreen();
+      } else if (elem.mozRequestFullScreen) {
+        elem.mozRequestFullScreen();
+      } else if (elem.msRequestFullscreen) {
+        elem.msRequestFullscreen();
+      }
+    } else {
+      if (doc.exitFullscreen) {
+        doc.exitFullscreen().catch((err: any) => console.error("Exit fullscreen failed:", err));
+      } else if (doc.webkitExitFullscreen) {
+        doc.webkitExitFullscreen();
+      } else if (doc.mozCancelFullScreen) {
+        doc.mozCancelFullScreen();
+      } else if (doc.msExitFullscreen) {
+        doc.msExitFullscreen();
+      }
+    }
+  }, []);
 
   React.useEffect(() => {
     isRefreshingRef.current = isRefreshing;
@@ -123,7 +181,7 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
         ))}
       </div>
 
-      {/* Right: Buttons inside TopBar (Refresh & Tabs) */}
+      {/* Right: Buttons inside TopBar (Refresh, Fullscreen & Tabs) */}
       <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-1.5 z-20">
         {/* Sub-Navigation Tabs Switcher inside TopBar */}
         {tabs.length > 0 && (
@@ -163,6 +221,26 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
           </div>
         )}
 
+        {/* Fullscreen Button */}
+        <div className="relative group flex items-center">
+          <button
+            id="global-fullscreen-button"
+            onClick={toggleFullscreen}
+            aria-label={isFullscreen ? "Exit Full Screen" : "Full Screen"}
+            className="flex h-7 w-7 items-center justify-center rounded-full transition-all border focus:outline-none cursor-pointer shadow-xs bg-white border-slate-200 text-[#474747] hover:text-[#1F1F1F] hover:bg-slate-100"
+          >
+            {isFullscreen ? <X size={13} /> : <Maximize size={13} />}
+          </button>
+
+          {/* Tooltip */}
+          <div className="absolute right-0 top-9 scale-95 opacity-0 pointer-events-none group-hover:scale-100 group-hover:opacity-100 transition-all duration-200 z-20 origin-top-right">
+            <div className="bg-[#EEEEEE] border border-zinc-300/80 rounded-lg px-3 py-1.5 shadow-md text-[10px] text-zinc-650 font-primary whitespace-nowrap">
+              {isFullscreen ? "Exit Full Screen" : "Full Screen"}
+            </div>
+          </div>
+        </div>
+
+        {/* Refresh Button */}
         <div className="relative group flex items-center">
           <button
             id="global-refresh-button"

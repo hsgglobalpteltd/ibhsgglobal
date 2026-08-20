@@ -29,7 +29,11 @@ import {
   RefreshCw,
   AlertTriangle,
   Upload,
-  CreditCard
+  Search,
+  Download,
+  CreditCard,
+  Receipt,
+  Image as ImageIcon
 } from "lucide-react";
 import { NavigationTabs } from "../navigation-tabs";
 import { DataTable } from "../data-table";
@@ -84,6 +88,24 @@ const dateStrToEpoch = (dateStr: string): number => {
   const parts = dateStr.split("-");
   if (parts.length !== 3) return 0;
   return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])).getTime();
+};
+
+const getCleanStoreAddress = (storeObj: any, sch?: any): string => {
+  const raw = storeObj ? (storeObj.address || storeObj.Address) : (sch?.store_address || sch?.address || sch?.Address);
+  if (!raw || String(raw).trim() === "" || String(raw).trim().toLowerCase() === "undefined" || String(raw).trim().toLowerCase() === "null") {
+    return "no address";
+  }
+  return String(raw).trim();
+};
+
+const isGroupRetailer = (r: any): boolean => {
+  const name = String(r?.display_name || r?.name || "").trim().toLowerCase();
+  const id = String(r?.id || "").trim().toLowerCase();
+  return (
+    id === "group a" || id === "group b" || id === "group c" || id === "group d" || id === "group e" ||
+    id.startsWith("group ") ||
+    name.startsWith("retailers group") || name.startsWith("retailer group")
+  );
 };
 
 export function PromoterModule({ profile }: PromoterModuleProps) {
@@ -225,8 +247,250 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   });
 
   const printContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const [printRetailerSearch, setPrintRetailerSearch] = React.useState<string>("");
+  const [isPrintRetailerOpen, setIsPrintRetailerOpen] = React.useState<boolean>(false);
+  const retailerDropdownRef = React.useRef<HTMLDivElement | null>(null);
 
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (retailerDropdownRef.current && !retailerDropdownRef.current.contains(event.target as Node)) {
+        setIsPrintRetailerOpen(false);
+      }
+    };
+    if (isPrintRetailerOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [isPrintRetailerOpen]);
+
+  // Reports Tab State
+  const [reportCampaignId, setReportCampaignId] = React.useState<string>("");
+  const [reportStartDate, setReportStartDate] = React.useState<string>("");
+  const [reportEndDate, setReportEndDate] = React.useState<string>("");
+  const [isReportEditMode, setIsReportEditMode] = React.useState<boolean>(false);
+  const [reportDrafts, setReportDrafts] = React.useState<{ [scheduleId: string]: any }>({});
+  const [savingReport, setSavingReport] = React.useState<boolean>(false);
+  const [reportSearchQuery, setReportSearchQuery] = React.useState<string>("");
+  const [activeItemsMovedModalShiftId, setActiveItemsMovedModalShiftId] = React.useState<string | null>(null);
+  const [reportClaimModalEventKey, setReportClaimModalEventKey] = React.useState<string | null>(null);
+  const [reportClaimModalItems, setReportClaimModalItems] = React.useState<any[]>([]);
+  const [uploadingReceiptIndex, setUploadingReceiptIndex] = React.useState<number | null>(null);
   const [promotingCostModalShiftId, setPromotingCostModalShiftId] = React.useState<string | null>(null);
+
+  const openReportClaimModal = (evt: any) => {
+    if (!evt) return;
+
+    // Collect all existing claims for this activation event:
+    const items: any[] = [];
+
+    // 1. Promoter individual claims
+    evt.promoterList.forEach((p: any) => {
+      const shift = schedules.find(s => String(s.id) === String(p.scheduleId));
+      const draft = reportDrafts[p.scheduleId];
+      const rawCost = draft?.promoting_cost !== undefined ? draft.promoting_cost : shift?.promoting_cost;
+      let expenses: any[] = [];
+      if (rawCost) {
+        try {
+          const parsed = typeof rawCost === "string" ? JSON.parse(rawCost) : rawCost;
+          if (Array.isArray(parsed)) expenses = parsed;
+          else if (typeof parsed === "number") expenses = [{ item: "Expense", amount: parsed }];
+        } catch (e) {
+          const num = Number(rawCost);
+          if (!isNaN(num) && num > 0) expenses = [{ item: "Expense", amount: num }];
+        }
+      }
+
+      expenses.forEach((ex: any, idx: number) => {
+        items.push({
+          id: ex.id || `claim_indiv_${p.scheduleId}_${idx}_${Date.now()}`,
+          assignedType: "promoter",
+          promoterId: p.promoterId,
+          promoterName: p.promoterName,
+          scheduleId: p.scheduleId,
+          item: ex.item || ex.description || ex.sku || "Personal Claim",
+          amount: Number(ex.amount || 0),
+          receipt_photo: ex.receipt_photo || ex.receiptUrl || ex.receipt_photo_url || ""
+        });
+      });
+    });
+
+    // 2. Company claims (stored in primary shift's company_claim or shared_event_cost)
+    const primaryShift = schedules.find(s => String(s.id) === String(evt.primaryShiftId));
+    const primaryDraft = reportDrafts[evt.primaryShiftId];
+    const rawCompany = primaryDraft?.company_claim !== undefined 
+      ? primaryDraft.company_claim 
+      : (primaryDraft?.shared_event_cost !== undefined 
+        ? primaryDraft.shared_event_cost 
+        : (primaryShift?.company_claim || primaryShift?.shared_event_cost));
+
+    let companyItems: any[] = [];
+    if (rawCompany) {
+      try {
+        const parsed = typeof rawCompany === "string" ? JSON.parse(rawCompany) : rawCompany;
+        if (Array.isArray(parsed)) companyItems = parsed;
+        else if (!isNaN(Number(rawCompany)) && Number(rawCompany) > 0) {
+          companyItems = [{ item: "Company Expense", amount: Number(rawCompany) }];
+        }
+      } catch (e) {
+        const num = Number(rawCompany);
+        if (!isNaN(num) && num > 0) companyItems = [{ item: "Company Expense", amount: num }];
+      }
+    }
+
+    companyItems.forEach((cx: any, idx: number) => {
+      const isGoods = cx.type === "goods" || (cx.sku && !cx.item);
+      items.push({
+        id: cx.id || `claim_comp_${evt.primaryShiftId}_${idx}_${Date.now()}`,
+        type: isGoods ? "goods" : "expense",
+        assignedType: "company",
+        promoterId: "",
+        promoterName: "Company",
+        scheduleId: evt.primaryShiftId,
+        sku: cx.sku || "",
+        qty: cx.qty || 1,
+        item: cx.item || cx.description || cx.sku || "Company Expense",
+        amount: Number(cx.amount || 0),
+        receipt_photo: cx.receipt_photo || cx.receiptUrl || cx.receipt_photo_url || ""
+      });
+    });
+
+    setReportClaimModalEventKey(evt.eventKey);
+    setReportClaimModalItems(items);
+  };
+
+  const handleAddClaimRow = (defaultType = "expense", defaultAssign = "company", defaultPromoterId = "", defaultPromoterName = "", defaultScheduleId = "") => {
+    setReportClaimModalItems(prev => [
+      ...prev,
+      {
+        id: `claim_${Date.now()}_${Math.random()}`,
+        type: defaultType, // "expense" | "goods"
+        assignedType: defaultAssign, // "company" | "promoter"
+        promoterId: defaultPromoterId,
+        promoterName: defaultPromoterName,
+        scheduleId: defaultScheduleId,
+        sku: "",
+        qty: 1,
+        item: "",
+        amount: 0,
+        receipt_photo: ""
+      }
+    ]);
+  };
+
+  const handleUpdateClaimItem = (id: string, field: string, value: any) => {
+    setReportClaimModalItems(prev => prev.map(item => {
+      if (item.id !== id) return item;
+      const updated = { ...item, [field]: value };
+
+      if (updated.type === "goods") {
+        if (field === "sku" || field === "qty" || field === "type") {
+          const prod = products.find(p => String(p.sku).toLowerCase() === String(updated.sku || "").toLowerCase());
+          const unitCost = prod ? (Number(prod.Cost) || Number(prod["Cost Price"]) || Number(prod["cost_price"]) || Number(prod["cost"]) || 0) : 0;
+          updated.amount = unitCost * (Number(updated.qty) || 0);
+          if (prod && (!updated.item || field === "sku")) {
+            updated.item = prod.display_name || prod.name || updated.sku;
+          }
+        }
+      }
+
+      return updated;
+    }));
+  };
+
+  const handleDeleteClaimItem = (id: string) => {
+    setReportClaimModalItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  const handleUploadClaimReceipt = async (index: number, file: File) => {
+    if (!file) return;
+    setUploadingReceiptIndex(index);
+    try {
+      const filename = `claim-${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+      const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
+        method: "POST",
+        headers: { "Content-Type": file.type || "image/jpeg" },
+        body: file
+      });
+      if (!uploadRes.ok) throw new Error("Receipt upload failed");
+      const uploadData = await uploadRes.json() as any;
+      if (!uploadData.success) throw new Error(uploadData.error || "Upload failed");
+
+      setReportClaimModalItems(prev => prev.map((item, idx) => {
+        if (idx !== index) return item;
+        return { ...item, receipt_photo: uploadData.url };
+      }));
+      showToast("Receipt uploaded successfully.", "success");
+    } catch (err: any) {
+      showToast("Failed to upload receipt: " + err.message, "error");
+    } finally {
+      setUploadingReceiptIndex(null);
+    }
+  };
+
+  const handleSaveReportClaimModal = (isZero = false) => {
+    if (!reportClaimModalEventKey) return;
+    const evt = reportActivationEvents.find(e => e.eventKey === reportClaimModalEventKey);
+    if (!evt) return;
+
+    if (isZero) {
+      // Clear individual claims for all promoters in event
+      evt.promoterList.forEach((p: any) => {
+        handleUpdateReportDraft(p.scheduleId, "promoting_cost", JSON.stringify([]));
+      });
+      // Clear company claims on primary shift
+      handleUpdateReportDraft(evt.primaryShiftId, "company_claim", JSON.stringify([]));
+      handleUpdateReportDraft(evt.primaryShiftId, "shared_event_cost", JSON.stringify([]));
+
+      setReportClaimModalEventKey(null);
+      setReportClaimModalItems([]);
+      showToast("All claims cleared to $0.00", "success");
+      return;
+    }
+
+    // Group items by assignedType
+    const companyClaims: any[] = [];
+    const promoterClaimsMap: { [scheduleId: string]: any[] } = {};
+    evt.promoterList.forEach((p: any) => {
+      promoterClaimsMap[p.scheduleId] = [];
+    });
+
+    reportClaimModalItems.forEach(item => {
+      const cleanItem = {
+        id: item.id,
+        type: item.type || "expense",
+        sku: item.sku || "",
+        qty: Number(item.qty || 1),
+        item: item.item || "Expense",
+        amount: Number(item.amount || 0),
+        receipt_photo: item.receipt_photo || "",
+        logged_at: Date.now()
+      };
+
+      if (item.assignedType === "company" || !item.scheduleId) {
+        companyClaims.push(cleanItem);
+      } else {
+        if (!promoterClaimsMap[item.scheduleId]) {
+          promoterClaimsMap[item.scheduleId] = [];
+        }
+        promoterClaimsMap[item.scheduleId].push(cleanItem);
+      }
+    });
+
+    // Save individual promoter claims
+    Object.keys(promoterClaimsMap).forEach(schedId => {
+      handleUpdateReportDraft(schedId, "promoting_cost", JSON.stringify(promoterClaimsMap[schedId]));
+    });
+
+    // Save company claims on primary shift
+    handleUpdateReportDraft(evt.primaryShiftId, "company_claim", JSON.stringify(companyClaims));
+    handleUpdateReportDraft(evt.primaryShiftId, "shared_event_cost", JSON.stringify(companyClaims));
+
+    setReportClaimModalEventKey(null);
+    setReportClaimModalItems([]);
+    showToast("Updated event claims.", "success");
+  };
   const [promotingCostItems, setPromotingCostItems] = React.useState<any[]>([]);
 
   const [otherLocationModalData, setOtherLocationModalData] = React.useState<{
@@ -322,14 +586,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const tabs = React.useMemo(() => {
     const list = [
       { id: "calendar", label: "Schedule" },
+      { id: "reports", label: "Reports" },
       { id: "print", label: "Print" }
     ];
     if (isAuthorized) {
       list.push({ id: "payout", label: "Payout" });
     }
     list.push(
-      { id: "campaign", label: "Campaign" },
-      { id: "promoters", label: "Promoters" }
+      { id: "campaign", label: "Campaign" }
     );
     return list;
   }, [isAuthorized]);
@@ -445,7 +709,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server status ${res.status}`);
       const json = await res.json();
-      setSchedules(Array.isArray(json) ? json : (json.value || []));
+      const list = Array.isArray(json) ? json : (json.value || []);
+      const parsedSchedules = list.map((s: any) => ({
+        ...s,
+        date: s.date ? Number(s.date) : (s.Date ? Number(s.Date) : 0)
+      }));
+      setSchedules(parsedSchedules);
     } catch (err: any) {
       showToast("Failed to load schedules: " + err.message, "error");
     } finally {
@@ -496,7 +765,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     if (!storeId || !baseStoreName) return baseStoreName || "";
     if (String(storeId).startsWith("OTHER")) return baseStoreName;
     const storeObj = stores.find(st => String(st.id) === String(storeId));
-    const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
+    const retId = storeObj ? (storeObj.retailers_id || storeObj.retailer_id || storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
     const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
     const retailerName = retailerObj ? (retailerObj["display_name"] || retailerObj.name || "") : "";
     const retailerPrefix = retailerName ? retailerName.substring(0, 5).toUpperCase() : "";
@@ -591,6 +860,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [paymentReceiptFile, setPaymentReceiptFile] = React.useState<File | null>(null);
   const [isPaymentSaving, setIsPaymentSaving] = React.useState<boolean>(false);
   const [viewingJobsPayout, setViewingJobsPayout] = React.useState<any | null>(null);
+  const [imagePreviewModalUrl, setImagePreviewModalUrl] = React.useState<string | null>(null);
 
   // Helper: Format date or timestamp to YYYY-MM-DD
   const formatDateToYYYYMMDD = React.useCallback((ts: any): string => {
@@ -694,6 +964,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         hourlyRate: rate,
         totalPayout,
         taskDetails: `${campaignTitle} @ ${formattedStore}`,
+        checkInSelfie: s["check_in_selfie"] || s.check_in_selfie || "",
+        checkOutSelfie: s["check_out_selfie"] || s.check_out_selfie || "",
         absent: isAbsent,
         absentReason: isAbsent ? (s["actual_end"] || "Not specified") : "",
         alreadyPaid: isPaid,
@@ -1342,8 +1614,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       showToast("Campaign Title is required.", "error");
       return;
     }
-    if (!campBrand) {
-      showToast("Please select a brand.", "error");
+    const selectedBrands = campBrand.split(",").map(id => id.trim()).filter(Boolean);
+    if (selectedBrands.length === 0) {
+      showToast("Please select at least 1 brand for the campaign.", "error");
       return;
     }
 
@@ -1687,7 +1960,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const promoterId = String(s["promoter_id"] || "");
       
       const storeObj = stores.find(st => String(st.id) === storeId);
-      const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
+      const retId = storeObj ? (storeObj.retailers_id || storeObj.retailer_id || storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
       const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
       const retailerName = retailerObj ? (retailerObj["display_name"] || retailerObj.name || "OTHERS") : "OTHERS";
 
@@ -1948,7 +2221,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const promoterId = String(s["promoter_id"] || "");
       
       const storeObj = stores.find(st => String(st.id) === storeId);
-      const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
+      const retId = storeObj ? (storeObj.retailers_id || storeObj.retailer_id || storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
       const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
       const retailerName = retailerObj ? (retailerObj["display_name"] || retailerObj.name || "OTHERS") : "OTHERS";
 
@@ -2433,6 +2706,392 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     });
   }, [campaigns, campaignSubTab, brands, products]);
 
+  // --- Reports Tab Computations & Handlers ---
+  
+  // Set default report campaign and date bounds
+  React.useEffect(() => {
+    if (!reportCampaignId && campaigns.length > 0) {
+      const firstActive = campaigns.find(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"));
+      if (firstActive) {
+        setReportCampaignId(firstActive.id);
+        if (firstActive.start_date) setReportStartDate(formatEpochToDateInput(firstActive.start_date));
+        if (firstActive.end_date) setReportEndDate(formatEpochToDateInput(firstActive.end_date));
+      }
+    }
+  }, [campaigns, reportCampaignId]);
+
+  // When reportCampaignId changes, update date bounds
+  React.useEffect(() => {
+    if (reportCampaignId && reportCampaignId !== "all" && reportCampaignId !== "") {
+      const selectedCamp = campaigns.find(c => String(c.id) === String(reportCampaignId));
+      if (selectedCamp) {
+        if (selectedCamp["start_date"]) {
+          setReportStartDate(formatEpochToDateInput(selectedCamp["start_date"]));
+        }
+        if (selectedCamp["end_date"]) {
+          setReportEndDate(formatEpochToDateInput(selectedCamp["end_date"]));
+        }
+      }
+    }
+  }, [reportCampaignId, campaigns]);
+
+  const reportCampaignProducts = React.useMemo(() => {
+    if (!reportCampaignId || reportCampaignId === "all") {
+      return products;
+    }
+    const camp = campaigns.find(c => String(c.id) === String(reportCampaignId));
+    if (!camp || !camp.brand) return products;
+    const brandIds = String(camp.brand).split(",").map(b => b.trim()).filter(Boolean);
+    const brandProds = products.filter(p => brandIds.includes(String(p.brands_id || p["brands_id"])));
+    if (camp.products) {
+      const targetedSkus = String(camp.products).split(",").map(sku => sku.trim()).filter(Boolean);
+      if (targetedSkus.length > 0) {
+        return brandProds.filter(p => targetedSkus.includes(p.sku));
+      }
+    }
+    return brandProds;
+  }, [reportCampaignId, campaigns, products]);
+
+  const reportSchedules = React.useMemo(() => {
+    let list = schedules.filter(s => {
+      const isArchived = s.archived && (String(s.archived) === "1" || String(s.archived) === "true");
+      return !isArchived;
+    });
+
+    if (reportCampaignId && reportCampaignId !== "all" && reportCampaignId !== "") {
+      list = list.filter(s => String(s.campaign_id) === String(reportCampaignId));
+    }
+
+    if (reportStartDate) {
+      const startMs = new Date(reportStartDate).setHours(0, 0, 0, 0);
+      list = list.filter(s => {
+        const shiftMs = new Date(s.date).setHours(0, 0, 0, 0);
+        return shiftMs >= startMs;
+      });
+    }
+
+    if (reportEndDate) {
+      const endMs = new Date(reportEndDate).setHours(23, 59, 59, 999);
+      list = list.filter(s => {
+        const shiftMs = new Date(s.date).setHours(0, 0, 0, 0);
+        return shiftMs <= endMs;
+      });
+    }
+
+    if (reportSearchQuery.trim()) {
+      const q = reportSearchQuery.toLowerCase().trim();
+      list = list.filter(s => {
+        const storeName = (s.store_name || "").toLowerCase();
+        const promoterName = (s.promoter_name || "").toLowerCase();
+        const campTitle = (s.campaign_title || "").toLowerCase();
+        return storeName.includes(q) || promoterName.includes(q) || campTitle.includes(q);
+      });
+    }
+
+    return list.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [schedules, reportCampaignId, reportStartDate, reportEndDate, reportSearchQuery]);
+
+  const getShiftItemsMovedList = React.useCallback((s: any) => {
+    if (!s) return [];
+    const draft = reportDrafts[s.id];
+    const raw = draft?.items_moved !== undefined ? draft.items_moved : s["items_moved"];
+    if (!raw) return [];
+    try {
+      const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (e) {
+      return [];
+    }
+  }, [reportDrafts]);
+
+  const getShiftPromoterWageInfo = React.useCallback((s: any) => {
+    const draft = reportDrafts[s.id];
+    const override = draft?.promoter_wage !== undefined ? draft.promoter_wage : s["promoter_wage"];
+    if (override !== undefined && override !== null && override !== "") {
+      return { wage: Number(override || 0), isPending: false, status: Number(override) === 0 ? "No Pay" : "Custom" };
+    }
+
+    const matchingPayout = payouts.find(p => {
+      if (String(p["promoter_id"]) !== String(s["promoter_id"])) return false;
+      const shiftDateNum = new Date(s.date).getTime();
+      return shiftDateNum >= Number(p["start_date"]) && shiftDateNum <= Number(p["end_date"]);
+    });
+
+    if (matchingPayout) {
+      try {
+        const details = JSON.parse(matchingPayout["payout_details"] || "[]");
+        const matchRow = details.find((d: any) => String(d.scheduleId) === String(s.id));
+        if (matchRow) {
+          return { wage: Number(matchRow.totalPayout || 0), isPending: false, status: matchingPayout.status || "Calculated" };
+        }
+      } catch (e) {}
+
+      const hrs = calculateHours(s["actual_start"] || s["shift_start"], s["actual_end"] || s["shift_end"]);
+      if (hrs > 0 && matchingPayout["hourly_rate"]) {
+        return { wage: hrs * Number(matchingPayout["hourly_rate"]), isPending: false, status: matchingPayout.status || "Calculated" };
+      }
+    }
+
+    if (!s["actual_start"] || !s["actual_end"]) {
+      return { wage: 0, isPending: true, status: "Pending Calculation" };
+    }
+
+    return { wage: 0, isPending: true, status: "Pending Calculation" };
+  }, [reportDrafts, payouts]);
+
+  // Group schedules by Activation Event: [Date + Store + Campaign]
+  const reportActivationEvents = React.useMemo(() => {
+    const groups: { [key: string]: any } = {};
+
+    reportSchedules.forEach(s => {
+      const shiftDateMs = new Date(s.date).setHours(0, 0, 0, 0);
+      const key = `${shiftDateMs}_${s.store_id || s.store_name}_${s.campaign_id || ""}`;
+
+      if (!groups[key]) {
+        groups[key] = {
+          eventKey: key,
+          primaryShiftId: s.id,
+          date: s.date,
+          store_id: s.store_id,
+          store_name: s.store_name,
+          campaign_id: s.campaign_id,
+          campaign_title: s.campaign_title,
+          shifts: []
+        };
+      }
+      groups[key].shifts.push(s);
+    });
+
+    return Object.values(groups).map((group: any) => {
+      // 1. Items Moved (Shared store movement)
+      let itemsMoved: any[] = [];
+      // Look for draft on primary shift or any shift in group
+      for (const shift of group.shifts) {
+        const draft = reportDrafts[shift.id];
+        const raw = draft?.items_moved !== undefined ? draft.items_moved : shift["items_moved"];
+        if (raw) {
+          try {
+            const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              itemsMoved = parsed;
+              break;
+            }
+          } catch (e) {}
+        }
+      }
+      const totalUnitsMoved = itemsMoved.reduce((acc, it) => acc + Number(it.qty || 0), 0);
+
+      // 2. Promoters Details (Individual Wages & Personal Claims)
+      let totalWages = 0;
+      let totalPersonalClaims = 0;
+
+      const promoterList = group.shifts.map((s: any) => {
+        const wageInfo = getShiftPromoterWageInfo(s);
+        totalWages += wageInfo.wage;
+
+        // Promoter expenses / claims
+        const draft = reportDrafts[s.id];
+        const rawCost = draft?.promoting_cost !== undefined ? draft.promoting_cost : s["promoting_cost"];
+        let shiftExpenses: any[] = [];
+        if (rawCost) {
+          try {
+            const parsed = typeof rawCost === "string" ? JSON.parse(rawCost) : rawCost;
+            if (Array.isArray(parsed)) shiftExpenses = parsed;
+            else if (typeof parsed === "number") shiftExpenses = [{ item: "Expense", amount: parsed }];
+          } catch (e) {
+            const num = Number(rawCost);
+            if (!isNaN(num) && num > 0) shiftExpenses = [{ item: "Expense", amount: num }];
+          }
+        }
+
+        const personalClaimTotal = shiftExpenses.reduce((acc, it) => acc + Number(it.amount || 0), 0);
+        totalPersonalClaims += personalClaimTotal;
+
+        return {
+          scheduleId: s.id,
+          promoterId: s.promoter_id,
+          promoterName: s.promoter_name || "Promoter",
+          shiftStart: s.shift_start,
+          shiftEnd: s.shift_end,
+          actualStart: s.actual_start,
+          actualEnd: s.actual_end,
+          wage: wageInfo.wage,
+          wagePending: wageInfo.isPending,
+          wageStatus: wageInfo.status,
+          individualExpenses: shiftExpenses,
+          individualClaimTotal: personalClaimTotal,
+          personalClaimTotal
+        };
+      });
+
+      // Company claims (stored in company_claim or shared_event_cost on primary shift)
+      const primaryDraft = reportDrafts[group.primaryShiftId];
+      const rawCompany = primaryDraft?.company_claim !== undefined 
+        ? primaryDraft.company_claim 
+        : (primaryDraft?.shared_event_cost !== undefined 
+          ? primaryDraft.shared_event_cost 
+          : (group.shifts[0]?.company_claim || group.shifts[0]?.shared_event_cost));
+      let companyClaimItems: any[] = [];
+      let totalCompanyClaims = 0;
+
+      if (rawCompany) {
+        try {
+          const parsed = typeof rawCompany === "string" ? JSON.parse(rawCompany) : rawCompany;
+          if (Array.isArray(parsed)) {
+            companyClaimItems = parsed;
+            totalCompanyClaims = parsed.reduce((acc: number, it: any) => acc + Number(it.amount || 0), 0);
+          } else if (!isNaN(Number(rawCompany)) && Number(rawCompany) > 0) {
+            totalCompanyClaims = Number(rawCompany);
+            companyClaimItems = [{ id: "legacy", item: "Company Expense", amount: totalCompanyClaims }];
+          }
+        } catch (e) {
+          const num = Number(rawCompany);
+          if (!isNaN(num) && num > 0) {
+            totalCompanyClaims = num;
+            companyClaimItems = [{ id: "legacy", item: "Company Expense", amount: num }];
+          }
+        }
+      }
+
+      const totalPromotingCost = totalPersonalClaims + totalCompanyClaims;
+      const totalActivationCost = totalPromotingCost + totalWages;
+
+      return {
+        ...group,
+        itemsMoved,
+        totalUnitsMoved,
+        promoterList,
+        totalWages,
+        totalIndividualClaims: totalPersonalClaims,
+        totalPersonalClaims,
+        companyClaimItems,
+        totalCompanyClaims,
+        totalPromotingCost,
+        totalActivationCost
+      };
+    });
+  }, [reportSchedules, reportDrafts, getShiftPromoterWageInfo]);
+
+  const reportMetrics = React.useMemo(() => {
+    let totalItemsMoved = 0;
+    let totalPromotingCost = 0;
+    let totalPromoterWages = 0;
+
+    reportActivationEvents.forEach(evt => {
+      totalItemsMoved += evt.totalUnitsMoved;
+      totalPromotingCost += evt.totalPromotingCost;
+      totalPromoterWages += evt.totalWages;
+    });
+
+    return {
+      totalActivations: reportActivationEvents.length,
+      totalItemsMoved,
+      totalPromotingCost,
+      totalPromoterWages,
+      totalActivationCost: totalPromotingCost + totalPromoterWages
+    };
+  }, [reportActivationEvents]);
+
+  const handleUpdateReportDraft = (shiftId: string, field: string, value: any) => {
+    setReportDrafts(prev => ({
+      ...prev,
+      [shiftId]: {
+        ...(prev[shiftId] || {}),
+        [field]: value
+      }
+    }));
+  };
+
+  const handleSaveReportChanges = async () => {
+    const shiftIds = Object.keys(reportDrafts);
+    if (shiftIds.length === 0) {
+      setIsReportEditMode(false);
+      return;
+    }
+
+    setSavingReport(true);
+    try {
+      setSchedules(prev => prev.map(s => {
+        if (reportDrafts[s.id]) {
+          return { ...s, ...reportDrafts[s.id] };
+        }
+        return s;
+      }));
+
+      for (const id of shiftIds) {
+        const changes = reportDrafts[id];
+        const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=Promoter_Schedule`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: "Promoter_Schedule",
+            action: "update",
+            data: {
+              id,
+              ...changes
+            }
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${res.status} error updating shift.`);
+        }
+      }
+
+      showToast(`Saved activation report updates for ${shiftIds.length} shift(s).`, "success");
+      setReportDrafts({});
+      setIsReportEditMode(false);
+      await loadSchedules();
+    } catch (err: any) {
+      showToast("Failed to save report changes: " + err.message, "error");
+    } finally {
+      setSavingReport(false);
+    }
+  };
+
+  const handleExportReportCSV = () => {
+    if (reportActivationEvents.length === 0) {
+      showToast("No data to export.", "warning");
+      return;
+    }
+
+    const headers = ["Date", "Campaign", "Retailer", "Store Name", "Store Address", "Promoters", "Items Moved", "Total Items Qty", "Individual Claims ($)", "Company Claims ($)", "Total Promoting Cost ($)", "Total Promoter Wages ($)", "Total Activation Cost ($)"];
+    
+    const rows = reportActivationEvents.map(evt => {
+      const dateStr = formatEpochToDisplay(evt.date);
+      const storeObj = stores.find(st => String(st.id) === String(evt.store_id));
+      const storeAddress = getCleanStoreAddress(storeObj, evt);
+      const itemsStr = evt.itemsMoved.map((it: any) => `${it.qty}x ${it.sku}`).join("; ");
+      const promotersStr = evt.promoterList.map((p: any) => `${p.promoterName} (Wage: $${p.wage.toFixed(2)}, Claim: $${p.personalClaimTotal.toFixed(2)})`).join(" | ");
+
+      return [
+        `"${dateStr}"`,
+        `"${evt.campaign_title || ""}"`,
+        `"${storeObj?.retailer_name || storeObj?.retailers_name || ""}"`,
+        `"${getFormattedStoreName(evt.store_id, evt.store_name)}"`,
+        `"${storeAddress}"`,
+        `"${promotersStr}"`,
+        `"${itemsStr}"`,
+        evt.totalUnitsMoved,
+        evt.totalPersonalClaims.toFixed(2),
+        evt.totalCompanyClaims.toFixed(2),
+        evt.totalPromotingCost.toFixed(2),
+        evt.totalWages.toFixed(2),
+        evt.totalActivationCost.toFixed(2)
+      ].join(",");
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Activation_Report_${reportStartDate || "all"}_to_${reportEndDate || "all"}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // Calendar calculations
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
@@ -2480,6 +3139,21 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
     return filtered;
   }, [schedules, selectedCampaignId, year, month]);
+
+  // Helper to determine if a day cell in monthly calendar is within the selected campaign's date range
+  const isDayWithinCampaignRange = React.useCallback((dayNum: number) => {
+    if (selectedCampaignId === "all" || !selectedCampaignId) return true;
+    const camp = campaigns.find(c => String(c.id) === String(selectedCampaignId));
+    if (!camp || (!camp.start_date && !camp.end_date)) return true;
+    
+    const targetTime = new Date(year, month, dayNum).setHours(0, 0, 0, 0);
+    const start = camp.start_date ? new Date(Number(camp.start_date)).setHours(0, 0, 0, 0) : null;
+    const end = camp.end_date ? new Date(Number(camp.end_date)).setHours(23, 59, 59, 999) : null;
+    
+    if (start && targetTime < start) return false;
+    if (end && targetTime > end) return false;
+    return true;
+  }, [selectedCampaignId, campaigns, year, month]);
 
   const isChecklistPendingForDay = React.useCallback((dayNum: number) => {
     const targetDate = new Date(year, month, dayNum).toDateString();
@@ -2730,6 +3404,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
+    // Validate that shift date is within the selected campaign's date range
+    if (selectedCampaignId && selectedCampaignId !== "all" && selectedCampaignId !== "") {
+      const camp = campaigns.find(c => String(c.id) === String(selectedCampaignId));
+      if (camp && (camp.start_date || camp.end_date)) {
+        const dropMs = new Date(date).setHours(0, 0, 0, 0);
+        const startMs = camp.start_date ? new Date(Number(camp.start_date)).setHours(0, 0, 0, 0) : null;
+        const endMs = camp.end_date ? new Date(Number(camp.end_date)).setHours(23, 59, 59, 999) : null;
+        if ((startMs && dropMs < startMs) || (endMs && dropMs > endMs)) {
+          showToast("Cannot assign or move shifts outside the campaign date range.", "error");
+          return;
+        }
+      }
+    }
+
     const scheduleId = e.dataTransfer.getData("scheduleId");
     const dragAction = e.dataTransfer.getData("dragAction");
 
@@ -2755,8 +3443,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         const newSchedules = schedules.map(s => s.id === sch.id ? {
           ...s,
           date: date.getTime(),
-          "Promoter ID": String(promoterId),
-          "Promoter Name": destPromoter.name
+          promoter_id: String(promoterId),
+          promoter_name: destPromoter.name
         } : s);
         pushHistory(newSchedules);
         showToast("Shift moved successfully.", "success");
@@ -2769,8 +3457,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           ...sch,
           id: `sch_${Date.now()}`,
           date: date.getTime(),
-          "Promoter ID": String(promoterId),
-          "Promoter Name": destPromoter.name
+          promoter_id: String(promoterId),
+          promoter_name: destPromoter.name
         };
         const newSchedules = [...schedules, newSch];
         pushHistory(newSchedules);
@@ -2909,6 +3597,19 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Clipboard Paste Schedule Assignment
   const handlePasteSchedule = (date: Date, promoterId: string) => {
     if (!copiedSchedule) return;
+
+    if (copiedSchedule.campaign_id) {
+      const camp = campaigns.find(c => String(c.id) === String(copiedSchedule.campaign_id));
+      if (camp && (camp.start_date || camp.end_date)) {
+        const pasteMs = new Date(date).setHours(0, 0, 0, 0);
+        const startMs = camp.start_date ? new Date(Number(camp.start_date)).setHours(0, 0, 0, 0) : null;
+        const endMs = camp.end_date ? new Date(Number(camp.end_date)).setHours(23, 59, 59, 999) : null;
+        if ((startMs && pasteMs < startMs) || (endMs && pasteMs > endMs)) {
+          showToast("Cannot paste shift outside the campaign date range.", "error");
+          return;
+        }
+      }
+    }
 
     // Calculate next shift time block dynamically
     const dayShifts = schedules.filter(s => 
@@ -3246,7 +3947,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             
             // Resolve retailer name
             const storeObj = stores.find(st => String(st.id) === String(s["store_id"]));
-            const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
+            const retId = storeObj ? (storeObj.retailers_id || storeObj.retailer_id || storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
             const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
             const retailerName = retailerObj ? (retailerObj["display_name"] || retailerObj.name || "") : "";
             const storeName = s["store_name"] || (storeObj ? storeObj["display_name"] : "");
@@ -3594,7 +4295,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         promoterSchedules.forEach((sch) => {
           const dateObj = new Date(sch.date);
           const storeObj = stores.find(st => String(st.id) === String(sch["store_id"]));
-          const storeAddress = storeObj ? storeObj.Address : (sch.Address || sch["store_address"] || "");
+          const storeAddress = getCleanStoreAddress(storeObj, sch);
 
           const campaign = campaigns.find(c => String(c.id) === String(sch["campaign_id"]));
           const campaignTitle = campaign ? campaign["campaign_title"] : sch["campaign_title"];
@@ -3721,7 +4422,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const retailerSchedules = schedules.filter(s => {
         if (s.date < startMs || s.date > endMs) return false;
         const storeObj = stores.find(st => String(st.id) === String(s["store_id"]));
-        const retId = storeObj ? (storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
+        const retId = storeObj ? (storeObj.retailers_id || storeObj.retailer_id || storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
         return String(retId) === String(printRetailerId);
       });
 
@@ -3729,7 +4430,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         const dateObj = new Date(sch.date);
         const storeObj = stores.find(st => String(st.id) === String(sch["store_id"]));
         const storeName = sch["store_name"] || (storeObj ? storeObj["display_name"] : "");
-        const storeAddress = storeObj ? storeObj.Address : (sch.Address || sch["store_address"] || "");
+        const storeAddress = getCleanStoreAddress(storeObj, sch);
         
         // Brand info
         const campaign = campaigns.find(c => String(c.id) === String(sch["campaign_id"]));
@@ -4085,15 +4786,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     let result = [...stores];
     if (selectedRetailerFilter !== "all") {
       result = result.filter(s => {
-        const retId = s["Retailers ID"] || s["Retailer ID"];
+        const retId = s.retailers_id || s.retailer_id || s["Retailers ID"] || s["Retailer ID"];
         return String(retId) === String(selectedRetailerFilter);
       });
     }
     if (storeSearch.trim()) {
       const q = storeSearch.toLowerCase();
       result = result.filter(s => 
-        String(s["display_name"] || "").toLowerCase().includes(q) ||
-        String(s.Address || "").toLowerCase().includes(q)
+        String(s["display_name"] || s.name || "").toLowerCase().includes(q) ||
+        String(s.address || s.Address || "").toLowerCase().includes(q)
       );
     }
     return result;
@@ -4206,15 +4907,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
       return {
         id: p.id,
-        PromoterName: <span className="font-bold text-zinc-900">{p["promoter_name"]}</span>,
+        PromoterName: <span className="font-medium text-zinc-850">{p["promoter_name"]}</span>,
         PromoterName_raw: p["promoter_name"] || "",
         JobDetails: (
           <button
             type="button"
             onClick={() => setViewingJobsPayout(p)}
-            className="px-2.5 py-1 bg-zinc-100 hover:bg-[#D3E3FD] border border-zinc-250 text-zinc-700 hover:text-[#0B57D0] font-bold rounded text-[10px] transition-colors cursor-pointer flex items-center gap-1"
+            className="px-2 py-0.5 bg-zinc-50 hover:bg-zinc-100 border border-zinc-250 text-zinc-650 hover:text-zinc-900 font-medium rounded text-[11px] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
           >
-            <Eye size={11} />
+            <Eye size={11} className="text-zinc-500" />
             View Jobs ({(() => {
               try {
                 const details = JSON.parse(p["payout_details"] || "[]");
@@ -4226,20 +4927,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           </button>
         ),
         JobDetails_raw: p["payout_details"] || "",
-        TotalPayout: <span className="font-bold text-[#0B57D0]">${Number(p["total_payout"])?.toFixed(2)}</span>,
+        TotalPayout: <span className="font-semibold text-zinc-900 font-mono">${Number(p["total_payout"])?.toFixed(2)}</span>,
         TotalPayout_raw: `$${Number(p["total_payout"])?.toFixed(2)}`,
         Status: (
           <span className={cn(
-            "px-2 py-0.5 rounded text-[10px] font-bold uppercase",
-            isPaid ? "bg-green-50 text-green-700 border border-green-200" : "bg-amber-50 text-amber-700 border border-amber-200"
+            "px-2 py-0.5 rounded text-[10.5px] font-medium uppercase tracking-wide",
+            isPaid ? "bg-emerald-50 text-emerald-700 border border-emerald-200/80" : "bg-amber-50 text-amber-700 border border-amber-200/80"
           )}>
             {p.status || "Pending Payout"}
           </span>
         ),
         Status_raw: p.status || "Pending Payout",
-        DatePayout: <span className="font-semibold text-zinc-700">{p["payment_date"] ? formatTimestamp(p["payment_date"]) : "-"}</span>,
+        DatePayout: <span className="text-zinc-600 font-normal">{p["payment_date"] ? formatTimestamp(p["payment_date"]) : "-"}</span>,
         DatePayout_raw: p["payment_date"] ? formatTimestamp(p["payment_date"]) : "-",
-        Reference: <span className="font-mono font-bold text-zinc-800">{p["payment_reference"] || "-"}</span>,
+        Reference: <span className="font-mono text-zinc-650 text-[11px]">{p["payment_reference"] || "-"}</span>,
         Reference_raw: p["payment_reference"] || "-",
         actions: (
           <div className="flex items-center gap-1.5 shrink-0 select-none">
@@ -4261,7 +4962,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     setPayoutFetchError(null);
                     setIsCreatePayoutOpen(true);
                   }}
-                  className="p-1 rounded hover:bg-zinc-100 border border-zinc-200 text-zinc-650 hover:text-zinc-900 transition-colors cursor-pointer flex items-center justify-center"
+                  className="p-1 rounded hover:bg-zinc-100 border border-zinc-200 text-zinc-550 hover:text-zinc-800 transition-colors cursor-pointer flex items-center justify-center"
                   title="Edit Payout"
                 >
                   <Pencil size={12} />
@@ -4269,7 +4970,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 <button
                   type="button"
                   onClick={() => handleDeletePayout(p.id)}
-                  className="p-1 rounded hover:bg-red-50 border border-zinc-200 text-red-600 hover:text-red-850 transition-colors cursor-pointer flex items-center justify-center"
+                  className="p-1 rounded hover:bg-red-50 border border-zinc-200 text-zinc-450 hover:text-red-600 transition-colors cursor-pointer flex items-center justify-center"
                   title="Delete Payout"
                 >
                   <Trash2 size={12} />
@@ -4280,10 +4981,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             <button
               type="button"
               onClick={() => handlePrintPayoutPDF(p)}
-              className="px-2 py-1 rounded hover:bg-zinc-100 border border-zinc-200 text-[#0B57D0] hover:text-[#0842A0] font-semibold text-[10px] transition-colors cursor-pointer flex items-center justify-center gap-1"
+              className="px-2 py-0.5 rounded hover:bg-zinc-100 border border-zinc-250 text-zinc-650 hover:text-zinc-900 font-medium text-[11px] transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-2xs"
               title="Print Supporting Document"
             >
-              <Printer size={12} />
+              <Printer size={11} className="text-zinc-500" />
               Print
             </button>
 
@@ -4296,10 +4997,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   setPaymentDate(new Date().toISOString().split("T")[0]);
                   setPaymentReceiptFile(null);
                 }}
-                className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white font-bold rounded text-[10px] transition-colors cursor-pointer flex items-center gap-1"
-                title="Mark as Paid"
+                className="px-2.5 py-0.5 bg-white hover:bg-emerald-50 border border-zinc-250 hover:border-emerald-400 text-zinc-700 hover:text-emerald-700 font-medium rounded text-[11px] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                title="Record Payment"
               >
-                <CreditCard size={10} />
+                <CreditCard size={11} className="text-emerald-600" />
                 Paid
               </button>
             )}
@@ -4497,8 +5198,30 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           return <div key={`empty-${idx}`} className="bg-zinc-50/20 border border-zinc-100/40 min-h-[65px] rounded-md" />;
                         }
 
+                        const isDayActive = isDayWithinCampaignRange(cell);
                         const dayEvents = getEventsForDay(cell);
                         const isSelected = selectedDay === cell;
+
+                        if (!isDayActive) {
+                          return (
+                            <div
+                              key={`day-${cell}`}
+                              className="border border-zinc-200/70 p-1.5 min-h-[65px] flex flex-col justify-between bg-zinc-100/60 rounded-md text-left relative opacity-35 cursor-not-allowed select-none"
+                              title="Date is outside the selected campaign range"
+                            >
+                              <span className="text-xs font-bold leading-none text-zinc-400">
+                                {cell}
+                              </span>
+                              {dayEvents.length > 0 && (
+                                <div className="flex flex-col gap-0.5 mt-1 overflow-hidden opacity-60">
+                                  <span className="text-[7.5px] font-bold text-zinc-400">
+                                    {dayEvents.length} shift{dayEvents.length > 1 ? "s" : ""}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
 
                         return (
                           <div
@@ -5303,26 +6026,50 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             <tr className="bg-zinc-50 border-b border-zinc-200">
                               {/* Date switcher in top-left cell (sticky top & left) */}
                               <th className="py-2.5 px-3 text-left border-r border-zinc-200 w-[150px] shrink-0 select-none bg-zinc-50 sticky top-0 left-0 z-30 shadow-[2px_0_5px_0_rgba(0,0,0,0.05)] border-b border-zinc-200">
-                                <div className="flex flex-col gap-1.5 w-full">
-                                  <div className="flex flex-col gap-0.5">
-                                    <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</span>
-                                    <input
-                                      type="date"
-                                      value={scheduleStartDate}
-                                      onChange={(e) => setScheduleStartDate(e.target.value)}
-                                      className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-bold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
-                                    />
-                                  </div>
-                                  <div className="flex flex-col gap-0.5">
-                                    <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">End Date</span>
-                                    <input
-                                      type="date"
-                                      value={scheduleEndDate}
-                                      onChange={(e) => setScheduleEndDate(e.target.value)}
-                                      className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-bold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
-                                    />
-                                  </div>
-                                </div>
+                                {(() => {
+                                  const activeCampaignObj = (selectedCampaignId && selectedCampaignId !== "all") 
+                                    ? campaigns.find(c => String(c.id) === String(selectedCampaignId)) 
+                                    : null;
+                                  const campMinDate = activeCampaignObj?.start_date ? formatEpochToDateInput(activeCampaignObj.start_date) : undefined;
+                                  const campMaxDate = activeCampaignObj?.end_date ? formatEpochToDateInput(activeCampaignObj.end_date) : undefined;
+
+                                  return (
+                                    <div className="flex flex-col gap-1.5 w-full">
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</span>
+                                        <input
+                                          type="date"
+                                          value={scheduleStartDate}
+                                          min={campMinDate}
+                                          max={campMaxDate}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (campMinDate && val < campMinDate) return setScheduleStartDate(campMinDate);
+                                            if (campMaxDate && val > campMaxDate) return setScheduleStartDate(campMaxDate);
+                                            setScheduleStartDate(val);
+                                          }}
+                                          className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-bold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
+                                        />
+                                      </div>
+                                      <div className="flex flex-col gap-0.5">
+                                        <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">End Date</span>
+                                        <input
+                                          type="date"
+                                          value={scheduleEndDate}
+                                          min={campMinDate}
+                                          max={campMaxDate}
+                                          onChange={(e) => {
+                                            const val = e.target.value;
+                                            if (campMinDate && val < campMinDate) return setScheduleEndDate(campMinDate);
+                                            if (campMaxDate && val > campMaxDate) return setScheduleEndDate(campMaxDate);
+                                            setScheduleEndDate(val);
+                                          }}
+                                          className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-bold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                               </th>
                               
                               {/* Promoter headers (sticky top) */}
@@ -5392,12 +6139,31 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               const formattedDay = date.toLocaleDateString("en-US", { weekday: "long" });
                               const formattedDateStr = date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
                               
+                              const activeCampaignObj = (selectedCampaignId && selectedCampaignId !== "all") 
+                                ? campaigns.find(c => String(c.id) === String(selectedCampaignId)) 
+                                : null;
+                              const isDateWithinCamp = (() => {
+                                if (!activeCampaignObj || (!activeCampaignObj.start_date && !activeCampaignObj.end_date)) return true;
+                                const timeMs = new Date(date).setHours(0, 0, 0, 0);
+                                const start = activeCampaignObj.start_date ? new Date(Number(activeCampaignObj.start_date)).setHours(0, 0, 0, 0) : null;
+                                const end = activeCampaignObj.end_date ? new Date(Number(activeCampaignObj.end_date)).setHours(23, 59, 59, 999) : null;
+                                if (start && timeMs < start) return false;
+                                if (end && timeMs > end) return false;
+                                return true;
+                              })();
+
                               return (
-                                <tr key={date.toDateString()} className="border-b border-zinc-200 hover:bg-zinc-50/10">
+                                <tr key={date.toDateString()} className={cn("border-b border-zinc-200 hover:bg-zinc-50/10", !isDateWithinCamp && "opacity-40 bg-zinc-100/50")}>
                                   {/* Left date column */}
-                                  <td className="py-4 px-4 font-bold text-xs text-zinc-805 border-r border-zinc-200 bg-zinc-50 sticky left-0 z-10 select-none min-h-[110px] shadow-[2px_0_5px_0_rgba(0,0,0,0.05)]">
-                                    <div className="font-bold text-zinc-900">{formattedDay}</div>
+                                  <td className={cn(
+                                    "py-4 px-4 font-bold text-xs border-r border-zinc-200 sticky left-0 z-10 select-none min-h-[110px] shadow-[2px_0_5px_0_rgba(0,0,0,0.05)]",
+                                    isDateWithinCamp ? "text-zinc-805 bg-zinc-50" : "text-zinc-400 bg-zinc-100/80"
+                                  )}>
+                                    <div className={cn("font-bold", isDateWithinCamp ? "text-zinc-900" : "text-zinc-400")}>{formattedDay}</div>
                                     <div className="text-zinc-450 text-[10px] font-bold font-mono mt-0.5">{formattedDateStr}</div>
+                                    {!isDateWithinCamp && (
+                                      <span className="text-[8px] font-bold uppercase text-amber-700 block mt-1">Outside range</span>
+                                    )}
                                   </td>
 
                                   {/* Day Planner Droppable cells */}
@@ -5406,9 +6172,16 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     return (
                                       <td
                                         key={p.id}
-                                        onDragOver={(e) => e.preventDefault()}
-                                        onDrop={(e) => handleStoreDrop(e, date, p.id)}
-                                        className="py-2.5 px-3 border-r border-zinc-200 w-[320px] shrink-0 min-h-[110px] align-top bg-white relative transition-colors hover:bg-blue-50/5"
+                                        onDragOver={(e) => {
+                                          if (isDateWithinCamp) e.preventDefault();
+                                        }}
+                                        onDrop={(e) => {
+                                          if (isDateWithinCamp) handleStoreDrop(e, date, p.id);
+                                        }}
+                                        className={cn(
+                                          "py-2.5 px-3 border-r border-zinc-200 w-[320px] shrink-0 min-h-[110px] align-top relative transition-colors",
+                                          isDateWithinCamp ? "bg-white hover:bg-blue-50/5" : "bg-zinc-100/60 cursor-not-allowed"
+                                        )}
                                       >
                                         <div className="flex flex-col gap-2 min-h-[85px] w-full">
                                           {cellSchedules.map((sch) => (
@@ -5590,7 +6363,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-850 outline-none cursor-pointer focus:border-zinc-555"
                         >
                           <option value="all">All Retailers</option>
-                          {retailers.map(r => (
+                          {retailers.filter(r => !isGroupRetailer(r)).map(r => (
                             <option key={r.id} value={r.id}>
                               {r["display_name"]}
                             </option>
@@ -5629,7 +6402,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 {getFormattedStoreName(store.id, store["display_name"])}
                               </div>
                               <div className="text-[10.5px] text-zinc-500 font-normal whitespace-normal leading-normal">
-                                {store.Address || "No address listed"}
+                                {getCleanStoreAddress(store)}
                               </div>
                             </div>
                           ))}
@@ -5647,6 +6420,874 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
               </div>
             )}
+
+          </div>
+        )}
+
+        {/* Reports Tab */}
+        {activeTab === "reports" && (
+          <div className="w-full h-full flex flex-col gap-3 overflow-hidden relative select-none">
+            
+            {/* Top Filter and Controls Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-zinc-200 rounded-lg px-4 py-2 shadow-xs shrink-0">
+              
+              {/* Left Filters: Campaign & Date Range */}
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Select Campaign */}
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider whitespace-nowrap">Campaign:</span>
+                  <select
+                    value={reportCampaignId}
+                    onChange={(e) => setReportCampaignId(e.target.value)}
+                    className="h-[28px] px-2.5 py-0 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]/20 cursor-pointer max-w-[220px] transition-all"
+                  >
+                    <option value="all">All Campaigns</option>
+                    {campaigns
+                      .filter(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"))
+                      .map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c["campaign_title"]}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+
+                {/* Date Range Controls */}
+                <div className="flex items-center gap-1.5 border-l border-zinc-200 pl-3">
+                  <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider whitespace-nowrap">Range:</span>
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="date"
+                      value={reportStartDate}
+                      onChange={(e) => setReportStartDate(e.target.value)}
+                      className="h-[28px] px-2 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-[11px] font-normal text-zinc-700 outline-none focus:border-[#0B57D0] cursor-pointer shadow-xs"
+                    />
+                    <span className="text-zinc-400 text-xs">to</span>
+                    <input
+                      type="date"
+                      value={reportEndDate}
+                      onChange={(e) => setReportEndDate(e.target.value)}
+                      className="h-[28px] px-2 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-[11px] font-normal text-zinc-700 outline-none focus:border-[#0B57D0] cursor-pointer shadow-xs"
+                    />
+                  </div>
+                </div>
+
+                {/* Search Box */}
+                <div className="relative flex items-center border-l border-zinc-200 pl-3">
+                  <Search size={12} className="absolute left-5 text-zinc-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={reportSearchQuery}
+                    onChange={(e) => setReportSearchQuery(e.target.value)}
+                    placeholder="Search store, promoter..."
+                    className="h-[28px] pl-7 pr-6 w-[200px] bg-zinc-50 border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:bg-white focus:border-[#0B57D0] transition-colors"
+                  />
+                  {reportSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setReportSearchQuery("")}
+                      className="absolute right-2 text-zinc-400 hover:text-zinc-600 p-0.5"
+                    >
+                      <X size={11} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Action Buttons: Edit Mode / Save / Export */}
+              <div className="flex items-center gap-2">
+                {!isReportEditMode ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setIsReportEditMode(true)}
+                      className="h-[28px] px-3.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Pencil size={12} />
+                      Edit Mode
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleExportReportCSV}
+                      className="h-[28px] px-3 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                      title="Export CSV"
+                    >
+                      <Download size={12} />
+                      Export CSV
+                    </button>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2 animate-in fade-in duration-150">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReportDrafts({});
+                        setIsReportEditMode(false);
+                      }}
+                      className="h-[28px] px-3 border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 rounded text-xs font-medium transition-all cursor-pointer"
+                      disabled={savingReport}
+                    >
+                      Discard
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveReportChanges}
+                      disabled={savingReport}
+                      className="h-[28px] px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all shadow flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {savingReport ? (
+                        <>
+                          <RefreshCw size={12} className="animate-spin" />
+                          Saving...
+                        </>
+                      ) : (
+                        <>
+                          <Check size={13} className="stroke-[3]" />
+                          Save Changes
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+            </div>
+
+            {/* KPI Metric Summary Cards Bar */}
+            <div className="grid grid-cols-5 gap-3 shrink-0">
+              {/* Activations */}
+              <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col justify-between shadow-xs">
+                <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Total Activations</span>
+                <div className="flex items-baseline gap-1.5 mt-1">
+                  <span className="text-lg font-bold text-zinc-900 font-mono">{reportMetrics.totalActivations}</span>
+                  <span className="text-[10px] text-zinc-400 font-normal uppercase">Shifts</span>
+                </div>
+              </div>
+
+              {/* Items Moved */}
+              <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col justify-between shadow-xs">
+                <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Total Items Moved</span>
+                <div className="flex items-baseline gap-1.5 mt-1">
+                  <span className="text-lg font-bold text-[#0B57D0] font-mono">{reportMetrics.totalItemsMoved}</span>
+                  <span className="text-[10px] text-blue-600 font-normal uppercase">Units</span>
+                </div>
+              </div>
+
+              {/* Promoting Cost */}
+              <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col justify-between shadow-xs">
+                <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Total Promoting Cost</span>
+                <div className="flex items-baseline gap-1.5 mt-1">
+                  <span className="text-lg font-bold text-amber-700 font-mono">${reportMetrics.totalPromotingCost.toFixed(2)}</span>
+                  <span className="text-[10px] text-zinc-400 font-normal uppercase">Expenses</span>
+                </div>
+              </div>
+
+              {/* Promoter Wages */}
+              <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col justify-between shadow-xs">
+                <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Total Promoter Wages</span>
+                <div className="flex items-baseline gap-1.5 mt-1">
+                  <span className="text-lg font-bold text-emerald-700 font-mono">${reportMetrics.totalPromoterWages.toFixed(2)}</span>
+                  <span className="text-[10px] text-zinc-400 font-normal uppercase">Payroll</span>
+                </div>
+              </div>
+
+              {/* Total Investment */}
+              <div className="bg-white border border-blue-200 bg-blue-50/20 rounded-lg p-3 flex flex-col justify-between shadow-xs">
+                <span className="text-[10px] font-semibold text-blue-800 uppercase tracking-wider">Total Activation Cost</span>
+                <div className="flex items-baseline gap-1.5 mt-1">
+                  <span className="text-lg font-bold text-[#0B57D0] font-mono">${reportMetrics.totalActivationCost.toFixed(2)}</span>
+                  <span className="text-[10px] text-[#0B57D0] font-normal uppercase">Total</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Main Report Table Container */}
+            <div className="flex-1 bg-white border border-zinc-200 rounded-lg overflow-hidden flex flex-col shadow-xs">
+              <div className="flex-1 overflow-auto custom-scrollbar">
+                <table className="w-full text-left border-collapse table-fixed min-w-[950px]">
+                  <thead className="bg-zinc-50 sticky top-0 z-10 border-b border-zinc-200 select-none shadow-xs">
+                    <tr>
+                      <th className="py-2.5 px-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider w-[140px]">Date & Shift</th>
+                      <th className="py-2.5 px-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider w-[230px]">Activation</th>
+                      <th className="py-2.5 px-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider w-[130px]">Promoter</th>
+                      <th className="py-2.5 px-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider w-[240px]">Items Moved</th>
+                      <th className="py-2.5 px-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider w-[135px]">Promoting Cost</th>
+                      <th className="py-2.5 px-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider w-[145px]">Promoter Wage</th>
+                      <th className="py-2.5 px-3 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider w-[110px] text-right pr-4">Total Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-150">
+                    {reportActivationEvents.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-16 text-center text-zinc-400 font-medium text-xs select-none">
+                          No activation events found for the selected campaign and date range.
+                        </td>
+                      </tr>
+                    ) : (
+                      reportActivationEvents.map((evt) => {
+                        const storeObj = stores.find(st => String(st.id) === String(evt.store_id));
+                        const storeAddress = getCleanStoreAddress(storeObj, evt);
+
+                        return (
+                          <tr key={evt.eventKey} className="hover:bg-zinc-50/70 transition-colors text-xs">
+                            {/* 1. Date & Shift */}
+                            <td className="py-2.5 px-3 align-top">
+                              <div className="font-medium text-zinc-900 leading-tight">
+                                {formatEpochToDisplay(evt.date)}
+                              </div>
+                              <div className="text-[10px] text-zinc-500 mt-1 flex items-center gap-1">
+                                <span className="px-1.5 py-0.2 bg-blue-50 text-[#0B57D0] border border-blue-200 rounded text-[9.5px] font-medium">
+                                  {evt.promoterList.length} Promoter{evt.promoterList.length === 1 ? "" : "s"}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* 2. Store / Location */}
+                            <td className="py-2.5 px-3 align-top">
+                              <div className="font-medium text-zinc-900 truncate leading-tight" title={getFormattedStoreName(evt.store_id, evt.store_name)}>
+                                {getFormattedStoreName(evt.store_id, evt.store_name)}
+                              </div>
+                              <div className="text-[10px] text-zinc-400 truncate mt-0.5" title={storeAddress}>
+                                {storeAddress}
+                              </div>
+                              <div className="text-[9px] text-[#0B57D0] truncate mt-0.5">
+                                {evt.campaign_title}
+                              </div>
+                            </td>
+
+                            {/* 3. Promoters Deployed */}
+                            <td className="py-2.5 px-3 align-top">
+                              <div className="flex flex-col gap-1.5">
+                                {evt.promoterList.map((p: any) => (
+                                  <div key={p.scheduleId} className="flex flex-col bg-zinc-50/80 border border-zinc-200 rounded px-2 py-1">
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span className="font-medium text-zinc-850 truncate">{p.promoterName}</span>
+                                      {p.actualStart ? (
+                                        <span className="text-[9px] font-mono text-emerald-700 font-medium">Act: {p.actualStart}-{p.actualEnd}</span>
+                                      ) : (
+                                        <span className="text-[9px] font-mono text-zinc-400">{p.shiftStart}-{p.shiftEnd}</span>
+                                      )}
+                                    </div>
+                                    <div className="flex items-center justify-between text-[9px] mt-0.5 text-zinc-500">
+                                      <span>Wage: <span className="font-mono text-zinc-700 font-medium">${p.wage.toFixed(2)}</span></span>
+                                      {p.personalClaimTotal > 0 && (
+                                        <span className="text-amber-700 font-medium font-mono">Claim: ${p.personalClaimTotal.toFixed(2)}</span>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+
+                            {/* 4. Items Moved (Shared Store Count) */}
+                            <td className="py-2.5 px-3 align-top">
+                              {!isReportEditMode ? (
+                                <div className="flex flex-col gap-1">
+                                  {evt.itemsMoved.length === 0 ? (
+                                    <span className="text-[11px] text-zinc-400 italic">0 pcs moved</span>
+                                  ) : (
+                                    <div className="flex flex-wrap gap-1">
+                                      {evt.itemsMoved.map((it: any) => {
+                                        const prod = products.find(p => p.sku === it.sku);
+                                        return (
+                                          <span
+                                            key={it.sku}
+                                            className="px-1.5 py-0.5 bg-blue-50/70 border border-blue-200 rounded text-[10px] font-medium text-[#0B57D0] shrink-0"
+                                            title={`${prod?.display_name || it.sku} (${it.sku})`}
+                                          >
+                                            {it.qty}x {prod?.display_name || it.sku}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                  <span className="text-[9.5px] font-mono text-zinc-450">
+                                    Total: {evt.totalUnitsMoved} unit{evt.totalUnitsMoved === 1 ? "" : "s"}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveItemsMovedModalShiftId(evt.primaryShiftId)}
+                                    className="px-2.5 py-1 bg-zinc-50 hover:bg-white border border-[#0B57D0] text-[#0B57D0] rounded text-[11px] font-medium transition-all shadow-xs flex items-center justify-between cursor-pointer"
+                                  >
+                                    <span className="truncate">
+                                      {evt.itemsMoved.length > 0 ? `${evt.totalUnitsMoved} pcs (${evt.itemsMoved.length} SKUs)` : "Set Items Moved"}
+                                    </span>
+                                    <Pencil size={11} className="shrink-0 ml-1" />
+                                  </button>
+                                  {evt.itemsMoved.length > 0 && (
+                                    <div className="flex flex-wrap gap-1">
+                                      {evt.itemsMoved.slice(0, 3).map((it: any) => (
+                                        <span key={it.sku} className="text-[9px] font-normal text-zinc-600 bg-zinc-100 px-1 rounded">
+                                          {it.qty}x {it.sku}
+                                        </span>
+                                      ))}
+                                      {evt.itemsMoved.length > 3 && (
+                                        <span className="text-[9px] font-normal text-zinc-400">+{evt.itemsMoved.length - 3} more</span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 5. Promoting Cost (Individual Claims + Company Claims) */}
+                            <td className="py-2.5 px-3 align-top">
+                              {!isReportEditMode ? (
+                                <div className="flex flex-col gap-1">
+                                  <div>
+                                    <span className="font-medium font-mono text-zinc-800">
+                                      ${evt.totalPromotingCost.toFixed(2)}
+                                    </span>
+                                    <div className="text-[9.5px] text-zinc-400 mt-0.5">
+                                      Ind: ${evt.totalIndividualClaims.toFixed(2)} | Co: ${evt.totalCompanyClaims.toFixed(2)}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => openReportClaimModal(evt)}
+                                    className="px-2.5 py-1 bg-zinc-50 hover:bg-white border border-amber-600 text-amber-700 rounded text-[11px] font-medium transition-all shadow-xs flex items-center justify-between cursor-pointer"
+                                  >
+                                    <span className="truncate">
+                                      {evt.totalPromotingCost > 0 
+                                        ? `Edit Claims ($${evt.totalPromotingCost.toFixed(2)})` 
+                                        : "Open Claim Form"}
+                                    </span>
+                                    <Receipt size={11} className="shrink-0 ml-1" />
+                                  </button>
+
+                                  <div className="flex items-center justify-between mt-0.5">
+                                    <span className="text-[9px] text-zinc-400">
+                                      Ind: ${evt.totalIndividualClaims.toFixed(2)} | Co: ${evt.totalCompanyClaims.toFixed(2)}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        evt.promoterList.forEach((p: any) => {
+                                          handleUpdateReportDraft(p.scheduleId, "promoting_cost", JSON.stringify([]));
+                                        });
+                                        handleUpdateReportDraft(evt.primaryShiftId, "company_claim", JSON.stringify([]));
+                                        handleUpdateReportDraft(evt.primaryShiftId, "shared_event_cost", JSON.stringify([]));
+                                      }}
+                                      className="text-[9px] font-medium text-zinc-500 hover:text-red-600 bg-zinc-100 hover:bg-red-50 border border-zinc-200 rounded px-1.5 py-0.2 cursor-pointer transition-colors"
+                                      title="Set all claims to $0.00"
+                                    >
+                                      Zero Cost
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 6. Promoter Wages */}
+                            <td className="py-2.5 px-3 align-top">
+                              {!isReportEditMode ? (
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-medium font-mono text-zinc-800">
+                                    ${evt.totalWages.toFixed(2)}
+                                  </span>
+                                  <span className="text-[9px] text-zinc-400">
+                                    {evt.promoterList.length} Promoter{evt.promoterList.length === 1 ? "" : "s"}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-2">
+                                  {evt.promoterList.map((p: any) => (
+                                    <div key={p.scheduleId} className="flex flex-col gap-0.5">
+                                      <span className="text-[9.5px] text-zinc-600 truncate">{p.promoterName}:</span>
+                                      <div className="flex items-center gap-1">
+                                        <span className="text-zinc-400 text-xs">$</span>
+                                        <input
+                                          type="number"
+                                          step="0.01"
+                                          min="0"
+                                          value={p.wage}
+                                          onChange={(e) => {
+                                            const num = parseFloat(e.target.value) || 0;
+                                            handleUpdateReportDraft(p.scheduleId, "promoter_wage", num);
+                                          }}
+                                          className="w-18 px-1.5 py-0.5 bg-white border border-zinc-200 rounded text-xs font-medium font-mono text-zinc-850 outline-none focus:border-[#0B57D0]"
+                                        />
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdateReportDraft(p.scheduleId, "promoter_wage", 0)}
+                                          className="text-[9px] font-medium text-zinc-500 hover:text-red-600 bg-zinc-100 hover:bg-red-50 border border-zinc-200 rounded px-1.5 py-0.5 cursor-pointer"
+                                          title="Mark No Pay"
+                                        >
+                                          No Pay
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 7. Total Cost */}
+                            <td className="py-2.5 px-3 align-top text-right pr-4">
+                              <span className="font-semibold font-mono text-zinc-900 text-xs">
+                                ${evt.totalActivationCost.toFixed(2)}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Modal: Set / Edit Items Moved for a specific shift */}
+            {activeItemsMovedModalShiftId && (() => {
+              const targetShift = schedules.find(s => String(s.id) === String(activeItemsMovedModalShiftId));
+              if (!targetShift) return null;
+
+              const currentItems = getShiftItemsMovedList(targetShift);
+              const storeObj = stores.find(st => String(st.id) === String(targetShift.store_id));
+
+              return (
+                <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150 font-primary">
+                  <div className="bg-white border border-zinc-200 rounded-lg shadow-xl max-w-lg w-full overflow-hidden flex flex-col">
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-150 bg-zinc-50 shrink-0">
+                      <div>
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-900">
+                          Items Moved (Activation Stock)
+                        </h3>
+                        <p className="text-[10px] text-zinc-500 mt-0.5">
+                          {getFormattedStoreName(targetShift.store_id, targetShift.store_name)} &bull; {targetShift.promoter_name} &bull; {formatEpochToDisplay(targetShift.date)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveItemsMovedModalShiftId(null)}
+                        className="p-1 hover:bg-zinc-200 rounded text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+
+                    {/* Body: Products Checklist with +/- Qty inputs */}
+                    <div className="p-5 max-h-[380px] overflow-y-auto custom-scrollbar flex flex-col gap-2.5">
+                      {reportCampaignProducts.length === 0 ? (
+                        <div className="py-8 text-center text-xs text-zinc-400 italic">
+                          No products found for this campaign.
+                        </div>
+                      ) : (
+                        reportCampaignProducts.map(p => {
+                          const existing = currentItems.find((it: any) => it.sku === p.sku);
+                          const qty = existing ? Number(existing.qty || 0) : 0;
+
+                          return (
+                            <div key={p.sku} className="flex items-center justify-between gap-3 p-2.5 border border-zinc-200 rounded bg-zinc-50/50 hover:bg-zinc-50 transition-colors">
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-xs font-medium text-zinc-800 truncate" title={p.display_name}>
+                                  {p.display_name}
+                                </span>
+                                <span className="text-[10px] font-mono text-zinc-400">
+                                  SKU: {p.sku}
+                                </span>
+                              </div>
+
+                              {/* Stepper Buttons */}
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const nextQty = Math.max(0, qty - 1);
+                                    let nextItems: any[];
+                                    if (nextQty === 0) {
+                                      nextItems = currentItems.filter((it: any) => it.sku !== p.sku);
+                                    } else if (existing) {
+                                      nextItems = currentItems.map((it: any) => it.sku === p.sku ? { ...it, qty: nextQty } : it);
+                                    } else {
+                                      nextItems = [...currentItems, { sku: p.sku, qty: nextQty }];
+                                    }
+                                    handleUpdateReportDraft(targetShift.id, "items_moved", JSON.stringify(nextItems));
+                                  }}
+                                  className="w-7 h-7 bg-white hover:bg-zinc-100 border border-zinc-200 rounded text-zinc-700 font-semibold flex items-center justify-center cursor-pointer transition-colors shadow-xs"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  value={qty}
+                                  onChange={(e) => {
+                                    const nextQty = Math.max(0, parseInt(e.target.value) || 0);
+                                    let nextItems: any[];
+                                    if (nextQty === 0) {
+                                      nextItems = currentItems.filter((it: any) => it.sku !== p.sku);
+                                    } else if (existing) {
+                                      nextItems = currentItems.map((it: any) => it.sku === p.sku ? { ...it, qty: nextQty } : it);
+                                    } else {
+                                      nextItems = [...currentItems, { sku: p.sku, qty: nextQty }];
+                                    }
+                                    handleUpdateReportDraft(targetShift.id, "items_moved", JSON.stringify(nextItems));
+                                  }}
+                                  className="w-14 h-7 text-center bg-white border border-zinc-200 rounded text-xs font-semibold font-mono text-zinc-900 outline-none focus:border-[#0B57D0]"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const nextQty = qty + 1;
+                                    let nextItems: any[];
+                                    if (existing) {
+                                      nextItems = currentItems.map((it: any) => it.sku === p.sku ? { ...it, qty: nextQty } : it);
+                                    } else {
+                                      nextItems = [...currentItems, { sku: p.sku, qty: nextQty }];
+                                    }
+                                    handleUpdateReportDraft(targetShift.id, "items_moved", JSON.stringify(nextItems));
+                                  }}
+                                  className="w-7 h-7 bg-white hover:bg-zinc-100 border border-zinc-200 rounded text-zinc-700 font-semibold flex items-center justify-center cursor-pointer transition-colors shadow-xs"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="flex items-center justify-between px-5 py-3 border-t border-zinc-150 bg-zinc-50 shrink-0">
+                      <div className="text-xs font-medium text-zinc-700 font-mono">
+                        Total Units: <span className="text-[#0B57D0] font-semibold">{currentItems.reduce((acc: number, it: any) => acc + Number(it.qty || 0), 0)} pcs</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setActiveItemsMovedModalShiftId(null)}
+                        className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-medium transition-all shadow-xs cursor-pointer"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Modal: Unified Claim Form (Individual & Company Claims) */}
+            {reportClaimModalEventKey && (() => {
+              const evt = reportActivationEvents.find(e => e.eventKey === reportClaimModalEventKey);
+              if (!evt) return null;
+
+              const storeObj = stores.find(st => String(st.id) === String(evt.store_id));
+              
+              let indivTotal = 0;
+              let compTotal = 0;
+              reportClaimModalItems.forEach(it => {
+                const amt = Number(it.amount || 0);
+                if (it.assignedType === "company" || !it.scheduleId) compTotal += amt;
+                else indivTotal += amt;
+              });
+              const grandTotal = indivTotal + compTotal;
+
+              return (
+                <div className="fixed inset-0 bg-black/45 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150 font-primary">
+                  <div className="w-[840px] max-w-[95vw] h-[550px] max-h-[85vh] bg-white rounded-lg border border-zinc-200 shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
+                    {/* Header */}
+                    <div className="bg-zinc-50 px-5 py-3.5 border-b border-zinc-150 flex justify-between items-center select-none shrink-0">
+                      <div>
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
+                          <Receipt size={14} className="text-amber-700" />
+                          Promoting Cost Claims (Individual & Company)
+                        </h3>
+                        <p className="text-[10.5px] text-zinc-500 font-mono mt-0.5">
+                          {getFormattedStoreName(evt.store_id, evt.store_name)} &bull; {evt.campaign_title} &bull; {formatEpochToDisplay(evt.date)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setReportClaimModalEventKey(null);
+                          setReportClaimModalItems([]);
+                        }}
+                        className="p-1 hover:bg-zinc-200 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+
+                    {/* Table Body */}
+                    <div className="flex-1 p-5 overflow-y-auto custom-scrollbar">
+                      <div className="w-full flex flex-col gap-3">
+                        {/* Table Header */}
+                        <div className="grid grid-cols-[170px_1fr_130px_110px_36px] gap-2.5 pb-2 border-b border-zinc-150 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1 select-none shrink-0">
+                          <div>Claim For / Type</div>
+                          <div>Description / Product</div>
+                          <div>Receipt Photo</div>
+                          <div>Amount</div>
+                          <div></div>
+                        </div>
+
+                        {/* Rows */}
+                        {reportClaimModalItems.length === 0 ? (
+                          <div className="py-12 text-center text-zinc-400 font-medium text-xs border border-dashed border-zinc-200 rounded-lg bg-zinc-50/50 select-none">
+                            No claims submitted or added yet for this activation. Click an add button below to add an expense or goods cost.
+                          </div>
+                        ) : (
+                          <div className="space-y-2.5">
+                            {reportClaimModalItems.map((item, index) => {
+                              const isGoods = item.type === "goods";
+                              const selectValue = isGoods ? "goods" : (item.assignedType === "company" ? "company" : (item.scheduleId || "company"));
+                              const matchedProduct = isGoods ? products.find(p => String(p.sku).toLowerCase() === String(item.sku || "").toLowerCase()) : null;
+                              const unitCost = matchedProduct ? (Number(matchedProduct.Cost) || Number(matchedProduct["Cost Price"]) || Number(matchedProduct["cost_price"]) || Number(matchedProduct["cost"]) || 0) : 0;
+
+                              return (
+                                <div key={item.id || index} className="grid grid-cols-[170px_1fr_130px_110px_36px] gap-2.5 items-center bg-zinc-50/40 p-1.5 border border-zinc-200/70 rounded-md">
+                                  {/* Claim For / Type */}
+                                  <div>
+                                    <select
+                                      value={selectValue}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val === "goods") {
+                                          handleUpdateClaimItem(item.id, "type", "goods");
+                                          handleUpdateClaimItem(item.id, "assignedType", "company");
+                                          handleUpdateClaimItem(item.id, "scheduleId", "");
+                                          handleUpdateClaimItem(item.id, "promoterName", "Company (Goods)");
+                                          handleUpdateClaimItem(item.id, "promoterId", "");
+                                        } else if (val === "company") {
+                                          handleUpdateClaimItem(item.id, "type", "expense");
+                                          handleUpdateClaimItem(item.id, "assignedType", "company");
+                                          handleUpdateClaimItem(item.id, "scheduleId", "");
+                                          handleUpdateClaimItem(item.id, "promoterName", "Company");
+                                          handleUpdateClaimItem(item.id, "promoterId", "");
+                                        } else {
+                                          const matchP = evt.promoterList.find((p: any) => String(p.scheduleId) === val);
+                                          handleUpdateClaimItem(item.id, "type", "expense");
+                                          handleUpdateClaimItem(item.id, "assignedType", "promoter");
+                                          handleUpdateClaimItem(item.id, "scheduleId", val);
+                                          handleUpdateClaimItem(item.id, "promoterName", matchP?.promoterName || "Promoter");
+                                          handleUpdateClaimItem(item.id, "promoterId", matchP?.promoterId || "");
+                                        }
+                                      }}
+                                      className="w-full px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer"
+                                    >
+                                      <option value="company">🏢 Company (Expense)</option>
+                                      <option value="goods">📦 Company (Goods/Cost)</option>
+                                      {evt.promoterList.map((p: any) => (
+                                        <option key={p.scheduleId} value={p.scheduleId}>
+                                          👤 {p.promoterName}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+
+                                  {/* Description or Product SKU + Qty */}
+                                  <div>
+                                    {isGoods ? (
+                                      <div className="flex items-center gap-1.5">
+                                        <select
+                                          value={item.sku || ""}
+                                          onChange={(e) => handleUpdateClaimItem(item.id, "sku", e.target.value)}
+                                          className="flex-1 min-w-0 px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer truncate"
+                                        >
+                                          <option value="">-- Select Campaign Product --</option>
+                                          {reportCampaignProducts.map(p => {
+                                            const pCost = Number(p.Cost) || Number(p["Cost Price"]) || Number(p["cost_price"]) || Number(p["cost"]) || 0;
+                                            return (
+                                              <option key={p.sku} value={p.sku}>
+                                                {p.sku} - {p.display_name} (Cost: ${pCost.toFixed(2)})
+                                              </option>
+                                            );
+                                          })}
+                                        </select>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          <input
+                                            type="number"
+                                            min="1"
+                                            placeholder="Qty"
+                                            value={item.qty ?? 1}
+                                            onChange={(e) => handleUpdateClaimItem(item.id, "qty", Math.max(1, parseInt(e.target.value) || 1))}
+                                            className="w-14 px-1.5 py-1 text-center bg-white border border-zinc-200 rounded text-xs font-medium font-mono text-zinc-850 outline-none focus:border-[#0B57D0]"
+                                            title="Quantity of goods used"
+                                          />
+                                          <span className="text-[10px] text-zinc-400 font-mono">pcs</span>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <input
+                                        type="text"
+                                        placeholder="e.g. Taxi transport, Ice & cups, Lunch claim..."
+                                        value={item.item || ""}
+                                        onChange={(e) => handleUpdateClaimItem(item.id, "item", e.target.value)}
+                                        className="w-full px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0]"
+                                      />
+                                    )}
+                                  </div>
+
+                                  {/* Receipt Photo (Optional) */}
+                                  <div className="flex items-center gap-1.5">
+                                    {item.receipt_photo ? (
+                                      <div className="flex items-center gap-1">
+                                        <a
+                                          href={item.receipt_photo}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="h-7 px-2 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-[#0B57D0] rounded text-[10.5px] font-medium flex items-center gap-1 transition-colors cursor-pointer"
+                                          title="View Receipt Photo"
+                                        >
+                                          <ImageIcon size={12} />
+                                          View
+                                        </a>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleUpdateClaimItem(item.id, "receipt_photo", "")}
+                                          className="p-1 hover:bg-zinc-200 text-zinc-400 hover:text-zinc-600 rounded text-[10px] cursor-pointer"
+                                          title="Remove photo"
+                                        >
+                                          <X size={12} />
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <label className="h-7 px-2 bg-white hover:bg-zinc-50 border border-zinc-200 hover:border-zinc-300 text-zinc-600 rounded text-[10.5px] font-medium flex items-center gap-1 transition-colors cursor-pointer shrink-0">
+                                        <Upload size={11} />
+                                        {uploadingReceiptIndex === index ? "Uploading..." : "Attach Photo"}
+                                        <input
+                                          type="file"
+                                          accept="image/*"
+                                          className="hidden"
+                                          disabled={uploadingReceiptIndex !== null}
+                                          onChange={(e) => {
+                                            const f = e.target.files?.[0];
+                                            if (f) handleUploadClaimReceipt(index, f);
+                                          }}
+                                        />
+                                      </label>
+                                    )}
+                                  </div>
+
+                                  {/* Amount */}
+                                  <div>
+                                    <div className="relative">
+                                      <span className="absolute left-2 top-1 text-zinc-400 font-medium select-none text-xs">$</span>
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        disabled={isGoods}
+                                        placeholder="0.00"
+                                        value={item.amount !== undefined ? (typeof item.amount === "number" ? item.amount.toFixed(2) : item.amount) : ""}
+                                        onChange={(e) => handleUpdateClaimItem(item.id, "amount", e.target.value === "" ? "" : parseFloat(e.target.value) || 0)}
+                                        className={cn(
+                                          "w-full pl-5 pr-2 py-1 bg-white border border-zinc-200 rounded text-xs font-medium font-mono text-zinc-850 outline-none focus:border-[#0B57D0]",
+                                          isGoods && "bg-zinc-50 text-zinc-600 cursor-not-allowed"
+                                        )}
+                                        title={isGoods ? `Auto-calculated: ${item.qty || 1} pcs × $${unitCost.toFixed(2)} cost price` : undefined}
+                                      />
+                                    </div>
+                                  </div>
+
+                                  {/* Delete button */}
+                                  <div className="flex justify-center">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteClaimItem(item.id)}
+                                      className="p-1 hover:bg-red-50 text-zinc-400 hover:text-red-500 rounded transition-colors cursor-pointer"
+                                      title="Remove claim row"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Add Row Buttons */}
+                        <div className="flex flex-wrap items-center gap-2 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => handleAddClaimRow("expense", "company")}
+                            className="px-3 py-1.5 border border-dashed border-amber-600 hover:bg-amber-50 text-amber-700 font-medium rounded text-xs cursor-pointer transition-all flex items-center gap-1.5"
+                          >
+                            <Plus size={13} className="stroke-[2.5]" />
+                            Add Company Expense
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleAddClaimRow("goods", "company")}
+                            className="px-3 py-1.5 border border-dashed border-emerald-600 hover:bg-emerald-50 text-emerald-700 font-medium rounded text-xs cursor-pointer transition-all flex items-center gap-1.5"
+                          >
+                            <Plus size={13} className="stroke-[2.5]" />
+                            Add Company Goods (Cost Price)
+                          </button>
+                          {evt.promoterList.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const p = evt.promoterList[0];
+                                handleAddClaimRow("expense", "promoter", p.promoterId, p.promoterName, p.scheduleId);
+                              }}
+                              className="px-3 py-1.5 border border-dashed border-blue-600 hover:bg-blue-50 text-[#0B57D0] font-medium rounded text-xs cursor-pointer transition-all flex items-center gap-1.5"
+                            >
+                              <Plus size={13} className="stroke-[2.5]" />
+                              Add Promoter Claim
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="bg-zinc-50 px-5 py-3 border-t border-zinc-150 flex justify-between items-center select-none shrink-0">
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="text-zinc-500">
+                          Individual: <span className="font-semibold font-mono text-zinc-800">${indivTotal.toFixed(2)}</span>
+                        </span>
+                        <span className="text-zinc-300">|</span>
+                        <span className="text-zinc-500">
+                          Company: <span className="font-semibold font-mono text-zinc-800">${compTotal.toFixed(2)}</span>
+                        </span>
+                        <span className="text-zinc-300">|</span>
+                        <span className="text-amber-800 font-medium">
+                          Total Claims: <span className="font-semibold font-mono text-amber-900 text-sm">${grandTotal.toFixed(2)}</span>
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setReportClaimModalEventKey(null);
+                            setReportClaimModalItems([]);
+                          }}
+                          className="px-3.5 py-1.5 border border-zinc-300 hover:border-zinc-400 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded text-xs cursor-pointer transition-colors shadow-2xs"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveReportClaimModal(true)}
+                          className="px-3.5 py-1.5 bg-zinc-200 hover:bg-zinc-300 text-zinc-800 font-medium rounded text-xs cursor-pointer transition-all shadow-xs"
+                          title="Clear all claims to $0.00"
+                        >
+                          Zero Cost
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveReportClaimModal(false)}
+                          className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs cursor-pointer transition-all shadow-xs flex items-center gap-1.5"
+                        >
+                          <Check size={13} className="stroke-[3]" />
+                          Apply Claims
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
           </div>
         )}
@@ -5727,24 +7368,57 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         </div>
                       </div>
 
-                      {/* Select Brand */}
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
-                          Select Brand
-                        </label>
-                        <select
-                          value={campBrand}
-                          onChange={(e) => {
-                            setCampBrand(e.target.value);
-                            setCampProducts([]); // Reset products selection when brand changes
-                          }}
-                          className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs cursor-pointer"
-                        >
-                          <option value="">-- Choose Brand --</option>
-                          {brands.map(b => (
-                            <option key={b.id} value={b.id}>{b["display_name"]}</option>
-                          ))}
-                        </select>
+                      {/* Select Multiple Brands (Min 1 brand) */}
+                      <div className="flex flex-col gap-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                            Select Brands <span className="text-red-500">*</span>
+                          </label>
+                          <span className="text-[10px] text-zinc-400 font-semibold lowercase">
+                            (min 1 brand)
+                          </span>
+                        </div>
+                        
+                        <div className="flex flex-wrap gap-1.5 p-2 bg-zinc-50 border border-zinc-200 rounded max-h-36 overflow-y-auto custom-scrollbar">
+                          {brands.map(b => {
+                            const selectedBrandIds = campBrand.split(",").map(id => id.trim()).filter(Boolean);
+                            const isSelected = selectedBrandIds.includes(String(b.id));
+
+                            return (
+                              <button
+                                key={b.id}
+                                type="button"
+                                onClick={() => {
+                                  let next: string[];
+                                  if (isSelected) {
+                                    next = selectedBrandIds.filter(id => id !== String(b.id));
+                                  } else {
+                                    next = [...selectedBrandIds, String(b.id)];
+                                  }
+                                  setCampBrand(next.join(","));
+                                  
+                                  // Prune unassociated products
+                                  const validSkus = products
+                                    .filter(p => next.includes(String(p.brands_id || p["brands_id"])))
+                                    .map(p => p.sku);
+                                  setCampProducts(prev => prev.filter(sku => validSkus.includes(sku)));
+                                }}
+                                className={cn(
+                                  "px-2.5 py-1 text-xs font-semibold rounded border transition-all cursor-pointer flex items-center gap-1.5 select-none",
+                                  isSelected
+                                    ? "bg-[#0B57D0] text-white border-[#0B57D0] shadow-xs"
+                                    : "bg-white text-zinc-700 border-zinc-200 hover:border-zinc-400 hover:bg-zinc-100"
+                                )}
+                              >
+                                <span>{b["display_name"]}</span>
+                                {isSelected && <Check size={11} className="stroke-[3]" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {campBrand.split(",").map(id => id.trim()).filter(Boolean).length === 0 && (
+                          <span className="text-[10px] text-amber-600 font-medium pl-0.5">Please select at least 1 brand.</span>
+                        )}
                       </div>
 
                       {/* Select Products Checklist */}
@@ -5891,231 +7565,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               </div>
             )}
 
-          </div>
-        )}
-
-        {/* Promoters Database Tab */}
-        {activeTab === "promoters" && (
-          <div className="w-full h-full flex flex-col gap-4 overflow-hidden relative">
-            
-            {isCreatingPromoter ? (
-              /* Promoter Creation / Edit Form */
-              <div className="flex flex-col flex-1 bg-white border border-zinc-200 rounded relative shadow-sm overflow-hidden select-none max-w-xl mx-auto w-full h-[calc(100vh-220px)]">
-                <form onSubmit={handleSavePromoter} className="flex flex-col flex-1 h-full overflow-hidden text-xs font-primary">
-                  <div className="flex justify-between items-center border-b border-zinc-150 px-6 py-4 bg-zinc-50 shrink-0">
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-900">
-                      {editingPromoterId ? "Edit Promoter Details" : "Add New Promoter"}
-                    </h3>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCreatingPromoter(false);
-                        setEditingPromoterId(null);
-                        setPromoterId("");
-                        setPromoterName("");
-                        setPromoterFullName("");
-                        setPromoterPhone("");
-                        setPromoterEmail("");
-                        setPromoterPaynow("");
-                      }}
-                      className="p-1 hover:bg-zinc-100 rounded text-zinc-455 hover:text-zinc-855 cursor-pointer"
-                    >
-                      <X size={15} />
-                    </button>
-                  </div>
-
-                  <div className="flex flex-col gap-4 flex-grow overflow-y-auto p-6">
-                    {/* Promoter ID */}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
-                        Promoter ID
-                      </label>
-                      <input
-                        type="text"
-                        value={promoterId}
-                        onChange={(e) => setPromoterId(e.target.value)}
-                        disabled={!!editingPromoterId}
-                        placeholder={editingPromoterId ? "" : "e.g. emp_01 (Leave blank to auto-generate)"}
-                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
-                      />
-                    </div>
-
-                    {/* Nickname */}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
-                        Nickname
-                      </label>
-                      <input
-                        type="text"
-                        value={promoterName}
-                        onChange={(e) => setPromoterName(e.target.value)}
-                        placeholder="e.g. John"
-                        required
-                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-955 focus:ring-1 focus:ring-zinc-955 transition-all shadow-xs"
-                      />
-                    </div>
-
-                    {/* Full Name */}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
-                        Full Name
-                      </label>
-                      <input
-                        type="text"
-                        value={promoterFullName}
-                        onChange={(e) => setPromoterFullName(e.target.value)}
-                        placeholder="e.g. John Doe"
-                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-955 focus:ring-1 focus:ring-zinc-955 transition-all shadow-xs"
-                      />
-                    </div>
-
-                    {/* Promoter Phone */}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
-                        Phone Number
-                      </label>
-                      <input
-                        type="text"
-                        value={promoterPhone}
-                        onChange={(e) => setPromoterPhone(e.target.value)}
-                        placeholder="e.g. +65 91234567"
-                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-955 focus:ring-1 focus:ring-zinc-955 transition-all shadow-xs"
-                      />
-                    </div>
-
-                    {/* Promoter Email */}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
-                        Email Address
-                      </label>
-                      <input
-                        type="email"
-                        value={promoterEmail}
-                        onChange={(e) => setPromoterEmail(e.target.value)}
-                        placeholder="e.g. john.doe@example.com"
-                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-955 focus:ring-1 focus:ring-zinc-955 transition-all shadow-xs"
-                      />
-                    </div>
-
-                    {/* Paynow Account */}
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
-                        Paynow Account
-                      </label>
-                      <input
-                        type="text"
-                        value={promoterPaynow}
-                        onChange={(e) => setPromoterPaynow(e.target.value)}
-                        placeholder="e.g. Mobile No. or NRIC"
-                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-955 focus:ring-1 focus:ring-zinc-955 transition-all shadow-xs"
-                      />
-                    </div>
-
-                    {/* PIN - Only visible inside Edit form */}
-                    {editingPromoterId && (
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
-                          Login PIN (4 digits)
-                        </label>
-                        <input
-                          type="text"
-                          value={promoterPin}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/\D/g, "");
-                            if (val.length <= 4) setPromoterPin(val);
-                          }}
-                          placeholder="e.g. 1234"
-                          maxLength={4}
-                          className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-955 focus:ring-1 focus:ring-zinc-955 transition-all shadow-xs"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex justify-end gap-3 border-t border-zinc-150 px-6 py-4 bg-zinc-50 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsCreatingPromoter(false);
-                        setEditingPromoterId(null);
-                        setPromoterId("");
-                        setPromoterName("");
-                        setPromoterFullName("");
-                        setPromoterPhone("");
-                        setPromoterEmail("");
-                        setPromoterPaynow("");
-                        setPromoterPin("");
-                      }}
-                      className="px-4 py-2 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-650 font-bold rounded cursor-pointer transition-all"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded cursor-pointer shadow-sm transition-all"
-                    >
-                      Save Promoter
-                    </button>
-                  </div>
-                </form>
-              </div>
-            ) : (
-              /* Promoter Table list view */
-              <div className="w-full h-full flex flex-col gap-3 snap-deals-table">
-                <div className="flex justify-between items-center pb-1 border-b border-zinc-150 shrink-0">
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setPromoterSubTab("active")}
-                      className={cn(
-                        "px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer",
-                        promoterSubTab === "active"
-                          ? "border-[#0B57D0] text-[#0B57D0]"
-                          : "border-transparent text-zinc-400 hover:text-zinc-600"
-                      )}
-                    >
-                      Active Promoter
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setPromoterSubTab("archive")}
-                      className={cn(
-                        "px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer",
-                        promoterSubTab === "archive"
-                          ? "border-[#0B57D0] text-[#0B57D0]"
-                          : "border-transparent text-zinc-400 hover:text-zinc-600"
-                      )}
-                    >
-                      Archive
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCreatingPromoter(true);
-                      setEditingPromoterId(null);
-                      setPromoterId("");
-                      setPromoterName("");
-                      setPromoterPhone("");
-                    }}
-                    className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Plus size={13} className="stroke-[2.5]" />
-                    Add Promoter
-                  </button>
-                </div>
-
-                <DataTable
-                  columns={promotersColumns}
-                  data={mappedPromoters}
-                  height="h-full"
-                  title=""
-                  userRole="admin"
-                  fetching={loadingPromoters}
-                />
-              </div>
-            )}
           </div>
         )}
 
@@ -6887,19 +8336,128 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       </div>
 
                       <div className="flex flex-col gap-3">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Retailer</label>
-                          <select
-                            value={printRetailerId}
-                            onChange={(e) => setPrintRetailerId(e.target.value)}
-                            className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none cursor-pointer focus:border-[#0B57D0]"
-                          >
-                            <option value="">-- Choose Retailer --</option>
-                            {retailers.filter(r => !(r.archived && (String(r.archived) === "1" || String(r.archived) === "true"))).map(r => (
-                              <option key={r.id} value={r.id}>{r["display_name"] || r.name || r.id}</option>
-                            ))}
-                          </select>
-                        </div>
+                        {/* Searchable Filter Dropdown for Retailer */}
+                        {(() => {
+                          const availableRetailers = retailers
+                            .filter(r => !(r.archived && (String(r.archived) === "1" || String(r.archived) === "true")))
+                            .filter(r => !isGroupRetailer(r));
+
+                          const filteredRetailers = !printRetailerSearch.trim()
+                            ? availableRetailers
+                            : availableRetailers.filter(r => {
+                                const q = printRetailerSearch.toLowerCase().trim();
+                                const name = (r["display_name"] || r.name || "").toLowerCase();
+                                const id = String(r.id || "").toLowerCase();
+                                return name.includes(q) || id.includes(q);
+                              });
+
+                          const selectedRetailerObj = availableRetailers.find(r => String(r.id) === String(printRetailerId));
+
+                          return (
+                            <div className="flex flex-col gap-1 relative" ref={retailerDropdownRef}>
+                              <div className="flex items-center justify-between">
+                                <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">
+                                  Select Retailer <span className="text-red-500">*</span>
+                                </label>
+                                <span className="text-[9px] text-zinc-400 font-semibold lowercase">
+                                  ({availableRetailers.length} available)
+                                </span>
+                              </div>
+
+                              {/* Trigger Button */}
+                              <button
+                                type="button"
+                                onClick={() => setIsPrintRetailerOpen(prev => !prev)}
+                                className={cn(
+                                  "w-full px-2.5 py-1.5 bg-white border rounded text-xs font-semibold text-left flex items-center justify-between transition-all cursor-pointer shadow-xs",
+                                  isPrintRetailerOpen ? "border-[#0B57D0] ring-1 ring-[#0B57D0]/30" : "border-zinc-200 hover:border-zinc-300",
+                                  !printRetailerId && "text-zinc-400"
+                                )}
+                              >
+                                <span className="truncate">
+                                  {selectedRetailerObj ? (selectedRetailerObj["display_name"] || selectedRetailerObj.name || selectedRetailerObj.id) : "-- Choose Retailer --"}
+                                </span>
+                                <div className="flex items-center gap-1 shrink-0 text-zinc-400">
+                                  {printRetailerId && (
+                                    <span
+                                      role="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setPrintRetailerId("");
+                                        setPrintRetailerSearch("");
+                                      }}
+                                      className="p-0.5 hover:text-zinc-600 rounded hover:bg-zinc-100"
+                                      title="Clear selection"
+                                    >
+                                      <X size={12} />
+                                    </span>
+                                  )}
+                                  <ChevronDown size={13} className={cn("transition-transform", isPrintRetailerOpen && "rotate-180")} />
+                                </div>
+                              </button>
+
+                              {/* Dropdown Floating Panel */}
+                              {isPrintRetailerOpen && (
+                                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-zinc-200 rounded-lg shadow-xl z-50 p-2 flex flex-col gap-1.5 animate-in fade-in zoom-in-95 duration-100">
+                                  {/* Search Box */}
+                                  <div className="relative flex items-center">
+                                    <Search size={13} className="absolute left-2.5 text-zinc-400 pointer-events-none" />
+                                    <input
+                                      type="text"
+                                      value={printRetailerSearch}
+                                      onChange={(e) => setPrintRetailerSearch(e.target.value)}
+                                      placeholder={`Search ${availableRetailers.length} retailers...`}
+                                      autoFocus
+                                      className="w-full pl-8 pr-7 py-1.5 bg-zinc-50 border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:bg-white focus:border-[#0B57D0] transition-colors"
+                                    />
+                                    {printRetailerSearch && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setPrintRetailerSearch("")}
+                                        className="absolute right-2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    )}
+                                  </div>
+
+                                  {/* Retailer Items List */}
+                                  <div className="max-h-48 overflow-y-auto custom-scrollbar flex flex-col gap-0.5">
+                                    {filteredRetailers.length === 0 ? (
+                                      <div className="py-4 text-center text-xs text-zinc-400 italic">
+                                        No retailers match &quot;{printRetailerSearch}&quot;
+                                      </div>
+                                    ) : (
+                                      filteredRetailers.map(r => {
+                                        const isSelected = String(r.id) === String(printRetailerId);
+                                        return (
+                                          <button
+                                            key={r.id}
+                                            type="button"
+                                            onClick={() => {
+                                              setPrintRetailerId(r.id);
+                                              setIsPrintRetailerOpen(false);
+                                              setPrintRetailerSearch("");
+                                            }}
+                                            className={cn(
+                                              "w-full text-left px-2.5 py-1.5 rounded text-xs font-semibold flex items-center justify-between cursor-pointer transition-colors",
+                                              isSelected
+                                                ? "bg-[#0B57D0] text-white font-bold"
+                                                : "hover:bg-zinc-100 text-zinc-700"
+                                            )}
+                                          >
+                                            <span className="truncate">{r["display_name"] || r.name || r.id}</span>
+                                            {isSelected && <Check size={12} className="stroke-[3] shrink-0" />}
+                                          </button>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })()}
                         <div className="flex gap-4">
                           <div className="flex flex-col gap-1 flex-1">
                             <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</label>
@@ -6966,8 +8524,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 {/* Header section */}
                 <div className="flex justify-between items-center select-none pb-1">
                   <div className="flex flex-col gap-0.5">
-                    <h2 className="text-base font-bold text-zinc-900">Promoter Payout Management</h2>
-                    <p className="text-xs text-zinc-505 font-medium">Create, review, and mark payments for promoter shifts</p>
+                    <h2 className="text-base font-semibold text-zinc-900">Promoter Payout Management</h2>
+                    <p className="text-xs text-zinc-500 font-normal">Create, review, and mark payments for promoter shifts</p>
                   </div>
                   <button
                     type="button"
@@ -6981,7 +8539,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       setPayoutFetchError(null);
                       setIsCreatePayoutOpen(true);
                     }}
-                    className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5"
+                    className="px-3.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
                   >
                     <Plus size={14} className="stroke-[2.5]" />
                     Create Payout
@@ -7004,10 +8562,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 {/* Form Header */}
                 <div className="flex justify-between items-center pb-1 select-none">
                   <div className="flex flex-col gap-0.5">
-                    <h3 className="text-sm font-bold text-zinc-900">
+                    <h3 className="text-sm font-semibold text-zinc-900">
                       {editingPayoutId ? "Edit Promoter Payout" : "Create Promoter Payout"}
                     </h3>
-                    <p className="text-[11px] text-zinc-500 font-semibold">
+                    <p className="text-[11px] text-zinc-500 font-normal">
                       Configure Date Range and Hourly Wage Rate to fetch scheduler shifts
                     </p>
                   </div>
@@ -7017,7 +8575,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       setIsCreatePayoutOpen(false);
                       setEditingPayoutId(null);
                     }}
-                    className="p-1 rounded hover:bg-zinc-200 text-zinc-505 hover:text-zinc-800 transition-colors cursor-pointer"
+                    className="p-1 rounded hover:bg-zinc-200 text-zinc-400 hover:text-zinc-700 transition-colors cursor-pointer"
                   >
                     <X size={18} />
                   </button>
@@ -7027,15 +8585,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 <div className="flex-1 min-h-0 overflow-auto flex flex-col gap-4">
                   {/* Setup Card */}
                   <div className="bg-white p-4 rounded border border-zinc-200 shadow-2xs flex flex-col gap-3">
-                    <h4 className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Payout Configurations</h4>
+                    <h4 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Payout Configurations</h4>
                     <div className="grid grid-cols-4 gap-4">
                       <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-zinc-650 uppercase tracking-wider pl-0.5">Select Promoter</label>
+                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Select Promoter</label>
                         <select
                           value={selectedPayoutPromoterId}
                           onChange={(e) => setSelectedPayoutPromoterId(e.target.value)}
                           disabled={!!editingPayoutId}
-                          className="px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer disabled:bg-zinc-50 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                          className="px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer disabled:bg-zinc-50 disabled:text-zinc-500 disabled:cursor-not-allowed"
                         >
                           <option value="">-- Choose Promoter --</option>
                           {promoters.filter(p => !(p.archived && (String(p.archived) === "1" || String(p.archived) === "true"))).map(p => (
@@ -7044,36 +8602,36 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         </select>
                       </div>
                       <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-zinc-655 uppercase tracking-wider pl-0.5">Start Date</label>
+                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Start Date</label>
                         <input
                           type="date"
                           value={payoutStartDate}
                           onChange={(e) => setPayoutStartDate(e.target.value)}
                           disabled={!!editingPayoutId}
-                          className="px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50 disabled:text-zinc-500"
+                          className="px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50 disabled:text-zinc-500"
                         />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-zinc-655 uppercase tracking-wider pl-0.5">End Date</label>
+                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">End Date</label>
                         <input
                           type="date"
                           value={payoutEndDate}
                           onChange={(e) => setPayoutEndDate(e.target.value)}
                           disabled={!!editingPayoutId}
-                          className="px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50 disabled:text-zinc-500"
+                          className="px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50 disabled:text-zinc-500"
                         />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-zinc-655 uppercase tracking-wider pl-0.5">Hour Rate ($)</label>
+                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Hour Rate ($)</label>
                         <div className="relative">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-semibold text-zinc-400">$</span>
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-normal text-zinc-400">$</span>
                           <input
                             type="number"
                             value={payoutHourlyRate}
                             onChange={(e) => setPayoutHourlyRate(e.target.value)}
                             disabled={!!editingPayoutId}
                             placeholder="e.g. 15.00"
-                            className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50 disabled:text-zinc-500"
+                            className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50 disabled:text-zinc-500"
                           />
                         </div>
                       </div>
@@ -7085,7 +8643,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           type="button"
                           onClick={fetchPayoutSchedules}
                           disabled={isPayoutFetching}
-                          className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-900 text-white font-bold rounded text-xs shadow-sm transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                          className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-900 text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                         >
                           {isPayoutFetching ? (
                             <>
@@ -7105,10 +8663,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                   {/* Validation Error Message */}
                   {payoutFetchError && (
-                    <div className="bg-red-50 border border-red-200 text-red-750 px-4 py-3 rounded flex items-start gap-2.5 text-xs font-semibold shadow-2xs leading-relaxed animate-in fade-in zoom-in-95 duration-150">
+                    <div className="bg-red-50 border border-red-200 text-red-750 px-4 py-3 rounded flex items-start gap-2.5 text-xs font-medium shadow-2xs leading-relaxed animate-in fade-in zoom-in-95 duration-150">
                       <AlertTriangle size={16} className="text-red-500 shrink-0 mt-0.5" />
                       <div>
-                        <span className="font-bold block text-red-855 mb-0.5">Time Logging Conflict Detected</span>
+                        <span className="font-semibold block text-red-800 mb-0.5">Time Logging Conflict Detected</span>
                         {payoutFetchError}
                       </div>
                     </div>
@@ -7118,15 +8676,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   {editedPayoutRows.length > 0 && (
                     <div className="flex-1 bg-white border border-zinc-200 rounded overflow-hidden shadow-2xs flex flex-col min-h-[250px]">
                       <div className="bg-zinc-50 px-4 py-2.5 border-b border-zinc-200 flex justify-between items-center">
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Shift Wage Breakdown</span>
-                        <span className="text-[10px] font-semibold text-zinc-505">
-                          Total Wages: <span className="font-bold text-[#0B57D0] text-xs">${editedPayoutRows.filter(r => r.selected).reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2)}</span>
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Shift Wage Breakdown</span>
+                        <span className="text-[10.5px] font-normal text-zinc-500">
+                          Total Wages: <span className="font-semibold text-[#0B57D0] text-xs font-mono">${editedPayoutRows.filter(r => r.selected).reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2)}</span>
                         </span>
                       </div>
                       <div className="flex-1 overflow-auto">
                         <table className="w-full text-left border-collapse text-xs">
                           <thead>
-                            <tr className="bg-zinc-50/50 border-b border-zinc-250 text-zinc-650 font-bold uppercase tracking-wider sticky top-0 select-none">
+                            <tr className="bg-zinc-50/70 border-b border-zinc-200 text-zinc-500 font-semibold uppercase tracking-wider sticky top-0 select-none">
                               <th className="py-2.5 px-3 w-10 text-center">
                                 <input
                                   type="checkbox"
@@ -7140,6 +8698,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               </th>
                               <th className="py-2.5 px-4 w-12 text-center">No.</th>
                               <th className="py-2.5 px-3">Date</th>
+                              <th className="py-2.5 px-3">Clock Photos</th>
                               <th className="py-2.5 px-3">Start Time</th>
                               <th className="py-2.5 px-3">End Time</th>
                               <th className="py-2.5 px-3">Total Time</th>
@@ -7148,7 +8707,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               <th className="py-2.5 px-3">Task Details</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-zinc-100 font-medium">
+                          <tbody className="divide-y divide-zinc-100 font-normal text-zinc-700">
                             {editedPayoutRows.map((row, idx) => {
                               const formatRowTimestamp = (ts: any): string => {
                                 const d = new Date(Number(ts));
@@ -7163,7 +8722,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               const isAlreadyPaid = row.alreadyPaid;
                               const rowStyle = isAlreadyPaid 
                                 ? "opacity-50 bg-zinc-50/55 select-none" 
-                                : "hover:bg-zinc-50/20 transition-colors";
+                                : "hover:bg-zinc-50/30 transition-colors";
+
+                              const sched = schedules.find(s => String(s.id) === String(row.scheduleId));
+                              const checkInPhoto = row.checkInSelfie || sched?.check_in_selfie;
+                              const checkOutPhoto = row.checkOutSelfie || sched?.check_out_selfie;
 
                               return (
                                 <tr key={row.scheduleId} className={rowStyle}>
@@ -7179,10 +8742,48 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                       className="rounded text-[#0B57D0] focus:ring-[#0B57D0] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                                     />
                                   </td>
-                                  <td className="py-2.5 px-4 text-center font-bold text-zinc-400">{idx + 1}</td>
-                                  <td className="py-2.5 px-3 font-semibold text-zinc-800">{formatRowTimestamp(row.date)}</td>
+                                  <td className="py-2.5 px-4 text-center font-medium text-zinc-400">{idx + 1}</td>
+                                  <td className="py-2.5 px-3 font-medium text-zinc-800">{formatRowTimestamp(row.date)}</td>
+                                  
+                                  {/* Clock In & Clock Out Photos */}
+                                  <td className="py-2.5 px-3">
+                                    {!checkInPhoto && !checkOutPhoto ? (
+                                      <span className="text-[10px] text-zinc-400 font-mono italic">No photos</span>
+                                    ) : (
+                                      <div className="flex items-center gap-1.5">
+                                        {checkInPhoto ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => setImagePreviewModalUrl(checkInPhoto)}
+                                            className="relative group w-7 h-7 rounded border border-blue-200 hover:border-blue-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
+                                            title="View Clock-In Selfie"
+                                          >
+                                            <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                                            <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[6.5px] text-white font-bold text-center leading-none py-0.5">IN</span>
+                                          </button>
+                                        ) : (
+                                          <span className="text-[9px] text-zinc-400 font-mono italic">No In</span>
+                                        )}
+
+                                        {checkOutPhoto ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => setImagePreviewModalUrl(checkOutPhoto)}
+                                            className="relative group w-7 h-7 rounded border border-emerald-200 hover:border-emerald-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
+                                            title="View Clock-Out Selfie"
+                                          >
+                                            <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                                            <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[6.5px] text-white font-bold text-center leading-none py-0.5">OUT</span>
+                                          </button>
+                                        ) : (
+                                          <span className="text-[9px] text-zinc-400 font-mono italic">No Out</span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+
                                   {row.absent ? (
-                                    <td colSpan={4} className="py-2.5 px-3 text-red-650 font-bold">
+                                    <td colSpan={4} className="py-2.5 px-3 text-red-600 font-medium">
                                       Absent: {row.absentReason || "Reason not specified"}
                                     </td>
                                   ) : (
@@ -7203,7 +8804,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             } : r);
                                             setEditedPayoutRows(updated);
                                           }}
-                                          className="px-2 py-0.5 border border-zinc-200 rounded text-xs font-semibold focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                          className="px-2 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
                                         />
                                       </td>
                                       <td className="py-2.5 px-3">
@@ -7222,13 +8823,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             } : r);
                                             setEditedPayoutRows(updated);
                                           }}
-                                          className="px-2 py-0.5 border border-zinc-200 rounded text-xs font-semibold focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                          className="px-2 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
                                         />
                                       </td>
-                                      <td className="py-2.5 px-3 font-bold text-zinc-800">{row.totalTime.toFixed(2)} hrs</td>
+                                      <td className="py-2.5 px-3 font-medium text-zinc-800">{row.totalTime.toFixed(2)} hrs</td>
                                       <td className="py-2.5 px-3 text-center">
                                         <div className="relative inline-block">
-                                          <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-zinc-450 font-bold">$</span>
+                                          <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-normal">$</span>
                                           <input
                                             type="number"
                                             value={row.hourlyRate}
@@ -7242,14 +8843,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                               } : r);
                                               setEditedPayoutRows(updated);
                                             }}
-                                            className="w-16 pl-4 pr-1.5 py-0.5 border border-zinc-200 rounded-lg text-center text-xs font-semibold focus:border-[#0B57D0] outline-none shadow-2xs disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                            className="w-16 pl-4 pr-1.5 py-0.5 border border-zinc-200 rounded text-center text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
                                           />
                                         </div>
                                       </td>
                                     </>
                                   )}
-                                  <td className="py-2.5 px-3 font-bold text-[#0B57D0]">${row.totalPayout.toFixed(2)}</td>
-                                  <td className="py-2.5 px-3 text-zinc-600 font-semibold">{row.taskDetails}</td>
+                                  <td className="py-2.5 px-3 font-semibold text-zinc-900 font-mono">${row.totalPayout.toFixed(2)}</td>
+                                  <td className="py-2.5 px-3 text-zinc-600 font-normal">{row.taskDetails}</td>
                                 </tr>
                               );
                             })}
@@ -7268,7 +8869,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       setIsCreatePayoutOpen(false);
                       setEditingPayoutId(null);
                     }}
-                    className="px-4 py-2 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded text-xs cursor-pointer transition-colors shadow-2xs"
+                    className="px-4 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded text-xs cursor-pointer transition-colors shadow-2xs"
                   >
                     Cancel
                   </button>
@@ -7276,7 +8877,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     type="button"
                     onClick={handleSavePayout}
                     disabled={editedPayoutRows.filter(r => r.selected).length === 0 || isPayoutSaving}
-                    className="px-5 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-4.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {isPayoutSaving ? (
                       <>
@@ -7299,53 +8900,53 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <div className="fixed inset-0 bg-black/45 backdrop-blur-xs flex items-center justify-center z-50 animate-in fade-in duration-200">
                 <div className="w-[450px] bg-white rounded border border-zinc-200 shadow-2xl flex flex-col font-primary animate-in zoom-in-95 duration-150">
                   <div className="bg-zinc-50 px-4 py-3 border-b border-zinc-150 rounded-t flex justify-between items-center">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-655">Record Payout Payment</h3>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-700">Record Payout Payment</h3>
                     <button
                       type="button"
                       onClick={() => setPaymentModalPayout(null)}
-                      className="p-1 hover:bg-zinc-250 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+                      className="p-1 hover:bg-zinc-200 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
                     >
                       <X size={14} />
                     </button>
                   </div>
 
                   <div className="p-5 flex flex-col gap-4 text-xs">
-                    <div className="flex flex-col gap-1.5 p-3 bg-blue-50/40 border border-blue-100 rounded">
-                      <div className="flex justify-between items-center text-zinc-655">
-                        <span className="font-semibold">Promoter name:</span>
-                        <span className="font-bold text-zinc-800">{paymentModalPayout["promoter_name"]}</span>
+                    <div className="flex flex-col gap-1.5 p-3 bg-zinc-50 border border-zinc-200/80 rounded">
+                      <div className="flex justify-between items-center text-zinc-600">
+                        <span className="font-medium">Promoter Name:</span>
+                        <span className="font-semibold text-zinc-800">{paymentModalPayout["promoter_name"]}</span>
                       </div>
-                      <div className="flex justify-between items-center text-zinc-655">
-                        <span className="font-semibold">Total Wage:</span>
-                        <span className="font-bold text-[#0B57D0]">${Number(paymentModalPayout["total_payout"])?.toFixed(2)}</span>
+                      <div className="flex justify-between items-center text-zinc-600">
+                        <span className="font-medium">Total Wage:</span>
+                        <span className="font-semibold text-zinc-900 font-mono">${Number(paymentModalPayout["total_payout"])?.toFixed(2)}</span>
                       </div>
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold text-zinc-655 uppercase tracking-wider pl-0.5">Reference Number (Receipt Ref)</label>
+                      <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Reference Number (Receipt Ref)</label>
                       <input
                         type="text"
                         value={paymentRef}
                         onChange={(e) => setPaymentRef(e.target.value)}
                         placeholder="e.g. TXN9234857"
-                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-850 outline-none focus:border-[#0B57D0] shadow-2xs"
+                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs"
                       />
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold text-zinc-655 uppercase tracking-wider pl-0.5">Payment Date</label>
+                      <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Payment Date</label>
                       <input
                         type="date"
                         value={paymentDate}
                         onChange={(e) => setPaymentDate(e.target.value)}
-                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-[#0B57D0] shadow-2xs"
+                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs"
                       />
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[10px] font-bold text-zinc-655 uppercase tracking-wider pl-0.5">Upload Receipt Photo</label>
+                      <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Upload Receipt Photo</label>
                       <div className="flex items-center gap-2">
-                        <label className="h-8 px-3 rounded border border-zinc-300 bg-[#E5E5E5] text-zinc-700 hover:text-zinc-950 hover:bg-[#EEEEEE]/50 transition-all select-none cursor-pointer flex items-center justify-center gap-1.5 font-bold text-[10px]">
+                        <label className="h-8 px-3 rounded border border-zinc-300 bg-zinc-100 text-zinc-700 hover:text-zinc-900 hover:bg-zinc-200 transition-all select-none cursor-pointer flex items-center justify-center gap-1.5 font-medium text-[11px]">
                           <Upload size={12} />
                           {paymentReceiptFile ? "Change Receipt" : "Choose File"}
                           <input
@@ -7360,7 +8961,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             className="hidden"
                           />
                         </label>
-                        <span className="text-[10px] text-zinc-500 font-semibold truncate max-w-[200px]">
+                        <span className="text-[10.5px] text-zinc-500 font-normal truncate max-w-[200px]">
                           {paymentReceiptFile ? paymentReceiptFile.name : "No file chosen"}
                         </span>
                       </div>
@@ -7371,7 +8972,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     <button
                       type="button"
                       onClick={() => setPaymentModalPayout(null)}
-                      className="px-3.5 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded text-xs transition-colors cursor-pointer"
+                      className="px-3.5 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded text-xs transition-colors cursor-pointer"
                     >
                       Cancel
                     </button>
@@ -7379,7 +8980,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       type="button"
                       onClick={handleSavePayment}
                       disabled={isPaymentSaving || !paymentRef.trim() || !paymentDate || !paymentReceiptFile}
-                      className="px-4 py-1.5 bg-green-600 hover:bg-green-700 text-white font-bold rounded text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isPaymentSaving ? (
                         <>
@@ -7423,10 +9024,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     {/* Modal Header */}
                     <div className="bg-zinc-50 px-4 py-3.5 border-b border-zinc-200 flex justify-between items-center select-none shrink-0">
                       <div className="flex flex-col gap-0.5">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
-                          Job Details - {viewingJobsPayout["promoter_name"]}
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-800">
+                          Job Details &bull; <span className="text-[#0B57D0]">{viewingJobsPayout["promoter_name"]}</span>
                         </h3>
-                        <p className="text-[10px] text-zinc-505 font-medium">
+                        <p className="text-[10px] text-zinc-500 font-normal">
                           List of shift jobs included in this payout
                         </p>
                       </div>
@@ -7442,36 +9043,81 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     {/* Modal Content */}
                     <div className="flex-1 overflow-auto p-4 min-h-0">
                       {jobs.length === 0 ? (
-                        <p className="text-zinc-550 text-xs text-center py-8">No shifts found in this payout.</p>
+                        <p className="text-zinc-500 text-xs text-center py-8">No shifts found in this payout.</p>
                       ) : (
                         <table className="w-full text-left border-collapse text-xs">
                           <thead>
-                            <tr className="bg-zinc-50 border-b border-zinc-250 text-zinc-650 font-bold uppercase tracking-wider sticky top-0">
+                            <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-semibold uppercase tracking-wider sticky top-0">
                               <th className="py-2 px-3 w-10 text-center">No.</th>
                               <th className="py-2 px-3">Date</th>
+                              <th className="py-2 px-3">Clock Photos</th>
                               <th className="py-2 px-3">Actual Hours</th>
                               <th className="py-2 px-3">Rate</th>
                               <th className="py-2 px-3">Payout</th>
                               <th className="py-2 px-3">Task Details</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-zinc-100 font-medium">
-                            {jobs.map((job, idx) => (
-                              <tr key={job.scheduleId || idx} className="hover:bg-zinc-50/50">
-                                <td className="py-2 px-3 text-center text-zinc-400 font-bold">{idx + 1}</td>
-                                <td className="py-2 px-3 text-zinc-800 font-semibold">{formatRowTimestamp(job.date)}</td>
-                                <td className="py-2 px-3 text-zinc-700 font-semibold">
-                                  {job.absent ? (
-                                    <span className="text-red-650 font-bold">Absent</span>
-                                  ) : (
-                                    `${job.startTime} - ${job.endTime} (${job.totalTime?.toFixed(2)} hrs)`
-                                  )}
-                                </td>
-                                <td className="py-2 px-3 text-zinc-600">${Number(job.hourlyRate || 0).toFixed(2)}</td>
-                                <td className="py-2 px-3 text-zinc-800 font-bold">${Number(job.totalPayout || 0).toFixed(2)}</td>
-                                <td className="py-2 px-3 text-zinc-505 italic font-semibold">{job.taskDetails}</td>
-                              </tr>
-                            ))}
+                          <tbody className="divide-y divide-zinc-100 font-normal text-zinc-700">
+                            {jobs.map((job, idx) => {
+                              const sched = schedules.find(s => String(s.id) === String(job.scheduleId));
+                              const checkInPhoto = job.checkInSelfie || sched?.check_in_selfie;
+                              const checkOutPhoto = job.checkOutSelfie || sched?.check_out_selfie;
+
+                              return (
+                                <tr key={job.scheduleId || idx} className="hover:bg-zinc-50/40">
+                                  <td className="py-2 px-3 text-center text-zinc-400 font-medium">{idx + 1}</td>
+                                  <td className="py-2 px-3 text-zinc-800 font-medium">{formatRowTimestamp(job.date)}</td>
+                                  
+                                  {/* Clock Photos */}
+                                  <td className="py-2 px-3">
+                                    {!checkInPhoto && !checkOutPhoto ? (
+                                      <span className="text-[10px] text-zinc-400 font-mono italic">No photos</span>
+                                    ) : (
+                                      <div className="flex items-center gap-1.5">
+                                        {checkInPhoto ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => setImagePreviewModalUrl(checkInPhoto)}
+                                            className="relative group w-7 h-7 rounded border border-blue-200 hover:border-blue-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
+                                            title="View Clock-In Selfie"
+                                          >
+                                            <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                                            <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[6.5px] text-white font-bold text-center leading-none py-0.5">IN</span>
+                                          </button>
+                                        ) : (
+                                          <span className="text-[9px] text-zinc-400 font-mono italic">No In</span>
+                                        )}
+
+                                        {checkOutPhoto ? (
+                                          <button
+                                            type="button"
+                                            onClick={() => setImagePreviewModalUrl(checkOutPhoto)}
+                                            className="relative group w-7 h-7 rounded border border-emerald-200 hover:border-emerald-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
+                                            title="View Clock-Out Selfie"
+                                          >
+                                            <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                                            <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[6.5px] text-white font-bold text-center leading-none py-0.5">OUT</span>
+                                          </button>
+                                        ) : (
+                                          <span className="text-[9px] text-zinc-400 font-mono italic">No Out</span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  <td className="py-2 px-3 text-zinc-700 font-normal">
+                                    {job.absent ? (
+                                      <span className="text-red-600 font-medium">Absent</span>
+                                    ) : (
+                                      `${job.startTime} - ${job.endTime} (${job.totalTime?.toFixed(2)} hrs)`
+                                    )}
+                                  </td>
+                                  <td className="py-2 px-3 text-zinc-600 font-mono">${Number(job.hourlyRate || 0).toFixed(2)}</td>
+                                  <td className="py-2 px-3 text-zinc-900 font-semibold font-mono">${Number(job.totalPayout || 0).toFixed(2)}</td>
+                                  <td className="py-2 px-3 text-zinc-500 font-normal">{job.taskDetails}</td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       )}
@@ -7482,7 +9128,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       <button
                         type="button"
                         onClick={() => setViewingJobsPayout(null)}
-                        className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-900 text-white font-bold rounded text-xs shadow-sm cursor-pointer transition-colors"
+                        className="px-4 py-1.5 bg-zinc-800 hover:bg-zinc-900 text-white font-medium rounded text-xs shadow-xs cursor-pointer transition-colors"
                       >
                         Close
                       </button>
@@ -7491,6 +9137,37 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 </div>
               );
             })()}
+
+            {/* Attendance Photo Preview Modal */}
+            {imagePreviewModalUrl && (
+              <div className="fixed inset-0 bg-black/65 backdrop-blur-xs flex items-center justify-center z-[99999] p-4 animate-in fade-in duration-150">
+                <div className="relative max-w-[90vw] max-h-[90vh] bg-white rounded-lg overflow-hidden shadow-2xl flex flex-col font-primary animate-in zoom-in-95 duration-150">
+                  <div className="flex justify-between items-center px-4 py-2.5 bg-zinc-900 text-white select-none shrink-0">
+                    <span className="text-xs font-semibold tracking-wide">Attendance Verification Photo</span>
+                    <div className="flex items-center gap-3">
+                      <a
+                        href={imagePreviewModalUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-300 hover:text-blue-200 underline font-medium"
+                      >
+                        Open Original
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => setImagePreviewModalUrl(null)}
+                        className="p-1 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded cursor-pointer transition-colors"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="p-3 bg-zinc-950 flex items-center justify-center overflow-auto max-h-[80vh]">
+                    <img src={imagePreviewModalUrl} alt="Attendance Preview" className="max-w-full max-h-[75vh] object-contain rounded" />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
