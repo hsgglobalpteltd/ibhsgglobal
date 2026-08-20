@@ -370,18 +370,44 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
   }, []);
 
-  // Fetch Promoters from Database
+  // Fetch Promoters from Database (Employees table with Promoter role)
   const loadPromoters = React.useCallback(async (forceSync = false) => {
     setLoadingPromoters(true);
     try {
-      const sheetName = "Promoter_Users";
+      const sheetName = "Employees";
       if (forceSync) {
         await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`, { method: "POST" });
       }
       const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=${sheetName}`);
       if (!res.ok) throw new Error(`Server status ${res.status}`);
       const json = await res.json();
-      setPromoters(Array.isArray(json) ? json : (json.value || []));
+      const list = Array.isArray(json) ? json : (json.value || []);
+      const promoterEmployees = list.filter((e: any) => {
+        let roles: string[] = [];
+        const rawRole = e.Role || e.role;
+        if (rawRole) {
+          try {
+            roles = typeof rawRole === "string" ? JSON.parse(rawRole) : rawRole;
+          } catch {
+            roles = [String(rawRole)];
+          }
+        }
+        return Array.isArray(roles) && roles.some(r => String(r).toLowerCase() === "promoter");
+      }).map((e: any) => ({
+        id: e.id,
+        name: e.Name || e.name || "",
+        full_name: e["Full Name"] || e.full_name || e.FullName || "",
+        phone: e.Phone || e.phone || "",
+        email: e.email || e.Email || "",
+        paynow_account: e.paynow_number || e["paynow_number"] || e["Paynow Account"] || "",
+        pin: e.PIN || e.pin || "",
+        type: e.Type || e.type || "Partimer",
+        note: e.note || e.Note || "",
+        role: e.Role || e.role || "[]",
+        archived: e.Archived === true || e.archived === true || e.Archived === 1 || e.archived === 1 || String(e.archived) === "true",
+        rawEmployee: e
+      }));
+      setPromoters(promoterEmployees);
     } catch (err: any) {
       showToast("Failed to load promoters: " + err.message, "error");
     } finally {
@@ -1459,7 +1485,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
   };
 
-  // Save Promoter (Insert/Update)
+  // Save Promoter (Insert/Update into Employees table)
   const handleSavePromoter = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!String(promoterName || "").trim()) {
@@ -1467,32 +1493,63 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
-    const id = editingPromoterId || String(promoterId || "").trim() || `prom_${Date.now()}`;
-    const payload = {
-      table: "Promoter_Users",
-      action: editingPromoterId ? "update" : "insert",
-      data: {
-        id: id,
-        name: String(promoterName || "").trim(),
-        full_name: String(promoterFullName || "").trim(),
-        phone: String(promoterPhone || "").trim(),
-        email: String(promoterEmail || "").trim(),
-        paynow_account: String(promoterPaynow || "").trim(),
-        pin: String(promoterPin || "").trim(),
-        archived: editingPromoterId ? (promoters.find(p => p.id === editingPromoterId)?.archived || false) : false
+    const currentPromoter = editingPromoterId ? promoters.find(p => p.id === editingPromoterId) : null;
+    const existingEmp = currentPromoter?.rawEmployee;
+    const id = editingPromoterId || String(promoterId || "").trim() || `emp_${Date.now()}`;
+
+    let existingRoles = ["Promoter"];
+    if (existingEmp) {
+      const r = existingEmp.Role || existingEmp.role;
+      if (r) {
+        try {
+          const parsed = typeof r === "string" ? JSON.parse(r) : r;
+          if (Array.isArray(parsed)) {
+            existingRoles = parsed;
+            if (!existingRoles.includes("Promoter")) existingRoles.push("Promoter");
+          }
+        } catch {}
       }
+    }
+
+    const cleanData: any = {
+      id: id,
+      type: existingEmp?.Type || existingEmp?.type || "Partimer",
+      name: String(promoterName || "").trim(),
+      full_name: String(promoterFullName || "").trim(),
+      in: existingEmp?.in || "",
+      pin: String(promoterPin || "").trim(),
+      phone: String(promoterPhone || "").trim(),
+      email: String(promoterEmail || "").trim(),
+      paynow_number: String(promoterPaynow || "").trim(),
+      photo_url: existingEmp?.["Photo URL"] || existingEmp?.photo_url || "",
+      address: existingEmp?.Address || existingEmp?.address || "",
+      note: existingEmp?.note || existingEmp?.Note || "",
+      role: JSON.stringify(existingRoles),
+      archived: editingPromoterId ? (currentPromoter?.archived || false) : false,
+      created_at: existingEmp?.["Created At"] || existingEmp?.created_at || Date.now(),
+      logs: existingEmp?.Logs || existingEmp?.logs || JSON.stringify([{ action: editingPromoterId ? "Update" : "Create", actionBy: "Promoter Module", remark: `${editingPromoterId ? "Updated" : "Created"} promoter profile.`, timestamp: Date.now() }])
+    };
+
+    const payload = {
+      table: "Employees",
+      action: editingPromoterId ? "update" : "insert",
+      data: cleanData
     };
 
     // Optimistic Update
     const tempPromoter = {
       id: id,
-      name: payload.data.name,
-      full_name: payload.data.full_name,
-      phone: payload.data.phone,
-      email: payload.data.email,
-      paynow_account: payload.data.paynow_account,
-      pin: payload.data.pin,
-      archived: payload.data.archived
+      name: cleanData.name,
+      full_name: cleanData.full_name,
+      phone: cleanData.phone,
+      email: cleanData.email,
+      paynow_account: cleanData.paynow_number,
+      pin: cleanData.pin,
+      type: cleanData.type,
+      note: cleanData.note,
+      role: cleanData.role,
+      archived: cleanData.archived,
+      rawEmployee: cleanData
     };
 
     setPromoters(prev => {
@@ -1542,10 +1599,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       if (!currentPromoter) return;
 
       const payload = {
-        table: "Promoter_Users",
+        table: "Employees",
         action: "update",
         data: {
-          ...currentPromoter,
+          id: pId,
           archived: isArchive ? true : false
         }
       };
@@ -1582,7 +1639,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              table: "Promoter_Users",
+              table: "Employees",
               action: "delete",
               data: { id: pId }
             })
@@ -5878,7 +5935,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         value={promoterId}
                         onChange={(e) => setPromoterId(e.target.value)}
                         disabled={!!editingPromoterId}
-                        placeholder={editingPromoterId ? "" : "e.g. prom_01 (Leave blank to auto-generate)"}
+                        placeholder={editingPromoterId ? "" : "e.g. emp_01 (Leave blank to auto-generate)"}
                         className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-855 outline-none focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 transition-all shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
                       />
                     </div>
