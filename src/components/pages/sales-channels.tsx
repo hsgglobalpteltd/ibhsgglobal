@@ -2,43 +2,46 @@
 
 import * as React from "react";
 import { FeatureCard } from "../feature-card";
-import { MultiChannelSyncModule } from "../modules/MultiChannelSyncModule";
-import { SalesLeaderboardModule } from "../modules/SalesLeaderboardModule";
-import { PromoPricingRulesModule } from "../modules/PromoPricingRulesModule";
 import { SnapDealsModule } from "../modules/SnapDealsModule";
 import { StoresVisibilityModule } from "../modules/StoresVisibilityModule";
 import { SponsorshipModule } from "../modules/SponsorshipModule";
 import { DirectOrderModule } from "../modules/DirectOrderModule";
 import { CustomerServiceModule } from "../modules/CustomerServiceModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
+import { canViewModule } from "@/lib/permissions";
+import { UserProfile } from "@/lib/api";
+import { useMaintenanceSettings } from "@/lib/maintenance";
 
 interface SalesChannelsPageProps {
-  profile?: {
-    role: string;
-    modules_access: string[];
-  } | null;
+  profile?: UserProfile | null;
+  breadcrumbPath?: string[];
 }
 
-export function SalesChannelsPage({ profile }: SalesChannelsPageProps) {
+export function SalesChannelsPage({ profile, breadcrumbPath }: SalesChannelsPageProps) {
   const [activeSubModule, setActiveSubModule] = React.useState<string | null>(null);
+  const { settings } = useMaintenanceSettings();
+
+  React.useEffect(() => {
+    if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Sales & Channels") {
+      setActiveSubModule(breadcrumbPath[1]);
+    }
+  }, [breadcrumbPath]);
 
   const subModules = React.useMemo(() => {
     return APP_PAGES_CONFIG.find((p) => p.id === "Sales & Channels")?.modules || [];
   }, []);
 
-  const modulesAccess = profile?.modules_access || [];
-  const isAdmin = profile?.role === "Administrator";
-  const isManager = profile?.role === "Manager";
-
-  // Filter modules based on user access
+  // Filter modules based on user view permission
   const visibleModules = subModules.filter(
-    (mod) => isAdmin || modulesAccess.includes(mod.title)
+    (mod) => canViewModule(profile, mod.title)
   );
 
   // Set initial breadcrumb on mount
   React.useEffect(() => {
-    window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Sales & Channels"] }));
-  }, []);
+    if (!activeSubModule) {
+      window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Sales & Channels"] }));
+    }
+  }, [activeSubModule]);
 
   // Listen to window breadcrumb-back event to reset views
   React.useEffect(() => {
@@ -63,12 +66,6 @@ export function SalesChannelsPage({ profile }: SalesChannelsPageProps) {
 
   const renderActiveSubModule = () => {
     switch (activeSubModule) {
-      case "Multi-Channel Sync":
-        return <MultiChannelSyncModule />;
-      case "Sales Leaderboard":
-        return <SalesLeaderboardModule />;
-      case "Promo & Pricing Rules":
-        return <PromoPricingRulesModule />;
       case "Snap Deals":
         return <SnapDealsModule profile={profile} />;
       case "Stores Visibility":
@@ -92,7 +89,7 @@ export function SalesChannelsPage({ profile }: SalesChannelsPageProps) {
             Sales & Channels Portal
           </h2>
           <p className="font-primary text-sm text-zinc-500">
-            Central campaign router and sync manager. Select a module below to launch.
+            Central campaign router and order manager. Select a module below to launch.
           </p>
         </div>
       )}
@@ -110,20 +107,16 @@ export function SalesChannelsPage({ profile }: SalesChannelsPageProps) {
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
               {visibleModules.map((mod) => {
-                const isUnderMaintenance = mod.title !== "Direct Order" && mod.title !== "Snap Deals" && mod.title !== "Customer Service" && mod.title !== "Stores Visibility";
+                const isUnderMaintenance = !!settings.moduleMaintenance[mod.title];
                 return (
-                  <div
+                  <FeatureCard
                     key={mod.title}
-                    title={isUnderMaintenance ? "This under maintenance" : undefined}
-                    className={isUnderMaintenance ? "opacity-50 cursor-not-allowed w-full max-w-[250px] aspect-[4/3]" : "w-full max-w-[250px] aspect-[4/3]"}
-                  >
-                    <FeatureCard
-                      title={mod.title}
-                      description={mod.description}
-                      onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
-                      className={isUnderMaintenance ? "pointer-events-none shadow-none hover:shadow-none hover:scale-100 hover:bg-white" : undefined}
-                    />
-                  </div>
+                    title={mod.title}
+                    description={mod.description}
+                    isUnderMaintenance={isUnderMaintenance}
+                    onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
+                    onDevAccess={() => handleSubModuleSelect(mod.title)}
+                  />
                 );
               })}
             </div>

@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { RefreshCw, Download, Maximize, X } from "lucide-react";
-import { usePWA } from "@/lib/usePWA";
+import { RefreshCw, Maximize, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TabItem } from "./navigation-tabs";
 
@@ -13,7 +12,6 @@ interface TopBarProps {
 }
 
 export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarProps) {
-  const { isInstallable, installApp } = usePWA();
   const [isRefreshing, setIsRefreshing] = React.useState(false);
   const [lastUpdated, setLastUpdated] = React.useState<string>("");
   const [isFullscreen, setIsFullscreen] = React.useState(false);
@@ -201,23 +199,6 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
                 {tab.label}
               </button>
             ))}
-          </div>
-        )}
-
-        {isInstallable && (
-          <div className="relative group flex items-center pr-1">
-            <button
-              onClick={installApp}
-              className="flex h-7 px-3 gap-1.5 items-center justify-center rounded-full transition-all border border-[#0B57D0]/20 bg-[#D3E3FD] hover:bg-[#B4D2FE] text-[#0B57D0] focus:outline-none cursor-pointer shadow-xs font-primary text-xs font-bold"
-            >
-              <Download size={13} />
-              <span>Install App</span>
-            </button>
-            <div className="absolute right-0 top-9 scale-95 opacity-0 pointer-events-none group-hover:scale-100 group-hover:opacity-100 transition-all duration-200 z-20 origin-top-right">
-              <div className="bg-[#EEEEEE] border border-zinc-300/80 rounded-lg px-3 py-1.5 shadow-md text-[10px] text-zinc-650 font-primary whitespace-nowrap">
-                Install iB Desktop App
-              </div>
-            </div>
           </div>
         )}
 

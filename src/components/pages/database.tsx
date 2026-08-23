@@ -8,28 +8,32 @@ import { RetailerSkusModule } from "../modules/RetailerSkusModule";
 import { PhonebookModule } from "../modules/PhonebookModule";
 import { EmployeesModule } from "../modules/EmployeesModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
+import { canViewModule } from "@/lib/permissions";
+import { UserProfile } from "@/lib/api";
+import { useMaintenanceSettings } from "@/lib/maintenance";
 
 interface DatabasePageProps {
-  profile?: {
-    role: string;
-    modules_access: string[];
-  } | null;
+  profile?: UserProfile | null;
+  breadcrumbPath?: string[];
 }
 
-export function DatabasePage({ profile }: DatabasePageProps) {
+export function DatabasePage({ profile, breadcrumbPath }: DatabasePageProps) {
   const [activeSubDb, setActiveSubDb] = React.useState<string | null>(null);
+  const { settings } = useMaintenanceSettings();
+
+  React.useEffect(() => {
+    if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Database") {
+      setActiveSubDb(breadcrumbPath[1]);
+    }
+  }, [breadcrumbPath]);
 
   const subDbs = React.useMemo(() => {
     return APP_PAGES_CONFIG.find((p) => p.id === "Database")?.modules || [];
   }, []);
 
-  const modulesAccess = profile?.modules_access || [];
-  const isAdmin = profile?.role === "Administrator";
-  const isManager = profile?.role === "Manager";
-
   // Filter modules based on user access
   const visibleModules = subDbs.filter(
-    (mod) => isAdmin || modulesAccess.includes(mod.title)
+    (mod) => canViewModule(profile, mod.title)
   );
 
   // Set initial breadcrumb on mount
@@ -101,20 +105,16 @@ export function DatabasePage({ profile }: DatabasePageProps) {
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
               {visibleModules.map((db) => {
-                const isUnderMaintenance = !["Products Database", "Stores Database", "Retailer SKU's", "Employees"].includes(db.title);
+                const isUnderMaintenance = !!settings.moduleMaintenance[db.title];
                 return (
-                  <div
+                  <FeatureCard
                     key={db.title}
-                    title={isUnderMaintenance ? "This under maintenance" : undefined}
-                    className={isUnderMaintenance ? "opacity-50 cursor-not-allowed w-full max-w-[250px] aspect-[4/3]" : "w-full max-w-[250px] aspect-[4/3]"}
-                  >
-                    <FeatureCard
-                      title={db.title}
-                      description={db.description}
-                      onClick={() => !isUnderMaintenance && handleSubDbSelect(db.title)}
-                      className={isUnderMaintenance ? "pointer-events-none shadow-none hover:shadow-none hover:scale-100 hover:bg-white" : undefined}
-                    />
-                  </div>
+                    title={db.title}
+                    description={db.description}
+                    isUnderMaintenance={isUnderMaintenance}
+                    onClick={() => !isUnderMaintenance && handleSubDbSelect(db.title)}
+                    onDevAccess={() => handleSubDbSelect(db.title)}
+                  />
                 );
               })}
             </div>

@@ -6,10 +6,11 @@ export interface UserProfile {
   email: string;
   name: string;
   phone_number: string | null;
-  role: "Administrator" | "Manager" | "Operator" | "Moderator";
+  role: "Administrator" | "Operator" | string;
   pages_access: string[]; // parsed JSON array
-  modules_access: string[]; // parsed JSON array
-  active: number; // 0 = inactive, 1 = active
+  modules_access: any; // parsed JSON object or array
+  active: number; // 0 = inactive, 1 = active, 2 = blocked
+  employee_id?: string | null;
   contract_signature_base64?: string | null;
   contract_pdf_link?: string | null;
   contract_signed_at?: number | null;
@@ -60,17 +61,63 @@ async function handleResponse(res: Response, errorPrefix: string): Promise<any> 
   return res.json();
 }
 
-// Parsing JSON safely
+// Parsing JSON safely for array
 function safeParseAccess(field: any): string[] {
   if (Array.isArray(field)) return field;
   if (typeof field === "string") {
     try {
-      return JSON.parse(field);
+      const parsed = JSON.parse(field);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
   }
   return [];
+}
+
+// Parsing JSON safely for object or array
+function safeParseModulesAccess(field: any): any {
+  if (typeof field === "object" && field !== null) return field;
+  if (typeof field === "string") {
+    try {
+      return JSON.parse(field);
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+// 0. PIN FAST LOGIN
+export async function loginWithPin(
+  pin: string,
+  sessionId?: string | null,
+  force?: boolean
+): Promise<{ user: UserProfile; token: string; employee?: any }> {
+  const res = await fetch(`${WORKER_URL}/api/users/pin-login`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(sessionId ? { "X-Session-ID": sessionId } : getSessionIdHeader()),
+    },
+    body: JSON.stringify({ pin, session_id: sessionId, force }),
+  });
+  const data = await handleResponse(res, "PIN Login");
+  if (data && data.error) {
+    const err = new Error(data.message || data.error);
+    (err as any).code = data.error;
+    (err as any).email = data.email;
+    (err as any).name = data.name;
+    throw err;
+  }
+  return {
+    ...data,
+    user: {
+      ...data.user,
+      pages_access: safeParseAccess(data.user.pages_access),
+      modules_access: safeParseModulesAccess(data.user.modules_access),
+    }
+  };
 }
 
 // 1. SYNC USER PROFILE
@@ -100,7 +147,7 @@ export async function syncUserProfile(
   return {
     ...data,
     pages_access: safeParseAccess(data.pages_access),
-    modules_access: safeParseAccess(data.modules_access),
+    modules_access: safeParseModulesAccess(data.modules_access),
   };
 }
 
@@ -118,7 +165,7 @@ export async function fetchMyProfile(idToken: string, email: string): Promise<Us
   return {
     ...data,
     pages_access: safeParseAccess(data.pages_access),
-    modules_access: safeParseAccess(data.modules_access),
+    modules_access: safeParseModulesAccess(data.modules_access),
   };
 }
 
@@ -138,7 +185,7 @@ export async function updateOwnProfile(idToken: string, email: string, name: str
   return {
     ...data,
     pages_access: safeParseAccess(data.pages_access),
-    modules_access: safeParseAccess(data.modules_access),
+    modules_access: safeParseModulesAccess(data.modules_access),
   };
 }
 
@@ -156,7 +203,7 @@ export async function fetchAllUsers(idToken: string, email: string): Promise<Use
   return results.map((u) => ({
     ...u,
     pages_access: safeParseAccess(u.pages_access),
-    modules_access: safeParseAccess(u.modules_access),
+    modules_access: safeParseModulesAccess(u.modules_access),
   }));
 }
 
@@ -165,12 +212,13 @@ export async function adminUpdateUser(
   idToken: string,
   requestorEmail: string,
   targetEmail: string,
-  role: "Administrator" | "Manager" | "Operator" | "Moderator",
+  role: string,
   pagesAccess: string[],
-  modulesAccess: string[],
+  modulesAccess: any,
   active: number,
   name?: string,
-  phoneNumber?: string | null
+  phoneNumber?: string | null,
+  employeeId?: string | null
 ): Promise<UserProfile> {
   const token = await getFreshToken(idToken);
   const res = await fetch(`${WORKER_URL}/api/users/admin-update`, {
@@ -188,13 +236,14 @@ export async function adminUpdateUser(
       active,
       name,
       phone_number: phoneNumber,
+      employee_id: employeeId,
     }),
   });
   const data = await handleResponse(res, "Update user");
   return {
     ...data,
     pages_access: safeParseAccess(data.pages_access),
-    modules_access: safeParseAccess(data.modules_access),
+    modules_access: safeParseModulesAccess(data.modules_access),
   };
 }
 
@@ -215,6 +264,24 @@ export async function adminDeleteUser(
     body: JSON.stringify({ email: targetEmail }),
   });
   return handleResponse(res, "Delete user");
+}
+
+// 6b. LOGOUT USER (Clear active session from DB)
+export async function logoutUser(token?: string, email?: string): Promise<{ success: boolean }> {
+  try {
+    const res = await fetch(`${WORKER_URL}/api/users/logout`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ email }),
+    });
+    return await res.json();
+  } catch (err) {
+    console.warn("Logout API call failed:", err);
+    return { success: false };
+  }
 }
 
 // 7. CONTRACT APIs

@@ -7,20 +7,28 @@ import { menuConfig } from "@/config/menu-config";
 import { ToastContainer } from "@/components/toast-container";
 import { auth, googleProvider, signInWithPopup, signOut } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { syncUserProfile, fetchMyProfile, fetchLatestContract, UserProfile } from "@/lib/api";
+import { syncUserProfile, fetchMyProfile, fetchLatestContract, loginWithPin, logoutUser, UserProfile } from "@/lib/api";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "@/components/custom-button";
-import { ShieldAlert } from "lucide-react";
+import { ShieldAlert, KeyRound, Sparkles } from "lucide-react";
 import { WelcomeAboardScreen } from "@/components/welcome-aboard";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MaintenanceModule } from "@/components/MaintenanceModule";
 import { fetchMaintenanceSettings, getClientIp, checkIsUnderMaintenance, MaintenanceSettings } from "@/lib/maintenance";
+import { canAccessPage } from "@/lib/permissions";
+import { APP_PAGES_CONFIG } from "@/config/modules-config";
+import { PwaInstallModal } from "@/components/pwa-install-modal";
 
 export default function Home() {
   const [firebaseUser, setFirebaseUser] = React.useState<any>(null);
   const [idToken, setIdToken] = React.useState<string>("");
   const [profile, setProfile] = React.useState<UserProfile | null>(null);
   const [loading, setLoading] = React.useState(true);
+
+  // PIN Fast Login State
+  const [pinDigits, setPinDigits] = React.useState<string[]>(["", "", "", ""]);
+  const [pinSubmitting, setPinSubmitting] = React.useState<boolean>(false);
+  const pinInputsRef = React.useRef<(HTMLInputElement | null)[]>([]);
 
   const [activeItem, setActiveItem] = React.useState("Dashboard");
   const [breadcrumbPath, setBreadcrumbPath] = React.useState<string[]>(["Dashboard"]);
@@ -30,6 +38,7 @@ export default function Home() {
     token: string;
     email: string;
     name: string;
+    pin?: string;
   } | null>(null);
 
   const [latestContractUpdatedAt, setLatestContractUpdatedAt] = React.useState<number>(0);
@@ -157,14 +166,21 @@ export default function Home() {
     try {
       setLoading(true);
       const sid = localStorage.getItem("session_id");
-      const dbProfile = await syncUserProfile(
-        pendingLogin.token,
-        pendingLogin.email,
-        pendingLogin.name,
-        sid,
-        true // force = true
-      );
-      setProfile(dbProfile);
+      if (pendingLogin.pin) {
+        const res = await loginWithPin(pendingLogin.pin, sid, true);
+        setFirebaseUser({ email: res.user.email, displayName: res.user.name });
+        setIdToken(res.token);
+        setProfile(res.user);
+      } else {
+        const dbProfile = await syncUserProfile(
+          pendingLogin.token,
+          pendingLogin.email,
+          pendingLogin.name,
+          sid,
+          true // force = true
+        );
+        setProfile(dbProfile);
+      }
       setPendingLogin(null);
       setConflictDialogOpen(false);
       showToast("Logged in successfully. Other sessions terminated.", "success");
@@ -180,6 +196,119 @@ export default function Home() {
     setPendingLogin(null);
     setConflictDialogOpen(false);
     await signOut(auth);
+  };
+
+  const handlePinLogin = async (codeToSubmit: string) => {
+    if (!codeToSubmit || codeToSubmit.length !== 4) return;
+    setPinSubmitting(true);
+    try {
+      let sid = localStorage.getItem("session_id");
+      if (!sid) {
+        sid = "sess_" + Math.random().toString(36).substring(2, 15) + "_" + Date.now();
+        localStorage.setItem("session_id", sid);
+      }
+      const res = await loginWithPin(codeToSubmit, sid);
+      setFirebaseUser({ email: res.user.email, displayName: res.user.name });
+      setIdToken(res.token);
+      setProfile(res.user);
+      showToast(`Welcome back, ${res.user.name}!`, "success");
+      setPinDigits(["", "", "", ""]);
+    } catch (err: any) {
+      if (err.code === "session_conflict") {
+        setPendingLogin({
+          token: "pin",
+          email: err.email || "Employee User",
+          name: err.name || "Employee User",
+          pin: codeToSubmit,
+        });
+        setConflictDialogOpen(true);
+      } else {
+        showToast(err.message || "Invalid PIN code", "error");
+        setPinDigits(["", "", "", ""]);
+        pinInputsRef.current[0]?.focus();
+      }
+    } finally {
+      setPinSubmitting(false);
+    }
+  };
+
+  const handleDigitChange = (index: number, value: string) => {
+    const cleaned = value.replace(/\D/g, "");
+    if (!cleaned) {
+      const next = [...pinDigits];
+      next[index] = "";
+      setPinDigits(next);
+      return;
+    }
+
+    if (cleaned.length > 1) {
+      const pasteDigits = cleaned.slice(0, 4).split("");
+      const next = ["", "", "", ""];
+      pasteDigits.forEach((d, i) => {
+        if (i < 4) next[i] = d;
+      });
+      setPinDigits(next);
+      const targetIndex = Math.min(pasteDigits.length - 1, 3);
+      pinInputsRef.current[targetIndex]?.focus();
+      if (pasteDigits.length === 4) {
+        handlePinLogin(next.join(""));
+      }
+      return;
+    }
+
+    const singleDigit = cleaned.slice(-1);
+    const next = [...pinDigits];
+    next[index] = singleDigit;
+    setPinDigits(next);
+
+    // Auto focus next box
+    if (index < 3) {
+      pinInputsRef.current[index + 1]?.focus();
+    }
+
+    // Auto submit if 4 digits filled
+    if (index === 3 || next.every((d) => d !== "")) {
+      const fullCode = next.join("");
+      if (fullCode.length === 4) {
+        handlePinLogin(fullCode);
+      }
+    }
+  };
+
+  const handleDigitKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace") {
+      if (!pinDigits[index] && index > 0) {
+        const next = [...pinDigits];
+        next[index - 1] = "";
+        setPinDigits(next);
+        pinInputsRef.current[index - 1]?.focus();
+      } else {
+        const next = [...pinDigits];
+        next[index] = "";
+        setPinDigits(next);
+      }
+    } else if (e.key === "ArrowLeft" && index > 0) {
+      pinInputsRef.current[index - 1]?.focus();
+    } else if (e.key === "ArrowRight" && index < 3) {
+      pinInputsRef.current[index + 1]?.focus();
+    }
+  };
+
+  const handleDigitPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 4);
+    if (pasted) {
+      const next = ["", "", "", ""];
+      pasted.split("").forEach((d, i) => {
+        if (i < 4) next[i] = d;
+      });
+      setPinDigits(next);
+      const targetIdx = Math.min(pasted.length, 3);
+      pinInputsRef.current[targetIdx]?.focus();
+      if (pasted.length === 4) {
+        handlePinLogin(pasted);
+      }
+    }
   };
 
   // Listen to set-breadcrumb event from child views
@@ -225,13 +354,8 @@ export default function Home() {
 
         // Redirect if active and viewing a page they no longer have permission to access
         if (freshProfile.active === 1 && activeItem !== "Dashboard") {
-          const isAdmin = freshProfile.role === "Administrator";
-          const isManager = freshProfile.role === "Manager";
-          const hasAccess =
-            activeItem === "Dashboard" ||
-            isAdmin ||
-            (isManager && activeItem !== "Administrator") ||
-            freshProfile.pages_access.includes(activeItem);
+          const pageModules = APP_PAGES_CONFIG.find((p) => p.id === activeItem)?.modules.map((m) => m.title) || [];
+          const hasAccess = canAccessPage(freshProfile, activeItem, pageModules);
 
           if (!hasAccess) {
             setActiveItem("Dashboard");
@@ -296,13 +420,8 @@ export default function Home() {
         setProfile(freshProfile);
 
         // Check if access was revoked
-        const isAdmin = freshProfile.role === "Administrator";
-        const isManager = freshProfile.role === "Manager";
-        const hasAccess =
-          item === "Dashboard" ||
-          isAdmin ||
-          (isManager && item !== "Administrator") ||
-          freshProfile.pages_access.includes(item);
+        const pageModules = APP_PAGES_CONFIG.find((p) => p.id === item)?.modules.map((m) => m.title) || [];
+        const hasAccess = canAccessPage(freshProfile, item, pageModules);
 
         if (!hasAccess) {
           setActiveItem("Dashboard");
@@ -323,6 +442,13 @@ export default function Home() {
     } else {
       executeMenuSelect(item);
     }
+  };
+
+  const handleSelectSubModule = (pageId: string, moduleTitle: string) => {
+    setActiveItem(pageId);
+    setBreadcrumbPath([pageId, moduleTitle]);
+    window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: [pageId, moduleTitle] }));
+    window.dispatchEvent(new CustomEvent("collapse-sidepanel"));
   };
 
   const executeBack = () => {
@@ -373,14 +499,27 @@ export default function Home() {
   };
 
   const handleLogout = async () => {
+    const userEmail = firebaseUser?.email || profile?.email;
+    const token = idToken;
     try {
-      await signOut(auth);
-      setActiveItem("Dashboard");
-      setBreadcrumbPath(["Dashboard"]);
-      showToast("Signed out successfully", "info");
+      if (userEmail) {
+        logoutUser(token, userEmail).catch(() => {});
+      }
+      if (auth.currentUser) {
+        await signOut(auth);
+      }
     } catch (err: any) {
-      showToast(err.message || "Logout failed", "error");
+      console.warn("Sign out auth error:", err);
     }
+    setFirebaseUser(null);
+    setIdToken("");
+    setProfile(null);
+    setPinDigits(["", "", "", ""]);
+    localStorage.removeItem("ib_promoter_schedules_draft");
+    localStorage.removeItem("ib_promoter_schedules_backup");
+    setActiveItem("Dashboard");
+    setBreadcrumbPath(["Dashboard"]);
+    showToast("Signed out successfully", "info");
   };
 
   const renderActivePage = () => {
@@ -392,15 +531,8 @@ export default function Home() {
       return <MaintenanceModule title={activeSubmodule} />;
     }
 
-    const isAdmin = profile.role === "Administrator";
-    const isManager = profile.role === "Manager";
-
-    // Enforce access control check
-    const hasAccess = 
-      activeItem === "Dashboard" || 
-      isAdmin || 
-      (isManager && activeItem !== "Administrator") || 
-      profile.pages_access.includes(activeItem);
+    const pageModules = APP_PAGES_CONFIG.find((p) => p.id === activeItem)?.modules.map((m) => m.title) || [];
+    const hasAccess = canAccessPage(profile, activeItem, pageModules);
 
     if (!hasAccess) {
       return (
@@ -414,7 +546,7 @@ export default function Home() {
     }
 
     // Bypass placeholder check for categories
-    const categoryPages = ["Frontline", "Database", "Sales & Channels", "Stock", "Office Tools", "Marketing & Content", "Website", "Tiktok", "Administrator"];
+    const categoryPages = ["Frontline", "Database", "Sales & Channels", "Stock", "Office Tools", "Website", "Tiktok", "Administrator"];
     if (breadcrumbPath.length > 1 && !categoryPages.includes(activeItem)) {
       return (
         <div className="flex flex-col gap-4 font-primary">
@@ -472,19 +604,61 @@ export default function Home() {
     // 2. Sign In Required Screen
     if (!firebaseUser || !profile) {
       return (
-        <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 select-none font-primary animate-in fade-in duration-300">
-          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 shadow-md flex flex-col gap-6 items-center text-center">
-            <div className="flex flex-col gap-1.5">
-              <h1 className="text-2xl font-extrabold tracking-tight text-zinc-950">iB HSG Global</h1>
-              <p className="text-sm font-medium text-zinc-500">Connecting Teams. Bridging Operations.</p>
+        <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#F0F4F9] p-6 select-none font-primary animate-in fade-in duration-300">
+          <div className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl p-8 shadow-xl flex flex-col gap-6 items-center text-center">
+            {/* Header */}
+            <div className="flex flex-col gap-1.5 items-center">
+              <h1 className="text-2xl font-bold tracking-tight text-zinc-950">iB HSG Global</h1>
+              <p className="text-xs font-medium text-zinc-500">Connecting Teams. Bridging Operations.</p>
             </div>
-            <div className="w-full border-t border-zinc-300/60 my-2" />
-            <p className="text-xs text-zinc-500 max-w-xs leading-relaxed">
-              Welcome to the HSG Global Internal Bridge. Authenticate below using your corporate Google login to access your workspaces.
-            </p>
-            <CustomButton onClick={handleLogin} variant="dark" className="w-full mt-2 h-9 text-xs">
-              Sign In with Google
-            </CustomButton>
+
+            {/* 4-Box PIN Input */}
+            <div className="w-full flex flex-col items-center gap-3">
+              <div className="flex items-center justify-center gap-2.5">
+                {pinDigits.map((digit, i) => (
+                  <input
+                    key={i}
+                    ref={(el) => { pinInputsRef.current[i] = el; }}
+                    type="password"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={1}
+                    autoFocus={i === 0}
+                    disabled={pinSubmitting}
+                    value={digit}
+                    onChange={(e) => handleDigitChange(i, e.target.value)}
+                    onKeyDown={(e) => handleDigitKeyDown(i, e)}
+                    onPaste={handleDigitPaste}
+                    className="w-12 h-14 text-center text-2xl font-mono font-bold bg-zinc-50 border-2 border-slate-300 rounded-xl text-zinc-900 focus:bg-white focus:border-[#0B57D0] focus:ring-4 focus:ring-[#0B57D0]/15 transition-all outline-none shadow-xs disabled:opacity-50"
+                  />
+                ))}
+              </div>
+              <p className="text-[11px] font-semibold text-zinc-500">
+                {pinSubmitting ? "Authenticating PIN..." : "Enter 4-digit employee PIN"}
+              </p>
+            </div>
+
+            {/* Clean Divider */}
+            <div className="w-full flex items-center gap-3">
+              <div className="flex-1 border-t border-slate-200" />
+              <span className="text-[11px] text-zinc-400 font-semibold uppercase tracking-wider">or</span>
+              <div className="flex-1 border-t border-slate-200" />
+            </div>
+
+            {/* Google Sign In Button */}
+            <button
+              type="button"
+              onClick={handleLogin}
+              className="w-full h-11 flex items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white hover:bg-zinc-50 active:scale-[0.98] text-xs font-semibold text-zinc-800 transition-all shadow-xs cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/>
+              </svg>
+              <span>Login with Google</span>
+            </button>
           </div>
         </div>
       );
@@ -581,6 +755,7 @@ export default function Home() {
             <SidePanel 
               activeItem={activeItem} 
               onSelectMenu={handleMenuSelect} 
+              onSelectSubModule={handleSelectSubModule}
               user={firebaseUser}
               profile={profile}
               onLogout={handleLogout}
@@ -606,6 +781,7 @@ export default function Home() {
     <>
       {renderMainContent()}
       <ToastContainer />
+      <PwaInstallModal />
 
       {/* Custom Popup Modal for Session Conflict */}
       {conflictDialogOpen && (

@@ -5,19 +5,18 @@ import { FeatureCard } from "../feature-card";
 import { TiktokOrdersModule } from "../modules/TiktokOrdersModule";
 import { TiktokTerminalModule } from "../modules/TiktokTerminalModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
+import { canViewModule } from "@/lib/permissions";
+import { UserProfile } from "@/lib/api";
+import { useMaintenanceSettings } from "@/lib/maintenance";
 
 interface TiktokPageProps {
-  profile?: {
-    role: string;
-    modules_access: string[];
-    name?: string;
-    email?: string;
-  } | null;
+  profile?: UserProfile | null;
   breadcrumbPath?: string[];
 }
 
 export function TiktokPage({ profile, breadcrumbPath }: TiktokPageProps) {
   const [activeSubModule, setActiveSubModule] = React.useState<string | null>(null);
+  const { settings } = useMaintenanceSettings();
 
   React.useEffect(() => {
     if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Tiktok") {
@@ -29,18 +28,9 @@ export function TiktokPage({ profile, breadcrumbPath }: TiktokPageProps) {
     return APP_PAGES_CONFIG.find((p) => p.id === "Tiktok")?.modules || [];
   }, []);
 
-  const modulesAccess = profile?.modules_access || [];
-  const isAdmin = profile?.role === "Administrator";
-  const isManager = profile?.role === "Manager";
-
-  // Filter modules based on user access (support legacy naming fallback)
+  // Filter modules based on user access
   const visibleModules = subModules.filter(
-    (mod) =>
-      isAdmin ||
-      isManager ||
-      modulesAccess.includes(mod.title) ||
-      (mod.title === "Tiktok Terminal" && modulesAccess.includes("Tiktok Fulfillment")) ||
-      modulesAccess.includes("Tiktok")
+    (mod) => canViewModule(profile, mod.title)
   );
 
   // Set initial breadcrumb on mount
@@ -107,15 +97,19 @@ export function TiktokPage({ profile, breadcrumbPath }: TiktokPageProps) {
             </div>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
-              {visibleModules.map((mod) => (
-                <div key={mod.title} className="w-full max-w-[250px] aspect-[4/3]">
+              {visibleModules.map((mod) => {
+                const isUnderMaintenance = !!settings.moduleMaintenance[mod.title];
+                return (
                   <FeatureCard
+                    key={mod.title}
                     title={mod.title}
                     description={mod.description}
-                    onClick={() => handleSubModuleSelect(mod.title)}
+                    isUnderMaintenance={isUnderMaintenance}
+                    onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
+                    onDevAccess={() => handleSubModuleSelect(mod.title)}
                   />
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

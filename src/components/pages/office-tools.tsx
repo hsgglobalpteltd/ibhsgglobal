@@ -3,37 +3,45 @@
 import * as React from "react";
 import { FeatureCard } from "../feature-card";
 import { InvoiceBarcodeGeneratorModule } from "../modules/InvoiceBarcodeGeneratorModule";
-import { ClaimFormGeneratorModule } from "../modules/ClaimFormGeneratorModule";
+import { StaffClaimsModule } from "../modules/StaffClaimsModule";
+import { FinanceClaimsModule } from "../modules/FinanceClaimsModule";
 import { DeliveryLabelGeneratorModule } from "../modules/DeliveryLabelGeneratorModule";
+import { AssetLibraryModule } from "../modules/AssetLibraryModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
+import { canViewModule } from "@/lib/permissions";
+import { UserProfile } from "@/lib/api";
+import { useMaintenanceSettings } from "@/lib/maintenance";
 
 interface OfficeToolsPageProps {
-  profile?: {
-    role: string;
-    modules_access: string[];
-  } | null;
+  profile?: UserProfile | null;
+  breadcrumbPath?: string[];
 }
 
-export function OfficeToolsPage({ profile }: OfficeToolsPageProps) {
+export function OfficeToolsPage({ profile, breadcrumbPath }: OfficeToolsPageProps) {
   const [activeSubModule, setActiveSubModule] = React.useState<string | null>(null);
+  const { settings } = useMaintenanceSettings();
+
+  React.useEffect(() => {
+    if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Office Tools") {
+      setActiveSubModule(breadcrumbPath[1]);
+    }
+  }, [breadcrumbPath]);
 
   const subModules = React.useMemo(() => {
     return APP_PAGES_CONFIG.find((p) => p.id === "Office Tools")?.modules || [];
   }, []);
 
-  const modulesAccess = profile?.modules_access || [];
-  const isAdmin = profile?.role === "Administrator";
-  const isManager = profile?.role === "Manager";
-
-  // Filter modules based on user access
+  // Filter modules based on user view permission
   const visibleModules = subModules.filter(
-    (mod) => isAdmin || modulesAccess.includes(mod.title)
+    (mod) => canViewModule(profile, mod.title)
   );
 
   // Set initial breadcrumb on mount
   React.useEffect(() => {
-    window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Office Tools"] }));
-  }, []);
+    if (!activeSubModule) {
+      window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Office Tools"] }));
+    }
+  }, [activeSubModule]);
 
   // Listen to window breadcrumb-back event to reset views
   React.useEffect(() => {
@@ -58,12 +66,17 @@ export function OfficeToolsPage({ profile }: OfficeToolsPageProps) {
 
   const renderActiveSubModule = () => {
     switch (activeSubModule) {
+      case "Staff Claims":
+        return <StaffClaimsModule profile={profile} />;
+      case "Finance Claims":
+      case "Claim Form Generator":
+        return <FinanceClaimsModule profile={profile} />;
       case "Invoice Barcode Generator":
         return <InvoiceBarcodeGeneratorModule />;
-      case "Claim Form Generator":
-        return <ClaimFormGeneratorModule />;
       case "Delivery Label Generator":
         return <DeliveryLabelGeneratorModule />;
+      case "Asset Library":
+        return <AssetLibraryModule profile={profile} />;
       default:
         return null;
     }
@@ -74,10 +87,10 @@ export function OfficeToolsPage({ profile }: OfficeToolsPageProps) {
       {!activeSubModule && (
         <div className="content-header flex flex-col gap-1 px-1 border-b border-zinc-300/40 pb-4">
           <h2 className="font-primary text-2xl font-bold text-zinc-950">
-            Office & Utilities
+            Office Tools & Utilities
           </h2>
           <p className="font-primary text-sm text-zinc-500">
-            Direct PDF/raster generator toolkit. Select a module below to launch.
+            PDF/barcode generators and asset libraries. Select a module below to launch.
           </p>
         </div>
       )}
@@ -94,14 +107,19 @@ export function OfficeToolsPage({ profile }: OfficeToolsPageProps) {
             </div>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
-              {visibleModules.map((mod) => (
-                <FeatureCard
-                  key={mod.title}
-                  title={mod.title}
-                  description={mod.description}
-                  onClick={() => handleSubModuleSelect(mod.title)}
-                />
-              ))}
+              {visibleModules.map((mod) => {
+                const isUnderMaintenance = !!settings.moduleMaintenance[mod.title];
+                return (
+                  <FeatureCard
+                    key={mod.title}
+                    title={mod.title}
+                    description={mod.description}
+                    isUnderMaintenance={isUnderMaintenance}
+                    onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
+                    onDevAccess={() => handleSubModuleSelect(mod.title)}
+                  />
+                );
+              })}
             </div>
           )}
         </div>

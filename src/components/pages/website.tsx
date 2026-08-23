@@ -6,22 +6,33 @@ import { TenantModule } from "../modules/TenantModule";
 import { SiteModule } from "../modules/SiteModule";
 import { StoreMapConfigModule } from "../modules/StoreMapConfigModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
+import { canViewModule } from "@/lib/permissions";
+import { UserProfile } from "@/lib/api";
+import { useMaintenanceSettings } from "@/lib/maintenance";
 
 interface WebsitePageProps {
-  profile?: {
-    email: string;
-    role: string;
-    modules_access: string[];
-  } | null;
+  profile?: UserProfile | null;
   idToken?: string;
+  breadcrumbPath?: string[];
 }
 
-export function WebsitePage({ profile, idToken }: WebsitePageProps) {
+export function WebsitePage({ profile, idToken, breadcrumbPath }: WebsitePageProps) {
   const [activeSubModule, setActiveSubModule] = React.useState<string | null>(null);
+  const { settings } = useMaintenanceSettings();
+
+  React.useEffect(() => {
+    if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Website") {
+      setActiveSubModule(breadcrumbPath[1]);
+    }
+  }, [breadcrumbPath]);
 
   const subModules = React.useMemo(() => {
     return APP_PAGES_CONFIG.find((p) => p.id === "Website")?.modules || [];
   }, []);
+
+  const visibleModules = subModules.filter(
+    (mod) => canViewModule(profile, mod.title)
+  );
 
   // Set initial breadcrumb on mount
   React.useEffect(() => {
@@ -80,21 +91,17 @@ export function WebsitePage({ profile, idToken }: WebsitePageProps) {
       ) : (
         <div className="content-body flex-1 w-full overflow-y-auto p-2">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
-            {subModules.map((mod) => {
-              const isUnderMaintenance = true;
+            {visibleModules.map((mod) => {
+              const isUnderMaintenance = !!settings.moduleMaintenance[mod.title];
               return (
-                <div
+                <FeatureCard
                   key={mod.title}
-                  title={isUnderMaintenance ? "This under maintenance" : undefined}
-                  className={isUnderMaintenance ? "opacity-50 cursor-not-allowed w-full max-w-[250px] aspect-[4/3]" : "w-full max-w-[250px] aspect-[4/3]"}
-                >
-                  <FeatureCard
-                    title={mod.title}
-                    description={mod.description}
-                    onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
-                    className={isUnderMaintenance ? "pointer-events-none shadow-none hover:shadow-none hover:scale-100 hover:bg-white" : undefined}
-                  />
-                </div>
+                  title={mod.title}
+                  description={mod.description}
+                  isUnderMaintenance={isUnderMaintenance}
+                  onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
+                  onDevAccess={() => handleSubModuleSelect(mod.title)}
+                />
               );
             })}
           </div>

@@ -22,6 +22,7 @@ const lora = Lora({
 
 import { ZoomBlocker } from "@/components/zoom-blocker";
 import { PwaRegister } from "@/components/pwa-register";
+import { PwaUpdateManager } from "@/components/pwa-update-manager";
 
 export const metadata: Metadata = {
   title: "iB - HSG Global Internal Bridge",
@@ -52,6 +53,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <PwaRegister />
+        <PwaUpdateManager />
         <ZoomBlocker />
         {children}
       </body>

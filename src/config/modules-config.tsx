@@ -68,16 +68,8 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     label: "Sales & Channels",
     modules: [
       {
-        title: "Multi-Channel Sync",
-        description: "Synchronize inventory, pricing, and orders across e-commerce platforms and physical retail.",
-      },
-      {
-        title: "Sales Leaderboard",
-        description: "Track performance rankings, daily achievements, and leaderboard statistics for field sales.",
-      },
-      {
-        title: "Promo & Pricing Rules",
-        description: "Define pricing strategies, seasonal discount triggers, dynamic promo rules, and margins.",
+        title: "Direct Order",
+        description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
       },
       {
         title: "Snap Deals",
@@ -90,10 +82,6 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Sponsorship",
         description: "Manage brand sponsorships, output distribution tracking, and receiver limit registries.",
-      },
-      {
-        title: "Direct Order",
-        description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
       },
       {
         title: "Customer Service",
@@ -111,7 +99,7 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       },
       {
         title: "Dispose Record",
-        description: "Manage and record damaged, returned, or expired goods disposal (coming soon).",
+        description: "Manage and record damaged, returned, or expired goods disposal.",
       }
     ]
   },
@@ -120,34 +108,24 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     label: "Office Tools",
     modules: [
       {
+        title: "Staff Claims",
+        description: "Record on-the-go out-of-pocket expenses, attach receipts, and submit batches up to $100 for payout.",
+      },
+      {
+        title: "Finance Claims",
+        description: "Review staff approvals, pay via PayNow, and compile official 2-page claim reports for Finance.",
+      },
+      {
         title: "Invoice Barcode Generator",
         description: "Generate invoice barcodes for retailers requiring barcode-enabled invoices.",
       },
       {
-        title: "Claim Form Generator",
-        description: "Upload receipts, scan data, and generate printable claim forms instantly.",
-      },
-      {
         title: "Delivery Label Generator",
         description: "Generate editable A6 delivery labels for quick printing and dispatch.",
-      }
-    ]
-  },
-  {
-    id: "Marketing & Content",
-    label: "Marketing & Content",
-    modules: [
+      },
       {
         title: "Asset Library",
         description: "Store, organize, and manage photos, documents, and marketing assets securely.",
-      },
-      {
-        title: "TikTok & Storyboard Briefs",
-        description: "Draft, edit, and organize storyboard briefs, video templates, and creators' guidelines.",
-      },
-      {
-        title: "Marketing Calendar",
-        description: "Plan promotional launches, influencer schedules, content releases, and pipeline dates.",
       }
     ]
   },
@@ -156,12 +134,12 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     label: "Website",
     modules: [
       {
-        title: "Portal Users",
-        description: "Manage registered user portals. Approve, suspend, or remove portal workspace access.",
-      },
-      {
         title: "Site",
         description: "Create website folders and allocate them to approved portal users (supports multi-user binding).",
+      },
+      {
+        title: "Portal Users",
+        description: "Manage registered user portals. Approve, suspend, or remove portal workspace access.",
       }
     ]
   },

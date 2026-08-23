@@ -7,6 +7,9 @@ import { NavigationTabs } from "../navigation-tabs";
 import { CustomButton } from "../custom-button";
 
 import { fetchLatestContract, adminUpdateContract } from "@/lib/api";
+import { APP_PAGES_CONFIG } from "@/config/modules-config";
+import { fetchMaintenanceSettings, saveModuleUnderConstruction, saveAllUnderConstructionModules } from "@/lib/maintenance";
+import { Search, Construction, CheckCircle2, SlidersHorizontal } from "lucide-react";
 
 interface SettingModuleProps {
   profile?: {
@@ -24,14 +27,21 @@ const apiColumns: Column[] = [
 export function SettingModule({ profile, idToken }: SettingModuleProps) {
   const tabs = [
     { id: "configuration", label: "Configuration", desc: "System parameters and configurations." },
+    { id: "under_construction", label: "Under Construction", desc: "Control module availability and toggle under construction status." },
     { id: "api", label: "API", desc: "Manage API integrations and secure credentials." }
   ];
 
-  const [activeTab, setActiveTab] = React.useState<"configuration" | "api">("configuration");
+  const [activeTab, setActiveTab] = React.useState<"configuration" | "under_construction" | "api">("configuration");
   const [data, setData] = React.useState<any[]>([]);
   const [fetching, setFetching] = React.useState(false);
   const [isEditMode, setIsEditMode] = React.useState(false);
   const [editingApi, setEditingApi] = React.useState<any | null>(null);
+
+  // Under construction state
+  const [moduleMaintenance, setModuleMaintenance] = React.useState<Record<string, boolean>>({});
+  const [maintenanceLoading, setMaintenanceLoading] = React.useState(false);
+  const [searchFilter, setSearchFilter] = React.useState("");
+  const [selectedCategory, setSelectedCategory] = React.useState<string>("All");
 
   // Contract upload states
   const [contractText, setContractText] = React.useState<string>("");
@@ -52,11 +62,25 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
     }
   }, []);
 
+  const loadMaintenance = React.useCallback(async () => {
+    setMaintenanceLoading(true);
+    try {
+      const settings = await fetchMaintenanceSettings();
+      setModuleMaintenance(settings.moduleMaintenance || {});
+    } catch (err: any) {
+      console.error("Failed to load maintenance settings:", err);
+    } finally {
+      setMaintenanceLoading(false);
+    }
+  }, []);
+
   React.useEffect(() => {
     if (activeTab === "configuration") {
       loadContract();
+    } else if (activeTab === "under_construction") {
+      loadMaintenance();
     }
-  }, [activeTab, loadContract]);
+  }, [activeTab, loadContract, loadMaintenance]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -160,6 +184,108 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
   }, [activeTab]);
 
 
+
+  // Handle toggle under construction mode for a module
+  const handleToggleModule = async (moduleTitle: string) => {
+    const current = !!moduleMaintenance[moduleTitle];
+    const next = !current;
+
+    const updatedMaintenance = {
+      ...moduleMaintenance,
+      [moduleTitle]: next
+    };
+
+    if (!next) {
+      delete updatedMaintenance[moduleTitle];
+    }
+
+    setModuleMaintenance(updatedMaintenance);
+
+    try {
+      const success = await saveModuleUnderConstruction(moduleTitle, next);
+      if (success) {
+        showToast(
+          next
+            ? `"${moduleTitle}" is now Under Construction.`
+            : `"${moduleTitle}" is now Active.`,
+          "success"
+        );
+        window.dispatchEvent(new CustomEvent("db-refresh"));
+      } else {
+        showToast("Failed to save setting to database", "error");
+        setModuleMaintenance(moduleMaintenance);
+      }
+    } catch (err: any) {
+      showToast("Failed to save setting: " + err.message, "error");
+      setModuleMaintenance(moduleMaintenance);
+    }
+  };
+
+  // Flattened modules list from APP_PAGES_CONFIG
+  const allModulesList = React.useMemo(() => {
+    const list: { pageId: string; pageLabel: string; title: string; description: string }[] = [];
+    APP_PAGES_CONFIG.forEach((page) => {
+      page.modules.forEach((mod) => {
+        list.push({
+          pageId: page.id,
+          pageLabel: page.label,
+          title: mod.title,
+          description: mod.description
+        });
+      });
+    });
+    return list;
+  }, []);
+
+  const categories = React.useMemo(() => {
+    const set = new Set<string>();
+    allModulesList.forEach((m) => set.add(m.pageLabel));
+    return ["All", ...Array.from(set)];
+  }, [allModulesList]);
+
+  const filteredModules = React.useMemo(() => {
+    return allModulesList.filter((mod) => {
+      const matchesCat = selectedCategory === "All" || mod.pageLabel === selectedCategory;
+      const q = searchFilter.trim().toLowerCase();
+      const matchesSearch =
+        !q ||
+        mod.title.toLowerCase().includes(q) ||
+        mod.description.toLowerCase().includes(q) ||
+        mod.pageLabel.toLowerCase().includes(q);
+      return matchesCat && matchesSearch;
+    });
+  }, [allModulesList, selectedCategory, searchFilter]);
+
+  const underConstructionCount = React.useMemo(() => {
+    return Object.values(moduleMaintenance).filter(Boolean).length;
+  }, [moduleMaintenance]);
+
+  const handleSetAll = async (underConst: boolean) => {
+    const updated: Record<string, boolean> = {};
+    allModulesList.forEach((m) => {
+      updated[m.title] = underConst;
+    });
+    setModuleMaintenance(underConst ? updated : {});
+
+    try {
+      const success = await saveAllUnderConstructionModules(updated);
+      if (success) {
+        showToast(
+          underConst
+            ? "All modules set to Under Construction."
+            : "All modules set to Active.",
+          "success"
+        );
+        window.dispatchEvent(new CustomEvent("db-refresh"));
+      } else {
+        showToast("Failed to update all modules", "error");
+        setModuleMaintenance(moduleMaintenance);
+      }
+    } catch (err: any) {
+      showToast("Error updating modules: " + err.message, "error");
+      setModuleMaintenance(moduleMaintenance);
+    }
+  };
 
   const handleEditModeChange = (edit: boolean) => {
     setIsEditMode(edit);
@@ -387,6 +513,169 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
                 <span className="text-[10px] text-zinc-450 mt-1 max-w-[240px] leading-relaxed">
                   NDA Signature is fully enforced. Click "View Active Contract" to review content or "Publish New" to replace.
                 </span>
+              </div>
+            )}
+          </div>
+        ) : activeTab === "under_construction" ? (
+          <div className="flex flex-col gap-4">
+            {/* Header Controls: Search, Category Filter, and Bulk Actions */}
+            <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-xs flex flex-col gap-3">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-zinc-900">Under Construction Control</h3>
+                    {underConstructionCount > 0 ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                        {underConstructionCount} Under Construction
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        All Modules Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                    Toggle construction mode for individual workspace modules. Modules in construction mode will be locked in the user portal.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleSetAll(false)}
+                    disabled={underConstructionCount === 0}
+                    className="px-3 py-1.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 hover:border-slate-300 text-xs font-bold text-zinc-700 rounded-md transition duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  >
+                    <CheckCircle2 size={13} className="text-emerald-600" />
+                    <span>Set All Active</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSetAll(true)}
+                    disabled={underConstructionCount === allModulesList.length}
+                    className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-xs font-bold text-blue-700 rounded-md transition duration-150 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  >
+                    <Construction size={13} className="text-blue-600" />
+                    <span>Set All Under Construction</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Search & Category Filter Bar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 pt-2 border-t border-slate-100">
+                <div className="relative flex-1 max-w-xs">
+                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                  <input
+                    type="text"
+                    value={searchFilter}
+                    onChange={(e) => setSearchFilter(e.target.value)}
+                    placeholder="Search module name or description..."
+                    className="w-full h-8 pl-8 pr-3 bg-slate-50 border border-slate-200 rounded text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white transition"
+                  />
+                  {searchFilter && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchFilter("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 text-xs font-bold"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-md whitespace-nowrap transition cursor-pointer ${
+                        selectedCategory === cat
+                          ? "bg-zinc-900 text-white shadow-xs"
+                          : "bg-slate-100 text-zinc-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* 3 or 4 Column Cards Grid */}
+            {maintenanceLoading ? (
+              <div className="flex items-center justify-center h-48 bg-white border border-slate-200 rounded-lg">
+                <span className="text-xs font-semibold text-zinc-400 animate-pulse">Loading module settings...</span>
+              </div>
+            ) : filteredModules.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 bg-white border border-dashed border-slate-200 rounded-lg p-6 text-center">
+                <span className="text-xs font-bold text-zinc-700">No modules found</span>
+                <span className="text-[11px] text-zinc-400 mt-1">Try adjusting your search query or category filter.</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 pb-8">
+                {filteredModules.map((mod) => {
+                  const isUnderConstruction = !!moduleMaintenance[mod.title];
+                  return (
+                    <div
+                      key={mod.title}
+                      className={`bg-white border rounded-xl p-4 flex flex-col justify-between transition-all duration-200 shadow-xs hover:shadow-md ${
+                        isUnderConstruction
+                          ? "border-blue-200 bg-blue-50/20"
+                          : "border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <div>
+                        {/* Top Meta: Category & Status */}
+                        <div className="flex items-center justify-between gap-2 mb-2">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 bg-slate-100 px-2 py-0.5 rounded">
+                            {mod.pageLabel}
+                          </span>
+                          {isUnderConstruction ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                              <span className="h-1.5 w-1.5 rounded-full bg-blue-600 animate-pulse" />
+                              Under Construction
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-zinc-400 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-full">
+                              Active
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Title & Description */}
+                        <h4 className="text-sm font-bold text-zinc-950 tracking-tight">
+                          {mod.title}
+                        </h4>
+                        <p className="text-xs text-zinc-500 leading-relaxed mt-1.5 line-clamp-3">
+                          {mod.description}
+                        </p>
+                      </div>
+
+                      {/* Footer Control: Toggle Switch */}
+                      <div className="border-t border-slate-100 pt-3 mt-4 flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-zinc-600 select-none">
+                          Construction Mode
+                        </span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={isUnderConstruction}
+                          onClick={() => handleToggleModule(mod.title)}
+                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            isUnderConstruction ? "bg-[#0B57D0]" : "bg-[#D1D5DB]"
+                          }`}
+                        >
+                          <span
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                              isUnderConstruction ? "translate-x-5" : "translate-x-0"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

@@ -1,4 +1,4 @@
-const CACHE_NAME = "ib-cache-v1";
+const CACHE_NAME = "ib-cache-v2";
 const ASSETS_TO_CACHE = [
   "/favicon.ico",
   "/icon-192.png",
@@ -14,7 +14,7 @@ self.addEventListener("install", (event) => {
   );
 });
 
-// Activate Event - Clean up old caches
+// Activate Event - Clean up old caches and claim clients immediately
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
@@ -29,7 +29,14 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-// Fetch Event - Network first, pass-through for dynamic endpoints, static cache for assets
+// Message listener for skip waiting prompt
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
+// Fetch Event - Network first for pages/scripts, pass-through for APIs, cache for static icons
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
@@ -38,19 +45,27 @@ self.addEventListener("fetch", (event) => {
     event.request.method !== "GET" ||
     url.pathname.includes("/api/") ||
     url.hostname.includes("firebase") ||
-    url.hostname.includes("firestore")
+    url.hostname.includes("firestore") ||
+    url.hostname.includes("workers.dev")
   ) {
     return;
   }
 
-  // Handle caching for local static assets
+  // For HTML documents/pages: Network First to guarantee latest code
+  if (event.request.mode === "navigate" || event.request.destination === "document") {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Handle caching for local static assets (icons, images)
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {
       if (cachedResponse) {
         return cachedResponse;
       }
       return fetch(event.request).then((response) => {
-        // Cache static files (e.g. images, assets) from the local origin dynamically
         if (
           response &&
           response.status === 200 &&
@@ -64,7 +79,7 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       }).catch(() => {
-        // Silent fallback for network errors
+        // Fallback
       });
     })
   );

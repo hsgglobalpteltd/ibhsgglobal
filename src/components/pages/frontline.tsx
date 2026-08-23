@@ -7,14 +7,12 @@ import { MerchandiserModule } from "../modules/MerchandiserModule";
 import { TaskModule } from "../modules/TaskModule";
 import { TrackOrderModule } from "../modules/TrackOrderModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
+import { canViewModule } from "@/lib/permissions";
+import { UserProfile } from "@/lib/api";
+import { useMaintenanceSettings, checkIsUnderMaintenance } from "@/lib/maintenance";
 
 interface FrontlinePageProps {
-  profile?: {
-    role: string;
-    modules_access: string[];
-    name?: string;
-    email?: string;
-  } | null;
+  profile?: UserProfile | null;
   breadcrumbPath?: string[];
 }
 
@@ -22,6 +20,7 @@ import { ConfirmDialog } from "../confirm-dialog";
 
 export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
   const [activeSubModule, setActiveSubModule] = React.useState<string | null>(null);
+  const { settings } = useMaintenanceSettings();
 
   React.useEffect(() => {
     if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Frontline") {
@@ -37,13 +36,9 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
     return APP_PAGES_CONFIG.find((p) => p.id === "Frontline")?.modules || [];
   }, []);
 
-  const modulesAccess = profile?.modules_access || [];
-  const isAdmin = profile?.role === "Administrator";
-  const isManager = profile?.role === "Manager";
-
-  // Filter modules based on user access
+  // Filter modules based on user view permission
   const visibleModules = subModules.filter(
-    (mod) => isAdmin || modulesAccess.includes(mod.title)
+    (mod) => canViewModule(profile, mod.title)
   );
 
   // Set initial breadcrumb on mount
@@ -151,20 +146,16 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
               {visibleModules.map((mod) => {
-                const isUnderMaintenance = mod.title !== "Tiktok Fulfillment" && mod.title !== "Track Order" && mod.title !== "Promoter";
+                const isUnderMaintenance = !!settings.moduleMaintenance[mod.title];
                 return (
-                  <div
+                  <FeatureCard
                     key={mod.title}
-                    title={isUnderMaintenance ? "This under maintenance" : undefined}
-                    className={isUnderMaintenance ? "opacity-50 cursor-not-allowed w-full max-w-[250px] aspect-[4/3]" : "w-full max-w-[250px] aspect-[4/3]"}
-                  >
-                    <FeatureCard
-                      title={mod.title}
-                      description={mod.description}
-                      onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
-                      className={isUnderMaintenance ? "pointer-events-none shadow-none hover:shadow-none hover:scale-100 hover:bg-white" : undefined}
-                    />
-                  </div>
+                    title={mod.title}
+                    description={mod.description}
+                    isUnderMaintenance={isUnderMaintenance}
+                    onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
+                    onDevAccess={() => handleSubModuleSelect(mod.title)}
+                  />
                 );
               })}
             </div>

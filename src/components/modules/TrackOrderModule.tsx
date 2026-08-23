@@ -32,7 +32,8 @@ import {
   AlertTriangle,
   ArrowRight,
   ExternalLink,
-  Square
+  Square,
+  Search
 } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -456,19 +457,61 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [isForceCloseModalOpen, setIsForceCloseModalOpen] = React.useState<boolean>(false);
   const [forceCloseLoading, setForceCloseLoading] = React.useState<boolean>(false);
 
+  const [driverSearchQuery, setDriverSearchQuery] = React.useState<string>("");
+
+  const matchesDriverRecord = React.useCallback((record: DriverLogRecord, query: string) => {
+    if (!query) return true;
+    const q = query.trim().toLowerCase();
+    
+    if ((record.id || "").toLowerCase().includes(q)) return true;
+    if ((record.driver || "").toLowerCase().includes(q)) return true;
+    if ((record.outsource_driver_details || "").toLowerCase().includes(q)) return true;
+    if ((record.driver_logs || "").toLowerCase().includes(q)) return true;
+    if ((record.active_orders || "").toLowerCase().includes(q)) return true;
+
+    // Check parsed active order IDs
+    try {
+      const activeIds = parseDriverActiveOrderIds(record.active_orders);
+      if (activeIds.some(id => id.toLowerCase().includes(q))) return true;
+    } catch (_) {}
+
+    // Check parsed completed log entries
+    try {
+      const completedLogs = parseDriverCompletedLogs(record.driver_logs);
+      if (completedLogs.some(log => (log.id || "").toLowerCase().includes(q))) return true;
+    } catch (_) {}
+
+    return false;
+  }, []);
+
   const onlineDrivers = React.useMemo(() => {
-    return driverLogs.filter((d) => (d.status || "").trim().toUpperCase() === "ON");
-  }, [driverLogs]);
+    const q = driverSearchQuery.trim().toLowerCase();
+    return driverLogs
+      .filter((d) => (d.status || "").trim().toUpperCase() === "ON")
+      .filter((d) => (q ? matchesDriverRecord(d, q) : true));
+  }, [driverLogs, driverSearchQuery, matchesDriverRecord]);
 
   const closedDriverJobs = React.useMemo(() => {
+    const q = driverSearchQuery.trim().toLowerCase();
+    const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
     return driverLogs
       .filter((d) => (d.status || "").trim().toUpperCase() === "OFF")
+      .filter((d) => {
+        // When searching, search across ALL historical records (regardless of date)
+        if (q) {
+          return matchesDriverRecord(d, q);
+        }
+        // When query is empty, only show the latest 1 week of records
+        const t = Number(d.end_time) || Number(d.start_time) || 0;
+        return t >= oneWeekAgo;
+      })
       .sort((a, b) => {
         const tA = Number(a.start_time) || 0;
         const tB = Number(b.start_time) || 0;
         return tB - tA;
       });
-  }, [driverLogs]);
+  }, [driverLogs, driverSearchQuery, matchesDriverRecord]);
 
   // Auto switch subtab to closed if no online drivers
   React.useEffect(() => {
@@ -477,16 +520,24 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   }, [onlineDrivers.length, activeDriverLogSubTab]);
 
+  const [activeLiveTrackingSubTab, setActiveLiveTrackingSubTab] = React.useState<"location" | "driver">("location");
+
   const tabs = [
-    { id: "dashboard", label: "Dashboard" },
+    { id: "dashboard", label: "Live Tracking" },
     { id: "delivery", label: "Delivery Order" },
     { id: "return", label: "Return Order" },
-    { id: "create", label: "Create Order" },
-    { id: "driver_log", label: "Driver Log" }
+    { id: "create", label: "Create Order" }
   ];
 
   const [activeTab, setActiveTab] = React.useState<string>("dashboard");
   const [activeDeliveryTab, setActiveDeliveryTab] = React.useState<"pending" | "complete">("pending");
+  const [deliveryStatusFilter, setDeliveryStatusFilter] = React.useState<string>("all");
+  const [deliverySearchQuery, setDeliverySearchQuery] = React.useState<string>("");
+
+  const [activeReturnTab, setActiveReturnTab] = React.useState<"pending" | "complete">("pending");
+  const [returnStatusFilter, setReturnStatusFilter] = React.useState<string>("all");
+  const [returnSearchQuery, setReturnSearchQuery] = React.useState<string>("");
+
   const [drafts, setDrafts] = React.useState<TrackOrderDraft[]>([]);
   const [dbOrders, setDbOrders] = React.useState<DbOrder[]>([]);
   const [pdfLoading, setPdfLoading] = React.useState<boolean>(false);
@@ -526,7 +577,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Return Orders panel and display states
   const [stores, setStores] = React.useState<any[]>([]);
   const [retailers, setRetailers] = React.useState<any[]>([]);
-  const [activeReturnTab, setActiveReturnTab] = React.useState<"pending" | "complete">("pending");
   const [isReturnPanelOpen, setIsReturnPanelOpen] = React.useState<boolean>(false);
   const [editingReturn, setEditingReturn] = React.useState<DbOrder | null>(null);
   const [returnRefNumber, setReturnRefNumber] = React.useState("");
@@ -780,12 +830,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Fetch database orders from Workers API
   const fetchDatabaseOrders = async (forceSync = false) => {
     try {
-      if (forceSync) {
-        // Refresh Workers cache from Google Sheets
-        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
-          method: "POST"
-        });
-      }
       const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders");
       if (res.ok) {
         const data = await res.json();
@@ -976,6 +1020,32 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     resetCreateForm();
   };
 
+  // Reusable order search & Mark dot filter helper
+  const matchesOrderSearch = React.useCallback((order: DbOrder, rawQuery: string): boolean => {
+    if (!rawQuery || !rawQuery.trim()) return true;
+    const q = rawQuery.trim();
+
+    // User typing mark with dot (e.g. "A." -> search for Mark "A")
+    if (q.endsWith(".")) {
+      const markQuery = q.slice(0, -1).trim().toLowerCase();
+      const orderMark = (order.mark || "").trim().toLowerCase();
+      return orderMark === markQuery;
+    }
+
+    const lowerQ = q.toLowerCase();
+    const idMatch = (order.id || "").toLowerCase().includes(lowerQ);
+    const doMatch = (order.do_number || "").toLowerCase().includes(lowerQ);
+    const refMatch = (order.ref_number || "").toLowerCase().includes(lowerQ);
+    const addressMatch = (order.deliver_to || "").toLowerCase().includes(lowerQ);
+    const postcodeMatch = (order.poscode || "").toLowerCase().includes(lowerQ);
+    const driverMatch = (order.driver || "").toLowerCase().includes(lowerQ);
+    const invoiceMatch = (order.invoice_number || "").toLowerCase().includes(lowerQ);
+    const creditNoteMatch = (order.credit_note_number || "").toLowerCase().includes(lowerQ);
+    const markMatch = (order.mark || "").trim().toLowerCase() === lowerQ;
+
+    return idMatch || doMatch || refMatch || addressMatch || postcodeMatch || driverMatch || invoiceMatch || creditNoteMatch || markMatch;
+  }, []);
+
   // Filter orders for Pending and Complete lists
   const pendingOrders = React.useMemo(() => {
     return dbOrders.filter(
@@ -1001,7 +1071,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     dbOrders.forEach((o) => {
       // Check if this order is delivered, collected, or complete
-      const isDelivered = o.type !== "Return" && (o.status === "Delivered" || String(o.completed) === "true" || o.completed === true);
+      const isDelivered = o.type !== "Return" && (o.status === "Delivered" || String(o.completed) === "true" || o.completed !== true);
       const isCollected = o.type === "Return" && (o.status === "Collected" || o.status === "Return Collected" || String(o.completed) === "true" || o.completed === true);
 
       if (isDelivered || isCollected) {
@@ -1051,12 +1121,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   }, [dbOrders, activeReturnTab]);
 
   const sortedReturnOrders = React.useMemo(() => {
-    return [...returnOrders].sort((a, b) => {
-      const timeA = Number(a.timestamp) || 0;
-      const timeB = Number(b.timestamp) || 0;
-      return timeB - timeA;
-    });
-  }, [returnOrders]);
+    return returnOrders
+      .filter((o) => {
+        if (returnStatusFilter !== "all" && (o.status || "").toLowerCase() !== returnStatusFilter.toLowerCase()) {
+          return false;
+        }
+        return matchesOrderSearch(o, returnSearchQuery);
+      })
+      .sort((a, b) => {
+        const timeA = Number(a.timestamp) || 0;
+        const timeB = Number(b.timestamp) || 0;
+        return timeB - timeA;
+      });
+  }, [returnOrders, returnStatusFilter, returnSearchQuery, matchesOrderSearch]);
 
   const filteredStores = React.useMemo(() => {
     if (!storeSearchQuery.trim()) return [];
@@ -1850,7 +1927,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // 1. Initialize and cleanup Leaflet Map instance
   React.useEffect(() => {
-    if (!leafletLoaded || activeTab !== "dashboard") return;
+    if (!leafletLoaded || activeTab !== "dashboard" || activeLiveTrackingSubTab !== "location") return;
 
     const L = (window as any).L;
     if (!L) return;
@@ -1873,6 +1950,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           mapRef.current.invalidateSize();
         }
       }, 300);
+    } else {
+      setTimeout(() => {
+        if (mapRef.current) {
+          mapRef.current.invalidateSize();
+        }
+      }, 100);
     }
 
     return () => {
@@ -1882,11 +1965,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         markersGroupRef.current = null;
       }
     };
-  }, [leafletLoaded, activeTab]);
+  }, [leafletLoaded, activeTab, activeLiveTrackingSubTab]);
 
   // 2. Render and update markers dynamically without re-initializing the map (prevents flickering)
   React.useEffect(() => {
-    if (!leafletLoaded || activeTab !== "dashboard" || !mapRef.current || !markersGroupRef.current) return;
+    if (!leafletLoaded || activeTab !== "dashboard" || activeLiveTrackingSubTab !== "location" || !mapRef.current || !markersGroupRef.current) return;
 
     const L = (window as any).L;
     if (!L) return;
@@ -3348,14 +3431,37 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
 
 
-  // Sort Pending Orders alphabetically by Mark A-Z
+  // Filter & Sort Pending Delivery Orders
   const sortedPendingOrders = React.useMemo(() => {
-    return [...pendingOrders].sort((a, b) => {
-      const timeA = Number(a.timestamp) || 0;
-      const timeB = Number(b.timestamp) || 0;
-      return timeB - timeA;
-    });
-  }, [pendingOrders]);
+    return pendingOrders
+      .filter((o) => {
+        if (deliveryStatusFilter !== "all" && (o.status || "").toLowerCase() !== deliveryStatusFilter.toLowerCase()) {
+          return false;
+        }
+        return matchesOrderSearch(o, deliverySearchQuery);
+      })
+      .sort((a, b) => {
+        const timeA = Number(a.timestamp) || 0;
+        const timeB = Number(b.timestamp) || 0;
+        return timeB - timeA;
+      });
+  }, [pendingOrders, deliveryStatusFilter, deliverySearchQuery, matchesOrderSearch]);
+
+  // Filter & Sort Completed Delivery Orders
+  const sortedCompletedOrders = React.useMemo(() => {
+    return completedOrders
+      .filter((o) => {
+        if (deliveryStatusFilter !== "all" && (o.status || "").toLowerCase() !== deliveryStatusFilter.toLowerCase()) {
+          return false;
+        }
+        return matchesOrderSearch(o, deliverySearchQuery);
+      })
+      .sort((a, b) => {
+        const timeA = Number(a.timestamp) || 0;
+        const timeB = Number(b.timestamp) || 0;
+        return timeB - timeA;
+      });
+  }, [completedOrders, deliveryStatusFilter, deliverySearchQuery, matchesOrderSearch]);
 
   // Helper to truncate text to 15 words
   const truncateWords = (text: string, count = 15) => {
@@ -3618,96 +3724,597 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       />
 
       <div className="content-body flex-1 w-full overflow-y-auto">
-        {/* TAB CONTENT: DASHBOARD */}
+        {/* TAB CONTENT: LIVE TRACKING (Formerly Dashboard) */}
         {activeTab === "dashboard" && (
-        <div className="flex flex-col gap-6 animate-tableFadeInOnly">
-          {/* Dashboard Metrics Row */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            {/* Card 1: Pending Delivery */}
-            <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
-              <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Delivery</span>
-                <span className="text-3xl font-bold text-zinc-950 mt-1">
-                  {pendingOrders.filter((o) => o.status !== "Delivered").length}
-                </span>
-              </div>
-              <div className="h-10 w-10 bg-[#E8F0FE] rounded flex items-center justify-center text-[#0B57D0]">
-                <Calendar size={18} className="stroke-[2.5]" />
+          <div className="flex flex-col gap-4 animate-tableFadeInOnly">
+            {/* Live Tracking Sub-tabs Switch Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setActiveLiveTrackingSubTab("location")}
+                  className={`flex items-center gap-2 px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
+                    activeLiveTrackingSubTab === "location"
+                      ? "border-[#0B57D0] text-[#0B57D0]"
+                      : "border-transparent text-zinc-400 hover:text-zinc-700"
+                  }`}
+                >
+                  <MapPin size={14} />
+                  Track Location
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveLiveTrackingSubTab("driver")}
+                  className={`flex items-center gap-2 px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
+                    activeLiveTrackingSubTab === "driver"
+                      ? "border-[#0B57D0] text-[#0B57D0]"
+                      : "border-transparent text-zinc-400 hover:text-zinc-700"
+                  }`}
+                >
+                  <Truck size={14} />
+                  Track Driver
+                  {onlineDrivers.length > 0 && (
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                  )}
+                </button>
               </div>
             </div>
 
-            {/* Card 2: Pending Return */}
-            <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
-              <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Return</span>
-                <span className="text-3xl font-bold text-zinc-950 mt-1">
-                  {dbOrders.filter((o) => o.type === "Return" && String(o.completed) !== "true" && o.completed !== true && o.status !== "Collected" && o.status !== "Return Collected").length}
-                </span>
-              </div>
-              <div className="h-10 w-10 bg-[#FCE8E6] rounded flex items-center justify-center text-[#C5221F]">
-                <ClipboardCheck size={18} className="stroke-[2.5]" />
-              </div>
-            </div>
+            {/* SUB-VIEW 1: TRACK LOCATION */}
+            {activeLiveTrackingSubTab === "location" && (
+              <div className="flex flex-col gap-6 animate-tableFadeInOnly">
+                {/* Dashboard Metrics Row */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Card 1: Pending Delivery */}
+                  <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Delivery</span>
+                      <span className="text-3xl font-bold text-zinc-950 mt-1">
+                        {pendingOrders.filter((o) => o.status !== "Delivered").length}
+                      </span>
+                    </div>
+                    <div className="h-10 w-10 bg-[#E8F0FE] rounded flex items-center justify-center text-[#0B57D0]">
+                      <Calendar size={18} className="stroke-[2.5]" />
+                    </div>
+                  </div>
 
-            {/* Card 3: Task Done */}
-            <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
-              <div className="flex flex-col">
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Task Done</span>
-                <span className="text-3xl font-bold text-zinc-950 mt-1">{tasksDoneToday}</span>
-              </div>
-              <div className="h-10 w-10 bg-[#E6F4EA] rounded flex items-center justify-center text-[#137333]">
-                <CheckCircle size={18} className="stroke-[2.5]" />
-              </div>
-            </div>
-          </div>
+                  {/* Card 2: Pending Return */}
+                  <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Return</span>
+                      <span className="text-3xl font-bold text-zinc-950 mt-1">
+                        {dbOrders.filter((o) => o.type === "Return" && String(o.completed) !== "true" && o.completed !== true && o.status !== "Collected" && o.status !== "Return Collected").length}
+                      </span>
+                    </div>
+                    <div className="h-10 w-10 bg-[#FCE8E6] rounded flex items-center justify-center text-[#C5221F]">
+                      <ClipboardCheck size={18} className="stroke-[2.5]" />
+                    </div>
+                  </div>
 
-          {/* Full Width & Height Map Container */}
-          <div className="w-full h-[calc(100vh-280px)] min-h-[450px] rounded border border-slate-200 overflow-hidden relative shadow-sm bg-white">
-            {/* Map Filter Toggle Button Overlay */}
-            <div className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur-xs border border-slate-200 rounded shadow-md p-1 flex gap-1">
-              <button
-                type="button"
-                onClick={() => setMapFilter("pending")}
-                className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-all select-none ${
-                  mapFilter === "pending"
-                    ? "bg-[#0B57D0] text-white"
-                    : "bg-transparent text-zinc-600 hover:bg-slate-100 hover:text-zinc-950"
-                }`}
-              >
-                Pending
-              </button>
-              <button
-                type="button"
-                onClick={() => setMapFilter("complete")}
-                className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-all select-none ${
-                  mapFilter === "complete"
-                    ? "bg-[#0B57D0] text-white"
-                    : "bg-transparent text-zinc-600 hover:bg-slate-100 hover:text-zinc-950"
-                }`}
-              >
-                Complete
-              </button>
-            </div>
+                  {/* Card 3: Task Done */}
+                  <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Task Done</span>
+                      <span className="text-3xl font-bold text-zinc-950 mt-1">{tasksDoneToday}</span>
+                    </div>
+                    <div className="h-10 w-10 bg-[#E6F4EA] rounded flex items-center justify-center text-[#137333]">
+                      <CheckCircle size={18} className="stroke-[2.5]" />
+                    </div>
+                  </div>
+                </div>
 
-            <div id="leaflet-map" className="w-full h-full z-10" />
-            {!leafletLoaded && (
-              <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-20">
-                <div className="flex flex-col items-center gap-2">
-                  <Loader2 className="w-6 h-6 animate-spin text-[#0B57D0]" />
-                  <span className="text-xs font-semibold text-zinc-500">Loading Map View...</span>
+                {/* Full Width & Height Map Container */}
+                <div className="w-full h-[calc(100vh-280px)] min-h-[450px] rounded border border-slate-200 overflow-hidden relative shadow-sm bg-white">
+                  {/* Map Filter Toggle Button Overlay */}
+                  <div className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur-xs border border-slate-200 rounded shadow-md p-1 flex gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setMapFilter("pending")}
+                      className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-all select-none ${
+                        mapFilter === "pending"
+                          ? "bg-[#0B57D0] text-white"
+                          : "bg-transparent text-zinc-600 hover:bg-slate-100 hover:text-zinc-950"
+                      }`}
+                    >
+                      Pending
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMapFilter("complete")}
+                      className={`px-3 py-1 text-xs font-bold rounded cursor-pointer transition-all select-none ${
+                        mapFilter === "complete"
+                          ? "bg-[#0B57D0] text-white"
+                          : "bg-transparent text-zinc-600 hover:bg-slate-100 hover:text-zinc-950"
+                      }`}
+                    >
+                      Complete
+                    </button>
+                  </div>
+
+                  <div id="leaflet-map" className="w-full h-full z-10" />
+                  {!leafletLoaded && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-20">
+                      <div className="flex flex-col items-center gap-2">
+                        <Loader2 className="w-6 h-6 animate-spin text-[#0B57D0]" />
+                        <span className="text-xs font-semibold text-zinc-500">Loading Map View...</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
+
+            {/* SUB-VIEW 2: TRACK DRIVER */}
+            {activeLiveTrackingSubTab === "driver" && (
+              <div className="flex flex-col gap-4 animate-tableFadeInOnly">
+                {/* Driver Sub-tabs Switch Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
+                  <div className="flex items-center gap-2">
+                    {onlineDrivers.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveDriverLogSubTab("online")}
+                        className={`flex items-center gap-2 px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
+                          activeDriverLogSubTab === "online"
+                            ? "border-[#0B57D0] text-[#0B57D0]"
+                            : "border-transparent text-zinc-400 hover:text-zinc-700"
+                        }`}
+                      >
+                        <span className="relative flex h-2 w-2">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                        </span>
+                        Online ({onlineDrivers.length})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setActiveDriverLogSubTab("closed")}
+                      className={`px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
+                        activeDriverLogSubTab === "closed"
+                          ? "border-[#0B57D0] text-[#0B57D0]"
+                          : "border-transparent text-zinc-400 hover:text-zinc-700"
+                      }`}
+                    >
+                      Job Closed ({closedDriverJobs.length})
+                    </button>
+                  </div>
+
+                  {/* Search Bar for Order ID, Job ID, or Driver */}
+                  <div className="relative w-full sm:w-72">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={driverSearchQuery}
+                      onChange={(e) => setDriverSearchQuery(e.target.value)}
+                      placeholder="Search Order ID, Job ID, Driver..."
+                      className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-200 rounded focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-colors"
+                    />
+                    {driverSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setDriverSearchQuery("")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
+                        title="Clear Search"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* ONLINE DRIVERS VIEW (3 Column Grid of Cards) */}
+                {activeDriverLogSubTab === "online" && (
+                  <div className="h-[calc(100vh-270px)] min-h-[400px] w-full overflow-y-auto pr-1">
+                    {onlineDrivers.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
+                        <Truck size={40} className="text-zinc-400 mb-3" />
+                        <span className="font-primary text-sm text-zinc-500 font-medium">
+                          No drivers are currently online.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-6">
+                        {onlineDrivers.map((driverJob) => {
+                          const completedLogs = parseDriverCompletedLogs(driverJob.driver_logs);
+                          const activeIds = parseDriverActiveOrderIds(driverJob.active_orders);
+                          
+                          // Match and resolve order objects
+                          const remainingOrders: DbOrder[] = activeIds
+                            .map((id) => resolveOrder(id))
+                            .filter(Boolean) as DbOrder[];
+
+                          // Calculate total issues/discrepancies count
+                          const totalDiscrepancies = completedLogs.reduce(
+                            (acc, curr) => acc + (curr.discrepancies ? curr.discrepancies.length : 0),
+                            0
+                          );
+
+                          // Starting point from office (409461)
+                          const startCoords: [number, number] = [1.3197, 103.8962];
+                          
+                          // Sort remaining active orders by nearest neighbor
+                          const sortedRemaining = sortOrdersByNearestRoute(startCoords, remainingOrders);
+
+                          const totalStops = completedLogs.length + remainingOrders.length;
+                          const completionPct = totalStops > 0 ? Math.round((completedLogs.length / totalStops) * 100) : 0;
+
+                          let runningCoords = startCoords;
+
+                          return (
+                            <div
+                              key={driverJob.id}
+                              className="bg-white border border-slate-200 rounded-lg flex flex-col shadow-xs overflow-hidden h-[calc(100vh-270px)] min-h-[480px]"
+                            >
+                              {/* Driver Card Header */}
+                              <div className="bg-slate-50 border-b border-slate-200 p-3.5 flex flex-col gap-2 flex-shrink-0">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-8 h-8 rounded-full bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex items-center justify-center text-[#0B57D0]">
+                                      <Truck size={16} />
+                                    </div>
+                                    <div>
+                                      <h4 className="font-primary text-sm font-bold text-zinc-900 leading-tight">
+                                        {driverJob.driver}
+                                      </h4>
+                                      <span className="text-[10px] text-zinc-500 font-medium">
+                                        Shift ID: {driverJob.id}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setForceCloseDriverJob(driverJob);
+                                      setIsForceCloseModalOpen(true);
+                                    }}
+                                    title="End Driver Shift"
+                                    className="p-1.5 rounded hover:bg-red-50 text-red-600 hover:text-red-700 transition-colors cursor-pointer flex items-center justify-center"
+                                  >
+                                    <Square size={14} fill="currentColor" />
+                                  </button>
+                                </div>
+
+                                {/* Shift Started & Stats bar */}
+                                <div className="flex items-center justify-between text-[11px] font-medium text-zinc-600 bg-white px-2.5 py-1.5 rounded border border-slate-200">
+                                  <div className="flex items-center gap-1">
+                                    <Clock size={12} className="text-zinc-400" />
+                                    <span>Start: {formatTimestamp(driverJob.start_time)}</span>
+                                  </div>
+                                  <span className="font-semibold text-zinc-800">
+                                    {completedLogs.length}/{totalStops} Done ({completionPct}%)
+                                  </span>
+                                </div>
+
+                                {/* Issues Badge if any */}
+                                {totalDiscrepancies > 0 && (
+                                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold">
+                                    <AlertTriangle size={13} className="text-amber-600" />
+                                    <span>{totalDiscrepancies} Discrepanc{totalDiscrepancies > 1 ? "ies" : "y"} / Remark Reported</span>
+                                  </div>
+                                )}
+
+                                {driverJob.outsource_driver_details && (
+                                  <div className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 font-semibold truncate">
+                                    ℹ️ Outsource: {driverJob.outsource_driver_details}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Route Timeline List (Scrollable) */}
+                              <div className="p-3.5 flex-1 overflow-y-auto flex flex-col gap-0 font-primary text-xs">
+                                {/* Node 0: Office / Warehouse Start */}
+                                <div className="flex items-start gap-2.5">
+                                  <div className="flex flex-col items-center">
+                                    <div className="w-6 h-6 rounded-full bg-zinc-800 text-white flex items-center justify-center text-[10px] font-bold shadow-xs flex-shrink-0">
+                                      🏢
+                                    </div>
+                                  </div>
+                                  <div className="flex-1 min-w-0 pt-0.5">
+                                    <div className="font-bold text-zinc-900 text-xs">
+                                      Start: Office / Warehouse
+                                    </div>
+                                    <div className="text-[10px] text-zinc-500">
+                                      Poscode: 409461 — Central Zone
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Completed Stops (Green Nodes) */}
+                                {completedLogs.map((logEntry, logIdx) => {
+                                  const matchedOrder = resolveOrder(logEntry.id);
+                                  const orderPoscode = matchedOrder?.poscode || "";
+                                  const orderAddress = matchedOrder?.deliver_to || "Singapore Address";
+                                  const orderMark = matchedOrder?.mark || "✓";
+
+                                  const orderCoords = matchedOrder ? getOrderLatLng(matchedOrder) : startCoords;
+                                  const distance = calculateDistanceKm(
+                                    runningCoords[0],
+                                    runningCoords[1],
+                                    orderCoords[0],
+                                    orderCoords[1]
+                                  );
+                                  runningCoords = orderCoords;
+
+                                  const hasDiscrepancies = logEntry.discrepancies && logEntry.discrepancies.length > 0;
+
+                                  return (
+                                    <React.Fragment key={`log-${logIdx}-${logEntry.id}`}>
+                                      {/* Vertical dotted line connecting nodes */}
+                                      <div className="flex items-center gap-2.5 h-6 ml-3 my-0.5">
+                                        <div className="w-[2px] h-full border-l-2 border-dashed border-emerald-300" />
+                                        <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
+                                          +{distance.toFixed(1)} km
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-start gap-2.5 bg-emerald-50/50 border border-emerald-200 rounded-lg p-2.5 my-0.5 shadow-xs">
+                                        <div className="flex flex-col items-center">
+                                          <div className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold shadow-xs flex-shrink-0">
+                                            <Check size={13} strokeWidth={3} />
+                                          </div>
+                                        </div>
+
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center justify-between gap-1">
+                                            <div className="font-bold text-emerald-950 text-xs truncate">
+                                              [{orderMark}] {logEntry.id}
+                                            </div>
+                                            <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded flex-shrink-0">
+                                              {formatTimestamp(logEntry.timestamp)}
+                                            </span>
+                                          </div>
+
+                                          <div className="text-[11px] text-zinc-600 font-medium truncate mt-0.5" title={orderAddress}>
+                                            {orderAddress}
+                                          </div>
+
+                                          {orderPoscode && (
+                                            <div className="mt-1">
+                                              {renderPoscodeCell(orderPoscode)}
+                                            </div>
+                                          )}
+
+                                          {/* Signed DO Proof Thumbnail */}
+                                          {logEntry.signed_paper_img && (
+                                            <div className="mt-2 flex items-center gap-2">
+                                              <div
+                                                onClick={() => setActiveLightboxImage(logEntry.signed_paper_img || null)}
+                                                className="relative w-12 h-12 rounded border border-emerald-300 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity bg-white flex-shrink-0 shadow-2xs"
+                                                title="Click to view signed DO full screen"
+                                              >
+                                                <img
+                                                  src={logEntry.signed_paper_img}
+                                                  alt="Signed DO Proof"
+                                                  className="w-full h-full object-cover"
+                                                />
+                                              </div>
+                                              <span className="text-[10px] text-emerald-700 font-semibold">
+                                                Signed DO Attached
+                                              </span>
+                                            </div>
+                                          )}
+
+                                          {/* Discrepancy / Issues Callout */}
+                                          {hasDiscrepancies && (
+                                            <div className="mt-2 bg-amber-50 border border-amber-300 rounded p-2 text-[10px] flex flex-col gap-1">
+                                              <div className="flex items-center gap-1 font-bold text-amber-900">
+                                                <AlertTriangle size={11} className="text-amber-600 flex-shrink-0" />
+                                                <span>Discrepancy / Issue:</span>
+                                              </div>
+                                              {logEntry.discrepancies?.map((disc, dIdx) => (
+                                                <div key={dIdx} className="text-amber-800 pl-3">
+                                                  • <span className="font-semibold">{disc.sku}</span>: Ordered {disc.qty_ordered}, Delivered {disc.qty_delivered}
+                                                  {disc.remark && (
+                                                    <div className="text-zinc-600 italic">
+                                                      Remark: "{disc.remark}"
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              ))}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </React.Fragment>
+                                  );
+                                })}
+
+                                {/* Active / Remaining Stops (Blue/Slate Nodes) */}
+                                {sortedRemaining.map((activeOrder, aIdx) => {
+                                  const orderCoords = getOrderLatLng(activeOrder);
+                                  const distance = calculateDistanceKm(
+                                    runningCoords[0],
+                                    runningCoords[1],
+                                    orderCoords[0],
+                                    orderCoords[1]
+                                  );
+                                  runningCoords = orderCoords;
+
+                                  let itemsCount = 0;
+                                  try {
+                                    const pItems = typeof activeOrder.items === "string" ? JSON.parse(activeOrder.items) : activeOrder.items;
+                                    itemsCount = Array.isArray(pItems) ? pItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0) : 0;
+                                  } catch (_) {}
+
+                                  return (
+                                    <React.Fragment key={`active-${activeOrder.id}-${aIdx}`}>
+                                      {/* Vertical dotted line connecting nodes */}
+                                      <div className="flex items-center gap-2.5 h-6 ml-3 my-0.5">
+                                        <div className="w-[2px] h-full border-l-2 border-dashed border-blue-300" />
+                                        <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">
+                                          +{distance.toFixed(1)} km
+                                        </span>
+                                      </div>
+
+                                      <div className="flex items-start gap-2.5 bg-blue-50/30 border border-blue-200 rounded-lg p-2.5 my-0.5 shadow-xs">
+                                        <div className="flex flex-col items-center">
+                                          <div className="w-6 h-6 rounded-full bg-[#0B57D0] text-white flex items-center justify-center text-[10px] font-bold shadow-xs flex-shrink-0">
+                                            {completedLogs.length + aIdx + 1}
+                                          </div>
+                                        </div>
+
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center justify-between gap-1">
+                                            <div className="font-bold text-blue-950 text-xs truncate">
+                                              [{activeOrder.mark}] {activeOrder.do_number}_{activeOrder.ref_number || "NA"}
+                                            </div>
+                                            <span className="text-[9px] font-bold text-blue-800 bg-blue-100 px-1.5 py-0.5 rounded flex-shrink-0">
+                                              Out for Delivery
+                                            </span>
+                                          </div>
+
+                                          <div className="text-[11px] text-zinc-600 font-medium truncate mt-0.5" title={activeOrder.deliver_to}>
+                                            {activeOrder.deliver_to}
+                                          </div>
+
+                                          <div className="mt-1 flex items-center gap-2">
+                                            {renderPoscodeCell(activeOrder.poscode)}
+                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border border-slate-200 text-[9px] font-bold text-zinc-600">
+                                              <Boxes size={10} className="text-zinc-400" /> {itemsCount} items
+                                            </span>
+                                          </div>
+
+                                          {activeOrder.type === "Urgent" && (
+                                            <div className="mt-1.5 text-[9px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded flex items-center gap-1">
+                                              <Clock size={10} className="text-red-500 animate-pulse" /> Urgent Delivery by 6:00 PM
+                                            </div>
+                                          )}
+
+                                          {activeOrder.type?.startsWith("Appointment") && (
+                                            <div className="mt-1.5 text-[9px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded flex items-center gap-1">
+                                              <Clock size={10} className="text-blue-500 animate-pulse" /> Appointment: {formatDateStr(activeOrder.deadline)}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* JOB CLOSED TABLE VIEW */}
+                {activeDriverLogSubTab === "closed" && (
+                  <div className="h-[calc(100vh-270px)] min-h-[400px] w-full relative">
+                    {closedDriverJobs.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
+                        <ClipboardCheck size={40} className="text-zinc-400 mb-3" />
+                        <span className="font-primary text-sm text-zinc-500 font-medium">
+                          No closed driver shifts recorded yet.
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="h-full overflow-auto border border-slate-200 rounded bg-white">
+                        <table className="w-full text-left font-primary text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
+                              <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Route Log</th>
+                              <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Job ID</th>
+                              <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Driver Name</th>
+                              <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Shift Started</th>
+                              <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Shift Ended</th>
+                              <th className="sticky top-0 bg-slate-50 p-3 w-28 align-middle z-10">Duration</th>
+                              <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Completed Stops</th>
+                              <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Discrepancies</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-200">
+                            {closedDriverJobs.map((record, idx) => {
+                              const logs = parseDriverCompletedLogs(record.driver_logs);
+                              const totalIssues = logs.reduce(
+                                (acc, curr) => acc + (curr.discrepancies ? curr.discrepancies.length : 0),
+                                0
+                              );
+
+                              return (
+                                <tr
+                                  key={record.id}
+                                  className={`transition-all h-14 ${
+                                    idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
+                                  } hover:bg-slate-50`}
+                                >
+                                  <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedRouteLogRecord(record);
+                                        setIsRouteLogModalOpen(true);
+                                      }}
+                                      title="View Complete Route Timeline Log"
+                                      className="w-8 h-8 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-[#0B57D0]/30 bg-[#0B57D0]/5 hover:bg-[#0B57D0] text-[#0B57D0] hover:text-white cursor-pointer transition-all outline-none mx-auto shadow-2xs"
+                                    >
+                                      <Route size={14} />
+                                    </button>
+                                  </td>
+                                  <td className="p-3 w-40 font-mono font-bold text-zinc-900 align-middle border-b border-zinc-200">
+                                    {record.id}
+                                  </td>
+                                  <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
+                                    {record.driver}
+                                    {record.outsource_driver_details && (
+                                      <div className="text-[10px] text-zinc-400 font-normal truncate">
+                                        {record.outsource_driver_details}
+                                      </div>
+                                    )}
+                                  </td>
+                                  <td className="p-3 w-40 text-zinc-600 align-middle border-b border-zinc-200">
+                                    {formatTimestamp(record.start_time)}
+                                  </td>
+                                  <td className="p-3 w-40 text-zinc-600 align-middle border-b border-zinc-200">
+                                    {formatTimestamp(record.end_time)}
+                                  </td>
+                                  <td className="p-3 w-28 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                                    {formatShiftDuration(record.start_time, record.end_time)}
+                                  </td>
+                                  <td className="p-3 w-28 text-center align-middle border-b border-zinc-200">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs">
+                                      <Check size={11} strokeWidth={3} />
+                                      {logs.length}
+                                    </span>
+                                  </td>
+                                  <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                                    {totalIssues > 0 ? (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[10px]">
+                                        <AlertTriangle size={11} className="text-amber-600" />
+                                        {totalIssues} Issue{totalIssues > 1 ? "s" : ""}
+                                      </span>
+                                    ) : (
+                                      <span className="text-zinc-400 font-normal text-[11px]">
+                                        Clean (0)
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        )}
 
       {/* TAB CONTENT: DELIVERY ORDER */}
       {activeTab === "delivery" && (
         <div className="flex flex-col gap-4 animate-tableFadeInOnly">
-          {/* Sub-tabs switch header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
-            <div className="flex items-center gap-2">
+          {/* Sub-tabs switch header & Filter / Search Controls */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => setActiveDeliveryTab("pending")}
@@ -3736,7 +4343,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 onClick={() => {
                   if (!invoiceLoading) setIsInvoiceUploadChoiceOpen(true);
                 }}
-                className={`ml-4 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${invoiceLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                className={`ml-2 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${invoiceLoading ? "opacity-50 cursor-not-allowed" : ""}`}
               >
                 <Upload size={14} />
                 Bulk Invoices Upload
@@ -3763,9 +4370,56 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 </span>
               )}
             </div>
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-zinc-600 self-end sm:self-auto">
-              {activeDeliveryTab === "pending" ? sortedPendingOrders.length : completedOrders.length} Orders
-            </span>
+
+            {/* Filter Status & Search Bar */}
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={deliveryStatusFilter}
+                onChange={(e) => setDeliveryStatusFilter(e.target.value)}
+                className="text-xs bg-white border border-slate-200 rounded px-2.5 py-1.5 text-zinc-700 font-medium focus:outline-none focus:border-[#0B57D0] cursor-pointer"
+              >
+                <option value="all">All Statuses</option>
+                {activeDeliveryTab === "pending" ? (
+                  <>
+                    <option value="Ready to Pick">Ready to Pick</option>
+                    <option value="Picking">Picking</option>
+                    <option value="Ready to Deliver">Ready to Deliver</option>
+                    <option value="Out for Delivery">Out for Delivery</option>
+                    <option value="Delivered">Delivered</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="Complete">Complete</option>
+                    <option value="Delivered">Delivered</option>
+                  </>
+                )}
+              </select>
+
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
+                <input
+                  type="text"
+                  value={deliverySearchQuery}
+                  onChange={(e) => setDeliverySearchQuery(e.target.value)}
+                  placeholder="Search ID, Ref, Address, Mark (e.g. A.)..."
+                  className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-200 rounded focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-colors"
+                />
+                {deliverySearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setDeliverySearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
+                    title="Clear Search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-zinc-600">
+                {activeDeliveryTab === "pending" ? sortedPendingOrders.length : sortedCompletedOrders.length} Orders
+              </span>
+            </div>
           </div>
 
           {activeDeliveryTab === "pending" ? (
@@ -3933,11 +4587,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             </div>
           ) : (
             <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
-              {completedOrders.length === 0 ? (
+              {sortedCompletedOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                   <CheckCircle size={40} className="text-zinc-400 mb-3" />
                   <span className="font-primary text-sm text-zinc-500 font-medium">
-                    No completed orders. Archive deliveries from the Pending tab.
+                    No completed orders found matching current filter or search.
                   </span>
                 </div>
               ) : (
@@ -3961,7 +4615,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     <tbody className="divide-y divide-zinc-200">
                       {(() => {
                         let lastDate = "";
-                        return completedOrders.map((order, idx) => {
+                        return sortedCompletedOrders.map((order, idx) => {
                           const dateStr = formatDateStr(order.timestamp);
                           const showDivider = dateStr !== lastDate;
                           if (showDivider) {
@@ -4088,7 +4742,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       {/* TAB CONTENT: RETURN ORDER */}
       {activeTab === "return" && (
         <div className="flex flex-col gap-4 animate-tableFadeInOnly">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -4113,9 +4767,55 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 Complete
               </button>
             </div>
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-zinc-600 self-end sm:self-auto">
-              {sortedReturnOrders.length} Returns
-            </span>
+
+            {/* Filter Status & Search Bar */}
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={returnStatusFilter}
+                onChange={(e) => setReturnStatusFilter(e.target.value)}
+                className="text-xs bg-white border border-slate-200 rounded px-2.5 py-1.5 text-zinc-700 font-medium focus:outline-none focus:border-[#0B57D0] cursor-pointer"
+              >
+                <option value="all">All Statuses</option>
+                {activeReturnTab === "pending" ? (
+                  <>
+                    <option value="Pending">Pending</option>
+                    <option value="Ready to Collect">Ready to Collect</option>
+                    <option value="Out for Collection">Out for Collection</option>
+                    <option value="Collected">Collected</option>
+                    <option value="Return Collected">Return Collected</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="Complete">Complete</option>
+                  </>
+                )}
+              </select>
+
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
+                <input
+                  type="text"
+                  value={returnSearchQuery}
+                  onChange={(e) => setReturnSearchQuery(e.target.value)}
+                  placeholder="Search ID, Ref, Address, Mark (e.g. A.)..."
+                  className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-200 rounded focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-colors"
+                />
+                {returnSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setReturnSearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
+                    title="Clear Search"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-zinc-600">
+                {sortedReturnOrders.length} Returns
+              </span>
+            </div>
           </div>
 
           <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
@@ -4651,451 +5351,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         </div>
       )}
 
-      {/* TAB CONTENT: DRIVER LOG */}
-      {activeTab === "driver_log" && (
-        <div className="flex flex-col gap-4 animate-tableFadeInOnly">
-          {/* Sub-tabs Switch Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
-            <div className="flex items-center gap-2">
-              {onlineDrivers.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setActiveDriverLogSubTab("online")}
-                  className={`flex items-center gap-2 px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
-                    activeDriverLogSubTab === "online"
-                      ? "border-[#0B57D0] text-[#0B57D0]"
-                      : "border-transparent text-zinc-400 hover:text-zinc-700"
-                  }`}
-                >
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                  Online ({onlineDrivers.length})
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={() => setActiveDriverLogSubTab("closed")}
-                className={`px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
-                  activeDriverLogSubTab === "closed"
-                    ? "border-[#0B57D0] text-[#0B57D0]"
-                    : "border-transparent text-zinc-400 hover:text-zinc-700"
-                }`}
-              >
-                Job Closed ({closedDriverJobs.length})
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2 self-end sm:self-auto">
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-zinc-600">
-                {activeDriverLogSubTab === "online"
-                  ? `${onlineDrivers.length} Online Drivers`
-                  : `${closedDriverJobs.length} Shift Records`}
-              </span>
-            </div>
-          </div>
-
-          {/* ONLINE DRIVERS VIEW (3 Column Grid of Cards) */}
-          {activeDriverLogSubTab === "online" && (
-            <div className="h-[calc(100vh-220px)] min-h-[400px] w-full overflow-y-auto pr-1">
-              {onlineDrivers.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
-                  <Truck size={40} className="text-zinc-400 mb-3" />
-                  <span className="font-primary text-sm text-zinc-500 font-medium">
-                    No drivers are currently online.
-                  </span>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-6">
-                  {onlineDrivers.map((driverJob) => {
-                    const completedLogs = parseDriverCompletedLogs(driverJob.driver_logs);
-                    const activeIds = parseDriverActiveOrderIds(driverJob.active_orders);
-                    
-                    // Match and resolve order objects
-                    const remainingOrders: DbOrder[] = activeIds
-                      .map((id) => resolveOrder(id))
-                      .filter(Boolean) as DbOrder[];
-
-                    // Calculate total issues/discrepancies count
-                    const totalDiscrepancies = completedLogs.reduce(
-                      (acc, curr) => acc + (curr.discrepancies ? curr.discrepancies.length : 0),
-                      0
-                    );
-
-                    // Starting point from office (409461)
-                    const startCoords: [number, number] = [1.3197, 103.8962];
-                    
-                    // Sort remaining active orders by nearest neighbor
-                    const sortedRemaining = sortOrdersByNearestRoute(startCoords, remainingOrders);
-
-                    const totalStops = completedLogs.length + remainingOrders.length;
-                    const completionPct = totalStops > 0 ? Math.round((completedLogs.length / totalStops) * 100) : 0;
-
-                    let runningCoords = startCoords;
-
-                    return (
-                      <div
-                        key={driverJob.id}
-                        className="bg-white border border-slate-200 rounded-lg flex flex-col shadow-xs overflow-hidden h-[calc(100vh-270px)] min-h-[480px]"
-                      >
-                        {/* Driver Card Header */}
-                        <div className="bg-slate-50 border-b border-slate-200 p-3.5 flex flex-col gap-2 flex-shrink-0">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <div className="w-8 h-8 rounded-full bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex items-center justify-center text-[#0B57D0]">
-                                <Truck size={16} />
-                              </div>
-                              <div>
-                                <h4 className="font-primary text-sm font-bold text-zinc-900 leading-tight">
-                                  {driverJob.driver}
-                                </h4>
-                                <span className="text-[10px] text-zinc-500 font-medium">
-                                  Shift ID: {driverJob.id}
-                                </span>
-                              </div>
-                            </div>
-
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setForceCloseDriverJob(driverJob);
-                                setIsForceCloseModalOpen(true);
-                              }}
-                              title="End Driver Shift"
-                              className="p-1.5 rounded hover:bg-red-50 text-red-600 hover:text-red-700 transition-colors cursor-pointer flex items-center justify-center"
-                            >
-                              <Square size={14} fill="currentColor" />
-                            </button>
-                          </div>
-
-                          {/* Shift Started & Stats bar */}
-                          <div className="flex items-center justify-between text-[11px] font-medium text-zinc-600 bg-white px-2.5 py-1.5 rounded border border-slate-200">
-                            <div className="flex items-center gap-1">
-                              <Clock size={12} className="text-zinc-400" />
-                              <span>Start: {formatTimestamp(driverJob.start_time)}</span>
-                            </div>
-                            <span className="font-semibold text-zinc-800">
-                              {completedLogs.length}/{totalStops} Done ({completionPct}%)
-                            </span>
-                          </div>
-
-                          {/* Issues Badge if any */}
-                          {totalDiscrepancies > 0 && (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-amber-50 border border-amber-200 text-amber-800 text-[11px] font-bold">
-                              <AlertTriangle size={13} className="text-amber-600" />
-                              <span>{totalDiscrepancies} Discrepanc{totalDiscrepancies > 1 ? "ies" : "y"} / Remark Reported</span>
-                            </div>
-                          )}
-
-                          {driverJob.outsource_driver_details && (
-                            <div className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 font-semibold truncate">
-                              ℹ️ Outsource: {driverJob.outsource_driver_details}
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Route Timeline List (Scrollable) */}
-                        <div className="p-3.5 flex-1 overflow-y-auto flex flex-col gap-0 font-primary text-xs">
-                          {/* Node 0: Office / Warehouse Start */}
-                          <div className="flex items-start gap-2.5">
-                            <div className="flex flex-col items-center">
-                              <div className="w-6 h-6 rounded-full bg-zinc-800 text-white flex items-center justify-center text-[10px] font-bold shadow-xs flex-shrink-0">
-                                🏢
-                              </div>
-                            </div>
-                            <div className="flex-1 min-w-0 pt-0.5">
-                              <div className="font-bold text-zinc-900 text-xs">
-                                Start: Office / Warehouse
-                              </div>
-                              <div className="text-[10px] text-zinc-500">
-                                Poscode: 409461 — Central Zone
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Completed Stops (Green Nodes) */}
-                          {completedLogs.map((logEntry, logIdx) => {
-                            const matchedOrder = resolveOrder(logEntry.id);
-                            const orderPoscode = matchedOrder?.poscode || "";
-                            const orderAddress = matchedOrder?.deliver_to || "Singapore Address";
-                            const orderMark = matchedOrder?.mark || "✓";
-
-                            const orderCoords = matchedOrder ? getOrderLatLng(matchedOrder) : startCoords;
-                            const distance = calculateDistanceKm(
-                              runningCoords[0],
-                              runningCoords[1],
-                              orderCoords[0],
-                              orderCoords[1]
-                            );
-                            runningCoords = orderCoords;
-
-                            const hasDiscrepancies = logEntry.discrepancies && logEntry.discrepancies.length > 0;
-
-                            return (
-                              <React.Fragment key={`log-${logIdx}-${logEntry.id}`}>
-                                {/* Vertical dotted line connecting nodes */}
-                                <div className="flex items-center gap-2.5 h-6 ml-3 my-0.5">
-                                  <div className="w-[2px] h-full border-l-2 border-dashed border-emerald-300" />
-                                  <span className="text-[9px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.2 rounded border border-emerald-200">
-                                    +{distance.toFixed(1)} km
-                                  </span>
-                                </div>
-
-                                <div className="flex items-start gap-2.5 bg-emerald-50/50 border border-emerald-200 rounded-lg p-2.5 my-0.5 shadow-xs">
-                                  <div className="flex flex-col items-center">
-                                    <div className="w-6 h-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold shadow-xs flex-shrink-0">
-                                      <Check size={13} strokeWidth={3} />
-                                    </div>
-                                  </div>
-
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center justify-between gap-1">
-                                      <div className="font-bold text-emerald-950 text-xs truncate">
-                                        [{orderMark}] {logEntry.id}
-                                      </div>
-                                      <span className="text-[9px] font-bold text-emerald-800 bg-emerald-100 px-1.5 py-0.5 rounded flex-shrink-0">
-                                        {formatTimestamp(logEntry.timestamp)}
-                                      </span>
-                                    </div>
-
-                                    <div className="text-[11px] text-zinc-600 font-medium truncate mt-0.5" title={orderAddress}>
-                                      {orderAddress}
-                                    </div>
-
-                                    {orderPoscode && (
-                                      <div className="mt-1">
-                                        {renderPoscodeCell(orderPoscode)}
-                                      </div>
-                                    )}
-
-                                    {/* Signed DO Proof Thumbnail */}
-                                    {logEntry.signed_paper_img && (
-                                      <div className="mt-2 flex items-center gap-2">
-                                        <div
-                                          onClick={() => setActiveLightboxImage(logEntry.signed_paper_img || null)}
-                                          className="relative w-12 h-12 rounded border border-emerald-300 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity bg-white flex-shrink-0 shadow-2xs"
-                                          title="Click to view signed DO full screen"
-                                        >
-                                          <img
-                                            src={logEntry.signed_paper_img}
-                                            alt="Signed DO Proof"
-                                            className="w-full h-full object-cover"
-                                          />
-                                        </div>
-                                        <span className="text-[10px] text-emerald-700 font-semibold">
-                                          Signed DO Attached
-                                        </span>
-                                      </div>
-                                    )}
-
-                                    {/* Discrepancy / Issues Callout */}
-                                    {hasDiscrepancies && (
-                                      <div className="mt-2 bg-amber-50 border border-amber-300 rounded p-2 text-[10px] flex flex-col gap-1">
-                                        <div className="flex items-center gap-1 font-bold text-amber-900">
-                                          <AlertTriangle size={11} className="text-amber-600 flex-shrink-0" />
-                                          <span>Discrepancy / Issue:</span>
-                                        </div>
-                                        {logEntry.discrepancies?.map((disc, dIdx) => (
-                                          <div key={dIdx} className="text-amber-800 pl-3">
-                                            • <span className="font-semibold">{disc.sku}</span>: Ordered {disc.qty_ordered}, Delivered {disc.qty_delivered}
-                                            {disc.remark && (
-                                              <div className="text-zinc-600 italic">
-                                                Remark: "{disc.remark}"
-                                              </div>
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </React.Fragment>
-                            );
-                          })}
-
-                          {/* Active / Remaining Stops (Blue/Slate Nodes) */}
-                          {sortedRemaining.map((activeOrder, aIdx) => {
-                            const orderCoords = getOrderLatLng(activeOrder);
-                            const distance = calculateDistanceKm(
-                              runningCoords[0],
-                              runningCoords[1],
-                              orderCoords[0],
-                              orderCoords[1]
-                            );
-                            runningCoords = orderCoords;
-
-                            let itemsCount = 0;
-                            try {
-                              const pItems = typeof activeOrder.items === "string" ? JSON.parse(activeOrder.items) : activeOrder.items;
-                              itemsCount = Array.isArray(pItems) ? pItems.reduce((acc: number, curr: SKUItem) => acc + curr.qty, 0) : 0;
-                            } catch (_) {}
-
-                            return (
-                              <React.Fragment key={`active-${activeOrder.id}-${aIdx}`}>
-                                {/* Vertical dotted line connecting nodes */}
-                                <div className="flex items-center gap-2.5 h-6 ml-3 my-0.5">
-                                  <div className="w-[2px] h-full border-l-2 border-dashed border-blue-300" />
-                                  <span className="text-[9px] font-bold text-blue-700 bg-blue-50 px-1.5 py-0.2 rounded border border-blue-200">
-                                    +{distance.toFixed(1)} km
-                                  </span>
-                                </div>
-
-                                <div className="flex items-start gap-2.5 bg-blue-50/30 border border-blue-200 rounded-lg p-2.5 my-0.5 shadow-xs">
-                                  <div className="flex flex-col items-center">
-                                    <div className="w-6 h-6 rounded-full bg-[#0B57D0] text-white flex items-center justify-center text-[10px] font-bold shadow-xs flex-shrink-0">
-                                      {completedLogs.length + aIdx + 1}
-                                    </div>
-                                  </div>
-
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center justify-between gap-1">
-                                      <div className="font-bold text-blue-950 text-xs truncate">
-                                        [{activeOrder.mark}] {activeOrder.do_number}_{activeOrder.ref_number || "NA"}
-                                      </div>
-                                      <span className="text-[9px] font-bold text-blue-800 bg-blue-100 px-1.5 py-0.5 rounded flex-shrink-0">
-                                        Out for Delivery
-                                      </span>
-                                    </div>
-
-                                    <div className="text-[11px] text-zinc-600 font-medium truncate mt-0.5" title={activeOrder.deliver_to}>
-                                      {activeOrder.deliver_to}
-                                    </div>
-
-                                    <div className="mt-1 flex items-center gap-2">
-                                      {renderPoscodeCell(activeOrder.poscode)}
-                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white border border-slate-200 text-[9px] font-bold text-zinc-600">
-                                        <Boxes size={10} className="text-zinc-400" /> {itemsCount} items
-                                      </span>
-                                    </div>
-
-                                    {activeOrder.type === "Urgent" && (
-                                      <div className="mt-1.5 text-[9px] font-bold text-red-700 bg-red-50 border border-red-200 px-2 py-0.5 rounded flex items-center gap-1">
-                                        <Clock size={10} className="text-red-500 animate-pulse" /> Urgent Delivery by 6:00 PM
-                                      </div>
-                                    )}
-
-                                    {activeOrder.type?.startsWith("Appointment") && (
-                                      <div className="mt-1.5 text-[9px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded flex items-center gap-1">
-                                        <Clock size={10} className="text-blue-500 animate-pulse" /> Appointment: {formatDateStr(activeOrder.deadline)}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              </React.Fragment>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* JOB CLOSED TABLE VIEW */}
-          {activeDriverLogSubTab === "closed" && (
-            <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
-              {closedDriverJobs.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
-                  <ClipboardCheck size={40} className="text-zinc-400 mb-3" />
-                  <span className="font-primary text-sm text-zinc-500 font-medium">
-                    No closed driver shifts recorded yet.
-                  </span>
-                </div>
-              ) : (
-                <div className="h-full overflow-auto border border-slate-200 rounded bg-white">
-                  <table className="w-full text-left font-primary text-xs border-collapse">
-                    <thead>
-                      <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
-                        <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Route Log</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Job ID</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Driver Name</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Shift Started</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Shift Ended</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-28 align-middle z-10">Duration</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Completed Stops</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Discrepancies</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-200">
-                      {closedDriverJobs.map((record, idx) => {
-                        const logs = parseDriverCompletedLogs(record.driver_logs);
-                        const totalIssues = logs.reduce(
-                          (acc, curr) => acc + (curr.discrepancies ? curr.discrepancies.length : 0),
-                          0
-                        );
-
-                        return (
-                          <tr
-                            key={record.id}
-                            className={`transition-all h-14 ${
-                              idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
-                            } hover:bg-slate-50`}
-                          >
-                            <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setSelectedRouteLogRecord(record);
-                                  setIsRouteLogModalOpen(true);
-                                }}
-                                title="View Complete Route Timeline Log"
-                                className="w-8 h-8 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-[#0B57D0]/30 bg-[#0B57D0]/5 hover:bg-[#0B57D0] text-[#0B57D0] hover:text-white cursor-pointer transition-all outline-none mx-auto shadow-2xs"
-                              >
-                                <Route size={14} />
-                              </button>
-                            </td>
-                            <td className="p-3 w-40 font-mono font-bold text-zinc-900 align-middle border-b border-zinc-200">
-                              {record.id}
-                            </td>
-                            <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                              {record.driver}
-                              {record.outsource_driver_details && (
-                                <div className="text-[10px] text-zinc-400 font-normal truncate">
-                                  {record.outsource_driver_details}
-                                </div>
-                              )}
-                            </td>
-                            <td className="p-3 w-40 text-zinc-600 align-middle border-b border-zinc-200">
-                              {formatTimestamp(record.start_time)}
-                            </td>
-                            <td className="p-3 w-40 text-zinc-600 align-middle border-b border-zinc-200">
-                              {formatTimestamp(record.end_time)}
-                            </td>
-                            <td className="p-3 w-28 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
-                              {formatShiftDuration(record.start_time, record.end_time)}
-                            </td>
-                            <td className="p-3 w-28 text-center align-middle border-b border-zinc-200">
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs">
-                                <Check size={11} strokeWidth={3} />
-                                {logs.length}
-                              </span>
-                            </td>
-                            <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                              {totalIssues > 0 ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[10px]">
-                                  <AlertTriangle size={11} className="text-amber-600" />
-                                  {totalIssues} Issue{totalIssues > 1 ? "s" : ""}
-                                </span>
-                              ) : (
-                                <span className="text-zinc-400 font-normal text-[11px]">
-                                  Clean (0)
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
       </div>
 
       {/* RIGHT SLIDE-IN PANEL (Drawer) */}

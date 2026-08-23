@@ -5,6 +5,7 @@ import { ArrowUp, ArrowDown, ArrowUpDown, Filter, X, Search, FileSpreadsheet, Fi
 import { jsPDF } from "jspdf";
 import { CustomButton } from "./custom-button";
 import { ConfirmDialog } from "./confirm-dialog";
+import { showToast } from "@/lib/toast";
 
 export interface Column {
   id: string;
@@ -55,6 +56,8 @@ interface DataTableProps {
   data: any[];
   height?: string; // e.g., "h-[450px]"
   userRole?: "admin" | "operator" | "viewer";
+  canEdit?: boolean;
+  canDelete?: boolean;
   title?: string;
   onSaveRow?: (updatedRow: any) => void;
   onDeleteRow?: (rowId: string) => void;
@@ -73,6 +76,8 @@ export function DataTable({
   columns: initialColumns,
   data,
   userRole = "admin",
+  canEdit = true,
+  canDelete = true,
   title = "Database Records",
   onSaveRow,
   onDeleteRow,
@@ -593,18 +598,29 @@ export function DataTable({
           {isEditMode && onAddNew && (
             <CustomButton
               variant="default"
-              onClick={onAddNew}
-              title="Create new record"
+              onClick={() => {
+                if (!canEdit) {
+                  showToast("⚠️ You have read-only access to this module.", "warning");
+                  return;
+                }
+                onAddNew();
+              }}
+              title={!canEdit ? "Read-only access" : "Create new record"}
+              className={!canEdit ? "opacity-50 cursor-not-allowed" : undefined}
             >
               <Plus size={13} className="stroke-[2.5]" />
               <span>{addNewText || "Add New"}</span>
             </CustomButton>
           )}
 
-          {userRole !== "viewer" && (onEditRow || onSaveRow || onDeleteRow || onBlockRow) && (
+          {(onEditRow || onSaveRow || onDeleteRow || onBlockRow) && (
             <CustomButton
               variant={isEditMode ? "dark" : "default"}
               onClick={() => {
+                if (!canEdit) {
+                  showToast("⚠️ You have read-only access to this module.", "warning");
+                  return;
+                }
                 if (isEditMode) {
                   if (editingRowId !== null) {
                     setShowUnsavedConfirm(true);
@@ -617,6 +633,8 @@ export function DataTable({
                   onEditModeChange?.(true);
                 }
               }}
+              className={!canEdit ? "opacity-50 cursor-not-allowed" : undefined}
+              title={!canEdit ? "Read-only access" : undefined}
             >
               {isEditMode ? "Exit Edit Mode" : "Edit Database"}
             </CustomButton>
@@ -788,14 +806,18 @@ export function DataTable({
                               )}
                               <button
                                 onClick={() => {
+                                  if (!canEdit) {
+                                    showToast("⚠️ You have read-only access to this module.", "warning");
+                                    return;
+                                  }
                                   if (onEditRow) {
                                     onEditRow(row);
                                   } else {
                                     handleStartEdit(row);
                                   }
                                 }}
-                                className="p-1 rounded bg-[#EEEEEE] hover:bg-[#E5E5E5] text-zinc-600 hover:text-zinc-950 border border-zinc-300/80 shadow-sm transition-colors cursor-pointer"
-                                title="Edit row"
+                                className={`p-1 rounded bg-[#EEEEEE] border border-zinc-300/80 shadow-sm transition-colors ${!canEdit ? "opacity-50 cursor-not-allowed text-zinc-400" : "hover:bg-[#E5E5E5] text-zinc-600 hover:text-zinc-950 cursor-pointer"}`}
+                                title={!canEdit ? "Read-only access" : "Edit row"}
                               >
                                 <Pencil size={13} />
                               </button>
@@ -808,11 +830,17 @@ export function DataTable({
                                   <Ban size={13} />
                                 </button>
                               )}
-                              {userRole === "admin" && onDeleteRow && (
+                              {onDeleteRow && (
                                 <button
-                                  onClick={() => handleDeleteRow(getRowId(row))}
-                                  className="p-1 rounded bg-[#EEEEEE] hover:bg-red-50 text-red-600 hover:text-red-700 border border-zinc-300/80 shadow-sm transition-colors cursor-pointer"
-                                  title="Delete row"
+                                  onClick={() => {
+                                    if (!canDelete) {
+                                      showToast("⚠️ You do not have permission to delete records in this module.", "warning");
+                                      return;
+                                    }
+                                    handleDeleteRow(getRowId(row));
+                                  }}
+                                  className={`p-1 rounded bg-[#EEEEEE] border border-zinc-300/80 shadow-sm transition-colors ${!canDelete ? "opacity-50 cursor-not-allowed text-zinc-400" : "hover:bg-red-50 text-red-600 hover:text-red-700 cursor-pointer"}`}
+                                  title={!canDelete ? "Delete restricted" : "Delete row"}
                                 >
                                   <Trash2 size={13} />
                                 </button>

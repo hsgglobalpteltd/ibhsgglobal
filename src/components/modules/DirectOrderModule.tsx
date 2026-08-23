@@ -869,15 +869,31 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
                                 {o.items_label}
                               </td>
                               <td className="px-3.5 py-2.5 whitespace-nowrap">
-                                <span
-                                  className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                                    o.status === "complete" 
-                                      ? "bg-emerald-50 text-emerald-700 border-emerald-200" 
-                                      : "bg-amber-50 text-amber-700 border-amber-200"
-                                  }`}
-                                >
-                                  {o.status === "complete" ? "COMPLETE" : "PENDING"}
-                                </span>
+                                {(() => {
+                                  const s = String(o.status || "pending").toLowerCase();
+                                  let bg = "bg-amber-50 text-amber-700 border-amber-200";
+                                  let label = String(o.status || "PENDING").toUpperCase();
+
+                                  if (s === "complete") {
+                                    bg = "bg-emerald-50 text-emerald-700 border-emerald-200";
+                                    label = "COMPLETE";
+                                  } else if (s === "delivered") {
+                                    bg = "bg-teal-50 text-teal-700 border-teal-200";
+                                    label = "DELIVERED";
+                                  } else if (s === "out for delivery" || s === "load" || s === "in transit") {
+                                    bg = "bg-blue-50 text-blue-700 border-blue-200";
+                                    label = s === "load" ? "LOADED" : "OUT FOR DELIVERY";
+                                  } else if (s === "picking" || s === "ready to pick" || s === "ready to deliver") {
+                                    bg = "bg-purple-50 text-purple-700 border-purple-200";
+                                    label = s.toUpperCase();
+                                  }
+
+                                  return (
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${bg}`}>
+                                      {label}
+                                    </span>
+                                  );
+                                })()}
                               </td>
                               <td className="px-3.5 py-2.5 whitespace-nowrap text-zinc-650 font-medium">{o.invoice_number || "-"}</td>
                               <td className="px-3.5 py-2.5 whitespace-nowrap font-bold text-zinc-900">{o.invoice_amount_label}</td>

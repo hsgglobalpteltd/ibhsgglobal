@@ -2203,20 +2203,56 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return p ? p.name : `Unknown (${id})`;
     }).sort();
 
-    // Group schedules by Retailer
-    interface GroupedShift {
+    // Helper to find product object by SKU, ID, or Display Name
+    const getProductObj = (rawSku: string) => {
+      if (!rawSku) return null;
+      const target = String(rawSku).trim().toLowerCase();
+      return products.find(p => {
+        const s = String(p.sku || p.SKU || p.id || "").trim().toLowerCase();
+        const d = String(p.display_name || p.name || p["Display Name"] || "").trim().toLowerCase();
+        return s === target || d === target;
+      }) || null;
+    };
+
+    const getProductDisplayName = (rawSku: string) => {
+      const p = getProductObj(rawSku);
+      if (p) {
+        return p.display_name || p["display_name"] || p.name || p["Display Name"] || p.sku || rawSku;
+      }
+      return rawSku;
+    };
+
+    const getProductCleanSku = (rawSku: string) => {
+      const p = getProductObj(rawSku);
+      if (p) {
+        return p.sku || p.SKU || p.id || rawSku;
+      }
+      return rawSku;
+    };
+
+    // Aggregate Product Move across the campaign
+    const skuMoveMap: Record<string, { sku: string; name: string; qty: number }> = {};
+    let grandTotalUnitsMoved = 0;
+    let grandTotalCost = 0;
+    let grandTotalWage = 0;
+
+    // Group schedules by Retailer and then by Store
+    interface StoreGroup {
       storeId: string;
       storeName: string;
-      dateTimeStr: string;
-      promoterName: string;
-      cost: string;
-      payroll: string;
+      storeAddress: string;
+      visitCount: number;
+      promoters: Set<string>;
+      unitsMoved: number;
+      costVal: number;
+      wageVal: number;
+      totalSpend: number;
     }
 
-    const retailerGroups: Record<string, { storeIds: Set<string>; shifts: GroupedShift[] }> = {};
+    const retailerStoreGroups: Record<string, { storeIds: Set<string>; stores: Record<string, StoreGroup> }> = {};
 
     campaignSchedules.forEach((s) => {
-      const storeId = String(s["store_id"] || "");
+      const storeId = String(s["store_id"] || "UNKNOWN");
       const storeName = String(s["store_name"] || "");
       const promoterId = String(s["promoter_id"] || "");
       
@@ -2224,121 +2260,99 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const retId = storeObj ? (storeObj.retailers_id || storeObj.retailer_id || storeObj["Retailers ID"] || storeObj["Retailer ID"]) : null;
       const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
       const retailerName = retailerObj ? (retailerObj["display_name"] || retailerObj.name || "OTHERS") : "OTHERS";
+      const storeAddress = getCleanStoreAddress(storeObj, s);
+      const formattedStoreName = getFormattedStoreName(storeId, storeName);
 
       const p = promoters.find((prm) => String(prm.id) === promoterId);
-      const promoterName = p ? p.name : `Unknown (${promoterId})`;
+      const promoterName = p ? p.name : (promoterId ? `Promoter (${promoterId})` : "Unassigned");
 
-      // Date formatting
-      const dateVal = s.date;
-      let dateText = "";
-      if (dateVal) {
-        const d = new Date(Number(dateVal));
-        if (!isNaN(d.getTime())) {
-          const dd = String(d.getDate()).padStart(2, "0");
-          const mm = String(d.getMonth() + 1).padStart(2, "0");
-          const yyyy = d.getFullYear();
-          dateText = `${dd}/${mm}/${yyyy}`;
-        }
-      }
-
-      // Actual Time formatting
-      const actualStartVal = s["actual_start"];
-      const actualEndVal = s["actual_end"];
-      let actualTimeRange = "";
-      if (actualStartVal === "Absent") {
-        actualTimeRange = `Absent (Reason: ${actualEndVal || "Not specified"})`;
-      } else {
-        const actualStart = formatTimeDisplay(actualStartVal);
-        const actualEnd = formatTimeDisplay(actualEndVal);
-        actualTimeRange = actualStart && actualEnd ? `${actualStart} - ${actualEnd}` : "Not logged";
-      }
-      
-      const dateTimeText = dateText ? `${dateText} (${actualTimeRange})` : "";
-
-      // Promoting Cost calculation
-      let totalCostVal = 0;
-      if (s["promoting_cost"]) {
+      // 1. Items Moved / Product Move
+      let shiftItemsMoved: any[] = [];
+      const draft = reportDrafts[s.id];
+      const rawItems = draft?.items_moved !== undefined ? draft.items_moved : s["items_moved"];
+      if (rawItems) {
         try {
-          const parsed = JSON.parse(s["promoting_cost"]);
+          const parsed = typeof rawItems === "string" ? JSON.parse(rawItems) : rawItems;
+          if (Array.isArray(parsed)) shiftItemsMoved = parsed;
+        } catch (e) {}
+      }
+
+      let shiftUnitsMoved = 0;
+      shiftItemsMoved.forEach((it: any) => {
+        const q = Number(it.qty || 0);
+        if (q > 0) {
+          shiftUnitsMoved += q;
+          grandTotalUnitsMoved += q;
+          const rawSku = String(it.sku || it.item || "");
+          const cleanSku = getProductCleanSku(rawSku);
+          const dName = getProductDisplayName(rawSku);
+          if (!skuMoveMap[cleanSku]) {
+            skuMoveMap[cleanSku] = { sku: cleanSku, name: dName, qty: 0 };
+          }
+          skuMoveMap[cleanSku].qty += q;
+        }
+      });
+
+      // 2. Promoting Cost calculation
+      let totalCostVal = 0;
+      const rawCost = draft?.promoting_cost !== undefined ? draft.promoting_cost : s["promoting_cost"];
+      if (rawCost) {
+        try {
+          const parsed = typeof rawCost === "string" ? JSON.parse(rawCost) : rawCost;
           if (Array.isArray(parsed)) {
             totalCostVal = parsed.reduce((acc: number, curr: any) => acc + Number(curr.amount || 0), 0);
+          } else if (!isNaN(Number(rawCost))) {
+            totalCostVal = Number(rawCost);
           }
         } catch (e) {
-          totalCostVal = 0;
+          const num = Number(rawCost);
+          if (!isNaN(num) && num > 0) totalCostVal = num;
         }
       }
-      const costText = totalCostVal > 0 ? `$${totalCostVal.toFixed(2)}` : "—";
+      grandTotalCost += totalCostVal;
 
-      // Matching Payout for Payroll
-      const matchingPayout = payouts.find(p => {
-        if (String(p["promoter_id"]) !== String(s["promoter_id"])) return false;
-        const shiftDateNum = new Date(s.date).getTime();
-        const pStart = Number(p["start_date"]);
-        const pEnd = Number(p["end_date"]);
-        return shiftDateNum >= pStart && shiftDateNum <= pEnd;
-      });
+      // 3. Wages / Payroll calculation
+      const wageInfo = getShiftPromoterWageInfo(s);
+      const shiftWage = Number(wageInfo.wage || 0);
+      grandTotalWage += shiftWage;
 
-      let payrollText = "—";
-      let shiftWage = 0;
-
-      if (matchingPayout) {
-        try {
-          const details = JSON.parse(matchingPayout["payout_details"] || "[]");
-          if (Array.isArray(details)) {
-            const matchRow = details.find((d: any) => String(d.scheduleId) === String(s.id));
-            if (matchRow) {
-              shiftWage = Number(matchRow.totalPayout || 0);
-            }
-          }
-        } catch (err) {}
-        
-        if (!shiftWage) {
-          const hrs = calculateHours(s["actual_start"], s["actual_end"]);
-          shiftWage = hrs * Number(matchingPayout["hourly_rate"] || 0);
-        }
-
-        if (matchingPayout.status === "Paid") {
-          payrollText = `$${shiftWage.toFixed(2)} (Paid)`;
-          if (matchingPayout["payment_reference"]) {
-            payrollText += ` - ${matchingPayout["payment_reference"]}`;
-          }
-        } else {
-          payrollText = `$${shiftWage.toFixed(2)} (Pending)`;
-        }
-      }
-
-      if (!retailerGroups[retailerName]) {
-        retailerGroups[retailerName] = {
+      // 4. Add to Retailer & Store Grouping
+      if (!retailerStoreGroups[retailerName]) {
+        retailerStoreGroups[retailerName] = {
           storeIds: new Set<string>(),
-          shifts: []
+          stores: {}
         };
       }
 
-      if (storeId) {
-        retailerGroups[retailerName].storeIds.add(storeId);
+      retailerStoreGroups[retailerName].storeIds.add(storeId);
+
+      if (!retailerStoreGroups[retailerName].stores[storeId]) {
+        retailerStoreGroups[retailerName].stores[storeId] = {
+          storeId,
+          storeName: formattedStoreName,
+          storeAddress,
+          visitCount: 0,
+          promoters: new Set<string>(),
+          unitsMoved: 0,
+          costVal: 0,
+          wageVal: 0,
+          totalSpend: 0
+        };
       }
 
-      retailerGroups[retailerName].shifts.push({
-        storeId,
-        storeName,
-        dateTimeStr: dateTimeText,
-        promoterName,
-        cost: costText,
-        payroll: payrollText
-      });
+      const stGroup = retailerStoreGroups[retailerName].stores[storeId];
+      stGroup.visitCount += 1;
+      if (promoterName && promoterName !== "Unassigned") {
+        stGroup.promoters.add(promoterName);
+      }
+      stGroup.unitsMoved += shiftUnitsMoved;
+      stGroup.costVal += totalCostVal;
+      stGroup.wageVal += shiftWage;
+      stGroup.totalSpend += (totalCostVal + shiftWage);
     });
 
-    // Sort shifts inside each group by date
-    Object.keys(retailerGroups).forEach(ret => {
-      retailerGroups[ret].shifts.sort((a, b) => {
-        const parseD = (str: string) => {
-          if (!str) return 0;
-          const p = str.split(" ")[0].split("/");
-          return new Date(Number(p[2]), Number(p[1]) - 1, Number(p[0])).getTime();
-        };
-        return parseD(a.dateTimeStr) - parseD(b.dateTimeStr);
-      });
-    });
+    const grandTotalSpend = grandTotalCost + grandTotalWage;
+    const uniqueStoresCount = new Set(campaignSchedules.map(s => String(s.store_id || "")).filter(Boolean)).size;
 
     const doc = new jsPDF({
       orientation: "portrait",
@@ -2346,10 +2360,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       format: "a4"
     });
 
+    // --- Header ---
     doc.setFont("helvetica", "bold");
     doc.setFontSize(16);
     doc.setTextColor(24, 24, 27);
-    doc.text("Campaign Reporting Sheet", 14, 20);
+    doc.text("Campaign Report", 14, 20);
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
@@ -2357,113 +2372,215 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const dateStr = new Date().toLocaleDateString("en-GB");
     doc.text(`Generated: ${dateStr}`, 196, 20, { align: "right" });
 
+    doc.setDrawColor(228, 228, 231);
     doc.line(14, 23, 196, 23);
 
-    // Title
+    // --- Campaign Details Block ---
     doc.setFont("helvetica", "bold");
     doc.setFontSize(12);
     doc.setTextColor(24, 24, 27);
-    doc.text(c["campaign_title"], 14, 32);
+    doc.text(c["campaign_title"] || "Untitled Campaign", 14, 31);
 
-    // Brand info
+    // Brand & Duration
     const brandName = String(c.brand || "").split(",")
       .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["display_name"] || id.trim())
       .join(", ");
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
+    doc.setFontSize(9);
     doc.setTextColor(113, 113, 122);
-    doc.text(`Brand: ${brandName}`, 14, 38);
+    doc.text(`Brand: ${brandName || "—"}`, 14, 37);
 
-    // Campaign Duration
     const startDisplay = formatEpochToDisplay(c["start_date"]) || "—";
     const endDisplay = formatEpochToDisplay(c["end_date"]) || "—";
-    doc.text(`Campaign Duration: ${startDisplay} - ${endDisplay}`, 14, 44);
+    doc.text(`Duration: ${startDisplay} to ${endDisplay}`, 110, 37);
 
-    // Description
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(24, 24, 27);
-    doc.text("Description", 14, 54);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(39, 39, 42);
-    const descLines = doc.splitTextToSize(c["campaign_description"] || "No description provided.", 182);
-    doc.text(descLines, 14, 59);
-
-    let yPos = 61 + descLines.length * 4.5;
-
-    // Instructions
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(24, 24, 27);
-    doc.text("Instructions", 14, yPos);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(39, 39, 42);
-    const instrLines = doc.splitTextToSize(c["campaign_instruction"] || "No instructions provided.", 182);
-    doc.text(instrLines, 14, yPos + 5);
-
-    yPos = yPos + 7 + instrLines.length * 4.5;
-
-    // Products
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(24, 24, 27);
-    doc.text("Target Products", 14, yPos);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(39, 39, 42);
+    // Target Products & Promoters
     let targetProds = "All Products in Brand";
     if (c.products && c.products.trim()) {
-      const prodSkus = c.products.split(",");
-      const prodNames = prodSkus.map((sku: string) => {
-        const p = products.find(prod => String(prod.sku).toLowerCase() === sku.toLowerCase());
-        return p ? p["display_name"] : sku;
+      const prodSkus = c.products.split(",").map((s: string) => s.trim()).filter(Boolean);
+      const prodList = prodSkus.map((sku: string) => {
+        const dName = getProductDisplayName(sku);
+        const cSku = getProductCleanSku(sku);
+        return dName !== cSku ? `${dName} (${cSku})` : dName;
       });
-      targetProds = prodNames.join(", ");
+      targetProds = prodList.join(", ");
     }
-    const prodLines = doc.splitTextToSize(targetProds, 182);
-    doc.text(prodLines, 14, yPos + 5);
-
-    yPos = yPos + 7 + prodLines.length * 4.5;
-
-    // Promoters Involved Summary
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(24, 24, 27);
-    doc.text("Promoters Involved Summary", 14, yPos);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(39, 39, 42);
     const promotersText = involvedPromoterNames.length > 0 
       ? involvedPromoterNames.join(", ") 
       : "No promoters assigned yet.";
-    const promoterLines = doc.splitTextToSize(promotersText, 182);
-    doc.text(promoterLines, 14, yPos + 5);
 
-    yPos = yPos + 7 + promoterLines.length * 4.5;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(71, 85, 105);
 
-    // Stores & Schedules (Grouped by Retailer)
+    const prodLines = doc.splitTextToSize(`Target Products: ${targetProds}`, 182);
+    doc.text(prodLines, 14, 43);
+    let yPos = 43 + prodLines.length * 4.2;
+
+    const promLines = doc.splitTextToSize(`Promoters Involved: ${promotersText}`, 182);
+    doc.text(promLines, 14, yPos);
+    yPos += promLines.length * 4.2 + 2;
+
+    // Optional Description
+    if (c["campaign_description"]) {
+      const descLines = doc.splitTextToSize(`Description: ${c["campaign_description"]}`, 182);
+      doc.text(descLines, 14, yPos);
+      yPos += descLines.length * 4.2 + 2;
+    }
+
+    // --- Performance & Financial Summary KPI Cards ---
+    yPos += 2;
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10.5);
+    doc.setTextColor(24, 24, 27);
+    doc.text("Campaign Summary", 14, yPos);
+    yPos += 4;
+
+    const cardWidth = 43.5;
+    const cardHeight = 20;
+    const cardGap = 2.6;
+
+    const summaryCards = [
+      {
+        label: "Product Move",
+        val: `${grandTotalUnitsMoved} Pcs`,
+        sub: `${Object.keys(skuMoveMap).length} SKUs Moved`,
+        bg: [240, 249, 255],
+        border: [186, 230, 253],
+        text: [2, 132, 199]
+      },
+      {
+        label: "Promoting Cost",
+        val: `$${grandTotalCost.toFixed(2)}`,
+        sub: "Claims & Expenses",
+        bg: [255, 251, 235],
+        border: [254, 243, 199],
+        text: [180, 83, 9]
+      },
+      {
+        label: "Wages Spend",
+        val: `$${grandTotalWage.toFixed(2)}`,
+        sub: "Promoter Payroll",
+        bg: [240, 253, 244],
+        border: [187, 247, 208],
+        text: [21, 128, 61]
+      },
+      {
+        label: "Total Spend",
+        val: `$${grandTotalSpend.toFixed(2)}`,
+        sub: `${campaignSchedules.length} Shifts / ${uniqueStoresCount} Stores`,
+        bg: [239, 246, 255],
+        border: [191, 219, 254],
+        text: [11, 87, 208]
+      }
+    ];
+
+    summaryCards.forEach((card, idx) => {
+      const x = 14 + idx * (cardWidth + cardGap);
+      doc.setFillColor(card.bg[0], card.bg[1], card.bg[2]);
+      doc.roundedRect(x, yPos, cardWidth, cardHeight, 1.5, 1.5, "F");
+      doc.setDrawColor(card.border[0], card.border[1], card.border[2]);
+      doc.roundedRect(x, yPos, cardWidth, cardHeight, 1.5, 1.5, "S");
+
+      // Label
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7);
+      doc.setTextColor(100, 116, 139);
+      doc.text(card.label.toUpperCase(), x + 3.5, yPos + 5);
+
+      // Value
+      doc.setFontSize(10.5);
+      doc.setTextColor(card.text[0], card.text[1], card.text[2]);
+      doc.text(card.val, x + 3.5, yPos + 12);
+
+      // Subtext
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(6.5);
+      doc.setTextColor(148, 163, 184);
+      doc.text(card.sub, x + 3.5, yPos + 17);
+    });
+
+    yPos += cardHeight + 8;
+
+    // --- Product Move Breakdown Table (if items moved) ---
+    const skuMoveList = Object.values(skuMoveMap).sort((a, b) => b.qty - a.qty);
+    if (skuMoveList.length > 0) {
+      if (yPos > 240) {
+        doc.addPage();
+        yPos = 20;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(24, 24, 27);
+      doc.text("Product Movement Breakdown", 14, yPos);
+      yPos += 3;
+
+      const prodTableHeaders = [["SKU", "Product Display Name", "Units Moved (Pcs)", "% of Total Movement"]];
+      const prodTableBody = skuMoveList.map(it => {
+        const pct = grandTotalUnitsMoved > 0 ? ((it.qty / grandTotalUnitsMoved) * 100).toFixed(1) + "%" : "0%";
+        return [it.sku, it.name, String(it.qty), pct];
+      });
+
+      // Add Total Row
+      prodTableBody.push(["TOTAL", `${skuMoveList.length} SKUs`, String(grandTotalUnitsMoved), "100.0%"]);
+
+      autoTable(doc, {
+        head: prodTableHeaders,
+        body: prodTableBody,
+        startY: yPos,
+        margin: { left: 14, right: 14 },
+        theme: "striped",
+        columnStyles: {
+          0: { cellWidth: 35 },
+          1: { cellWidth: 85 },
+          2: { cellWidth: 32, halign: "right" },
+          3: { cellWidth: 30, halign: "right" }
+        },
+        headStyles: {
+          fillColor: [240, 244, 249],
+          textColor: [71, 71, 71],
+          fontStyle: "bold",
+          fontSize: 8
+        },
+        bodyStyles: {
+          fontSize: 7.5,
+          textColor: [39, 39, 42]
+        },
+        styles: {
+          font: "helvetica",
+          cellPadding: 2
+        }
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 8;
+    }
+
+    // --- Stores & Activations Summary (Grouped by Retailer) ---
+    if (yPos > 240) {
+      doc.addPage();
+      yPos = 20;
+    }
+
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
     doc.setTextColor(24, 24, 27);
-    doc.text("Stores & Schedules", 14, yPos);
+    doc.text("Stores & Activations Summary", 14, yPos);
+    doc.setDrawColor(228, 228, 231);
     doc.line(14, yPos + 2, 196, yPos + 2);
     yPos += 7;
 
-    if (Object.keys(retailerGroups).length === 0) {
+    if (Object.keys(retailerStoreGroups).length === 0) {
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(113, 113, 122);
-      doc.text("No schedules assigned to this campaign yet.", 14, yPos);
+      doc.text("No stores assigned to this campaign yet.", 14, yPos);
     } else {
-      Object.keys(retailerGroups).sort().forEach((retailerName) => {
-        const group = retailerGroups[retailerName];
-        const qtyStores = group.storeIds.size;
+      Object.keys(retailerStoreGroups).sort().forEach((retailerName) => {
+        const group = retailerStoreGroups[retailerName];
+        const storeList = Object.values(group.stores).sort((a, b) => b.visitCount - a.visitCount);
+        const qtyStores = storeList.length;
+        const totalVisits = storeList.reduce((acc, st) => acc + st.visitCount, 0);
 
         if (yPos > 245) {
           doc.addPage();
@@ -2472,12 +2589,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
         doc.setFont("helvetica", "bold");
         doc.setFontSize(9.5);
-        doc.setTextColor(11, 87, 208); // Brand blue
-        doc.text(`${retailerName} (${qtyStores})`, 14, yPos);
+        doc.setTextColor(11, 87, 208);
+        doc.text(`${retailerName} (${qtyStores} Store${qtyStores === 1 ? "" : "s"}, ${totalVisits} Activation${totalVisits === 1 ? "" : "s"})`, 14, yPos);
         yPos += 2;
 
-        const tableHeaders = [["Store", "Promoter Name", "Date & Actual Time", "Cost", "Payroll"]];
-        const tableBody = group.shifts.map(s => [s.storeName, s.promoterName, s.dateTimeStr, s.cost, s.payroll]);
+        const tableHeaders = [["Store Name & Address", "Activations", "Promoters", "Product Move", "Cost", "Wages", "Total Spend"]];
+        const tableBody = storeList.map(st => [
+          `${st.storeName}\n${st.storeAddress}`,
+          `${st.visitCount}x (${st.visitCount} visit${st.visitCount === 1 ? "" : "s"})`,
+          Array.from(st.promoters).join(", ") || "—",
+          st.unitsMoved > 0 ? `${st.unitsMoved} pcs` : "—",
+          st.costVal > 0 ? `$${st.costVal.toFixed(2)}` : "—",
+          st.wageVal > 0 ? `$${st.wageVal.toFixed(2)}` : "—",
+          st.totalSpend > 0 ? `$${st.totalSpend.toFixed(2)}` : "—"
+        ]);
 
         autoTable(doc, {
           head: tableHeaders,
@@ -2486,118 +2611,32 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           margin: { left: 14, right: 14 },
           theme: "striped",
           columnStyles: {
-            0: { cellWidth: 40 }, // Store
-            1: { cellWidth: 35 }, // Promoter Name
-            2: { cellWidth: 60 }, // Date & Actual Time
-            3: { cellWidth: 22 }, // Cost
-            4: { cellWidth: 25 }, // Payroll
+            0: { cellWidth: 55 },
+            1: { cellWidth: 26, halign: "center" },
+            2: { cellWidth: 32 },
+            3: { cellWidth: 22, halign: "right" },
+            4: { cellWidth: 15, halign: "right" },
+            5: { cellWidth: 17, halign: "right" },
+            6: { cellWidth: 15, halign: "right" }
           },
           headStyles: {
             fillColor: [240, 244, 249],
             textColor: [71, 71, 71],
             fontStyle: "bold",
-            fontSize: 8.5,
+            fontSize: 7.5
           },
           bodyStyles: {
-            fontSize: 8,
-            textColor: [39, 39, 42],
+            fontSize: 7,
+            textColor: [39, 39, 42]
           },
           styles: {
             font: "helvetica",
-            cellPadding: 2.5,
+            cellPadding: 2
           }
         });
 
-        yPos = (doc as any).lastAutoTable.finalY + 8;
+        yPos = (doc as any).lastAutoTable.finalY + 7;
       });
-
-      // Calculate total cost and total wage for all campaign schedules
-      let grandTotalCost = 0;
-      let grandTotalWage = 0;
-
-      campaignSchedules.forEach((s) => {
-        // 1. Cost calculation
-        if (s["promoting_cost"]) {
-          try {
-            const parsed = JSON.parse(s["promoting_cost"]);
-            if (Array.isArray(parsed)) {
-              grandTotalCost += parsed.reduce((acc: number, curr: any) => acc + Number(curr.amount || 0), 0);
-            }
-          } catch (e) {}
-        }
-
-        // 2. Wage calculation
-        const matchingPayout = payouts.find(p => {
-          if (String(p["promoter_id"]) !== String(s["promoter_id"])) return false;
-          const shiftDateNum = new Date(s.date).getTime();
-          const pStart = Number(p["start_date"]);
-          const pEnd = Number(p["end_date"]);
-          return shiftDateNum >= pStart && shiftDateNum <= pEnd;
-        });
-
-        if (matchingPayout) {
-          let shiftWage = 0;
-          try {
-            const details = JSON.parse(matchingPayout["payout_details"] || "[]");
-            if (Array.isArray(details)) {
-              const matchRow = details.find((d: any) => String(d.scheduleId) === String(s.id));
-              if (matchRow) {
-                shiftWage = Number(matchRow.totalPayout || 0);
-              }
-            }
-          } catch (err) {}
-          if (!shiftWage) {
-            const hrs = calculateHours(s["actual_start"], s["actual_end"]);
-            shiftWage = hrs * Number(matchingPayout["hourly_rate"] || 0);
-          }
-          grandTotalWage += shiftWage;
-        }
-      });
-
-      const grandTotalSpend = grandTotalCost + grandTotalWage;
-
-      if (yPos > 240) {
-        doc.addPage();
-        yPos = 20;
-      }
-
-      doc.setDrawColor(228, 228, 231); // zinc-200
-      doc.line(14, yPos, 196, yPos);
-      yPos += 6;
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10.5);
-      doc.setTextColor(24, 24, 27); // zinc-900
-      doc.text("Campaign Financial Summary", 14, yPos);
-      yPos += 5;
-
-      // Draw a beautiful summary card
-      doc.setFillColor(244, 244, 245); // zinc-100
-      doc.rect(14, yPos, 182, 30, "F");
-      doc.setDrawColor(228, 228, 231); // zinc-200
-      doc.rect(14, yPos, 182, 30, "S");
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.setTextColor(82, 82, 91); // zinc-600
-      doc.text("Total Promoting Cost:", 20, yPos + 7);
-      doc.text("Total Wages (Payroll):", 20, yPos + 15);
-      
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.setTextColor(11, 87, 208); // Brand blue
-      doc.text("Total Campaign Spend:", 20, yPos + 24);
-
-      // Values aligned to the right
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
-      doc.setTextColor(39, 39, 42); // zinc-800
-      doc.text(`$${grandTotalCost.toFixed(2)}`, 190, yPos + 7, { align: "right" });
-      doc.text(`$${grandTotalWage.toFixed(2)}`, 190, yPos + 15, { align: "right" });
-
-      doc.setFontSize(10);
-      doc.setTextColor(11, 87, 208);
-      doc.text(`$${grandTotalSpend.toFixed(2)}`, 190, yPos + 24, { align: "right" });
     }
 
     const pdfBlob = doc.output("blob");
@@ -2629,10 +2668,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         id: c.id,
         title: (
           <div className="flex flex-col gap-0.5 select-text">
-            <span className="font-bold text-zinc-900">{c["campaign_title"]}</span>
-            <span className="text-[10px] text-zinc-400 font-bold font-mono">Brand: {brandName}</span>
+            <span className="font-semibold text-zinc-800">{c["campaign_title"]}</span>
+            <span className="text-[10.5px] text-zinc-500 font-normal">Brand: {brandName}</span>
             {(c["start_date"] || c["end_date"]) && (
-              <span className="text-[10px] text-[#0B57D0] font-bold font-mono">
+              <span className="text-[10px] text-[#0B57D0] font-normal font-mono">
                 Duration: {formatEpochToDisplay(c["start_date"]) || "—"} to {formatEpochToDisplay(c["end_date"]) || "—"}
               </span>
             )}
@@ -4821,12 +4860,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
       return {
         id: p.id,
-        id_display: <span className="font-bold text-zinc-900">{p.id}</span>,
-        Nickname: <span className="font-bold text-zinc-850">{p.name || "—"}</span>,
-        FullName: <span className="font-semibold text-zinc-700">{p["full_name"] || p.full_name || "—"}</span>,
-        phone: <span className="font-semibold text-zinc-500">{p.phone || "—"}</span>,
-        email: <span className="font-semibold text-zinc-500">{p.email || "—"}</span>,
-        Paynow: <span className="font-semibold text-zinc-500 font-mono text-[11px]">{p["paynow_account"] || p.paynow_account || "—"}</span>,
+        id_display: <span className="font-mono text-zinc-500 text-[11px] font-normal">{p.id}</span>,
+        Nickname: <span className="font-medium text-zinc-900">{p.name || "—"}</span>,
+        FullName: <span className="text-zinc-600 font-normal">{p["full_name"] || p.full_name || "—"}</span>,
+        phone: <span className="text-zinc-500 font-normal">{p.phone || "—"}</span>,
+        email: <span className="text-zinc-500 font-normal">{p.email || "—"}</span>,
+        Paynow: <span className="text-zinc-500 font-mono text-[11px] font-normal">{p["paynow_account"] || p.paynow_account || "—"}</span>,
         actions: (
           <div className="flex items-center gap-1.5 w-[80px] shrink-0 select-none">
             <button
@@ -5048,7 +5087,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               setCalendarMode("monthly");
                               setSelectedCampaignId("all");
                             }}
-                            className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-[#0B57D0] text-white border-transparent shadow-xs flex items-center justify-center whitespace-nowrap"
+                            className="h-[26px] px-2.5 text-[11px] font-medium rounded border transition-all cursor-pointer bg-[#0B57D0] text-white border-transparent shadow-xs flex items-center justify-center whitespace-nowrap"
                           >
                             Calendar
                           </button>
@@ -5059,7 +5098,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               setIsStoreLibraryCollapsed(true);
                               setSelectedCampaignId("");
                             }}
-                            className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-white text-zinc-655 border-zinc-200 hover:bg-zinc-50 flex items-center justify-center whitespace-nowrap"
+                            className="h-[26px] px-2.5 text-[11px] font-medium rounded border transition-all cursor-pointer bg-white text-zinc-655 border-zinc-200 hover:bg-zinc-50 flex items-center justify-center whitespace-nowrap"
                           >
                             Schedule
                           </button>
@@ -5078,7 +5117,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                   localStorage.setItem("ib_promoter_schedules_draft", JSON.stringify(schedules));
                                   localStorage.setItem("ib_promoter_schedules_backup", JSON.stringify(schedules));
                                 }}
-                                className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center gap-1 shadow-sm justify-center whitespace-nowrap"
+                                className="h-[26px] px-2.5 text-[11px] font-medium bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center gap-1 shadow-sm justify-center whitespace-nowrap"
                               >
                                 <Pencil size={11} className="stroke-[2.5]" />
                                 Edit Schedule
@@ -5088,7 +5127,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 <button
                                   type="button"
                                   onClick={handleSaveAndDeploy}
-                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center whitespace-nowrap"
+                                  className="h-[26px] px-2.5 text-[11px] font-medium bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center whitespace-nowrap"
                                 >
                                   <Check size={11} className="stroke-[2.5]" />
                                   Save & Deploy
@@ -5104,7 +5143,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     localStorage.removeItem("ib_promoter_schedules_backup");
                                     showToast("Draft changes discarded.", "info");
                                   }}
-                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-555 border border-zinc-200 hover:bg-zinc-50 hover:text-zinc-850 rounded transition-all cursor-pointer flex items-center justify-center whitespace-nowrap"
+                                  className="h-[26px] px-2.5 text-[11px] font-medium bg-white text-zinc-555 border border-zinc-200 hover:bg-zinc-50 hover:text-zinc-850 rounded transition-all cursor-pointer flex items-center justify-center whitespace-nowrap"
                                 >
                                   Discard
                                 </button>
@@ -5135,11 +5174,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                         {/* Select Campaign Dropdown */}
                         <div className="flex items-center gap-1.5 md:border-l md:border-zinc-200 md:pl-3 h-5">
-                          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider whitespace-nowrap">Select Campaign:</span>
+                          <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider whitespace-nowrap">Select Campaign:</span>
                           <select
                             value={selectedCampaignId}
                             onChange={(e) => setSelectedCampaignId(e.target.value)}
-                            className="h-[26px] px-2 py-0 bg-white border border-zinc-200 rounded text-[11px] font-bold text-zinc-800 outline-none focus:border-zinc-955 cursor-pointer whitespace-nowrap"
+                            className="h-[26px] px-2 py-0 bg-white border border-zinc-200 rounded text-[11px] font-semibold text-zinc-800 outline-none focus:border-zinc-955 cursor-pointer whitespace-nowrap"
                           >
                             <option value="">-- Choose Campaign --</option>
                             <option value="all">All Campaigns</option>
@@ -5163,7 +5202,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         >
                           <ChevronLeft size={13} className="stroke-[2.5]" />
                         </button>
-                        <span className="text-[11px] font-bold font-mono text-zinc-800 uppercase px-1.5 w-[90px] text-center select-none leading-none whitespace-nowrap">
+                        <span className="text-[11px] font-medium font-mono text-zinc-800 uppercase px-1.5 w-[90px] text-center select-none leading-none whitespace-nowrap">
                           {currentDate.toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                         </span>
                         <button
@@ -5182,7 +5221,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         <span 
                           key={day} 
                           className={cn(
-                            "text-[10px] font-bold uppercase tracking-wider text-zinc-400",
+                            "text-[10px] font-medium uppercase tracking-wider text-zinc-400",
                             (day === "Sat" || day === "Sun") ? "text-amber-500/80" : ""
                           )}
                         >
@@ -5209,12 +5248,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               className="border border-zinc-200/70 p-1.5 min-h-[65px] flex flex-col justify-between bg-zinc-100/60 rounded-md text-left relative opacity-35 cursor-not-allowed select-none"
                               title="Date is outside the selected campaign range"
                             >
-                              <span className="text-xs font-bold leading-none text-zinc-400">
+                              <span className="text-xs font-semibold leading-none text-zinc-400">
                                 {cell}
                               </span>
                               {dayEvents.length > 0 && (
                                 <div className="flex flex-col gap-0.5 mt-1 overflow-hidden opacity-60">
-                                  <span className="text-[7.5px] font-bold text-zinc-400">
+                                  <span className="text-[7.5px] font-medium text-zinc-400">
                                     {dayEvents.length} shift{dayEvents.length > 1 ? "s" : ""}
                                   </span>
                                 </div>
@@ -5237,8 +5276,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             )}
                           >
                             <span className={cn(
-                              "text-xs font-bold leading-none",
-                              isToday(cell) ? "text-[#0B57D0] font-bold" : "text-zinc-650"
+                              "text-xs font-semibold leading-none",
+                              isToday(cell) ? "text-[#0B57D0] font-semibold" : "text-zinc-650"
                             )}>
                               {cell}
                             </span>
@@ -5255,15 +5294,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 {(isSelected ? dayEvents : dayEvents.slice(0, 2)).map((e) => (
                                   <div 
                                     key={e.id} 
-                                    className="text-[8.5px] font-bold px-1 py-0.5 rounded bg-[#0B57D0]/10 text-[#0B57D0] flex flex-col gap-0.5 text-left mb-0.5"
+                                    className="text-[8.5px] font-medium px-1 py-0.5 rounded bg-[#0B57D0]/10 text-[#0B57D0] flex flex-col gap-0.5 text-left mb-0.5"
                                     title={`${e["promoter_name"]} @ ${getFormattedStoreName(e["store_id"], e["store_name"])} - ${e["campaign_title"]}`}
                                   >
                                     <div className="truncate leading-none">{e["promoter_name"]} @ {getFormattedStoreName(e["store_id"], e["store_name"])}</div>
-                                    <div className="text-[7.5px] text-[#0B57D0]/80 font-semibold truncate leading-none">{e["campaign_title"]}</div>
+                                    <div className="text-[7.5px] text-[#0B57D0]/75 font-normal truncate leading-none">{e["campaign_title"]}</div>
                                   </div>
                                 ))}
                                 {!isSelected && dayEvents.length > 2 && (
-                                  <span className="text-[7.5px] font-bold text-zinc-400 pl-1 leading-none">
+                                  <span className="text-[7.5px] font-medium text-zinc-400 pl-1 leading-none">
                                     +{dayEvents.length - 2} more
                                   </span>
                                 )}
@@ -5279,10 +5318,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 <div className="flex-[30] bg-white border border-zinc-200 rounded p-5 flex flex-col overflow-hidden shadow-sm h-full min-h-[400px] xl:min-w-[320px] w-full">
                   {/* Header */}
                   <div className="flex flex-col pb-3 border-b border-zinc-150 shrink-0">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-955">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-955">
                       Checklist Deployment
                     </h3>
-                    <p className="text-[10px] text-zinc-500 font-bold font-mono mt-0.5">
+                    <p className="text-[10px] text-zinc-500 font-medium font-mono mt-0.5">
                       {String(selectedDay).padStart(2, "0")}/{String(month + 1).padStart(2, "0")}/{year}
                     </p>
                   </div>
@@ -5290,7 +5329,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   {/* Body Content */}
                   {selectedDayShifts.length === 0 ? (
                     <div className="flex-grow flex items-center justify-center font-primary">
-                      <div className="py-12 text-center text-zinc-400 font-bold select-none border border-dashed border-zinc-200 rounded p-4 bg-zinc-50/20 w-full">
+                      <div className="py-12 text-center text-zinc-400 font-normal select-none border border-dashed border-zinc-200 rounded p-4 bg-zinc-50/20 w-full">
                         <CalendarIcon size={20} className="stroke-1 mx-auto mb-2 opacity-50 text-zinc-450" />
                         <span className="block text-[10.5px]">No shifts assigned today.</span>
                         <span className="block text-[8.5px] font-medium leading-normal px-4 mt-1 text-zinc-400">
@@ -5364,7 +5403,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               <div className="flex justify-between items-start gap-2">
                                 <div className="min-w-0 flex-grow">
                                   <div className="flex items-center gap-1.5">
-                                    <h4 className="text-[11px] font-bold uppercase text-zinc-905 tracking-wider truncate">
+                                    <h4 className="text-[11px] font-semibold uppercase text-zinc-900 tracking-wider truncate">
                                       {s["promoter_name"]}
                                     </h4>
                                     {isScheduleExpanded ? (
@@ -5373,22 +5412,22 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                       <ChevronDown size={11} className="text-zinc-500 stroke-[3.5] shrink-0" />
                                     )}
                                   </div>
-                                  <p className="text-[9.5px] text-zinc-900 font-bold truncate leading-tight mt-0.5">
+                                  <p className="text-[9.5px] text-zinc-800 font-semibold truncate leading-tight mt-0.5">
                                     {s["campaign_title"]}
                                   </p>
-                                  <p className="text-[9.5px] text-zinc-500 font-bold truncate leading-tight mt-0.5">
+                                  <p className="text-[9.5px] text-zinc-500 font-medium truncate leading-tight mt-0.5">
                                     {getFormattedStoreName(s["store_id"], s["store_name"])}
                                   </p>
                                 </div>
                                 
-                                <div className="flex flex-col items-end gap-1 shrink-0 text-[9px] font-bold font-mono text-zinc-400">
+                                <div className="flex flex-col items-end gap-1 shrink-0 text-[9px] font-medium font-mono text-zinc-400">
                                   <div className="flex items-center gap-1.5">
                                     <Clock size={10} className="stroke-[2.5]" />
                                     <span>{formatTimeDisplay(s["shift_start"])} - {formatTimeDisplay(s["shift_end"])}</span>
                                   </div>
                                   {/* Progress badge */}
                                   <span className={cn(
-                                    "px-1.5 py-0.5 rounded font-bold font-primary text-[8.5px] border transition-colors",
+                                    "px-1.5 py-0.5 rounded font-medium font-primary text-[8.5px] border transition-colors",
                                     doneCount === totalCount
                                       ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                       : "bg-red-50 text-red-700 border-red-200"
@@ -5428,14 +5467,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         )}
                                       </div>
                                       <div className="flex-grow min-w-0">
-                                        <div className="font-bold text-zinc-800 leading-snug text-[10.5px]">Get permission from the store</div>
-                                        <div className="mt-1 text-[9.5px] font-semibold">
+                                        <div className="font-semibold text-zinc-800 leading-snug text-[10.5px]">Get permission from the store</div>
+                                        <div className="mt-1 text-[9.5px] font-normal">
                                           {isDone ? (
                                             <span className="text-zinc-500 leading-normal">
-                                              Authorized by: <span className="text-[#0B57D0] font-bold">{s["permission_by"]}</span>
+                                              Authorized by: <span className="text-[#0B57D0] font-semibold">{s["permission_by"]}</span>
                                             </span>
                                           ) : (
-                                            <span className="text-amber-500 font-bold uppercase tracking-wider text-[8px]">Pending</span>
+                                            <span className="text-amber-600 font-medium uppercase tracking-wider text-[8px]">Pending</span>
                                           )}
                                         </div>
                                       </div>
@@ -5444,12 +5483,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     {isExpanded && (
                                       <div className="border-t border-zinc-100 pt-2 mt-0.5 flex flex-col gap-2 animate-in slide-in-from-top-1 duration-150">
                                         <div className="flex flex-col gap-1">
-                                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                                          <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                                             Authorized By (Store Manager Name)
                                           </label>
-                                          <input
-                                            type="text"
-                                            placeholder="Enter manager name..."
+                                          <input type="text" placeholder="Enter manager name..."
                                             value={s["permission_by"] || ""}
                                             onClick={(e) => e.stopPropagation()}
                                             onChange={(e) => {
@@ -5459,7 +5496,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                               handleUpdateShiftField(s.id, "permission_by", e.target.value.trim());
                                             }}
                                             disabled={!isEditMode}
-                                            className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
+                                            className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-normal outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
                                           />
                                         </div>
                                       </div>
@@ -5493,14 +5530,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         )}
                                       </div>
                                       <div className="flex-grow min-w-0">
-                                        <div className="font-bold text-zinc-805 leading-snug text-[10.5px]">Check availability stock at store</div>
-                                        <div className="mt-1 text-[9.5px] font-semibold">
+                                        <div className="font-medium text-zinc-800 leading-snug text-[10.5px]">Check availability stock at store</div>
+                                        <div className="mt-1 text-[9.5px] font-normal">
                                           {isDone ? (
                                             <span className="text-zinc-555 leading-normal">
-                                              Status: <span className="text-[#0B57D0] font-bold">{s["stock_checked"]}</span>
+                                              Status: <span className="text-[#0B57D0] font-semibold">{s["stock_checked"]}</span>
                                             </span>
                                           ) : (
-                                            <span className="text-amber-500 font-bold uppercase tracking-wider text-[8px]">Pending</span>
+                                            <span className="text-amber-600 font-medium uppercase tracking-wider text-[8px]">Pending</span>
                                           )}
                                         </div>
                                       </div>
@@ -5509,12 +5546,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     {isExpanded && (
                                       <div className="border-t border-zinc-100 pt-2 mt-0.5 flex flex-col gap-2 animate-in slide-in-from-top-1 duration-150">
                                         <div className="flex flex-col gap-1">
-                                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                                          <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                                             Stock Remarks / Findings
                                           </label>
-                                          <input
-                                            type="text"
-                                            placeholder="e.g. Fully stocked / Out of Pak Man 1kg..."
+                                          <input type="text" placeholder="e.g. Fully stocked / Out of Pak Man 1kg..."
                                             value={s["stock_checked"] || ""}
                                             onClick={(e) => e.stopPropagation()}
                                             onChange={(e) => {
@@ -5524,7 +5559,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                               handleUpdateShiftField(s.id, "stock_checked", e.target.value.trim());
                                             }}
                                             disabled={!isEditMode}
-                                            className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
+                                            className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-normal outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
                                           />
                                         </div>
                                       </div>
@@ -5559,14 +5594,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         )}
                                       </div>
                                       <div className="flex-grow min-w-0">
-                                        <div className="font-bold text-zinc-805 leading-snug text-[10.5px]">{t.text}</div>
-                                        <div className="mt-1 text-[9.5px] font-semibold">
+                                        <div className="font-medium text-zinc-800 leading-snug text-[10.5px]">{t.text}</div>
+                                        <div className="mt-1 text-[9.5px] font-normal">
                                           {isDone ? (
                                             <span className="text-zinc-555 leading-normal">
-                                              Answer: <span className="text-[#0B57D0] font-bold">{t.answer}</span>
+                                              Answer: <span className="text-[#0B57D0] font-semibold">{t.answer}</span>
                                             </span>
                                           ) : (
-                                            <span className="text-amber-500 font-bold uppercase tracking-wider text-[8px]">Pending</span>
+                                            <span className="text-amber-600 font-medium uppercase tracking-wider text-[8px]">Pending</span>
                                           )}
                                         </div>
                                       </div>
@@ -5588,12 +5623,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     {isExpanded && (
                                       <div className="border-t border-zinc-100 pt-2 mt-0.5 flex flex-col gap-2 animate-in slide-in-from-top-1 duration-150">
                                         <div className="flex flex-col gap-1">
-                                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                                          <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                                             Task Answer / Result
                                           </label>
-                                          <input
-                                            type="text"
-                                            placeholder="Type task answer/status..."
+                                          <input type="text" placeholder="Type task answer/status..."
                                             value={t.answer || ""}
                                             onClick={(e) => e.stopPropagation()}
                                             onChange={(e) => {
@@ -5609,7 +5642,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                               handleUpdateShiftField(s.id, "custom_tasks", JSON.stringify(updatedCustomTasks));
                                             }}
                                             disabled={!isEditMode}
-                                            className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
+                                            className="w-full px-2 py-1 border border-zinc-200 rounded text-xs font-normal outline-none focus:border-zinc-555 bg-white shadow-xs disabled:bg-zinc-50 disabled:cursor-not-allowed"
                                           />
                                         </div>
                                       </div>
@@ -5626,9 +5659,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 const canClick = isEditMode || isDone;
                                 
                                 const timeAnswer = isAbsent ? (
-                                  <span className="text-red-600 font-bold">Absent (Reason: {s["actual_end"] || "Not specified"})</span>
+                                  <span className="text-red-600 font-medium">Absent (Reason: {s["actual_end"] || "Not specified"})</span>
                                 ) : (
-                                  <span className="text-[#0B57D0] font-bold">{formatTimeDisplay(s["actual_start"])} - {formatTimeDisplay(s["actual_end"])}</span>
+                                  <span className="text-[#0B57D0] font-semibold">{formatTimeDisplay(s["actual_start"])} - {formatTimeDisplay(s["actual_end"])}</span>
                                 );
                                 
                                 return (
@@ -5651,14 +5684,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         )}
                                       </div>
                                       <div className="flex-grow min-w-0">
-                                        <div className="font-bold text-zinc-855 leading-snug text-[10.5px]">Confirm promoter actual shift times</div>
-                                        <div className="mt-1 text-[9.5px] font-semibold">
+                                        <div className="font-medium text-zinc-800 leading-snug text-[10.5px]">Confirm promoter actual shift times</div>
+                                        <div className="mt-1 text-[9.5px] font-normal">
                                           {isDone ? (
                                             <span className="text-zinc-550 leading-normal font-primary">
                                               Actual Time: {timeAnswer}
                                             </span>
                                           ) : (
-                                            <span className="text-amber-500 font-bold uppercase tracking-wider text-[8px]">Pending</span>
+                                            <span className="text-amber-600 font-medium uppercase tracking-wider text-[8px]">Pending</span>
                                           )}
                                         </div>
                                       </div>
@@ -5669,7 +5702,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         {isAbsent ? (
                                           <div className="flex flex-col gap-2">
                                             <div className="flex flex-col gap-1">
-                                              <label className="text-[9px] font-bold text-red-500 uppercase tracking-wider pl-0.5">
+                                              <label className="text-[9px] font-medium text-red-500 uppercase tracking-wider pl-0.5">
                                                 Reason for Absence (Required)
                                               </label>
                                               <input
@@ -5698,7 +5731,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                   setSchedules(newSchedules);
                                                   pushHistory(newSchedules);
                                                 }}
-                                                className="text-[10px] font-bold text-[#0B57D0] hover:underline cursor-pointer text-left pl-0.5"
+                                                className="text-[10px] font-semibold text-[#0B57D0] hover:underline cursor-pointer text-left pl-0.5"
                                               >
                                                 ← Reset to shift start/end times
                                               </button>
@@ -5708,7 +5741,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                           <div className="flex flex-col gap-2">
                                             <div className="flex gap-2 items-end">
                                               <div className="flex flex-col gap-1 flex-1">
-                                                <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                                                <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                                                   Actual Start Time
                                                 </label>
                                                 <input
@@ -5724,7 +5757,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                               </div>
                                               
                                               <div className="flex flex-col gap-1 flex-1">
-                                                <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                                                <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                                                   Actual End Time
                                                 </label>
                                                 <input
@@ -5741,7 +5774,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
  
                                               {isEditMode && (
                                                 <div className="flex flex-col gap-1">
-                                                  <span className="text-[9px] invisible select-none font-bold uppercase pl-0.5">
+                                                  <span className="text-[9px] invisible select-none font-medium uppercase pl-0.5">
                                                     Spacer
                                                   </span>
                                                   <button
@@ -5754,7 +5787,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                       setSchedules(newSchedules);
                                                       pushHistory(newSchedules);
                                                     }}
-                                                    className="py-1 px-3 border border-red-200 hover:bg-red-50 text-red-650 rounded text-xs font-bold transition-colors cursor-pointer text-center h-[26px] flex items-center justify-center"
+                                                    className="py-1 px-3 border border-red-200 hover:bg-red-50 text-red-650 rounded text-xs font-semibold transition-colors cursor-pointer text-center h-[26px] flex items-center justify-center"
                                                   >
                                                     Absent
                                                   </button>
@@ -5787,18 +5820,18 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         )}
                                       </div>
                                       <div className="flex-grow min-w-0">
-                                        <div className="font-bold text-zinc-855 leading-snug text-[10.5px]">Promoting Cost</div>
-                                        <div className="mt-1 text-[9.5px] font-semibold">
+                                        <div className="font-medium text-zinc-800 leading-snug text-[10.5px]">Promoting Cost</div>
+                                        <div className="mt-1 text-[9.5px] font-normal">
                                           {isDone ? (
                                             promotingCosts.length === 0 ? (
-                                              <span className="text-green-600 font-bold uppercase tracking-wider text-[9px]">Zero Cost</span>
+                                              <span className="text-green-600 font-medium uppercase tracking-wider text-[9px]">Zero Cost</span>
                                             ) : (
                                               <span className="text-zinc-555 leading-normal">
-                                                Qty: <span className="text-zinc-850 font-bold">{totalQty}</span> | Amount: <span className="text-[#0B57D0] font-bold">${totalAmount.toFixed(2)}</span>
+                                                Qty: <span className="text-zinc-700 font-medium">{totalQty}</span> | Amount: <span className="text-[#0B57D0] font-semibold">${totalAmount.toFixed(2)}</span>
                                               </span>
                                             )
                                           ) : (
-                                            <span className="text-amber-500 font-bold uppercase tracking-wider text-[8px]">Pending</span>
+                                            <span className="text-amber-600 font-medium uppercase tracking-wider text-[8px]">Pending</span>
                                           )}
                                         </div>
                                       </div>
@@ -5810,7 +5843,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             e.stopPropagation();
                                             openPromotingCostModal(s.id);
                                           }}
-                                          className="px-2 py-0.5 bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-700 font-bold rounded text-[9.5px] cursor-pointer transition-colors"
+                                          className="px-2 py-0.5 bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-700 font-medium rounded text-[9.5px] cursor-pointer transition-colors"
                                         >
                                           {isDone ? "Edit" : "Add"}
                                         </button>
@@ -5823,7 +5856,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               {/* Custom task creation input */}
                               {isEditMode && !isOtherLoc && (
                                 <div className="border-t border-zinc-100 pt-3 space-y-2">
-                                  <span className="text-[9px] font-bold text-[#0B57D0] uppercase tracking-widest block pl-0.5">
+                                  <span className="text-[9px] font-semibold text-[#0B57D0] uppercase tracking-widest block pl-0.5">
                                     Add Custom Task
                                   </span>
                                   <div className="flex gap-2">
@@ -5849,7 +5882,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                         e.stopPropagation();
                                         handleAddCustomTask(s.id, taskInputText);
                                       }}
-                                      className="px-2.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded font-bold shadow-xs transition-colors cursor-pointer text-xs"
+                                      className="px-2.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded font-medium shadow-xs transition-colors cursor-pointer text-xs"
                                     >
                                       Add
                                     </button>
@@ -5889,7 +5922,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               setCalendarMode("monthly");
                               setSelectedCampaignId("all");
                             }}
-                            className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-white text-zinc-655 border-zinc-200 hover:bg-zinc-50 flex items-center justify-center"
+                            className="h-[26px] px-2.5 text-[11px] font-medium rounded border transition-all cursor-pointer bg-white text-zinc-655 border-zinc-200 hover:bg-zinc-50 flex items-center justify-center"
                           >
                             Calendar
                           </button>
@@ -5900,7 +5933,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               setIsStoreLibraryCollapsed(true);
                               setSelectedCampaignId("");
                             }}
-                            className="h-[26px] px-2.5 text-[11px] font-bold rounded border transition-all cursor-pointer bg-[#0B57D0] text-white border-transparent shadow-xs flex items-center justify-center"
+                            className="h-[26px] px-2.5 text-[11px] font-medium rounded border transition-all cursor-pointer bg-[#0B57D0] text-white border-transparent shadow-xs flex items-center justify-center"
                           >
                             Schedule
                           </button>
@@ -5919,7 +5952,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                   localStorage.setItem("ib_promoter_schedules_draft", JSON.stringify(schedules));
                                   localStorage.setItem("ib_promoter_schedules_backup", JSON.stringify(schedules));
                                 }}
-                                className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center gap-1 shadow-sm justify-center"
+                                className="h-[26px] px-2.5 text-[11px] font-medium bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center gap-1 shadow-sm justify-center"
                               >
                                 <Pencil size={11} className="stroke-[2.5]" />
                                 Edit Schedule
@@ -5929,7 +5962,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 <button
                                   type="button"
                                   onClick={handleSaveAndDeploy}
-                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center"
+                                  className="h-[26px] px-2.5 text-[11px] font-medium bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center"
                                 >
                                   <Check size={11} className="stroke-[2.5]" />
                                   Save & Deploy
@@ -5945,7 +5978,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     localStorage.removeItem("ib_promoter_schedules_backup");
                                     showToast("Draft changes discarded.", "info");
                                   }}
-                                  className="h-[26px] px-2.5 text-[11px] font-bold bg-white text-zinc-555 border border-zinc-200 hover:bg-zinc-50 hover:text-zinc-850 rounded transition-all cursor-pointer flex items-center justify-center"
+                                  className="h-[26px] px-2.5 text-[11px] font-medium bg-white text-zinc-555 border border-zinc-200 hover:bg-zinc-50 hover:text-zinc-850 rounded transition-all cursor-pointer flex items-center justify-center"
                                 >
                                   Discard
                                 </button>
@@ -5976,11 +6009,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                         {/* Select Campaign Dropdown */}
                         <div className="flex items-center gap-1.5 border-l border-zinc-200 pl-4 h-5">
-                          <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider">Select Campaign:</span>
+                          <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Select Campaign:</span>
                           <select
                             value={selectedCampaignId}
                             onChange={(e) => setSelectedCampaignId(e.target.value)}
-                            className="h-[26px] px-2 py-0 bg-white border border-zinc-200 rounded text-[11px] font-bold text-zinc-800 outline-none focus:border-zinc-955 cursor-pointer"
+                            className="h-[26px] px-2 py-0 bg-white border border-zinc-200 rounded text-[11px] font-semibold text-zinc-800 outline-none focus:border-zinc-955 cursor-pointer"
                           >
                             <option value="">-- Choose Campaign --</option>
                             {campaigns
@@ -6000,7 +6033,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           <button
                             type="button"
                             onClick={() => setIsStoreLibraryCollapsed(false)}
-                            className="h-[26px] px-2.5 bg-white border border-[#0B57D0] hover:bg-[#0B57D0]/5 rounded text-[11px] font-bold text-[#0B57D0] flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center"
+                            className="h-[26px] px-2.5 bg-white border border-[#0B57D0] hover:bg-[#0B57D0]/5 rounded text-[11px] font-semibold text-[#0B57D0] flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center"
                             title="Expand Stores Library"
                           >
                             <ChevronLeft size={12} className="stroke-[2.5]" />
@@ -6013,7 +6046,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     {selectedCampaignId === "" ? (
                       <div className="flex-grow flex flex-col items-center justify-center p-12 bg-zinc-50 border border-zinc-200 border-dashed rounded text-center my-4 h-[380px]">
                         <Megaphone size={36} className="text-zinc-400 stroke-1 mb-2.5 animate-pulse" />
-                        <span className="text-zinc-555 text-xs font-bold uppercase tracking-wider">Campaign Selection Required</span>
+                        <span className="text-zinc-555 text-xs font-semibold uppercase tracking-wider">Campaign Selection Required</span>
                         <p className="text-[11px] text-zinc-450 mt-1.5 max-w-xs font-semibold leading-relaxed">
                           Please select a campaign from the dropdown above to view the promoter weekly planner and drag stores to assign shifts.
                         </p>
@@ -6036,7 +6069,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                   return (
                                     <div className="flex flex-col gap-1.5 w-full">
                                       <div className="flex flex-col gap-0.5">
-                                        <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</span>
+                                        <span className="text-[8px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</span>
                                         <input
                                           type="date"
                                           value={scheduleStartDate}
@@ -6048,11 +6081,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             if (campMaxDate && val > campMaxDate) return setScheduleStartDate(campMaxDate);
                                             setScheduleStartDate(val);
                                           }}
-                                          className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-bold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
+                                          className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-semibold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
                                         />
                                       </div>
                                       <div className="flex flex-col gap-0.5">
-                                        <span className="text-[8px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">End Date</span>
+                                        <span className="text-[8px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">End Date</span>
                                         <input
                                           type="date"
                                           value={scheduleEndDate}
@@ -6064,7 +6097,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             if (campMaxDate && val > campMaxDate) return setScheduleEndDate(campMaxDate);
                                             setScheduleEndDate(val);
                                           }}
-                                          className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-bold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
+                                          className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-semibold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
                                         />
                                       </div>
                                     </div>
@@ -6076,7 +6109,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               {visiblePromoters.map((p) => (
                                 <th 
                                   key={p.id} 
-                                  className="py-3 px-4 font-bold text-xs text-zinc-700 text-center border-r border-zinc-200 w-[320px] shrink-0 relative group select-none bg-zinc-50 sticky top-0 z-20 border-b border-zinc-200"
+                                  className="py-3 px-4 font-semibold text-xs text-zinc-700 text-center border-r border-zinc-200 w-[320px] shrink-0 relative group select-none bg-zinc-50 sticky top-0 z-20 border-b border-zinc-200"
                                 >
                                   <span>{p.name}</span>
                                   {isEditMode && (
@@ -6098,7 +6131,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     <button
                                       type="button"
                                       onClick={() => setShowAddColDropdown(!showAddColDropdown)}
-                                      className="px-2 py-1 rounded bg-zinc-50 hover:bg-zinc-150 border border-zinc-250 text-zinc-650 hover:text-zinc-955 transition-colors cursor-pointer text-xs font-bold"
+                                      className="px-2 py-1 rounded bg-zinc-50 hover:bg-zinc-150 border border-zinc-250 text-zinc-650 hover:text-zinc-955 transition-colors cursor-pointer text-xs font-semibold"
                                       title="Show promoter column"
                                     >
                                       +
@@ -6106,7 +6139,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     
                                     {showAddColDropdown && (
                                       <div className="absolute left-2 mt-2 w-48 bg-white border border-slate-200 rounded shadow-lg z-30 p-2 text-left font-normal max-h-48 overflow-y-auto custom-scrollbar">
-                                        <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block pb-1 border-b border-zinc-100 mb-1">Show Promoter</span>
+                                        <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider block pb-1 border-b border-zinc-100 mb-1">Show Promoter</span>
                                         {promoters
                                           .filter(p => 
                                             !visiblePromoters.some(vp => String(vp.id) === String(p.id)) &&
@@ -6156,13 +6189,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 <tr key={date.toDateString()} className={cn("border-b border-zinc-200 hover:bg-zinc-50/10", !isDateWithinCamp && "opacity-40 bg-zinc-100/50")}>
                                   {/* Left date column */}
                                   <td className={cn(
-                                    "py-4 px-4 font-bold text-xs border-r border-zinc-200 sticky left-0 z-10 select-none min-h-[110px] shadow-[2px_0_5px_0_rgba(0,0,0,0.05)]",
+                                    "py-4 px-4 font-semibold text-xs border-r border-zinc-200 sticky left-0 z-10 select-none min-h-[110px] shadow-[2px_0_5px_0_rgba(0,0,0,0.05)]",
                                     isDateWithinCamp ? "text-zinc-805 bg-zinc-50" : "text-zinc-400 bg-zinc-100/80"
                                   )}>
-                                    <div className={cn("font-bold", isDateWithinCamp ? "text-zinc-900" : "text-zinc-400")}>{formattedDay}</div>
-                                    <div className="text-zinc-450 text-[10px] font-bold font-mono mt-0.5">{formattedDateStr}</div>
+                                    <div className={cn("font-semibold", isDateWithinCamp ? "text-zinc-800" : "text-zinc-400")}>{formattedDay}</div>
+                                    <div className="text-zinc-450 text-[10px] font-medium font-mono mt-0.5">{formattedDateStr}</div>
                                     {!isDateWithinCamp && (
-                                      <span className="text-[8px] font-bold uppercase text-amber-700 block mt-1">Outside range</span>
+                                      <span className="text-[8px] font-medium uppercase text-amber-700 block mt-1">Outside range</span>
                                     )}
                                   </td>
 
@@ -6236,7 +6269,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                               {/* Right side shift details */}
                                               <div className="flex-1 min-w-0 flex flex-col gap-1 pr-3">
                                                 <div className="flex justify-between items-start">
-                                                  <span className="font-bold text-zinc-800 text-[11px] truncate leading-tight w-full pr-1.5" title={getFormattedStoreName(sch["store_id"], sch["store_name"])}>
+                                                  <span className="font-semibold text-zinc-800 text-[11px] truncate leading-tight w-full pr-1.5" title={getFormattedStoreName(sch["store_id"], sch["store_name"])}>
                                                     {getFormattedStoreName(sch["store_id"], sch["store_name"])}
                                                   </span>
                                                   {isEditMode && (
@@ -6250,7 +6283,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                   )}
                                                 </div>
                                                 
-                                                <div className="text-[9.5px] text-[#0B57D0] font-bold truncate leading-none" title={sch["campaign_title"]}>
+                                                <div className="text-[9.5px] text-[#0B57D0] font-normal truncate leading-none" title={sch["campaign_title"]}>
                                                   {sch["campaign_title"]}
                                                 </div>
 
@@ -6264,9 +6297,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                           type="time"
                                                           value={formatTimeDisplay(sch["shift_start"]) || "09:00"}
                                                           onChange={(e) => handleUpdateTime(sch.id, "shift_start", e.target.value)}
-                                                          className="px-1 py-0.5 border border-zinc-200 rounded text-[9.5px] font-semibold text-zinc-850 bg-white outline-none focus:border-zinc-500 cursor-pointer w-[92px]"
+                                                          className="px-1 py-0.5 border border-zinc-200 rounded text-[9.5px] font-normal text-zinc-700 bg-white outline-none focus:border-zinc-500 cursor-pointer w-[92px]"
                                                         />
-                                                        <span className="text-[9px] text-zinc-400 font-bold">-</span>
+                                                        <span className="text-[9px] text-zinc-400 font-normal">-</span>
                                                         <input
                                                           type="time"
                                                           value={formatTimeDisplay(sch["shift_end"]) || "17:00"}
@@ -6285,7 +6318,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                                   </div>
                                                 ) : (
                                                   <div className="flex flex-col mt-1 border-t border-zinc-150 pt-1.5 shrink-0 gap-0.5">
-                                                    <div className="flex items-center gap-1.5 text-zinc-550 font-semibold text-[9.5px]">
+                                                    <div className="flex items-center gap-1.5 text-zinc-500 font-normal text-[9.5px]">
                                                       <Clock size={11} className="text-zinc-400 shrink-0" />
                                                       <span>{formatTimeDisplay(sch["shift_start"]) || "09:00"} - {formatTimeDisplay(sch["shift_end"]) || "17:00"}</span>
                                                     </div>
@@ -6304,7 +6337,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             <button
                                               type="button"
                                               onClick={() => handlePasteSchedule(date, p.id)}
-                                              className="w-full py-1 border border-dashed border-[#0B57D0]/40 hover:bg-blue-50/50 hover:border-[#0B57D0] text-[#0B57D0] text-[10px] font-bold rounded flex items-center justify-center gap-1 transition-all cursor-pointer mt-1"
+                                              className="w-full py-1 border border-dashed border-[#0B57D0]/40 hover:bg-blue-50/50 hover:border-[#0B57D0] text-[#0B57D0] text-[10px] font-medium rounded flex items-center justify-center gap-1 transition-all cursor-pointer mt-1"
                                               title="Paste copied shift with default times"
                                             >
                                               <ClipboardPaste size={11} />
@@ -6335,7 +6368,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     <div className="flex flex-col flex-grow overflow-hidden">
                       
                       <div className="flex justify-between items-center border-b border-zinc-150 pb-2.5 shrink-0">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-900">
                           Stores Library
                         </h3>
                         <button
@@ -6382,7 +6415,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             }}
                             className="bg-amber-50/20 hover:bg-amber-50/40 border border-dashed border-amber-300 hover:border-amber-500 rounded p-3 shadow-xs cursor-grab active:cursor-grabbing select-none transition-all flex flex-col gap-1.5 text-xs font-primary animate-in fade-in duration-200"
                           >
-                            <div className="font-bold text-amber-800 flex items-center gap-1.5">
+                            <div className="font-semibold text-amber-800 flex items-center gap-1.5">
                               <MapPin size={13} className="text-amber-600 stroke-[2.5]" />
                               Other Location
                             </div>
@@ -6398,7 +6431,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               onDragStart={(e) => e.dataTransfer.setData("storeId", String(store.id))}
                               className="bg-zinc-50/40 hover:bg-blue-50/5 border border-zinc-200 hover:border-[#0B57D0] rounded p-3 shadow-xs cursor-grab active:cursor-grabbing select-none transition-all flex flex-col gap-1.5 text-xs font-primary animate-in fade-in duration-200"
                             >
-                              <div className="font-bold text-zinc-805 leading-tight">
+                              <div className="font-medium text-zinc-800 leading-tight">
                                 {getFormattedStoreName(store.id, store["display_name"])}
                               </div>
                               <div className="text-[10.5px] text-zinc-500 font-normal whitespace-normal leading-normal">
@@ -6407,7 +6440,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             </div>
                           ))}
                           {filteredStores.length === 0 && (
-                            <div className="text-center text-zinc-400 font-bold select-none border border-dashed border-zinc-200 rounded p-6 bg-zinc-50/20 text-[10.5px]">
+                            <div className="text-center text-zinc-400 font-normal select-none border border-dashed border-zinc-200 rounded p-6 bg-zinc-50/20 text-[10.5px]">
                               No stores found
                             </div>
                           )}
@@ -6508,6 +6541,36 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     </button>
                     <button
                       type="button"
+                      onClick={() => {
+                        if (reportCampaignId && reportCampaignId !== "all") {
+                          const curCamp = campaigns.find(c => String(c.id) === String(reportCampaignId));
+                          if (curCamp) {
+                            handlePrintCampaignReport(curCamp);
+                            return;
+                          }
+                        }
+                        // If "all" campaigns or none explicitly selected, prompt or pick active
+                        if (campaigns.length > 0) {
+                          const activeCamps = campaigns.filter(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"));
+                          if (activeCamps.length === 1) {
+                            handlePrintCampaignReport(activeCamps[0]);
+                          } else {
+                            // Switch to print layout or alert
+                            setSelectedPrintLayout("campaign-reporting");
+                            setActiveTab("print");
+                          }
+                        } else {
+                          showToast("No campaigns available to print.", "info");
+                        }
+                      }}
+                      className="h-[28px] px-3 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                      title="Print Campaign Report"
+                    >
+                      <Printer size={12} />
+                      Print Report
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleExportReportCSV}
                       className="h-[28px] px-3 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                       title="Export CSV"
@@ -6559,7 +6622,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col justify-between shadow-xs">
                 <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Total Activations</span>
                 <div className="flex items-baseline gap-1.5 mt-1">
-                  <span className="text-lg font-bold text-zinc-900 font-mono">{reportMetrics.totalActivations}</span>
+                  <span className="text-lg font-semibold text-zinc-800 font-mono">{reportMetrics.totalActivations}</span>
                   <span className="text-[10px] text-zinc-400 font-normal uppercase">Shifts</span>
                 </div>
               </div>
@@ -6568,7 +6631,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col justify-between shadow-xs">
                 <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Total Items Moved</span>
                 <div className="flex items-baseline gap-1.5 mt-1">
-                  <span className="text-lg font-bold text-[#0B57D0] font-mono">{reportMetrics.totalItemsMoved}</span>
+                  <span className="text-lg font-semibold text-[#0B57D0] font-mono">{reportMetrics.totalItemsMoved}</span>
                   <span className="text-[10px] text-blue-600 font-normal uppercase">Units</span>
                 </div>
               </div>
@@ -6577,7 +6640,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col justify-between shadow-xs">
                 <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Total Promoting Cost</span>
                 <div className="flex items-baseline gap-1.5 mt-1">
-                  <span className="text-lg font-bold text-amber-700 font-mono">${reportMetrics.totalPromotingCost.toFixed(2)}</span>
+                  <span className="text-lg font-semibold text-amber-700 font-mono">${reportMetrics.totalPromotingCost.toFixed(2)}</span>
                   <span className="text-[10px] text-zinc-400 font-normal uppercase">Expenses</span>
                 </div>
               </div>
@@ -6586,7 +6649,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <div className="bg-white border border-zinc-200 rounded-lg p-3 flex flex-col justify-between shadow-xs">
                 <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Total Promoter Wages</span>
                 <div className="flex items-baseline gap-1.5 mt-1">
-                  <span className="text-lg font-bold text-emerald-700 font-mono">${reportMetrics.totalPromoterWages.toFixed(2)}</span>
+                  <span className="text-lg font-semibold text-emerald-700 font-mono">${reportMetrics.totalPromoterWages.toFixed(2)}</span>
                   <span className="text-[10px] text-zinc-400 font-normal uppercase">Payroll</span>
                 </div>
               </div>
@@ -6595,7 +6658,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <div className="bg-white border border-blue-200 bg-blue-50/20 rounded-lg p-3 flex flex-col justify-between shadow-xs">
                 <span className="text-[10px] font-semibold text-blue-800 uppercase tracking-wider">Total Activation Cost</span>
                 <div className="flex items-baseline gap-1.5 mt-1">
-                  <span className="text-lg font-bold text-[#0B57D0] font-mono">${reportMetrics.totalActivationCost.toFixed(2)}</span>
+                  <span className="text-lg font-semibold text-[#0B57D0] font-mono">${reportMetrics.totalActivationCost.toFixed(2)}</span>
                   <span className="text-[10px] text-[#0B57D0] font-normal uppercase">Total</span>
                 </div>
               </div>
@@ -7301,7 +7364,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <div className="flex flex-col flex-1 bg-white border border-zinc-200 rounded relative shadow-sm overflow-hidden select-none max-w-5xl mx-auto w-full h-[calc(100vh-220px)]">
                 <form onSubmit={handleSaveCampaign} className="flex flex-col flex-1 h-full overflow-hidden text-xs font-primary">
                   <div className="flex justify-between items-center border-b border-zinc-150 px-6 py-4 bg-zinc-50 shrink-0">
-                    <h3 className="text-sm font-bold uppercase tracking-wider text-zinc-900">
+                    <h3 className="text-sm font-semibold uppercase tracking-wider text-zinc-900">
                       {editingCampaignId ? "Edit Campaign Details" : "Create New Campaign"}
                     </h3>
                     <button
@@ -7330,7 +7393,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     <div className="flex flex-col gap-4">
                       {/* Campaign Title */}
                       <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                        <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                           Campaign Title
                         </label>
                         <input
@@ -7345,7 +7408,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       {/* Campaign Date Range */}
                       <div className="grid grid-cols-2 gap-3">
                         <div className="flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                          <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                             Start Date
                           </label>
                           <input
@@ -7356,7 +7419,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           />
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                          <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                             End Date
                           </label>
                           <input
@@ -7371,7 +7434,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       {/* Select Multiple Brands (Min 1 brand) */}
                       <div className="flex flex-col gap-1.5">
                         <div className="flex items-center justify-between">
-                          <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                          <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                             Select Brands <span className="text-red-500">*</span>
                           </label>
                           <span className="text-[10px] text-zinc-400 font-semibold lowercase">
@@ -7424,7 +7487,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       {/* Select Products Checklist */}
                       {campBrand && (
                         <div className="flex flex-col gap-1">
-                          <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                          <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                             Target Products (Optional checklist - Unchecked implies all products of brand)
                           </label>
                           <div className="flex flex-col gap-1.5 mt-2 max-h-56 overflow-y-auto border border-zinc-200 rounded p-2.5 bg-zinc-50/30 custom-scrollbar">
@@ -7458,7 +7521,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     <div className="flex flex-col gap-4">
                       {/* Campaign Description */}
                       <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                        <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                           Campaign Description
                         </label>
                         <textarea
@@ -7471,7 +7534,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                       {/* Campaign Instruction */}
                       <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider pl-0.5">
+                        <label className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider pl-0.5">
                           Campaign Instruction (For Promoters)
                         </label>
                         <textarea
@@ -7486,7 +7549,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   </div>
 
                   {/* Action buttons */}
-                  <div className="flex justify-end gap-2 text-xs font-bold px-6 py-4 border-t border-zinc-150 bg-zinc-50 shrink-0">
+                  <div className="flex justify-end gap-2 text-xs font-semibold px-6 py-4 border-t border-zinc-150 bg-zinc-50 shrink-0">
                     <button
                       type="button"
                       onClick={() => {
@@ -7522,7 +7585,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       type="button"
                       onClick={() => setCampaignSubTab("active")}
                       className={cn(
-                        "px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer",
+                        "px-4 py-2 text-xs font-semibold uppercase tracking-wider transition-all border-b-2 cursor-pointer",
                         campaignSubTab === "active"
                           ? "border-[#0B57D0] text-[#0B57D0]"
                           : "border-transparent text-zinc-400 hover:text-zinc-600"
@@ -7534,7 +7597,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       type="button"
                       onClick={() => setCampaignSubTab("archive")}
                       className={cn(
-                        "px-4 py-2 text-xs font-bold uppercase tracking-wider transition-all border-b-2 cursor-pointer",
+                        "px-4 py-2 text-xs font-semibold uppercase tracking-wider transition-all border-b-2 cursor-pointer",
                         campaignSubTab === "archive"
                           ? "border-[#0B57D0] text-[#0B57D0]"
                           : "border-transparent text-zinc-400 hover:text-zinc-600"
@@ -7547,7 +7610,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   <button
                     type="button"
                     onClick={() => setIsCreatingCampaign(true)}
-                    className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                    className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
                   >
                     <Plus size={13} className="stroke-[2.5]" />
                     Create Campaign
@@ -7593,7 +7656,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 >
                   {selectedPrintLayout !== "master-calendar" ? (
                     <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
-                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                      <span className="font-primary text-sm font-semibold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
                         Print Master Calendar
                       </span>
                       <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
@@ -7603,7 +7666,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   ) : (
                     <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
                       <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#0B57D0]">
                           Configure Master Calendar
                         </h3>
                         <button
@@ -7621,7 +7684,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       <div className="flex gap-4">
                         <div className="flex flex-col gap-3 flex-1">
                           <div className="flex flex-col gap-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Month</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Select Month</label>
                             <select
                               value={printMonth}
                               onChange={(e) => setPrintMonth(Number(e.target.value))}
@@ -7633,7 +7696,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             </select>
                           </div>
                           <div className="flex flex-col gap-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Year</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Select Year</label>
                             <input
                               type="number"
                               value={printYear}
@@ -7645,7 +7708,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                         <div className="flex flex-col gap-1 flex-1">
                           <div className="flex justify-between items-center pr-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5 mb-1">Select Campaigns</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5 mb-1">Select Campaigns</label>
                             <button
                               type="button"
                               onClick={(e) => {
@@ -7657,7 +7720,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                   setPrintSelectedCampaignIds(allIds);
                                 }
                               }}
-                              className="text-[9px] font-bold text-[#0B57D0] hover:text-[#0842A0] hover:underline cursor-pointer"
+                              className="text-[9px] font-semibold text-[#0B57D0] hover:text-[#0842A0] hover:underline cursor-pointer"
                             >
                               {printSelectedCampaignIds.length === campaigns.length ? "Deselect All" : "Select All"}
                             </button>
@@ -7696,7 +7759,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             e.stopPropagation();
                             setSelectedPrintLayout(null);
                           }}
-                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded cursor-pointer transition-colors"
                         >
                           Cancel
                         </button>
@@ -7708,7 +7771,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             handlePrintReport("A3 landscape");
                           }}
                           className={cn(
-                            "px-3 py-1.5 text-white font-bold rounded shadow transition-all flex items-center gap-1.5",
+                            "px-3 py-1.5 text-white font-medium rounded shadow transition-all flex items-center gap-1.5",
                             printSelectedCampaignIds.length === 0
                               ? "bg-[#0B57D0]/50 cursor-not-allowed opacity-50"
                               : "bg-[#0B57D0] hover:bg-[#0842A0] cursor-pointer"
@@ -7741,7 +7804,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 >
                   {selectedPrintLayout !== "master-calendar-promoter" ? (
                     <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
-                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                      <span className="font-primary text-sm font-semibold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
                         Print Calendar (By Promoters)
                       </span>
                       <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
@@ -7751,7 +7814,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   ) : (
                     <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
                       <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#0B57D0]">
                           Configure Calendar (By Promoters)
                         </h3>
                         <button
@@ -7769,7 +7832,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       <div className="flex gap-4">
                         <div className="flex flex-col gap-3 flex-1">
                           <div className="flex flex-col gap-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Month</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Select Month</label>
                             <select
                               value={printMonth}
                               onChange={(e) => setPrintMonth(Number(e.target.value))}
@@ -7781,7 +7844,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             </select>
                           </div>
                           <div className="flex flex-col gap-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Year</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Select Year</label>
                             <input
                               type="number"
                               value={printYear}
@@ -7792,7 +7855,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         </div>
 
                         <div className="flex flex-col gap-1 flex-1">
-                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5 mb-1">Select Promoters</label>
+                          <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5 mb-1">Select Promoters</label>
                           <div className="w-full h-[120px] overflow-y-auto border border-zinc-200 rounded p-2.5 custom-scrollbar flex flex-col gap-1.5 bg-white shadow-inner">
                             {promoters.map(p => {
                               const isChecked = printSelectedPromoterIds.includes(String(p.id));
@@ -7825,7 +7888,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             e.stopPropagation();
                             setSelectedPrintLayout(null);
                           }}
-                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded cursor-pointer transition-colors"
                         >
                           Cancel
                         </button>
@@ -7836,7 +7899,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             e.stopPropagation();
                             handlePrintReport("A3 landscape");
                           }}
-                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded shadow transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Printer size={12} className="stroke-[2.5]" />
                           Print Report
@@ -7863,7 +7926,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 >
                   {selectedPrintLayout !== "campaign-schedule" ? (
                     <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
-                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                      <span className="font-primary text-sm font-semibold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
                         Print Campaign Schedule
                       </span>
                       <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
@@ -7873,7 +7936,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   ) : (
                     <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
                       <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#0B57D0]">
                           Configure Campaign Schedule
                         </h3>
                         <button
@@ -7890,7 +7953,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                       <div className="flex flex-col gap-3">
                         <div className="flex flex-col gap-1">
-                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Campaign</label>
+                          <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Select Campaign</label>
                           <select
                             value={printCampaignId}
                             onChange={(e) => setPrintCampaignId(e.target.value)}
@@ -7904,7 +7967,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         </div>
                         <div className="flex gap-4">
                           <div className="flex flex-col gap-1 flex-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</label>
                             <input
                               type="date"
                               value={printStartDate}
@@ -7913,7 +7976,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             />
                           </div>
                           <div className="flex flex-col gap-1 flex-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">End Date</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">End Date</label>
                             <input
                               type="date"
                               value={printEndDate}
@@ -7923,7 +7986,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           </div>
                         </div>
                         <div className="flex flex-col gap-1">
-                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Filter Promoter</label>
+                          <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Filter Promoter</label>
                           <div className="flex items-center gap-4 pl-0.5 py-1">
                             <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-zinc-700">
                               <input
@@ -7950,7 +8013,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                         {printPromoterType === "selected" && (
                           <div className="flex flex-col gap-1 animate-in fade-in slide-in-from-top-1 duration-150">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Promoter</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Select Promoter</label>
                             <select
                               value={printSelectedPromoterId}
                               onChange={(e) => setPrintSelectedPromoterId(e.target.value)}
@@ -7972,7 +8035,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             e.stopPropagation();
                             setSelectedPrintLayout(null);
                           }}
-                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded cursor-pointer transition-colors"
                         >
                           Cancel
                         </button>
@@ -7986,7 +8049,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             }
                             handlePrintReport("A4 landscape");
                           }}
-                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
                         >
                           <Printer size={12} className="stroke-[2.5]" />
                           Print Report
@@ -8013,7 +8076,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 >
                   {selectedPrintLayout !== "promoter-schedule" ? (
                     <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
-                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                      <span className="font-primary text-sm font-semibold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
                         Print Promoter Schedule
                       </span>
                       <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
@@ -8023,7 +8086,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   ) : (
                     <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
                       <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#0B57D0]">
                           Configure Promoter Schedule
                         </h3>
                         <button
@@ -8040,7 +8103,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                       <div className="flex flex-col gap-3">
                         <div className="flex flex-col gap-1">
-                          <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Promoter</label>
+                          <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Select Promoter</label>
                           <select
                             value={printPromoterId}
                             onChange={(e) => setPrintPromoterId(e.target.value)}
@@ -8054,7 +8117,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         </div>
                         <div className="flex gap-4">
                           <div className="flex flex-col gap-1 flex-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</label>
                             <input
                               type="date"
                               value={printStartDate}
@@ -8063,7 +8126,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             />
                           </div>
                           <div className="flex flex-col gap-1 flex-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">End Date</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">End Date</label>
                             <input
                               type="date"
                               value={printEndDate}
@@ -8081,7 +8144,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             e.stopPropagation();
                             setSelectedPrintLayout(null);
                           }}
-                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded cursor-pointer transition-colors"
                         >
                           Cancel
                         </button>
@@ -8095,7 +8158,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             }
                             handlePrintReport("A4 landscape");
                           }}
-                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
                         >
                           <Printer size={12} className="stroke-[2.5]" />
                           Print Report
@@ -8122,7 +8185,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 >
                   {selectedPrintLayout !== "campaign-briefing" ? (
                     <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
-                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                      <span className="font-primary text-sm font-semibold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
                         Print Campaign Briefing
                       </span>
                       <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
@@ -8132,7 +8195,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   ) : (
                     <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
                       <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#0B57D0]">
                           Configure Campaign Briefing
                         </h3>
                         <button
@@ -8148,7 +8211,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       </div>
 
                       <div className="flex flex-col gap-1">
-                        <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Campaign</label>
+                        <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Select Campaign</label>
                         <select
                           value={printCampaignId}
                           onChange={(e) => setPrintCampaignId(e.target.value)}
@@ -8172,7 +8235,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             e.stopPropagation();
                             setSelectedPrintLayout(null);
                           }}
-                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded cursor-pointer transition-colors"
                         >
                           Cancel
                         </button>
@@ -8189,7 +8252,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               handlePrintCampaign(selectedCamp);
                             }
                           }}
-                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
                         >
                           <Printer size={12} className="stroke-[2.5]" />
                           Print Briefing
@@ -8216,17 +8279,17 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 >
                   {selectedPrintLayout !== "campaign-reporting" ? (
                     <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
-                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                      <span className="font-primary text-sm font-semibold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
                         Print Campaign Report
                       </span>
                       <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
-                        Print portrait A4 campaign report sheet with actual work times.
+                        Print portrait A4 campaign report with summary metrics, expenses, wages, and product movement.
                       </span>
                     </div>
                   ) : (
                     <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
                       <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#0B57D0]">
                           Configure Campaign Report
                         </h3>
                         <button
@@ -8242,7 +8305,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       </div>
 
                       <div className="flex flex-col gap-1">
-                        <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Select Campaign</label>
+                        <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Select Campaign</label>
                         <select
                           value={printCampaignId}
                           onChange={(e) => setPrintCampaignId(e.target.value)}
@@ -8266,7 +8329,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             e.stopPropagation();
                             setSelectedPrintLayout(null);
                           }}
-                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded cursor-pointer transition-colors"
                         >
                           Cancel
                         </button>
@@ -8283,7 +8346,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               handlePrintCampaignReport(selectedCamp);
                             }
                           }}
-                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
                         >
                           <Printer size={12} className="stroke-[2.5]" />
                           Print Report
@@ -8310,7 +8373,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 >
                   {selectedPrintLayout !== "retailer-schedule" ? (
                     <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
-                      <span className="font-primary text-sm font-bold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                      <span className="font-primary text-sm font-semibold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
                         Print Retailer Activation Table
                       </span>
                       <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
@@ -8320,7 +8383,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   ) : (
                     <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
                       <div className="flex justify-between items-center border-b border-zinc-150 pb-2">
-                        <h3 className="text-xs font-bold uppercase tracking-wider text-[#0B57D0]">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#0B57D0]">
                           Configure Retailer Table
                         </h3>
                         <button
@@ -8356,7 +8419,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           return (
                             <div className="flex flex-col gap-1 relative" ref={retailerDropdownRef}>
                               <div className="flex items-center justify-between">
-                                <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">
+                                <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">
                                   Select Retailer <span className="text-red-500">*</span>
                                 </label>
                                 <span className="text-[9px] text-zinc-400 font-semibold lowercase">
@@ -8442,7 +8505,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             className={cn(
                                               "w-full text-left px-2.5 py-1.5 rounded text-xs font-semibold flex items-center justify-between cursor-pointer transition-colors",
                                               isSelected
-                                                ? "bg-[#0B57D0] text-white font-bold"
+                                                ? "bg-[#0B57D0] text-white font-semibold"
                                                 : "hover:bg-zinc-100 text-zinc-700"
                                             )}
                                           >
@@ -8460,7 +8523,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         })()}
                         <div className="flex gap-4">
                           <div className="flex flex-col gap-1 flex-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</label>
                             <input
                               type="date"
                               value={printStartDate}
@@ -8469,7 +8532,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             />
                           </div>
                           <div className="flex flex-col gap-1 flex-1">
-                            <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider pl-0.5">End Date</label>
+                            <label className="text-[9px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">End Date</label>
                             <input
                               type="date"
                               value={printEndDate}
@@ -8487,7 +8550,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             e.stopPropagation();
                             setSelectedPrintLayout(null);
                           }}
-                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded cursor-pointer transition-colors"
+                          className="px-3 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded cursor-pointer transition-colors"
                         >
                           Cancel
                         </button>
@@ -8501,7 +8564,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             }
                             handlePrintReport("A4 landscape");
                           }}
-                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
+                          className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded shadow transition-all cursor-pointer flex items-center gap-1.5"
                         >
                           <Printer size={12} className="stroke-[2.5]" />
                           Print Table
@@ -8759,7 +8822,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             title="View Clock-In Selfie"
                                           >
                                             <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                                            <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[6.5px] text-white font-bold text-center leading-none py-0.5">IN</span>
+                                            <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[6.5px] text-white font-semibold text-center leading-none py-0.5">IN</span>
                                           </button>
                                         ) : (
                                           <span className="text-[9px] text-zinc-400 font-mono italic">No In</span>
@@ -8773,7 +8836,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             title="View Clock-Out Selfie"
                                           >
                                             <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                                            <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[6.5px] text-white font-bold text-center leading-none py-0.5">OUT</span>
+                                            <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[6.5px] text-white font-semibold text-center leading-none py-0.5">OUT</span>
                                           </button>
                                         ) : (
                                           <span className="text-[9px] text-zinc-400 font-mono italic">No Out</span>
@@ -9082,7 +9145,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             title="View Clock-In Selfie"
                                           >
                                             <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                                            <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[6.5px] text-white font-bold text-center leading-none py-0.5">IN</span>
+                                            <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[6.5px] text-white font-semibold text-center leading-none py-0.5">IN</span>
                                           </button>
                                         ) : (
                                           <span className="text-[9px] text-zinc-400 font-mono italic">No In</span>
@@ -9096,7 +9159,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             title="View Clock-Out Selfie"
                                           >
                                             <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                                            <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[6.5px] text-white font-bold text-center leading-none py-0.5">OUT</span>
+                                            <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[6.5px] text-white font-semibold text-center leading-none py-0.5">OUT</span>
                                           </button>
                                         ) : (
                                           <span className="text-[9px] text-zinc-400 font-mono italic">No Out</span>
@@ -9216,8 +9279,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               {/* Header */}
               <div className="bg-zinc-50 px-5 py-4 border-b border-zinc-150 rounded-t flex justify-between items-center select-none shrink-0">
                 <div className="flex flex-col gap-0.5">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-[#0B57D0]">Promoting Cost Details</h3>
-                  <p className="text-[10.5px] text-zinc-500 font-bold font-mono">
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-[#0B57D0]">Promoting Cost Details</h3>
+                  <p className="text-[10.5px] text-zinc-500 font-medium font-mono">
                     {activeShift["promoter_name"]} @ {getFormattedStoreName(activeShift["store_id"], activeShift["store_name"])} | {activeShiftDateStr}
                   </p>
                 </div>
@@ -9234,7 +9297,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <div className="flex-grow p-5 overflow-y-auto custom-scrollbar">
                 <div className="w-full flex flex-col gap-3">
                   {/* Table Header */}
-                  <div className="grid grid-cols-[140px_1fr_90px_120px_45px] gap-3 pb-2 border-b border-zinc-150 text-[10px] font-bold text-zinc-400 uppercase tracking-wider pl-1 select-none shrink-0">
+                  <div className="grid grid-cols-[140px_1fr_90px_120px_45px] gap-3 pb-2 border-b border-zinc-150 text-[10px] font-medium text-zinc-400 uppercase tracking-wider pl-1 select-none shrink-0">
                     <div>Type</div>
                     <div>SKU / Description</div>
                     <div>Qty</div>
@@ -9244,7 +9307,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                   {/* Table Rows */}
                   {promotingCostItems.length === 0 ? (
-                    <div className="py-12 text-center text-zinc-400 font-bold border border-dashed border-zinc-150 rounded bg-zinc-50/20 select-none">
+                    <div className="py-12 text-center text-zinc-400 font-normal border border-dashed border-zinc-150 rounded bg-zinc-50/20 select-none">
                       No cost items added yet. Click "Add Item" below to start.
                     </div>
                   ) : (
@@ -9305,7 +9368,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           {/* Amount Column */}
                           <div>
                             <div className="relative">
-                              <span className="absolute left-2.5 top-1.5 text-zinc-400 font-bold select-none">$</span>
+                              <span className="absolute left-2.5 top-1.5 text-zinc-400 font-normal select-none">$</span>
                               <input
                                 type="number"
                                 step="0.01"
@@ -9314,7 +9377,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 disabled={item.type === "Goods"}
                                 value={item.amount !== undefined ? (typeof item.amount === "number" ? item.amount.toFixed(2) : item.amount) : ""}
                                 onChange={(e) => handleUpdateItemField(item.id, "amount", e.target.value === "" ? "" : Number(e.target.value))}
-                                className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-bold text-zinc-850 outline-none focus:border-[#0B57D0] disabled:bg-zinc-50 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0] disabled:bg-zinc-50 disabled:text-zinc-500 disabled:cursor-not-allowed"
                               />
                             </div>
                           </div>
@@ -9340,7 +9403,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     <button
                       type="button"
                       onClick={handleAddCostRow}
-                      className="px-3 py-1.5 border border-dashed border-[#0B57D0] hover:bg-[#0B57D0]/5 text-[#0B57D0] font-bold rounded text-xs cursor-pointer transition-all flex items-center gap-1.5"
+                      className="px-3 py-1.5 border border-dashed border-[#0B57D0] hover:bg-[#0B57D0]/5 text-[#0B57D0] font-semibold rounded text-xs cursor-pointer transition-all flex items-center gap-1.5"
                     >
                       <Plus size={13} className="stroke-[2.5]" />
                       Add Item
@@ -9352,15 +9415,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               {/* Footer */}
               <div className="bg-zinc-50 px-5 py-4 border-t border-zinc-150 rounded-b flex justify-between items-center select-none shrink-0">
                 <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider pl-0.5">Total Cost:</span>
-                  <span className="text-sm font-bold text-[#0B57D0]">${totalCostSum.toFixed(2)}</span>
+                  <span className="text-xs font-medium text-zinc-500 uppercase tracking-wider pl-0.5">Total Cost:</span>
+                  <span className="text-sm font-semibold text-[#0B57D0]">${totalCostSum.toFixed(2)}</span>
                 </div>
 
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
                     onClick={() => setPromotingCostModalShiftId(null)}
-                    className="px-4 py-2 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded text-xs cursor-pointer transition-colors shadow-2xs"
+                    className="px-4 py-2 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded text-xs cursor-pointer transition-colors shadow-2xs"
                   >
                     Cancel
                   </button>
@@ -9374,7 +9437,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       setPromotingCostModalShiftId(null);
                       showToast("Promoting cost saved as zero.", "success");
                     }}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded text-xs cursor-pointer transition-all shadow-md flex items-center gap-1.5"
+                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded text-xs cursor-pointer transition-all shadow-md flex items-center gap-1.5"
                   >
                     Zero Cost
                   </button>
@@ -9397,7 +9460,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       setPromotingCostModalShiftId(null);
                       showToast("Promoting cost saved successfully.", "success");
                     }}
-                    className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded text-xs cursor-pointer transition-all shadow-md flex items-center gap-1.5"
+                    className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs cursor-pointer transition-all shadow-md flex items-center gap-1.5"
                   >
                     <Check size={14} className="stroke-[2.5]" />
                     Save Cost
@@ -9423,8 +9486,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               {/* Header */}
               <div className="bg-zinc-50 px-5 py-4 border-b border-zinc-150 rounded-t flex justify-between items-center select-none shrink-0">
                 <div className="flex flex-col gap-0.5">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-[#0B57D0]">Custom Location Details</h3>
-                  <p className="text-[10.5px] text-zinc-500 font-bold font-mono">
+                  <h3 className="text-sm font-semibold uppercase tracking-wider text-[#0B57D0]">Custom Location Details</h3>
+                  <p className="text-[10.5px] text-zinc-500 font-medium font-mono">
                     Assigning to {activePromoter?.name || "Promoter"} on {activeDateStr}
                   </p>
                 </div>
@@ -9440,7 +9503,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               {/* Inputs */}
               <div className="p-5 flex flex-col gap-4">
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10.5px] font-bold text-zinc-650 uppercase tracking-wider pl-0.5">Location Title</label>
+                  <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Location Title</label>
                   <input
                     type="text"
                     placeholder="e.g. Marina Bay Sands / Exhibition Hall..."
@@ -9451,7 +9514,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 </div>
 
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10.5px] font-bold text-zinc-650 uppercase tracking-wider pl-0.5">Address</label>
+                  <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Address</label>
                   <textarea
                     placeholder="e.g. 10 Bayfront Ave, Singapore 018956..."
                     value={otherLocationAddress}
@@ -9467,7 +9530,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 <button
                   type="button"
                   onClick={() => setOtherLocationModalData(null)}
-                  className="px-4 py-2 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-bold rounded text-xs cursor-pointer transition-colors shadow-2xs"
+                  className="px-4 py-2 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded text-xs cursor-pointer transition-colors shadow-2xs"
                 >
                   Cancel
                 </button>
@@ -9539,7 +9602,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     setOtherLocationModalData(null);
                     showToast("Custom location shift assigned successfully.", "success");
                   }}
-                  className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded text-xs cursor-pointer transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs cursor-pointer transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Assign Location
                 </button>

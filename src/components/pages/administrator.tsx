@@ -5,18 +5,24 @@ import { FeatureCard } from "../feature-card";
 import { UsersModule } from "../modules/UsersModule";
 import { SettingModule } from "../modules/SettingModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
+import { UserProfile } from "@/lib/api";
+import { useMaintenanceSettings } from "@/lib/maintenance";
 
 interface AdministratorPageProps {
-  profile?: {
-    email: string;
-    role: string;
-    modules_access: string[];
-  } | null;
+  profile?: UserProfile | null;
   idToken?: string;
+  breadcrumbPath?: string[];
 }
 
-export function AdministratorPage({ profile, idToken }: AdministratorPageProps) {
+export function AdministratorPage({ profile, idToken, breadcrumbPath }: AdministratorPageProps) {
   const [activeSubModule, setActiveSubModule] = React.useState<string | null>(null);
+  const { settings } = useMaintenanceSettings();
+
+  React.useEffect(() => {
+    if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Administrator") {
+      setActiveSubModule(breadcrumbPath[1]);
+    }
+  }, [breadcrumbPath]);
 
   const subModules = React.useMemo(() => {
     return APP_PAGES_CONFIG.find((p) => p.id === "Administrator")?.modules || [];
@@ -80,20 +86,16 @@ export function AdministratorPage({ profile, idToken }: AdministratorPageProps) 
         <div className="content-body flex-1 w-full overflow-y-auto p-2">
           <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-6 mt-2">
             {subModules.map((mod) => {
-              const isUnderMaintenance = true;
+              const isUnderMaintenance = !!settings.moduleMaintenance[mod.title];
               return (
-                <div
+                <FeatureCard
                   key={mod.title}
-                  title={isUnderMaintenance ? "This under maintenance" : undefined}
-                  className={isUnderMaintenance ? "opacity-50 cursor-not-allowed w-full max-w-[250px] aspect-[4/3]" : "w-full max-w-[250px] aspect-[4/3]"}
-                >
-                  <FeatureCard
-                    title={mod.title}
-                    description={mod.description}
-                    onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
-                    className={isUnderMaintenance ? "pointer-events-none shadow-none hover:shadow-none hover:scale-100 hover:bg-white" : undefined}
-                  />
-                </div>
+                  title={mod.title}
+                  description={mod.description}
+                  isUnderMaintenance={isUnderMaintenance}
+                  onClick={() => !isUnderMaintenance && handleSubModuleSelect(mod.title)}
+                  onDevAccess={() => handleSubModuleSelect(mod.title)}
+                />
               );
             })}
           </div>

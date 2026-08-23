@@ -1,12 +1,11 @@
 import * as React from "react";
-import { LayoutDashboard, Users, Database, TrendingUp, Package, Briefcase, Megaphone, Shield, Globe } from "lucide-react";
+import { LayoutDashboard, Users, Database, TrendingUp, Package, Briefcase, Shield, Globe } from "lucide-react";
 import { DashboardPage } from "@/components/pages/dashboard";
 import { FrontlinePage } from "@/components/pages/frontline";
 import { DatabasePage } from "@/components/pages/database";
 import { SalesChannelsPage } from "@/components/pages/sales-channels";
 import { StockPage } from "@/components/pages/stock";
 import { OfficeToolsPage } from "@/components/pages/office-tools";
-import { MarketingContentPage } from "@/components/pages/marketing-content";
 import { WebsitePage } from "@/components/pages/website";
 import { TiktokPage } from "@/components/pages/tiktok";
 import { AdministratorPage } from "@/components/pages/administrator";
@@ -68,12 +67,6 @@ export const menuConfig: MenuItem[] = [
     label: "Office Tools",
     icon: <Briefcase size={18} />,
     component: <OfficeToolsPage />,
-  },
-  {
-    id: "Marketing & Content",
-    label: "Marketing & Content",
-    icon: <Megaphone size={18} />,
-    component: <MarketingContentPage />,
   },
   {
     id: "Website",

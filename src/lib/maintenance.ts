@@ -1,4 +1,4 @@
-"use client";
+import * as React from "react";
 
 export interface MaintenanceSettings {
   websiteMaintenance: boolean;
@@ -19,7 +19,7 @@ export async function getClientIp(): Promise<string> {
   }
 }
 
-// Fetch maintenance settings from Setting_API table
+// Fetch maintenance settings from dedicated under_construction endpoint
 export async function fetchMaintenanceSettings(): Promise<MaintenanceSettings> {
   const defaultSettings: MaintenanceSettings = {
     websiteMaintenance: false,
@@ -28,100 +28,134 @@ export async function fetchMaintenanceSettings(): Promise<MaintenanceSettings> {
   };
 
   try {
-    const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=Setting_API");
+    const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/under-construction");
     if (!res.ok) return defaultSettings;
-    const list = await res.json();
-    if (!Array.isArray(list)) return defaultSettings;
-
-    const webRow = list.find((item) => item.id === "maintenance_website");
-    const ipsRow = list.find((item) => item.id === "maintenance_allowed_ips");
-    const modRow = list.find((item) => item.id === "maintenance_modules");
-
-    let allowedIps: string[] = [];
-    if (ipsRow?.Key || ipsRow?.value) {
-      const raw = ipsRow.Key || ipsRow.value || "";
-      allowedIps = raw.split(",").map((s: string) => s.trim()).filter(Boolean);
-    }
-
-    let moduleMaintenance: Record<string, boolean> = {};
-    if (modRow?.Key || modRow?.value) {
-      try {
-        moduleMaintenance = JSON.parse(modRow.Key || modRow.value || "{}");
-      } catch (err) {
-        console.warn("Failed to parse module maintenance JSON:", err);
-      }
-    }
-
+    const json = await res.json();
+    
     return {
-      websiteMaintenance: webRow?.Key === "true" || webRow?.value === "true",
-      allowedIps,
-      moduleMaintenance
+      websiteMaintenance: false,
+      allowedIps: [],
+      moduleMaintenance: json.modules || {}
     };
   } catch (err) {
-    console.error("Failed to fetch maintenance settings:", err);
+    console.error("Failed to fetch under construction settings:", err);
     return defaultSettings;
   }
 }
 
-// Save maintenance settings to the backend database
-export async function saveMaintenanceSetting(id: string, value: string): Promise<boolean> {
+// Save a module's under construction state via dedicated endpoint
+export async function saveModuleUnderConstruction(moduleName: string, isUnderConstruction: boolean): Promise<boolean> {
   try {
-    const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+    const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/under-construction", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        table: "Setting_API",
-        action: "upsert",
-        data: {
-          id,
-          Name: id.replace(/_/g, " "),
-          Key: value
-        }
+        module_name: moduleName,
+        is_under_construction: isUnderConstruction
       })
     });
     if (!res.ok) return false;
     const json = await res.json();
     return !!json.success;
   } catch (e) {
-    console.error("Failed to save maintenance setting:", e);
+    console.error("Failed to save under construction module setting:", e);
     return false;
   }
 }
 
-// Evaluate if maintenance mode applies
+// Bulk save under construction modules map via dedicated endpoint
+export async function saveAllUnderConstructionModules(modulesMap: Record<string, boolean>): Promise<boolean> {
+  try {
+    const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/under-construction", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        modules_map: modulesMap
+      })
+    });
+    if (!res.ok) return false;
+    const json = await res.json();
+    return !!json.success;
+  } catch (e) {
+    console.error("Failed to save bulk under construction settings:", e);
+    return false;
+  }
+}
+
+// Check if current client is in localhost / development environment
+export function isLocalhostEnvironment(): boolean {
+  if (typeof window === "undefined") return false;
+  const hostname = window.location.hostname;
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    hostname.startsWith("192.168.") ||
+    hostname.endsWith(".local")
+  );
+}
+
+// Evaluate if maintenance mode applies (Localhost always bypasses under construction)
 export function checkIsUnderMaintenance(
   settings: MaintenanceSettings,
-  clientIp: string,
+  clientIp?: string,
   targetModule?: string
 ): boolean {
-  // 1. Localhost Bypass Rule
-  if (typeof window !== "undefined") {
-    const hostname = window.location.hostname;
-    if (
-      hostname === "localhost" ||
-      hostname === "127.0.0.1" ||
-      hostname.startsWith("192.168.")
-    ) {
-      return false; // local development bypasses maintenance mode
-    }
+  // Developer Localhost Bypass: Localhost developers have full unrestricted access to all modules
+  if (isLocalhostEnvironment()) {
+    return false;
   }
 
-  // 2. IP Exclusion Rule
-  const cleanClientIp = (clientIp || "").trim().toLowerCase();
-  const isWhitelisted = settings.allowedIps.some(ip => ip.trim().toLowerCase() === cleanClientIp);
-  if (isWhitelisted) {
-    return false; // whitelisted IP bypasses maintenance mode
-  }
-
-  // 3. Website-wide Maintenance Rule
-  if (settings.websiteMaintenance) {
+  // 1. Module-specific Under Construction Rule (Blocks non-localhost users)
+  if (targetModule && settings.moduleMaintenance && settings.moduleMaintenance[targetModule]) {
     return true;
   }
 
-  // 4. Module-specific Maintenance Rule
-  if (targetModule && settings.moduleMaintenance[targetModule]) {
+  // 2. IP Exclusion / Whitelist Rule for Global Website Maintenance
+  if (clientIp) {
+    const cleanClientIp = clientIp.trim().toLowerCase();
+    const isWhitelisted = settings.allowedIps.some(ip => ip.trim().toLowerCase() === cleanClientIp);
+    if (isWhitelisted) {
+      return false; // whitelisted IP bypasses global maintenance mode
+    }
+  }
+
+  // 3. Website-wide Maintenance Rule
+  if (!targetModule && settings.websiteMaintenance) {
     return true;
   }
 
   return false;
+}
+
+// React hook to subscribe to live maintenance settings
+export function useMaintenanceSettings() {
+  const [settings, setSettings] = React.useState<MaintenanceSettings>({
+    websiteMaintenance: false,
+    allowedIps: [],
+    moduleMaintenance: {}
+  });
+  const [loading, setLoading] = React.useState<boolean>(true);
+
+  const loadSettings = React.useCallback(async () => {
+    try {
+      const data = await fetchMaintenanceSettings();
+      setSettings(data);
+    } catch (e) {
+      console.error("Failed to load maintenance settings in hook:", e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    loadSettings();
+    const handleRefresh = () => {
+      loadSettings();
+    };
+    window.addEventListener("db-refresh", handleRefresh);
+    return () => window.removeEventListener("db-refresh", handleRefresh);
+  }, [loadSettings]);
+
+  return { settings, setSettings, loading, reload: loadSettings };
 }

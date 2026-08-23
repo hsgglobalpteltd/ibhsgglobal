@@ -76,10 +76,11 @@ export function UsersModule({ idToken = "simulated-id-token", profile }: UsersMo
         updatedUser.email,
         updatedUser.role,
         updatedUser.pages_access || [],
-        updatedUser.modules_access || [],
+        updatedUser.modules_access || {},
         updatedUser.active,
         updatedUser.name,
-        updatedUser.phone_number
+        updatedUser.phone_number,
+        updatedUser.employee_id || null
       );
       showToast(`User ${updatedUser.email} updated successfully!`, "success");
       loadUsers(true); // silent background load
