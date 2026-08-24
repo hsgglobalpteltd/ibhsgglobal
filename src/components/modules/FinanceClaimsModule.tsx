@@ -85,6 +85,8 @@ interface OperatorBatch {
   employee_name?: string;
   employee_role?: string;
   paynow_number?: string;
+  target_admin_email?: string;
+  target_admin_name?: string;
   claim_date: string;
   expense_ids: string[];
   items: Array<{
@@ -108,6 +110,26 @@ interface OperatorBatch {
 
 interface FinanceClaimsModuleProps {
   profile?: UserProfile | null;
+}
+
+function formatCleanPayNow(val?: string): string {
+  if (!val) return "";
+  let clean = val.trim().replace(/[\s-]/g, "");
+  if (clean.startsWith("+65")) {
+    clean = clean.substring(3);
+  } else if (clean.startsWith("65") && clean.length === 10) {
+    clean = clean.substring(2);
+  }
+  return clean;
+}
+
+function formatDateDisplay(dStr?: string): string {
+  if (!dStr) return "";
+  if (dStr.includes("-")) {
+    const parts = dStr.split("-");
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dStr;
 }
 
 export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
@@ -299,6 +321,11 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
 
   React.useEffect(() => {
     loadData();
+    const handleGlobalRefresh = () => {
+      loadData();
+    };
+    window.addEventListener("db-refresh", handleGlobalRefresh);
+    return () => window.removeEventListener("db-refresh", handleGlobalRefresh);
   }, [loadData]);
 
   // Reset form and clear local draft
@@ -1208,16 +1235,6 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                 Review submitted operator expense batches, inspect receipts, and mark paid via PayNow.
               </p>
             </div>
-
-            <CustomButton
-              onClick={loadData}
-              variant="secondary"
-              disabled={loadingData}
-              className="h-8 px-3 text-xs"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loadingData ? "animate-spin" : ""}`} />
-              Refresh
-            </CustomButton>
           </div>
 
           <div className="flex-1 bg-white border border-zinc-300 rounded-lg overflow-hidden flex flex-col shadow-xs min-h-0">
@@ -1225,7 +1242,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
               <table className="w-full border-collapse text-left">
                 <thead className="bg-zinc-50 border-b border-zinc-300 sticky top-0 z-10">
                   <tr>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-36">Batch ID / Date</th>
+                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-36">Claim Date</th>
                     <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-48">Staff & PayNow</th>
                     <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase">Itemized Particulars</th>
                     <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-28">Amount</th>
@@ -1260,11 +1277,12 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                       return (
                         <tr key={batch.id} className="hover:bg-zinc-50/80 transition-colors">
                           <td className="p-3">
-                            <span className="font-mono font-bold text-zinc-900 block text-[11px]">
-                              {batch.id}
+                            <span className="font-bold text-zinc-900 block text-xs flex items-center gap-1">
+                              <Calendar className="w-3.5 h-3.5 text-zinc-400" />
+                              {formatDateDisplay(batch.claim_date)}
                             </span>
-                            <span className="text-[10px] text-zinc-400 font-semibold flex items-center gap-1 mt-0.5">
-                              <Calendar className="w-3 h-3" /> {batch.claim_date}
+                            <span className="font-mono text-[10px] text-zinc-400 font-semibold block mt-0.5">
+                              {batch.id}
                             </span>
                           </td>
                           <td className="p-3">
@@ -1272,8 +1290,13 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                               {batch.employee_name || batch.user_name}
                             </span>
                             <span className="text-[10px] text-emerald-700 font-mono font-semibold flex items-center gap-1 mt-0.5">
-                              <CreditCard className="w-3 h-3" /> {batch.paynow_number || "No PayNow"}
+                              <CreditCard className="w-3 h-3" /> {formatCleanPayNow(batch.paynow_number) || "No PayNow"}
                             </span>
+                            {batch.target_admin_name && (
+                              <span className="text-[9px] text-zinc-400 font-semibold block mt-0.5">
+                                Assigned to: {batch.target_admin_name}
+                              </span>
+                            )}
                           </td>
                           <td className="p-3">
                             <span className="font-medium text-zinc-800 block truncate max-w-md">
@@ -1368,16 +1391,6 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
             </div>
 
             <div className="flex items-center gap-2">
-              <CustomButton
-                onClick={() => loadData()}
-                variant="secondary"
-                disabled={loadingData}
-                className="h-8 px-3 text-xs"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loadingData ? "animate-spin" : ""}`} />
-                Refresh
-              </CustomButton>
-
               <CustomButton
                 onClick={() => {
                   setEditingClaimId(null);
@@ -1629,7 +1642,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                 <div>
                   <span className="text-[10px] font-bold text-emerald-800 uppercase block">Send PayNow To</span>
                   <span className="text-sm font-bold text-emerald-950">{approvingBatch.employee_name}</span>
-                  <span className="text-xs font-mono font-bold text-emerald-700 block">{approvingBatch.paynow_number || "No PayNow"}</span>
+                  <span className="text-xs font-mono font-bold text-emerald-700 block">{formatCleanPayNow(approvingBatch.paynow_number) || "No PayNow"}</span>
                 </div>
                 <div className="text-right">
                   <span className="text-[10px] font-bold text-emerald-800 uppercase block">Payout Amount</span>

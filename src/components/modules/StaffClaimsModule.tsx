@@ -27,9 +27,10 @@ import {
   DollarSign,
   Receipt,
   Send,
-  RefreshCw,
   Check,
-  Ban
+  Ban,
+  ShieldCheck,
+  Edit3
 } from "lucide-react";
 
 const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
@@ -46,7 +47,6 @@ interface OperatorExpense {
   date: string;
   description: string;
   amount: number | string;
-  project_department?: string;
   remarks?: string;
   receipt_name?: string;
   receipt_url: string;
@@ -64,6 +64,8 @@ interface OperatorBatch {
   employee_name?: string;
   employee_role?: string;
   paynow_number?: string;
+  target_admin_email?: string;
+  target_admin_name?: string;
   claim_date: string;
   expense_ids: string[];
   items: Array<{
@@ -71,7 +73,6 @@ interface OperatorBatch {
     date: string;
     description: string;
     amount: number | string;
-    project_department?: string;
     remarks?: string;
     receipt_name?: string;
     receipt_url: string;
@@ -85,12 +86,39 @@ interface OperatorBatch {
   created_at: number;
 }
 
+interface AdminUser {
+  email: string;
+  name: string;
+  phone_number?: string;
+  role?: string;
+}
+
 interface StaffClaimsModuleProps {
   profile?: UserProfile | null;
 }
 
+function formatCleanPayNow(val?: string): string {
+  if (!val) return "";
+  let clean = val.trim().replace(/[\s-]/g, "");
+  if (clean.startsWith("+65")) {
+    clean = clean.substring(3);
+  } else if (clean.startsWith("65") && clean.length === 10) {
+    clean = clean.substring(2);
+  }
+  return clean;
+}
+
+function formatDateDisplay(dStr?: string): string {
+  if (!dStr) return "";
+  if (dStr.includes("-")) {
+    const parts = dStr.split("-");
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dStr;
+}
+
 export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
-  const [activeTab, setActiveTab] = React.useState<"log" | "ledger" | "batches">("log");
+  const [activeTab, setActiveTab] = React.useState<"expenses" | "batches">("expenses");
   const [scriptsReady, setScriptsReady] = React.useState(false);
 
   // Employee & PayNow Profile details
@@ -106,11 +134,22 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
     id: profile?.employee_id || ""
   });
 
+  // Admin routing state
+  const [adminsList, setAdminsList] = React.useState<AdminUser[]>([]);
+  const [selectedAdminEmail, setSelectedAdminEmail] = React.useState<string>("");
+
+  // PayNow Quick Update Modal state
+  const [showPayNowModal, setShowPayNowModal] = React.useState(false);
+  const [payNowInput, setPayNowInput] = React.useState("");
+  const [isSavingPayNow, setIsSavingPayNow] = React.useState(false);
+
+  // Submit Claim Batch Modal state
+  const [showSubmitModal, setShowSubmitModal] = React.useState(false);
+
   // Form states for logging an expense
   const [expenseDate, setExpenseDate] = React.useState(new Date().toISOString().split("T")[0]);
   const [description, setDescription] = React.useState("");
   const [amount, setAmount] = React.useState("");
-  const [projectDept, setProjectDept] = React.useState("");
   const [remarks, setRemarks] = React.useState("");
 
   // Receipt image attachment states
@@ -188,12 +227,15 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
           }
 
           if (matched) {
+            const rawPNow = matched.paynow_number || matched.phone || "";
+            const cleanPNow = formatCleanPayNow(rawPNow);
             setEmployeeDetails({
               name: matched.name || matched.full_name || profile?.name || "",
               role: matched.role || "",
-              paynow: matched.paynow_number || matched.phone || "",
+              paynow: cleanPNow,
               id: matched.id || profile?.employee_id || ""
             });
+            setPayNowInput(cleanPNow);
           }
         }
       } catch (err) {
@@ -203,19 +245,37 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
     fetchEmployeeProfile();
   }, [profile, userEmail]);
 
+  // Fetch list of Administrators/Supervisors for dropdown
+  const loadAdmins = React.useCallback(async () => {
+    try {
+      const res = await fetch(`${WORKER_URL}/api/claims/admins`);
+      if (res.ok) {
+        const data = (await res.json()) as AdminUser[];
+        setAdminsList(Array.isArray(data) ? data : []);
+        if (Array.isArray(data) && data.length > 0 && !selectedAdminEmail) {
+          setSelectedAdminEmail(data[0].email);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to load admins list:", err);
+    }
+  }, [selectedAdminEmail]);
+
+  React.useEffect(() => {
+    loadAdmins();
+  }, [loadAdmins]);
+
   // Fetch operator's expenses and submitted batches
   const loadOperatorData = React.useCallback(async () => {
     if (!userEmail) return;
     setLoadingData(true);
     try {
-      // 1. Fetch expenses
       const expRes = await fetch(`${WORKER_URL}/api/claims/operator/expenses?email=${encodeURIComponent(userEmail)}`);
       if (expRes.ok) {
         const expData = (await expRes.json()) as OperatorExpense[];
         setExpenses(Array.isArray(expData) ? expData : []);
       }
 
-      // 2. Fetch batches
       const batRes = await fetch(`${WORKER_URL}/api/claims/operator/batches?email=${encodeURIComponent(userEmail)}`);
       if (batRes.ok) {
         const batData = (await batRes.json()) as OperatorBatch[];
@@ -232,6 +292,51 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
   React.useEffect(() => {
     loadOperatorData();
   }, [loadOperatorData]);
+
+  // Global Header Refresh Listener ("db-refresh")
+  React.useEffect(() => {
+    const handleGlobalRefresh = () => {
+      loadOperatorData();
+      loadAdmins();
+    };
+    window.addEventListener("db-refresh", handleGlobalRefresh);
+    return () => window.removeEventListener("db-refresh", handleGlobalRefresh);
+  }, [loadOperatorData, loadAdmins]);
+
+  // Quick PayNow Save/Update
+  const handleSavePayNow = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!payNowInput.trim()) {
+      showToast("Please enter a valid PayNow mobile / UEN number.", "warning");
+      return;
+    }
+
+    const cleanInput = formatCleanPayNow(payNowInput);
+    setIsSavingPayNow(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/claims/operator/update-paynow`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employee_id: employeeDetails.id || profile?.employee_id,
+          user_email: userEmail,
+          paynow_number: cleanInput
+        })
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const resData = await res.json();
+      if (resData.error) throw new Error(resData.error);
+
+      setEmployeeDetails((prev) => ({ ...prev, paynow: cleanInput }));
+      setShowPayNowModal(false);
+      showToast("PayNow number updated successfully!", "success");
+    } catch (err: any) {
+      showToast("Failed to update PayNow: " + err.message, "error");
+    } finally {
+      setIsSavingPayNow(false);
+    }
+  };
 
   // Handle receipt image select & cropper setup
   const handleReceiptUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -324,7 +429,6 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
         date: expenseDate,
         description: description.trim(),
         amount: parseFloat(amount),
-        project_department: projectDept.trim(),
         remarks: remarks.trim(),
         receipt: receiptImage
       };
@@ -341,15 +445,14 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
 
       showToast("Expense recorded successfully!", "success");
 
-      // Reset form
+      // Reset form fields
       setDescription("");
       setAmount("");
       setRemarks("");
       setReceiptImage(null);
 
-      // Refresh data & switch to ledger tab
+      // Refresh data
       loadOperatorData();
-      setActiveTab("ledger");
     } catch (err: any) {
       console.error("Save expense error:", err);
       showToast("Failed to save expense: " + err.message, "error");
@@ -406,9 +509,10 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
   const selectedTotal = selectedExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
   const roundedSelectedTotal = Number(selectedTotal.toFixed(2));
   const isOverLimit = roundedSelectedTotal > MAX_BATCH_LIMIT;
+  const isPayNowMissing = !employeeDetails.paynow || !employeeDetails.paynow.trim();
 
-  // Submit Claim Batch
-  const handleSubmitBatch = async () => {
+  // Click Submit Batch Handler -> Checks PayNow and opens dialog
+  const handleOpenSubmitBatchModal = () => {
     if (selectedExpenses.length === 0) {
       showToast("Please select at least 1 expense to submit.", "warning");
       return;
@@ -419,63 +523,79 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
       return;
     }
 
-    setConfirmDialog({
-      open: true,
-      title: "Submit Claim Batch to Admin",
-      description: `You are submitting ${selectedExpenses.length} expense(s) totaling $${roundedSelectedTotal.toFixed(2)} for supervisor review and PayNow reimbursement to ${employeeDetails.paynow || "your registered PayNow"}. Once submitted, these expenses are locked and cannot be edited.`,
-      confirmText: `Submit Batch ($${roundedSelectedTotal.toFixed(2)})`,
-      variant: "dark",
-      onConfirm: async () => {
-        setIsSubmittingBatch(true);
-        try {
-          const payload = {
-            user_email: userEmail,
-            user_name: profile?.name || employeeDetails.name,
-            employee_id: employeeDetails.id,
-            employee_name: employeeDetails.name || profile?.name,
-            employee_role: employeeDetails.role,
-            paynow_number: employeeDetails.paynow,
-            expense_ids: Array.from(selectedExpenseIds)
-          };
+    if (isPayNowMissing) {
+      setPayNowInput("");
+      setShowPayNowModal(true);
+      showToast("Please register your PayNow number before submitting a claim batch.", "warning");
+      return;
+    }
 
-          const res = await fetch(`${WORKER_URL}/api/claims/operator/batch/submit`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload)
-          });
+    setShowSubmitModal(true);
+  };
 
-          if (!res.ok) throw new Error(await res.text());
-          const resData = await res.json();
-          if (resData.error) throw new Error(resData.error);
+  // Submit Claim Batch with Selected Admin
+  const handleConfirmSubmitBatch = async () => {
+    if (!selectedAdminEmail) {
+      showToast("Please select an Administrator / Supervisor to send this claim to.", "warning");
+      return;
+    }
 
-          showToast("Claim batch submitted to supervisor successfully!", "success");
-          setSelectedExpenseIds(new Set());
-          loadOperatorData();
-          setActiveTab("batches");
-        } catch (err: any) {
-          console.error("Batch submit error:", err);
-          showToast("Failed to submit batch: " + err.message, "error");
-        } finally {
-          setIsSubmittingBatch(false);
-        }
-      }
-    });
+    if (isPayNowMissing) {
+      showToast("PayNow number is required to receive payout.", "warning");
+      setShowSubmitModal(false);
+      setShowPayNowModal(true);
+      return;
+    }
+
+    const matchedAdmin = adminsList.find((a) => a.email.toLowerCase() === selectedAdminEmail.toLowerCase());
+    const adminName = matchedAdmin?.name || selectedAdminEmail;
+
+    setIsSubmittingBatch(true);
+    try {
+      const payload = {
+        user_email: userEmail,
+        user_name: profile?.name || employeeDetails.name,
+        employee_id: employeeDetails.id,
+        employee_name: employeeDetails.name || profile?.name,
+        employee_role: employeeDetails.role,
+        paynow_number: employeeDetails.paynow,
+        target_admin_email: selectedAdminEmail,
+        target_admin_name: adminName,
+        expense_ids: Array.from(selectedExpenseIds)
+      };
+
+      const res = await fetch(`${WORKER_URL}/api/claims/operator/batch/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const resData = await res.json();
+      if (resData.error) throw new Error(resData.error);
+
+      showToast(`Claim batch submitted to ${adminName} successfully!`, "success");
+      setShowSubmitModal(false);
+      setSelectedExpenseIds(new Set());
+      loadOperatorData();
+      setActiveTab("batches");
+    } catch (err: any) {
+      console.error("Batch submit error:", err);
+      showToast("Failed to submit batch: " + err.message, "error");
+    } finally {
+      setIsSubmittingBatch(false);
+    }
   };
 
   const tabs: TabItem[] = [
     {
-      id: "log",
-      label: "Log Expense",
-      desc: "Record on-the-go out-of-pocket expenses."
-    },
-    {
-      id: "ledger",
-      label: "My Expenses Ledger",
-      desc: "Unclaimed expenses list with $100 batch selection."
+      id: "expenses",
+      label: "My Expenses",
+      desc: "Record out-of-pocket expenses and combine into claim batches."
     },
     {
       id: "batches",
-      label: "Submitted Batches",
+      label: "Claim Submitted",
       desc: "Track supervisor approval and PayNow payout status."
     }
   ];
@@ -490,438 +610,436 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
         onTabSelect={(tabId: string) => setActiveTab(tabId as any)}
       />
 
-      {/* TAB 1: LOG EXPENSE */}
-      {activeTab === "log" && (
-        <div className="flex-1 overflow-y-auto p-4 flex justify-center">
-          <div className="w-full max-w-2xl bg-white border border-zinc-300 rounded-2xl p-6 shadow-xs flex flex-col gap-5">
-            
-            {/* Header & Bound Employee Info */}
-            <div className="flex items-center justify-between border-b border-zinc-200 pb-4">
-              <div>
-                <h3 className="text-base font-bold text-zinc-950">Record New Out-Of-Pocket Expense</h3>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  Attach receipt photo. Expenses stay in your ledger until you batch and submit.
-                </p>
-              </div>
-              
-              {employeeDetails.paynow && (
-                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-xs font-semibold">
-                  <CreditCard className="w-4 h-4 text-emerald-600" />
-                  <span>PayNow: <strong>{employeeDetails.paynow}</strong></span>
-                </div>
-              )}
+      {/* PAYNOW MISSING BANNER ALERT */}
+      {isPayNowMissing && (
+        <div className="mx-4 mt-1.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <div className="text-xs text-amber-900">
+              <span className="font-bold">PayNow Number Required for Reimbursements: </span>
+              <span className="text-[11px] text-amber-700">
+                You can record expenses to your ledger, but you must register your PayNow number before submitting claim batches for payout.
+              </span>
             </div>
+          </div>
+          <button
+            onClick={() => {
+              setPayNowInput(employeeDetails.paynow || "");
+              setShowPayNowModal(true);
+            }}
+            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-colors shrink-0 shadow-xs cursor-pointer"
+          >
+            Update PayNow
+          </button>
+        </div>
+      )}
 
-            {/* Form Fields */}
-            <form onSubmit={handleSaveExpense} className="flex flex-col gap-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* TAB 1: COMBINED MY EXPENSES (35% FORM | 65% LEDGER TABLE) */}
+      {activeTab === "expenses" && (
+        <div className="flex-1 overflow-hidden p-3 min-h-0">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full min-h-0">
+            
+            {/* LEFT 35% PANEL: LOG EXPENSE FORM (col-span-4 / col-span-5) */}
+            <div className="lg:col-span-4 xl:col-span-4 bg-white border border-zinc-300 rounded-xl p-4 shadow-xs flex flex-col gap-3 overflow-y-auto min-h-0">
+              
+              {/* Form Header */}
+              <div className="flex items-center justify-between border-b border-zinc-200 pb-2.5 shrink-0">
+                <div>
+                  <h3 className="text-xs font-bold text-zinc-950 uppercase tracking-wider">Record Expense</h3>
+                  <span className="text-[10px] text-zinc-400">Attach receipt photo to save to ledger</span>
+                </div>
+
+                {employeeDetails.paynow ? (
+                  <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md text-emerald-800 text-[10px] font-semibold">
+                    <CreditCard className="w-3 h-3 text-emerald-600" />
+                    <span>PayNow: <strong>{employeeDetails.paynow}</strong></span>
+                    <button
+                      onClick={() => {
+                        setPayNowInput(employeeDetails.paynow);
+                        setShowPayNowModal(true);
+                      }}
+                      className="ml-1 text-emerald-700 hover:text-emerald-950 cursor-pointer"
+                      title="Edit PayNow"
+                    >
+                      <Edit3 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setPayNowInput("");
+                      setShowPayNowModal(true);
+                    }}
+                    className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-md text-amber-800 text-[10px] font-bold cursor-pointer transition-colors"
+                  >
+                    <Plus className="w-3 h-3" /> Add PayNow
+                  </button>
+                )}
+              </div>
+
+              {/* Form Inputs */}
+              <form onSubmit={handleSaveExpense} className="flex flex-col gap-3 flex-1">
                 
-                {/* Expense Date */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  {/* Expense Date */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
+                      Expense Date *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={expenseDate}
+                      onChange={(e) => setExpenseDate(e.target.value)}
+                      className="h-9 px-2.5 border border-zinc-300 rounded-lg text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] bg-white"
+                    />
+                  </div>
+
+                  {/* Amount */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
+                      Amount ($ SGD) *
+                    </label>
+                    <div className="relative flex items-center">
+                      <span className="absolute left-2.5 text-xs font-bold text-zinc-400">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        required
+                        placeholder="0.00"
+                        value={amount}
+                        onChange={(e) => setAmount(e.target.value)}
+                        className="h-9 pl-6 pr-2.5 w-full border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] bg-white"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Description */}
                 <div className="flex flex-col gap-1">
-                  <label className="text-[11px] font-bold text-zinc-600 uppercase tracking-wider">
-                    Expense Date *
+                  <label className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
+                    Description / Particulars *
                   </label>
                   <input
-                    type="date"
+                    type="text"
                     required
-                    value={expenseDate}
-                    onChange={(e) => setExpenseDate(e.target.value)}
-                    className="h-10 px-3 border border-zinc-300 rounded-lg text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] bg-white"
+                    placeholder="e.g. Parking fee at FairPrice Suntec, fuel, materials"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    className="h-9 px-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] bg-white"
                   />
                 </div>
 
-                {/* Amount */}
+                {/* Remarks */}
                 <div className="flex flex-col gap-1">
-                  <label className="text-[11px] font-bold text-zinc-600 uppercase tracking-wider">
-                    Amount ($ SGD) *
+                  <label className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
+                    Remarks
                   </label>
-                  <div className="relative flex items-center">
-                    <span className="absolute left-3 text-xs font-bold text-zinc-400">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0.01"
-                      required
-                      placeholder="0.00"
-                      value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
-                      className="h-10 pl-7 pr-3 w-full border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] bg-white"
-                    />
-                  </div>
+                  <input
+                    type="text"
+                    placeholder="e.g. Emergency store visit"
+                    value={remarks}
+                    onChange={(e) => setRemarks(e.target.value)}
+                    className="h-9 px-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] bg-white"
+                  />
                 </div>
 
-              </div>
-
-              {/* Description */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-zinc-600 uppercase tracking-wider">
-                  Description / Particulars *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Parking fee at FairPrice Suntec, fuel, materials purchase"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  className="h-10 px-3 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] bg-white"
-                />
-              </div>
-
-              {/* Remarks */}
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-zinc-600 uppercase tracking-wider">
-                  Remarks
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Emergency store visit"
-                  value={remarks}
-                  onChange={(e) => setRemarks(e.target.value)}
-                  className="h-10 px-3 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] bg-white"
-                />
-              </div>
-
-              {/* Receipt Upload Box */}
-              <div className="border border-zinc-300 rounded-xl p-4 bg-zinc-50/50 flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-zinc-700 uppercase tracking-wider flex items-center gap-1.5">
-                    <Receipt className="w-4 h-4 text-zinc-600" />
-                    Receipt Attachment *
-                  </span>
-                  {receiptImage && (
-                    <span className="text-xs font-bold text-emerald-600 flex items-center gap-1">
-                      <Check className="w-3.5 h-3.5" /> Ready
+                {/* Receipt Upload Box */}
+                <div className="border border-zinc-300 rounded-xl p-3 bg-zinc-50/50 flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-zinc-700 uppercase tracking-wider flex items-center gap-1">
+                      <Receipt className="w-3.5 h-3.5 text-zinc-600" />
+                      Receipt Attachment *
                     </span>
-                  )}
-                </div>
+                    {receiptImage && (
+                      <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-0.5">
+                        <Check className="w-3 h-3" /> Ready
+                      </span>
+                    )}
+                  </div>
 
-                {receiptImage ? (
-                  <div className="flex items-center justify-between p-2.5 bg-white border border-zinc-200 rounded-lg">
-                    <div className="flex items-center gap-3 overflow-hidden">
-                      <img
-                        src={receiptImage.src}
-                        alt="Receipt"
-                        className="w-12 h-12 object-cover rounded-md border border-zinc-200"
-                      />
-                      <div className="truncate">
-                        <span className="text-xs font-bold text-zinc-800 truncate block">
-                          {receiptImage.name}
-                        </span>
-                        <span className="text-[10px] text-zinc-400 font-semibold">
-                          Cropped & Verified
-                        </span>
+                  {receiptImage ? (
+                    <div className="flex items-center justify-between p-2 bg-white border border-zinc-200 rounded-lg">
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <img
+                          src={receiptImage.src}
+                          alt="Receipt"
+                          className="w-10 h-10 object-cover rounded-md border border-zinc-200 shrink-0"
+                        />
+                        <div className="truncate">
+                          <span className="text-xs font-bold text-zinc-800 truncate block">
+                            {receiptImage.name}
+                          </span>
+                          <span className="text-[9px] text-zinc-400 font-semibold">
+                            Cropped & Ready
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="text-[10px] font-bold text-blue-600 hover:text-blue-800 px-1.5 py-0.5 bg-blue-50 rounded border border-blue-200 cursor-pointer"
+                        >
+                          Change
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setReceiptImage(null)}
+                          className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="text-xs font-bold text-blue-600 hover:text-blue-800 px-2 py-1 bg-blue-50 rounded border border-blue-200 cursor-pointer"
-                      >
-                        Change
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setReceiptImage(null)}
-                        className="p-1.5 text-zinc-400 hover:text-red-600 rounded-md transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                  ) : (
+                    <div
+                      onClick={() => fileInputRef.current?.click()}
+                      className="border border-dashed border-zinc-300 hover:border-[#0B57D0] rounded-lg p-3.5 flex flex-col items-center justify-center gap-1 cursor-pointer bg-white transition-colors text-center"
+                    >
+                      <Upload className="w-5 h-5 text-zinc-400" />
+                      <span className="text-[11px] font-bold text-zinc-700">
+                        Upload Receipt Photo
+                      </span>
+                      <span className="text-[9px] text-zinc-400">
+                        Click to capture/crop receipt
+                      </span>
                     </div>
-                  </div>
-                ) : (
-                  <div
-                    onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-zinc-300 hover:border-[#0B57D0] rounded-xl p-6 flex flex-col items-center justify-center gap-2 cursor-pointer bg-white transition-colors"
-                  >
-                    <Upload className="w-6 h-6 text-zinc-400" />
-                    <span className="text-xs font-bold text-zinc-700">
-                      Click to upload receipt photo
-                    </span>
-                    <span className="text-[10px] text-zinc-400">
-                      Supports JPG, PNG, WEBP (Image will open in crop editor)
-                    </span>
-                  </div>
-                )}
+                  )}
 
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  onChange={handleReceiptUpload}
-                  accept="image/*"
-                  className="hidden"
-                />
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleReceiptUpload}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                </div>
+
+                {/* Submit Form Button */}
+                <div className="pt-1 mt-auto">
+                  <CustomButton
+                    type="submit"
+                    variant="default"
+                    disabled={isSubmittingExpense || !receiptImage || !description.trim() || !amount}
+                    className="w-full h-9 text-xs font-bold uppercase tracking-wider shadow-sm"
+                  >
+                    {isSubmittingExpense ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                        Recording...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-3.5 h-3.5 mr-1.5" />
+                        Record Expense
+                      </>
+                    )}
+                  </CustomButton>
+                </div>
+
+              </form>
+
+            </div>
+
+            {/* RIGHT 65% PANEL: UNCLAIMED EXPENSES LEDGER TABLE (col-span-8 / col-span-7) */}
+            <div className="lg:col-span-8 xl:col-span-8 bg-white border border-zinc-300 rounded-xl overflow-hidden flex flex-col shadow-xs min-h-0">
+              
+              {/* Header Bar */}
+              <div className="bg-zinc-50 border-b border-zinc-200 p-3 flex items-center justify-between shrink-0">
+                <div>
+                  <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                    Unclaimed Expenses Ledger ({unsubmittedExpenses.length})
+                  </h3>
+                  <span className="text-[11px] text-zinc-500">
+                    Select items to combine into a claim batch. Maximum limit: <strong>$100.00</strong>
+                  </span>
+                </div>
               </div>
 
-              {/* Submit Button */}
-              <div className="flex justify-end pt-2">
-                <CustomButton
-                  type="submit"
-                  variant="default"
-                  disabled={isSubmittingExpense || !receiptImage || !description.trim() || !amount}
-                  className="h-10 px-6 text-xs font-bold uppercase tracking-wider"
-                >
-                  {isSubmittingExpense ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
-                      Saving Expense...
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="w-4 h-4 mr-1.5" />
-                      Record Expense
-                    </>
+              {/* Scrollable Table */}
+              <div className="flex-1 overflow-y-auto min-h-0">
+                <table className="w-full border-collapse text-left">
+                  <thead className="bg-zinc-50 border-b border-zinc-300 sticky top-0 z-10">
+                    <tr>
+                      <th className="p-3 text-center w-10">
+                        <input
+                          type="checkbox"
+                          checked={
+                            unsubmittedExpenses.length > 0 &&
+                            selectedExpenseIds.size === unsubmittedExpenses.length
+                          }
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedExpenseIds(new Set(unsubmittedExpenses.map((ex) => ex.id)));
+                            } else {
+                              setSelectedExpenseIds(new Set());
+                            }
+                          }}
+                          className="rounded border-zinc-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
+                        />
+                      </th>
+                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-28">Date</th>
+                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase">Description</th>
+                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-24">Amount</th>
+                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-20">Receipt</th>
+                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-12"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-200 text-xs">
+                    {loadingData ? (
+                      <tr>
+                        <td colSpan={6} className="p-10 text-center text-zinc-500">
+                          <div className="flex flex-col items-center justify-center gap-2">
+                            <Loader2 className="w-5 h-5 animate-spin text-[#0B57D0]" />
+                            <span className="font-semibold text-xs">Loading ledger...</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : unsubmittedExpenses.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="p-10 text-center text-zinc-400">
+                          <div className="flex flex-col items-center justify-center gap-1.5">
+                            <Receipt className="w-7 h-7 text-zinc-300" />
+                            <span className="font-semibold text-xs text-zinc-600">
+                              No unclaimed expenses in your ledger.
+                            </span>
+                            <span className="text-[11px] text-zinc-400">
+                              Fill in the form on the left to record an out-of-pocket purchase.
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      unsubmittedExpenses.map((exp) => {
+                        const isChecked = selectedExpenseIds.has(exp.id);
+                        return (
+                          <tr
+                            key={exp.id}
+                            className={`hover:bg-zinc-50/80 transition-colors cursor-pointer ${
+                              isChecked ? "bg-blue-50/40" : ""
+                            }`}
+                            onClick={() => toggleSelectExpense(exp.id)}
+                          >
+                            <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => toggleSelectExpense(exp.id)}
+                                className="rounded border-zinc-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
+                              />
+                            </td>
+                            <td className="p-3 font-semibold text-zinc-700 whitespace-nowrap">
+                              {formatDateDisplay(exp.date)}
+                            </td>
+                            <td className="p-3 font-bold text-zinc-900">
+                              {exp.description}
+                              {exp.remarks && (
+                                <span className="block text-[10px] text-zinc-400 font-normal">
+                                  {exp.remarks}
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-3 text-right font-mono font-extrabold text-zinc-950 text-sm">
+                              ${Number(exp.amount || 0).toFixed(2)}
+                            </td>
+                            <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              {exp.receipt_url ? (
+                                <button
+                                  onClick={() => setPreviewingReceiptUrl(exp.receipt_url)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10px] font-bold border border-zinc-300 cursor-pointer"
+                                >
+                                  <Eye className="w-3 h-3 text-zinc-500" /> View
+                                </button>
+                              ) : (
+                                <span className="text-[10px] text-zinc-400">None</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                onClick={() => handleDeleteExpense(exp.id)}
+                                className="p-1.5 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                                title="Delete Expense"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Bottom Batch Action Bar */}
+              <div className="bg-zinc-50 border-t border-zinc-300 p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-semibold text-zinc-600">
+                    {selectedExpenseIds.size} of {unsubmittedExpenses.length} selected
+                  </span>
+
+                  <div
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold font-mono ${
+                      isOverLimit
+                        ? "bg-red-50 text-red-700 border-red-300"
+                        : selectedExpenseIds.size > 0
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                        : "bg-zinc-100 text-zinc-600 border-zinc-200"
+                    }`}
+                  >
+                    <span>Selected: ${roundedSelectedTotal.toFixed(2)}</span>
+                    <span className="text-[10px] font-normal text-zinc-400">/ $100 max</span>
+                  </div>
+
+                  {isOverLimit && (
+                    <span className="text-xs font-bold text-red-600 flex items-center gap-1">
+                      <AlertCircle className="w-3.5 h-3.5" /> Over $100 limit
+                    </span>
                   )}
+                </div>
+
+                <CustomButton
+                  onClick={handleOpenSubmitBatchModal}
+                  variant="default"
+                  disabled={isSubmittingBatch || selectedExpenseIds.size === 0 || isOverLimit}
+                  className="h-9 px-4 text-xs font-bold uppercase tracking-wider shadow-sm"
+                >
+                  <Send className="w-3.5 h-3.5 mr-1.5" />
+                  Submit Claim Batch (${roundedSelectedTotal.toFixed(2)})
                 </CustomButton>
               </div>
 
-            </form>
+            </div>
 
           </div>
         </div>
       )}
 
-      {/* TAB 2: MY EXPENSES LEDGER (UNSUBMITTED WITH $100 BATCH SELECTION) */}
-      {activeTab === "ledger" && (
-        <div className="flex flex-col flex-1 h-full overflow-hidden gap-3 pb-2">
-          
-          {/* Header Info & Refresh */}
-          <div className="bg-white p-3.5 rounded-lg border border-zinc-300/80 shadow-xs flex items-center justify-between shrink-0">
-            <div>
-              <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                Unclaimed Expense Records
-              </h3>
-              <p className="text-[11px] text-zinc-500 mt-0.5">
-                Check the boxes next to expenses to combine into a claim batch. Maximum limit is <strong>$100.00 per submission</strong>.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <CustomButton
-                onClick={loadOperatorData}
-                variant="secondary"
-                disabled={loadingData}
-                className="h-8 px-3 text-xs"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loadingData ? "animate-spin" : ""}`} />
-                Refresh
-              </CustomButton>
-
-              <CustomButton
-                onClick={() => setActiveTab("log")}
-                variant="default"
-                className="h-8 px-3 text-xs"
-              >
-                <Plus className="w-3.5 h-3.5 mr-1.5" />
-                Add Expense
-              </CustomButton>
-            </div>
-          </div>
-
-          {/* Ledger Table */}
-          <div className="flex-1 bg-white border border-zinc-300 rounded-lg overflow-hidden flex flex-col shadow-xs min-h-0">
-            <div className="flex-1 overflow-y-auto">
-              <table className="w-full border-collapse text-left">
-                <thead className="bg-zinc-50 border-b border-zinc-300 sticky top-0 z-10">
-                  <tr>
-                    <th className="p-3 text-center w-12">
-                      <input
-                        type="checkbox"
-                        checked={
-                          unsubmittedExpenses.length > 0 &&
-                          selectedExpenseIds.size === unsubmittedExpenses.length
-                        }
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedExpenseIds(new Set(unsubmittedExpenses.map((ex) => ex.id)));
-                          } else {
-                            setSelectedExpenseIds(new Set());
-                          }
-                        }}
-                        className="rounded border-zinc-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
-                      />
-                    </th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-28">Date</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase">Description</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-44">Site / Project</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-28">Amount</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-24">Receipt</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-16"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-zinc-200 text-xs">
-                  {loadingData ? (
-                    <tr>
-                      <td colSpan={7} className="p-12 text-center text-zinc-500">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <Loader2 className="w-6 h-6 animate-spin text-[#0B57D0]" />
-                          <span className="font-semibold text-xs">Loading unsubmitted expenses...</span>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : unsubmittedExpenses.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="p-12 text-center text-zinc-400">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <Receipt className="w-8 h-8 text-zinc-300" />
-                          <span className="font-semibold text-sm text-zinc-600">
-                            No unclaimed expenses in your ledger.
-                          </span>
-                          <span className="text-xs text-zinc-400">
-                            Click "Add Expense" to record an out-of-pocket purchase.
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    unsubmittedExpenses.map((exp) => {
-                      const isChecked = selectedExpenseIds.has(exp.id);
-                      return (
-                        <tr
-                          key={exp.id}
-                          className={`hover:bg-zinc-50/80 transition-colors cursor-pointer ${
-                            isChecked ? "bg-blue-50/40" : ""
-                          }`}
-                          onClick={() => toggleSelectExpense(exp.id)}
-                        >
-                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleSelectExpense(exp.id)}
-                              className="rounded border-zinc-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
-                            />
-                          </td>
-                          <td className="p-3 font-semibold text-zinc-700 whitespace-nowrap">
-                            {exp.date}
-                          </td>
-                          <td className="p-3 font-bold text-zinc-900">
-                            {exp.description}
-                            {exp.remarks && (
-                              <span className="block text-[10px] text-zinc-400 font-normal">
-                                {exp.remarks}
-                              </span>
-                            )}
-                          </td>
-                          <td className="p-3 font-semibold text-zinc-600 truncate max-w-[160px]">
-                            {exp.project_department || "-"}
-                          </td>
-                          <td className="p-3 text-right font-mono font-extrabold text-zinc-950 text-sm">
-                            ${Number(exp.amount || 0).toFixed(2)}
-                          </td>
-                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                            {exp.receipt_url ? (
-                              <button
-                                onClick={() => setPreviewingReceiptUrl(exp.receipt_url)}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10px] font-bold border border-zinc-300 cursor-pointer"
-                              >
-                                <Eye className="w-3 h-3 text-zinc-500" /> View
-                              </button>
-                            ) : (
-                              <span className="text-[10px] text-zinc-400">None</span>
-                            )}
-                          </td>
-                          <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={() => handleDeleteExpense(exp.id)}
-                              className="p-1.5 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
-                              title="Delete Expense"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Bottom Batch Action Bar */}
-            <div className="bg-zinc-50 border-t border-zinc-300 p-4 flex flex-col sm:flex-row items-center justify-between gap-4 shrink-0">
-              <div className="flex items-center gap-4">
-                <span className="text-xs font-semibold text-zinc-600">
-                  {selectedExpenseIds.size} of {unsubmittedExpenses.length} expense(s) selected
-                </span>
-
-                <div
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border text-xs font-bold font-mono ${
-                    isOverLimit
-                      ? "bg-red-50 text-red-700 border-red-300"
-                      : selectedExpenseIds.size > 0
-                      ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                      : "bg-zinc-100 text-zinc-600 border-zinc-200"
-                  }`}
-                >
-                  <span>Selected: ${roundedSelectedTotal.toFixed(2)}</span>
-                  <span className="text-[10px] font-normal text-zinc-400">/ $100.00 max</span>
-                </div>
-
-                {isOverLimit && (
-                  <span className="text-xs font-bold text-red-600 flex items-center gap-1">
-                    <AlertCircle className="w-4 h-4" /> Limit exceeded! Please uncheck an item.
-                  </span>
-                )}
-              </div>
-
-              <CustomButton
-                onClick={handleSubmitBatch}
-                variant="default"
-                disabled={isSubmittingBatch || selectedExpenseIds.size === 0 || isOverLimit}
-                className="h-9 px-5 text-xs font-bold uppercase tracking-wider shadow-sm"
-              >
-                {isSubmittingBatch ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
-                    Submitting...
-                  </>
-                ) : (
-                  <>
-                    <Send className="w-4 h-4 mr-1.5" />
-                    Submit Claim Batch (${roundedSelectedTotal.toFixed(2)})
-                  </>
-                )}
-              </CustomButton>
-            </div>
-
-          </div>
-
-        </div>
-      )}
-
-      {/* TAB 3: SUBMITTED BATCHES & STATUS TRACKING */}
+      {/* TAB 2: CLAIM SUBMITTED & STATUS TRACKING */}
       {activeTab === "batches" && (
-        <div className="flex flex-col flex-1 h-full overflow-hidden gap-3 pb-2">
+        <div className="flex flex-col flex-1 h-full overflow-hidden gap-3 p-3 min-h-0">
           
-          <div className="bg-white p-3.5 rounded-lg border border-zinc-300/80 shadow-xs flex items-center justify-between shrink-0">
-            <div>
-              <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                Submitted Claim Batches
-              </h3>
-              <p className="text-[11px] text-zinc-500 mt-0.5">
-                Track supervisor review, approval status, and PayNow payout references.
-              </p>
+          <div className="flex-1 bg-white border border-zinc-300 rounded-xl overflow-hidden flex flex-col shadow-xs min-h-0">
+            <div className="bg-zinc-50 border-b border-zinc-200 p-3.5 flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                  Claim Submitted ({batches.length})
+                </h3>
+                <p className="text-[11px] text-zinc-500 mt-0.5">
+                  Track supervisor review, approval status, and PayNow payout references.
+                </p>
+              </div>
             </div>
 
-            <CustomButton
-              onClick={loadOperatorData}
-              variant="secondary"
-              disabled={loadingData}
-              className="h-8 px-3 text-xs"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loadingData ? "animate-spin" : ""}`} />
-              Refresh
-            </CustomButton>
-          </div>
-
-          <div className="flex-1 bg-white border border-zinc-300 rounded-lg overflow-hidden flex flex-col shadow-xs min-h-0">
-            <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto min-h-0">
               <table className="w-full border-collapse text-left">
                 <thead className="bg-zinc-50 border-b border-zinc-300 sticky top-0 z-10">
                   <tr>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-36">Batch ID / Date</th>
+                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-36">Claim Date</th>
+                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-48">Sent To Supervisor</th>
                     <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase">Items Breakdown</th>
                     <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-28">Total Amount</th>
                     <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-36">Payout Status</th>
@@ -931,20 +1049,20 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                 <tbody className="divide-y divide-zinc-200 text-xs">
                   {loadingData ? (
                     <tr>
-                      <td colSpan={5} className="p-12 text-center text-zinc-500">
+                      <td colSpan={6} className="p-12 text-center text-zinc-500">
                         <div className="flex flex-col items-center justify-center gap-2">
                           <Loader2 className="w-6 h-6 animate-spin text-[#0B57D0]" />
-                          <span className="font-semibold text-xs">Loading submitted batches...</span>
+                          <span className="font-semibold text-xs">Loading submitted claims...</span>
                         </div>
                       </td>
                     </tr>
                   ) : batches.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="p-12 text-center text-zinc-400">
+                      <td colSpan={6} className="p-12 text-center text-zinc-400">
                         <div className="flex flex-col items-center justify-center gap-2">
                           <Clock className="w-8 h-8 text-zinc-300" />
                           <span className="font-semibold text-sm text-zinc-600">
-                            No submitted claim batches yet.
+                            No claims submitted yet.
                           </span>
                           <span className="text-xs text-zinc-400">
                             Select recorded expenses from your ledger to submit a claim batch.
@@ -958,12 +1076,23 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                       return (
                         <tr key={batch.id} className="hover:bg-zinc-50/80 transition-colors">
                           <td className="p-3">
-                            <span className="font-mono font-bold text-zinc-900 block text-[11px]">
+                            <span className="font-bold text-zinc-900 block text-xs flex items-center gap-1">
+                              <Calendar className="w-3.5 h-3.5 text-zinc-400" />
+                              {formatDateDisplay(batch.claim_date)}
+                            </span>
+                            <span className="font-mono text-[10px] text-zinc-400 font-semibold block mt-0.5">
                               {batch.id}
                             </span>
-                            <span className="text-[10px] text-zinc-400 font-semibold flex items-center gap-1 mt-0.5">
-                              <Calendar className="w-3 h-3" /> {batch.claim_date}
+                          </td>
+                          <td className="p-3">
+                            <span className="font-bold text-zinc-900 block truncate max-w-[170px]">
+                              {batch.target_admin_name || batch.target_admin_email || "Administrator"}
                             </span>
+                            {batch.target_admin_email && (
+                              <span className="text-[10px] text-zinc-400 block truncate max-w-[170px]">
+                                {batch.target_admin_email}
+                              </span>
+                            )}
                           </td>
                           <td className="p-3">
                             <span className="font-medium text-zinc-800 block truncate max-w-md">
@@ -1025,6 +1154,154 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
         </div>
       )}
 
+      {/* SUBMIT CLAIM BATCH MODAL (WITH ADMIN SELECTOR & PAYNOW CONFIRMATION) */}
+      {showSubmitModal && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl border border-zinc-300 shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-pop-in">
+            <div className="px-6 py-4 bg-zinc-50 border-b border-zinc-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950">Submit Claim Batch for Payout</h3>
+                <span className="text-xs text-zinc-500">
+                  {selectedExpenses.length} expense(s) selected
+                </span>
+              </div>
+              <button
+                onClick={() => setShowSubmitModal(false)}
+                className="w-7 h-7 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-100 flex items-center justify-center text-zinc-500 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-6 flex flex-col gap-4">
+              
+              {/* Reimbursement info */}
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-bold text-emerald-800 uppercase block">Reimbursement Target</span>
+                  <span className="text-sm font-bold text-emerald-950">{employeeDetails.name}</span>
+                  <span className="text-xs font-mono font-bold text-emerald-700 block">PayNow: {employeeDetails.paynow}</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] font-bold text-emerald-800 uppercase block">Total Claim</span>
+                  <span className="text-lg font-mono font-extrabold text-emerald-950">${roundedSelectedTotal.toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Admin Selection Dropdown */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-bold text-zinc-700 uppercase tracking-wider flex items-center gap-1">
+                  <ShieldCheck className="w-4 h-4 text-[#0B57D0]" />
+                  Select Administrator / Supervisor to Claim *
+                </label>
+                <select
+                  value={selectedAdminEmail}
+                  onChange={(e) => setSelectedAdminEmail(e.target.value)}
+                  className="h-10 px-3 border border-zinc-300 rounded-lg text-xs font-semibold text-zinc-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                >
+                  {adminsList.length === 0 ? (
+                    <option value="">No Administrators found</option>
+                  ) : (
+                    adminsList.map((admin) => (
+                      <option key={admin.email} value={admin.email}>
+                        {admin.name} ({admin.email})
+                      </option>
+                    ))
+                  )}
+                </select>
+                <span className="text-[10px] text-zinc-400">
+                  The selected manager will receive your claim batch in their review queue.
+                </span>
+              </div>
+
+              <div className="text-[11px] text-zinc-500 border-t border-zinc-200 pt-3">
+                ⚠️ Once submitted, these expenses are locked and cannot be edited or deleted while under review.
+              </div>
+
+            </div>
+
+            <div className="p-4 bg-zinc-50 border-t border-zinc-200 flex justify-end gap-2">
+              <CustomButton variant="secondary" onClick={() => setShowSubmitModal(false)}>
+                Cancel
+              </CustomButton>
+              <CustomButton
+                variant="default"
+                disabled={isSubmittingBatch || !selectedAdminEmail}
+                onClick={handleConfirmSubmitBatch}
+              >
+                {isSubmittingBatch ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                    Submitting...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4 mr-1.5" />
+                    Confirm & Submit ($ {roundedSelectedTotal.toFixed(2)})
+                  </>
+                )}
+              </CustomButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* QUICK PAYNOW UPDATE MODAL */}
+      {showPayNowModal && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-2xl border border-zinc-300 shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-pop-in">
+            <div className="px-6 py-4 bg-zinc-50 border-b border-zinc-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <CreditCard className="w-4 h-4 text-[#0B57D0]" />
+                <h3 className="text-sm font-bold text-zinc-950">Update Employee PayNow Number</h3>
+              </div>
+              <button
+                onClick={() => setShowPayNowModal(false)}
+                className="w-7 h-7 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-100 flex items-center justify-center text-zinc-500 cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSavePayNow} className="p-6 flex flex-col gap-4">
+              <p className="text-xs text-zinc-600">
+                Enter your mobile number, UEN, or NRIC registered with PayNow so supervisors can send your reimbursement directly.
+              </p>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] font-bold text-zinc-600 uppercase tracking-wider">
+                  PayNow Number / Mobile *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. 91234567 or 201912345A"
+                  value={payNowInput}
+                  onChange={(e) => setPayNowInput(e.target.value)}
+                  className="h-10 px-3 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] bg-white font-mono"
+                />
+              </div>
+
+              <div className="p-4 -mx-6 -mb-6 bg-zinc-50 border-t border-zinc-200 flex justify-end gap-2 mt-2">
+                <CustomButton variant="secondary" onClick={() => setShowPayNowModal(false)}>
+                  Cancel
+                </CustomButton>
+                <CustomButton type="submit" variant="default" disabled={isSavingPayNow || !payNowInput.trim()}>
+                  {isSavingPayNow ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+                      Saving...
+                    </>
+                  ) : (
+                    "Save PayNow Number"
+                  )}
+                </CustomButton>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* BATCH DETAILS MODAL */}
       {viewingBatch && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
@@ -1046,7 +1323,12 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
               <div className="flex items-center justify-between bg-zinc-50 p-3 rounded-lg border border-zinc-200 text-xs font-semibold">
                 <div>
                   <span className="text-zinc-500 block text-[10px] uppercase">Reimbursement Target</span>
-                  <span className="font-bold text-zinc-900">{viewingBatch.employee_name} ({viewingBatch.paynow_number || "-"})</span>
+                  <span className="font-bold text-zinc-900">{viewingBatch.employee_name} ({formatCleanPayNow(viewingBatch.paynow_number) || "-"})</span>
+                  {viewingBatch.target_admin_name && (
+                    <span className="text-[10px] text-zinc-500 block mt-0.5">
+                      Assigned To: <strong>{viewingBatch.target_admin_name}</strong>
+                    </span>
+                  )}
                 </div>
                 <div className="text-right">
                   <span className="text-zinc-500 block text-[10px] uppercase">Total Payout</span>
@@ -1061,7 +1343,7 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                     <div key={idx} className="p-3 flex items-center justify-between text-xs">
                       <div>
                         <span className="font-bold text-zinc-900 block">{it.description}</span>
-                        <span className="text-[10px] text-zinc-400 font-semibold">{it.date} • {it.project_department || "HQ"}</span>
+                        <span className="text-[10px] text-zinc-400 font-semibold">{formatDateDisplay(it.date)} {it.remarks ? `• ${it.remarks}` : ""}</span>
                       </div>
                       <div className="flex items-center gap-3">
                         <span className="font-mono font-bold text-zinc-900">${Number(it.amount || 0).toFixed(2)}</span>
