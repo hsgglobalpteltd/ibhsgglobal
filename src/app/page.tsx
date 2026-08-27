@@ -19,6 +19,22 @@ import { canAccessPage } from "@/lib/permissions";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { PwaInstallModal } from "@/components/pwa-install-modal";
 
+// Helper to format remaining lockout time nicely
+function formatLockoutTime(seconds: number): string {
+  if (seconds >= 3600) {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return `${h}h ${m}m ${s}s`;
+  }
+  if (seconds >= 60) {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}m ${s}s`;
+  }
+  return `${seconds}s`;
+}
+
 export default function Home() {
   const [firebaseUser, setFirebaseUser] = React.useState<any>(null);
   const [idToken, setIdToken] = React.useState<string>("");
@@ -28,6 +44,8 @@ export default function Home() {
   // PIN Fast Login State
   const [pinDigits, setPinDigits] = React.useState<string[]>(["", "", "", ""]);
   const [pinSubmitting, setPinSubmitting] = React.useState<boolean>(false);
+  const [failedAttempts, setFailedAttempts] = React.useState<number>(0);
+  const [lockoutRemaining, setLockoutRemaining] = React.useState<number>(0);
   const pinInputsRef = React.useRef<(HTMLInputElement | null)[]>([]);
 
   const [activeItem, setActiveItem] = React.useState("Dashboard");
@@ -109,6 +127,55 @@ export default function Home() {
       .catch((e) => console.error("Failed to load latest contract details:", e));
   }, []);
 
+  // Load initial PIN lockout and failed attempts
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const storedAttempts = localStorage.getItem("ib_pin_failed_attempts");
+    if (storedAttempts) {
+      setFailedAttempts(parseInt(storedAttempts, 10) || 0);
+    }
+
+    const storedLockout = localStorage.getItem("ib_pin_lockout_until");
+    if (storedLockout) {
+      const lockoutUntil = parseInt(storedLockout, 10);
+      const now = Date.now();
+      if (lockoutUntil > now) {
+        setLockoutRemaining(Math.ceil((lockoutUntil - now) / 1000));
+      } else {
+        localStorage.removeItem("ib_pin_lockout_until");
+        setLockoutRemaining(0);
+      }
+    }
+  }, []);
+
+  // Timer interval for PIN lockout countdown
+  React.useEffect(() => {
+    if (lockoutRemaining <= 0) return;
+
+    const timer = setInterval(() => {
+      const storedLockout = localStorage.getItem("ib_pin_lockout_until");
+      if (storedLockout) {
+        const lockoutUntil = parseInt(storedLockout, 10);
+        const now = Date.now();
+        const diff = Math.ceil((lockoutUntil - now) / 1000);
+        if (diff > 0) {
+          setLockoutRemaining(diff);
+        } else {
+          setLockoutRemaining(0);
+          localStorage.removeItem("ib_pin_lockout_until");
+          setTimeout(() => {
+            pinInputsRef.current[0]?.focus();
+          }, 50);
+        }
+      } else {
+        setLockoutRemaining(0);
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [lockoutRemaining]);
+
   // Listen to Firebase Auth state changes
   React.useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -118,6 +185,12 @@ export default function Home() {
           setFirebaseUser(user);
           setIdToken(token);
           
+          // Clear PIN lockout on successful login
+          setFailedAttempts(0);
+          setLockoutRemaining(0);
+          localStorage.removeItem("ib_pin_failed_attempts");
+          localStorage.removeItem("ib_pin_lockout_until");
+
           // Retrieve or generate unique session ID for this browser tab/session
           let sid = localStorage.getItem("session_id");
           if (!sid) {
@@ -181,6 +254,12 @@ export default function Home() {
         );
         setProfile(dbProfile);
       }
+      // Reset PIN lockout on force login
+      setFailedAttempts(0);
+      setLockoutRemaining(0);
+      localStorage.removeItem("ib_pin_failed_attempts");
+      localStorage.removeItem("ib_pin_lockout_until");
+
       setPendingLogin(null);
       setConflictDialogOpen(false);
       showToast("Logged in successfully. Other sessions terminated.", "success");
@@ -199,7 +278,7 @@ export default function Home() {
   };
 
   const handlePinLogin = async (codeToSubmit: string) => {
-    if (!codeToSubmit || codeToSubmit.length !== 4) return;
+    if (!codeToSubmit || codeToSubmit.length !== 4 || lockoutRemaining > 0) return;
     setPinSubmitting(true);
     try {
       let sid = localStorage.getItem("session_id");
@@ -213,6 +292,10 @@ export default function Home() {
       setProfile(res.user);
       showToast(`Welcome back, ${res.user.name}!`, "success");
       setPinDigits(["", "", "", ""]);
+      setFailedAttempts(0);
+      setLockoutRemaining(0);
+      localStorage.removeItem("ib_pin_failed_attempts");
+      localStorage.removeItem("ib_pin_lockout_until");
     } catch (err: any) {
       if (err.code === "session_conflict") {
         setPendingLogin({
@@ -223,9 +306,22 @@ export default function Home() {
         });
         setConflictDialogOpen(true);
       } else {
-        showToast(err.message || "Invalid PIN code", "error");
+        const nextAttempts = failedAttempts + 1;
+        setFailedAttempts(nextAttempts);
+        localStorage.setItem("ib_pin_failed_attempts", nextAttempts.toString());
+
+        const lockoutDuration = nextAttempts >= 3 ? 24 * 60 * 60 * 1000 : 60 * 1000;
+        const lockoutUntil = Date.now() + lockoutDuration;
+        localStorage.setItem("ib_pin_lockout_until", lockoutUntil.toString());
+        setLockoutRemaining(Math.ceil(lockoutDuration / 1000));
+
         setPinDigits(["", "", "", ""]);
-        pinInputsRef.current[0]?.focus();
+
+        if (nextAttempts >= 3) {
+          showToast("Maximum PIN attempts exceeded. Input disabled for 24 hours. Please Login with Google.", "error");
+        } else {
+          showToast(err.message || "Invalid PIN code. PIN input locked for 60 seconds.", "error");
+        }
       }
     } finally {
       setPinSubmitting(false);
@@ -233,6 +329,7 @@ export default function Home() {
   };
 
   const handleDigitChange = (index: number, value: string) => {
+    if (lockoutRemaining > 0 || pinSubmitting) return;
     const cleaned = value.replace(/\D/g, "");
     if (!cleaned) {
       const next = [...pinDigits];
@@ -276,6 +373,7 @@ export default function Home() {
   };
 
   const handleDigitKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (lockoutRemaining > 0 || pinSubmitting) return;
     if (e.key === "Backspace") {
       if (!pinDigits[index] && index > 0) {
         const next = [...pinDigits];
@@ -295,6 +393,7 @@ export default function Home() {
   };
 
   const handleDigitPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    if (lockoutRemaining > 0 || pinSubmitting) return;
     e.preventDefault();
     const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 4);
     if (pasted) {
@@ -623,18 +722,24 @@ export default function Home() {
                     inputMode="numeric"
                     pattern="[0-9]*"
                     maxLength={1}
-                    autoFocus={i === 0}
-                    disabled={pinSubmitting}
+                    autoFocus={i === 0 && lockoutRemaining === 0}
+                    disabled={pinSubmitting || lockoutRemaining > 0}
                     value={digit}
                     onChange={(e) => handleDigitChange(i, e.target.value)}
                     onKeyDown={(e) => handleDigitKeyDown(i, e)}
                     onPaste={handleDigitPaste}
-                    className="w-12 h-14 text-center text-2xl font-mono font-bold bg-zinc-50 border-2 border-slate-300 rounded-xl text-zinc-900 focus:bg-white focus:border-[#0B57D0] focus:ring-4 focus:ring-[#0B57D0]/15 transition-all outline-none shadow-xs disabled:opacity-50"
+                    className="w-12 h-14 text-center text-2xl font-mono font-bold bg-zinc-50 border-2 border-slate-300 rounded-xl text-zinc-900 focus:bg-white focus:border-[#0B57D0] focus:ring-4 focus:ring-[#0B57D0]/15 transition-all outline-none shadow-xs disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-zinc-100"
                   />
                 ))}
               </div>
-              <p className="text-[11px] font-semibold text-zinc-500">
-                {pinSubmitting ? "Authenticating PIN..." : "Enter 4-digit employee PIN"}
+              <p className="text-[11px] font-semibold text-center text-zinc-500">
+                {lockoutRemaining > 0
+                  ? failedAttempts >= 3
+                    ? `PIN locked (${formatLockoutTime(lockoutRemaining)}). Please Login with Google`
+                    : `Incorrect PIN. Try again in ${formatLockoutTime(lockoutRemaining)}`
+                  : pinSubmitting
+                    ? "Authenticating PIN..."
+                    : "Enter 4-digit employee PIN"}
               </p>
             </div>
 

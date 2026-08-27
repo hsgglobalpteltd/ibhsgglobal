@@ -868,7 +868,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     } catch (_) {}
   };
 
-  const handleCreateOrderSubmit = (e: React.FormEvent) => {
+  const handleCreateOrderSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!createDoNumber) {
       showToast("DO Number is required", "error");
@@ -927,6 +927,26 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       ? getAppointmentDeadline(createAppointmentDate, createTimeWindow)
       : 0;
 
+    const cleanPoscode = String(createPoscode || "").trim();
+
+    let lat: number | string = "";
+    let lng: number | string = "";
+    try {
+      const coords = await fetchPostcodeCoordinates(cleanPoscode, oneMapUrl, oneMapToken);
+      if (coords) {
+        lat = coords.lat;
+        lng = coords.lng;
+      } else {
+        const fallback = getSingaporeLatLng(cleanPoscode);
+        lat = fallback.lat;
+        lng = fallback.lng;
+      }
+    } catch (_) {
+      const fallback = getSingaporeLatLng(cleanPoscode);
+      lat = fallback.lat;
+      lng = fallback.lng;
+    }
+
     if (editingOrder) {
       const orderId = editingOrder.id;
       let parsedItems: SKUItem[] = createItems.filter(i => i.sku.trim() !== "");
@@ -939,9 +959,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         type: createType,
         deliver_to: createDeliverTo,
         deliver_method: createDeliverMethod,
-        poscode: String(createPoscode || "").trim(),
+        poscode: cleanPoscode,
         items: JSON.stringify(parsedItems),
-        deadline: deadlineVal
+        deadline: deadlineVal,
+        latitude: lat,
+        longitude: lng
       };
 
       const remarkText = getOrderEditsRemark(editingOrder, payloadData);
@@ -1004,12 +1026,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       mark: createMark,
       type: createType,
       deliverTo: createDeliverTo,
-      poscode: createPoscode,
+      poscode: cleanPoscode,
       items: createItems.filter(i => i.sku.trim() !== ""),
       appointmentDate: createType === "Appointment" ? createAppointmentDate : undefined,
       appointmentTimeWindow: createType === "Appointment" ? createTimeWindow : undefined,
       deadline: deadlineVal,
-      deliverMethod: createDeliverMethod
+      deliverMethod: createDeliverMethod,
+      latitude: lat,
+      longitude: lng
     };
 
     const updated = [...drafts, newDraft];
@@ -2804,8 +2828,18 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         if (coords) {
           lat = coords.lat;
           lng = coords.lng;
+        } else if (!lat || !lng) {
+          const fallback = getSingaporeLatLng(order.poscode);
+          lat = fallback.lat;
+          lng = fallback.lng;
         }
-      } catch (_) {}
+      } catch (_) {
+        if (!lat || !lng) {
+          const fallback = getSingaporeLatLng(order.poscode);
+          lat = fallback.lat;
+          lng = fallback.lng;
+        }
+      }
 
       // Upload draft's PDF images to R2 under Track_Orders/DO_Paper/ in background
       let photoDoPaperUrl = "";
