@@ -140,6 +140,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Portal Users",
         description: "Manage registered user portals. Approve, suspend, or remove portal workspace access.",
+      },
+      {
+        title: "Catalog Web",
+        description: "Manage export catalog website layout, headlines, products & brands showcase, assets, and inquiry routing.",
       }
     ]
   },

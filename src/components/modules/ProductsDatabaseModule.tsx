@@ -9,6 +9,7 @@ import { NavigationTabs } from "../navigation-tabs";
 const defaultBrandColumns: Column[] = [
   { id: 'id', header: 'id', accessor: 'id' },
   { id: "Display Name", header: "Display Name", accessor: "Display Name" },
+  { id: "Description", header: "Description", accessor: "Description" },
   { id: "Logo Image", header: "Logo Image", accessor: "Logo Image" },
   { id: "Rank", header: "Rank", accessor: "Rank" }
 ];
@@ -20,6 +21,7 @@ function normalizeKeysToPretty(item: any): any {
     sku: "sku",
     brands_id: "Brands ID",
     display_name: "Display Name",
+    description: "Description",
     image: "Image",
     carton: "Carton",
     cost: "Cost",
@@ -63,6 +65,7 @@ function normalizeKeysToRaw(item: any): any {
     sku: "sku",
     brandsid: "brands_id",
     displayname: "display_name",
+    description: "description",
     image: "image",
     carton: "carton",
     cost: "cost",
@@ -606,6 +609,16 @@ function BrandEditForm({ brand, onSave, onCancel }: { brand: any; onSave: (data:
               className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
             />
           </div>
+          <div className="flex flex-col gap-1.5 col-span-2">
+            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Brand Description</label>
+            <textarea
+              value={formData["Description"] || ""}
+              onChange={(e) => handleChange("Description", e.target.value)}
+              placeholder="Official brand background, export story, and culinary profile..."
+              rows={3}
+              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold resize-none"
+            />
+          </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Logo Image</label>
             <div className="flex gap-2">
@@ -652,7 +665,7 @@ function BrandEditForm({ brand, onSave, onCancel }: { brand: any; onSave: (data:
           {/* Generic fields editor for other sheets scale-up */}
           {Object.keys(formData)
             .filter((k) => {
-              if (['id', "Display Name", "Logo Image", "Rank", "id", "isNew"].includes(k)) return false;
+              if (['id', "Display Name", "Description", "Logo Image", "Rank", "id", "isNew"].includes(k)) return false;
               const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
                 otherKey !== k && 
                 otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
