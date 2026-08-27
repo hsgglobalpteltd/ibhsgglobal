@@ -147,6 +147,7 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
   const [showSubmitModal, setShowSubmitModal] = React.useState(false);
 
   // Form states for logging an expense
+  const [editingExpenseId, setEditingExpenseId] = React.useState<string | null>(null);
   const [expenseDate, setExpenseDate] = React.useState(new Date().toISOString().split("T")[0]);
   const [description, setDescription] = React.useState("");
   const [amount, setAmount] = React.useState("");
@@ -157,6 +158,8 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
     src: string;
     name: string;
     type: string;
+    url?: string;
+    file_key?: string;
   } | null>(null);
 
   // Cropper states
@@ -398,7 +401,36 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
     showToast("Receipt photo attached successfully!", "success");
   };
 
-  // Save new expense
+  // Load expense into form for editing
+  const handleEditExpense = (exp: OperatorExpense) => {
+    setEditingExpenseId(exp.id);
+    setExpenseDate(exp.date || new Date().toISOString().split("T")[0]);
+    setDescription(exp.description || "");
+    setAmount(String(exp.amount || ""));
+    setRemarks(exp.remarks || "");
+    if (exp.receipt_url) {
+      setReceiptImage({
+        src: exp.receipt_url,
+        name: exp.receipt_name || "receipt.jpg",
+        type: "image/jpeg",
+        url: exp.receipt_url,
+        file_key: exp.receipt_file_key
+      });
+    } else {
+      setReceiptImage(null);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingExpenseId(null);
+    setExpenseDate(new Date().toISOString().split("T")[0]);
+    setDescription("");
+    setAmount("");
+    setRemarks("");
+    setReceiptImage(null);
+  };
+
+  // Save new expense or update existing expense
   const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -420,6 +452,7 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
     setIsSubmittingExpense(true);
     try {
       const payload = {
+        ...(editingExpenseId ? { id: editingExpenseId } : {}),
         user_email: userEmail,
         user_name: profile?.name || employeeDetails.name,
         employee_id: employeeDetails.id,
@@ -443,13 +476,15 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
       const resData = await res.json();
       if (resData.error) throw new Error(resData.error);
 
-      showToast("Expense recorded successfully!", "success");
+      showToast(editingExpenseId ? "Expense updated successfully!" : "Expense recorded successfully!", "success");
 
       // Reset form fields
+      setEditingExpenseId(null);
       setDescription("");
       setAmount("");
       setRemarks("");
       setReceiptImage(null);
+      setExpenseDate(new Date().toISOString().split("T")[0]);
 
       // Refresh data
       loadOperatorData();
@@ -470,6 +505,9 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
       confirmText: "Delete",
       variant: "danger",
       onConfirm: async () => {
+        if (editingExpenseId === id) {
+          handleCancelEdit();
+        }
         setExpenses((prev) => prev.filter((e) => e.id !== id));
         setSelectedExpenseIds((prev) => {
           const next = new Set(prev);
@@ -645,36 +683,58 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
               {/* Form Header */}
               <div className="flex items-center justify-between border-b border-zinc-200 pb-2.5 shrink-0">
                 <div>
-                  <h3 className="text-xs font-bold text-zinc-950 uppercase tracking-wider">Record Expense</h3>
-                  <span className="text-[10px] text-zinc-400">Attach receipt photo to save to ledger</span>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold text-zinc-950 uppercase tracking-wider">
+                      {editingExpenseId ? "Edit Expense" : "Record Expense"}
+                    </h3>
+                    {editingExpenseId && (
+                      <span className="px-1.5 py-0.5 text-[9px] font-bold bg-blue-100 text-blue-800 rounded border border-blue-200 uppercase">
+                        Editing
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] text-zinc-400">
+                    {editingExpenseId ? "Update expense details and save to ledger" : "Attach receipt photo to save to ledger"}
+                  </span>
                 </div>
 
-                {employeeDetails.paynow ? (
-                  <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md text-emerald-800 text-[10px] font-semibold">
-                    <CreditCard className="w-3 h-3 text-emerald-600" />
-                    <span>PayNow: <strong>{employeeDetails.paynow}</strong></span>
+                <div className="flex items-center gap-2">
+                  {editingExpenseId && (
+                    <button
+                      type="button"
+                      onClick={handleCancelEdit}
+                      className="px-2 py-0.5 text-[10px] font-bold text-zinc-600 hover:text-zinc-900 bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 rounded cursor-pointer transition-colors"
+                    >
+                      Cancel Edit
+                    </button>
+                  )}
+                  {employeeDetails.paynow ? (
+                    <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md text-emerald-800 text-[10px] font-semibold">
+                      <CreditCard className="w-3 h-3 text-emerald-600" />
+                      <span>PayNow: <strong>{employeeDetails.paynow}</strong></span>
+                      <button
+                        onClick={() => {
+                          setPayNowInput(employeeDetails.paynow);
+                          setShowPayNowModal(true);
+                        }}
+                        className="ml-1 text-emerald-700 hover:text-emerald-950 cursor-pointer"
+                        title="Edit PayNow"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       onClick={() => {
-                        setPayNowInput(employeeDetails.paynow);
+                        setPayNowInput("");
                         setShowPayNowModal(true);
                       }}
-                      className="ml-1 text-emerald-700 hover:text-emerald-950 cursor-pointer"
-                      title="Edit PayNow"
+                      className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-md text-amber-800 text-[10px] font-bold cursor-pointer transition-colors"
                     >
-                      <Edit3 className="w-3 h-3" />
+                      <Plus className="w-3 h-3" /> Add PayNow
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setPayNowInput("");
-                      setShowPayNowModal(true);
-                    }}
-                    className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-md text-amber-800 text-[10px] font-bold cursor-pointer transition-colors"
-                  >
-                    <Plus className="w-3 h-3" /> Add PayNow
-                  </button>
-                )}
+                  )}
+                </div>
               </div>
 
               {/* Form Inputs */}
@@ -819,17 +879,32 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                 </div>
 
                 {/* Submit Form Button */}
-                <div className="pt-1 mt-auto">
+                <div className="pt-1 mt-auto flex gap-2">
+                  {editingExpenseId && (
+                    <CustomButton
+                      type="button"
+                      variant="secondary"
+                      onClick={handleCancelEdit}
+                      className="w-1/3 h-9 text-xs font-bold uppercase tracking-wider shadow-sm"
+                    >
+                      Cancel
+                    </CustomButton>
+                  )}
                   <CustomButton
                     type="submit"
                     variant="default"
                     disabled={isSubmittingExpense || !receiptImage || !description.trim() || !amount}
-                    className="w-full h-9 text-xs font-bold uppercase tracking-wider shadow-sm"
+                    className={`h-9 text-xs font-bold uppercase tracking-wider shadow-sm ${editingExpenseId ? "flex-1" : "w-full"}`}
                   >
                     {isSubmittingExpense ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                        Recording...
+                        {editingExpenseId ? "Updating..." : "Recording..."}
+                      </>
+                    ) : editingExpenseId ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 mr-1.5" />
+                        Update Expense
                       </>
                     ) : (
                       <>
@@ -885,7 +960,7 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                       <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase">Description</th>
                       <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-24">Amount</th>
                       <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-20">Receipt</th>
-                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-12"></th>
+                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-20">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200 text-xs">
@@ -915,11 +990,16 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                     ) : (
                       unsubmittedExpenses.map((exp) => {
                         const isChecked = selectedExpenseIds.has(exp.id);
+                        const isEditing = editingExpenseId === exp.id;
                         return (
                           <tr
                             key={exp.id}
                             className={`hover:bg-zinc-50/80 transition-colors cursor-pointer ${
-                              isChecked ? "bg-blue-50/40" : ""
+                              isEditing
+                                ? "bg-amber-50/60 ring-1 ring-amber-300 inset-0"
+                                : isChecked
+                                ? "bg-blue-50/40"
+                                : ""
                             }`}
                             onClick={() => toggleSelectExpense(exp.id)}
                           >
@@ -935,7 +1015,14 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                               {formatDateDisplay(exp.date)}
                             </td>
                             <td className="p-3 font-bold text-zinc-900">
-                              {exp.description}
+                              <div className="flex items-center gap-1.5">
+                                {exp.description}
+                                {isEditing && (
+                                  <span className="px-1.5 py-0.2 text-[9px] font-bold bg-amber-200 text-amber-900 rounded">
+                                    Editing
+                                  </span>
+                                )}
+                              </div>
                               {exp.remarks && (
                                 <span className="block text-[10px] text-zinc-400 font-normal">
                                   {exp.remarks}
@@ -958,13 +1045,26 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                               )}
                             </td>
                             <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                              <button
-                                onClick={() => handleDeleteExpense(exp.id)}
-                                className="p-1.5 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
-                                title="Delete Expense"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              <div className="flex items-center justify-center gap-1">
+                                <button
+                                  onClick={() => handleEditExpense(exp)}
+                                  className={`p-1.5 rounded transition-colors cursor-pointer ${
+                                    isEditing
+                                      ? "text-[#0B57D0] bg-blue-100 ring-1 ring-[#0B57D0]"
+                                      : "text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50"
+                                  }`}
+                                  title="Edit Expense into Form"
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteExpense(exp.id)}
+                                  className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
+                                  title="Delete Expense"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
