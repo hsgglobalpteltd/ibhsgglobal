@@ -2528,6 +2528,16 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                           <img
                             src={item.receipt_url}
                             alt={item.description}
+                            onError={(e) => {
+                              (e.currentTarget as HTMLImageElement).style.display = "none";
+                              const parent = e.currentTarget.parentElement;
+                              if (parent && !parent.querySelector(".img-fallback")) {
+                                const fb = document.createElement("div");
+                                fb.className = "img-fallback w-full h-full flex flex-col items-center justify-center text-zinc-400 text-[10px] text-center p-2 bg-zinc-100";
+                                fb.innerHTML = '<span class="text-[10px] font-semibold text-rose-500">Image Missing</span><span class="text-[8px] text-zinc-400 mt-0.5">Please re-upload</span>';
+                                parent.appendChild(fb);
+                              }
+                            }}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                           />
                           <div className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white text-[10px] font-medium gap-1 backdrop-blur-[1px]">
@@ -2750,6 +2760,16 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                               <img
                                 src={imgUrl}
                                 alt={rc.name || `Receipt #${idx + 1}`}
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display = "none";
+                                  const parent = e.currentTarget.parentElement;
+                                  if (parent && !parent.querySelector(".img-fallback")) {
+                                    const fb = document.createElement("div");
+                                    fb.className = "img-fallback w-full h-full flex flex-col items-center justify-center text-zinc-400 text-[10px] text-center p-2 bg-zinc-100";
+                                    fb.innerHTML = '<span class="text-[10px] font-semibold text-rose-500">Image Missing</span><span class="text-[8px] text-zinc-400 mt-0.5">Please re-upload</span>';
+                                    parent.appendChild(fb);
+                                  }
+                                }}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                               />
                             ) : (
