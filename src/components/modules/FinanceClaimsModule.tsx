@@ -1954,11 +1954,11 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                                     Reject
                                   </button>
                                 </>
-                              ) : batch.status === "paid" ? (
+                              ) : (batch.status === "paid" || batch.status === "claimed_to_finance") ? (
                                 <button
                                   onClick={() => handleRevokePaid(batch)}
                                   className="px-2 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 shrink-0"
-                                  title="Revoke paid status and revert back to pending review"
+                                  title="Revoke paid/claimed status and revert back to pending review"
                                 >
                                   <RotateCcw className="w-3 h-3" /> Revoke
                                 </button>
@@ -1968,7 +1968,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                                 </span>
                               ) : (
                                 <span className="text-[10px] text-zinc-400 font-medium">
-                                  {batch.status === "claimed_to_finance" ? "Claimed" : "Completed"}
+                                  Completed
                                 </span>
                               )}
                             </div>
@@ -2579,7 +2579,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                     </CustomButton>
                   </>
                 )}
-                {viewingBatch.status === "paid" && (
+                {(viewingBatch.status === "paid" || viewingBatch.status === "claimed_to_finance") && (
                   <CustomButton
                     variant="secondary"
                     onClick={() => {
@@ -2590,7 +2590,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                     className="h-8 px-3 text-xs text-amber-800 border-amber-200 bg-amber-50 hover:bg-amber-100"
                   >
                     <RotateCcw className="w-3.5 h-3.5 mr-1" />
-                    Revoke Paid
+                    Revoke Payout
                   </CustomButton>
                 )}
                 <CustomButton
