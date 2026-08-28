@@ -420,15 +420,32 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
 
   const handleRemoveClaimRow = (id: number) => {
     const rowToRemove = claimRows.find((r) => r.id === id);
-    if (rowToRemove?.remark) {
-      const match = rowToRemove.remark.match(/Claim ID:\s*([A-Za-z0-9_-]+)/);
-      const batchId = match ? match[1] : null;
-      if (batchId) {
-        setReceiptImages((prev) => prev.filter((img) => img.batch_id !== batchId));
-        setImportedBatchIds((prev) => prev.filter((bId) => bId !== batchId));
-      }
+    const match = rowToRemove?.remark?.match(/Claim ID:\s*([A-Za-z0-9_-]+)/i);
+    const batchId = match ? match[1] : null;
+    const staffName = rowToRemove?.desc ? rowToRemove.desc.trim().toLowerCase() : "";
+
+    // 1. Remove all matching receipts from the drawer
+    setReceiptImages((prev) =>
+      prev.filter((img) => {
+        if (batchId && (img.batch_id === batchId || (img.name && img.name.includes(batchId)))) {
+          return false;
+        }
+        if (img.line_number === id) {
+          return false;
+        }
+        if (staffName && img.staff_name && img.staff_name.trim().toLowerCase() === staffName) {
+          return false;
+        }
+        return true;
+      })
+    );
+
+    // 2. Remove batchId from registry
+    if (batchId) {
+      setImportedBatchIds((prev) => prev.filter((bId) => bId !== batchId));
     }
 
+    // 3. Update claimRows and recalculate total amounts
     if (claimRows.length === 1) {
       setClaimRows([{ id: 1, desc: "", amt: "", type: "EXCL", remark: "" }]);
     } else {
@@ -558,25 +575,31 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
       if (!res.success) throw new Error(res.error || "Failed to scan receipt");
       const data = res.data;
 
-      const updated = receiptImages.map((img, i) => (i === idx ? { ...img, extracted: true } : img));
-      setReceiptImages(updated);
-
+      const isInitialBlank = claimRows.length === 1 && claimRows[0].desc === "" && claimRows[0].amt === "";
       const maxId = claimRows.length > 0 ? Math.max(...claimRows.map((r) => r.id)) : 0;
+      const newRowId = isInitialBlank ? 1 : maxId + 1;
+      const targetLineNumber = isInitialBlank ? 1 : claimRows.length + 1;
+
       const newRow: ClaimRow = {
-        id: maxId + 1,
+        id: newRowId,
         desc: data.merchant || "RECEIPT CHARGES",
         amt: (parseFloat(data.total) || 0.0).toFixed(2),
         type: data.is_gst ? "INCL" : "EXCL",
         remark: "",
       };
 
-      if (claimRows.length === 1 && claimRows[0].desc === "" && claimRows[0].amt === "") {
+      const updated = receiptImages.map((img, i) =>
+        i === idx ? { ...img, extracted: true, line_number: targetLineNumber, item_desc: data.merchant || img.item_desc } : img
+      );
+      setReceiptImages(updated);
+
+      if (isInitialBlank) {
         setClaimRows([newRow]);
       } else {
         setClaimRows([...claimRows, newRow]);
       }
 
-      showToast("Receipt data parsed successfully!", "success");
+      showToast("Receipt data parsed and linked to item line!", "success");
     } catch (err: any) {
       showToast("OCR Scanner failed. Please check System Settings.", "error");
     } finally {
@@ -977,6 +1000,43 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
     });
   };
 
+  // Delete Submitted Claim
+  const handleDeleteSubmittedClaim = (claim: ClaimRecord) => {
+    if (!canDelete) {
+      showToast("⚠️ You do not have permission to delete records in this module.", "warning");
+      return;
+    }
+
+    setConfirmDialog({
+      open: true,
+      title: "Delete Submitted Claim",
+      description: `Are you sure you want to permanently delete claim ${claim.id} (${claim.employee_name || "Claim"} • $${Number(claim.total_amount || 0).toFixed(2)})? Any imported staff claims will be restored to the unclaimed pool.`,
+      confirmText: "Delete Claim",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`${WORKER_URL}/api/claims/delete`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: claim.id })
+          });
+
+          if (!res.ok) throw new Error(await res.text());
+          const resData = await res.json();
+          if (resData.error) throw new Error(resData.error);
+
+          showToast(`Claim ${claim.id} deleted successfully.`, "success");
+          if (viewingClaimDetails?.id === claim.id) {
+            setViewingClaimDetails(null);
+          }
+          loadData();
+        } catch (err: any) {
+          showToast(`Failed to delete claim: ${err.message}`, "error");
+        }
+      }
+    });
+  };
+
   // Print PDF Trigger
   const handleGeneratePDF = async (recordToPrint?: ClaimRecord) => {
     const newTab = window.open("about:blank", "_blank");
@@ -1293,12 +1353,15 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                       <div className="flex flex-col gap-1.5 flex-1 h-full overflow-y-auto pr-1 border border-zinc-200/50 rounded-lg p-1.5 bg-zinc-50/20">
                         {receiptImages.map((file, idx) => {
                           const isStaffClaimReceipt = !!file.batch_id;
+                          const isInputDisabled = isStaffClaimReceipt || !!file.extracted;
+
                           return (
                             <div
                               key={idx}
-                              className="flex items-center justify-between bg-zinc-50 border border-zinc-200 p-2 rounded-lg shrink-0 hover:bg-zinc-100/60 transition-colors"
+                              className="flex items-center justify-between bg-zinc-50 border border-zinc-200 p-2 rounded-lg shrink-0 hover:bg-zinc-100/60 transition-colors gap-2"
                             >
-                              <div className="flex items-center gap-2 overflow-hidden flex-1 mr-2">
+                              {/* Left: Badge & Name */}
+                              <div className="flex items-center gap-1.5 overflow-hidden flex-1 min-w-0">
                                 {file.batch_id ? (
                                   <span className="text-[8px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1 py-0.5 rounded shrink-0">
                                     Staff
@@ -1310,44 +1373,69 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                                 )}
                                 <span
                                   onClick={() => setPreviewingReceiptUrl(file.url || file.src)}
-                                  className="text-[9px] font-semibold text-zinc-700 hover:text-[#0B57D0] hover:underline truncate block cursor-pointer"
+                                  className="text-[10px] font-medium text-zinc-800 hover:text-[#0B57D0] hover:underline truncate block cursor-pointer"
                                   title="Click to preview receipt"
                                 >
                                   {file.item_desc || file.name}
                                 </span>
                               </div>
 
+                              {/* Right: Line # input + [Scan] + [Trash] + [Eye] */}
                               <div className="flex items-center gap-1.5 shrink-0">
-                                {/* Preview Eye Button */}
-                                <button
-                                  type="button"
-                                  onClick={() => setPreviewingReceiptUrl(file.url || file.src)}
-                                  className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-blue-50 border border-zinc-200 transition-colors cursor-pointer"
-                                  title="Preview Receipt"
+                                {/* Link to Item Line Number Input */}
+                                <div
+                                  className="flex items-center gap-0.5"
+                                  title={
+                                    isInputDisabled
+                                      ? `Auto-linked to item line #${file.line_number || idx + 1}`
+                                      : "Link receipt to item line #"
+                                  }
                                 >
-                                  <Eye className="w-3.5 h-3.5" />
-                                </button>
+                                  <span className="text-[9px] font-bold text-zinc-400">#</span>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    max={claimRows.length || 8}
+                                    value={file.line_number ?? ""}
+                                    disabled={isInputDisabled}
+                                    placeholder="-"
+                                    onChange={(e) => {
+                                      const val = e.target.value ? parseInt(e.target.value, 10) : undefined;
+                                      setReceiptImages((prev) =>
+                                        prev.map((img, i) => (i === idx ? { ...img, line_number: val } : img))
+                                      );
+                                    }}
+                                    className={`w-7 h-6 text-center text-[10px] font-bold rounded border ${
+                                      isInputDisabled
+                                        ? "bg-zinc-100 text-zinc-500 border-zinc-200 cursor-not-allowed"
+                                        : "bg-white text-zinc-900 border-zinc-300 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                    }`}
+                                  />
+                                </div>
 
-                                {/* Only show OCR Scan button for manual / direct receipts */}
+                                {/* 1. [Scan] Button */}
                                 {!isStaffClaimReceipt && (
                                   isScanningIndex === idx ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-500" />
+                                    <div className="w-10 h-6 flex items-center justify-center">
+                                      <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                                    </div>
                                   ) : file.extracted ? (
-                                    <span className="text-[8px] font-bold text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded border border-emerald-200 uppercase">
+                                    <span className="text-[8px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 uppercase whitespace-nowrap">
                                       Scanned
                                     </span>
                                   ) : (
                                     <button
                                       type="button"
                                       onClick={() => triggerExtraction(idx)}
-                                      className="text-[8px] font-bold text-zinc-700 hover:text-zinc-950 bg-zinc-200 border border-zinc-300 px-1 py-0.5 rounded uppercase cursor-pointer"
+                                      className="h-6 px-1.5 text-[9px] font-bold text-zinc-700 hover:text-zinc-950 bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 rounded uppercase cursor-pointer transition-colors"
+                                      title="Scan receipt with AI OCR"
                                     >
                                       Scan
                                     </button>
                                   )
                                 )}
 
-                                {/* Only show Delete button for direct manual receipts (locked for staff claims) */}
+                                {/* 2. [Trash Icon] Button */}
                                 {!isStaffClaimReceipt && (
                                   <button
                                     type="button"
@@ -1358,6 +1446,16 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                                     <Trash2 className="w-3.5 h-3.5" />
                                   </button>
                                 )}
+
+                                {/* 3. [Eye Icon] Preview Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => setPreviewingReceiptUrl(file.url || file.src)}
+                                  className="w-6 h-6 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-blue-50 border border-zinc-200 transition-colors cursor-pointer"
+                                  title="Preview Receipt"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                </button>
                               </div>
                             </div>
                           );
@@ -1932,11 +2030,11 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
               <table className="w-full border-collapse text-left table-fixed">
                 <thead className="bg-zinc-50/80 border-b border-zinc-200 sticky top-0 z-10">
                   <tr>
-                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[16%] text-left">Claim Date</th>
-                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[28%] text-left">Claim Header</th>
-                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[14%] text-left">Claim Amount</th>
-                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[16%] text-left">Status</th>
-                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[26%] text-left">Action</th>
+                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[13%] text-left">Claim Date</th>
+                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[23%] text-left">Claim Header</th>
+                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[12%] text-left">Claim Amount</th>
+                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[15%] text-left">Status</th>
+                    <th className="p-3 text-xs font-semibold text-zinc-600 w-[37%] text-left">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-100 text-xs">
@@ -2060,10 +2158,10 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
 
                           {/* 5. Action */}
                           <td className="p-3 text-left" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center justify-start gap-1.5 flex-wrap">
+                            <div className="flex items-center justify-start gap-1 flex-nowrap whitespace-nowrap">
                               <button
                                 onClick={() => setViewingClaimDetails(claim)}
-                                className="px-2.5 py-1 rounded-md bg-zinc-50 hover:bg-zinc-100 text-zinc-700 text-xs font-medium border border-zinc-200 transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+                                className="px-2 py-1 rounded-md bg-zinc-50 hover:bg-zinc-100 text-zinc-700 text-xs font-medium border border-zinc-200 transition-colors cursor-pointer flex items-center gap-1 shrink-0 whitespace-nowrap"
                                 title="View Itemized Particulars & Receipts"
                               >
                                 <Eye className="w-3.5 h-3.5 text-zinc-500" /> Details
@@ -2072,7 +2170,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                               <button
                                 onClick={() => handleGeneratePDF(claim)}
                                 disabled={isGenerating}
-                                className="px-2.5 py-1 rounded-md bg-white hover:bg-zinc-50 text-zinc-700 text-xs font-medium border border-zinc-200 transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+                                className="px-2 py-1 rounded-md bg-white hover:bg-zinc-50 text-zinc-700 text-xs font-medium border border-zinc-200 transition-colors cursor-pointer flex items-center gap-1 shrink-0 whitespace-nowrap"
                                 title="Print Official PDF Claim Form"
                               >
                                 <Printer className="w-3.5 h-3.5 text-zinc-500" /> Print
@@ -2081,7 +2179,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                               {isPaidReceived ? (
                                 <button
                                   disabled
-                                  className="px-2 py-1 rounded-md bg-zinc-100 text-zinc-400 border border-zinc-200 text-xs font-medium cursor-not-allowed flex items-center gap-1 shrink-0"
+                                  className="px-2 py-1 rounded-md bg-zinc-100 text-zinc-400 border border-zinc-200 text-xs font-medium cursor-not-allowed flex items-center gap-1 shrink-0 whitespace-nowrap"
                                   title="Editing is locked because payment has been received"
                                 >
                                   <Lock className="w-3 h-3" /> Edit
@@ -2099,7 +2197,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                                     setReceiptImages(claim.receipts || []);
                                     setActiveTab("form");
                                   }}
-                                  className="px-2 py-1 rounded-md bg-white hover:bg-blue-50 text-[#0B57D0] border border-blue-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+                                  className="px-2 py-1 rounded-md bg-white hover:bg-blue-50 text-[#0B57D0] border border-blue-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 shrink-0 whitespace-nowrap"
                                   title="Edit Claim"
                                 >
                                   <Edit className="w-3 h-3" /> Edit
@@ -2114,7 +2212,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                                     setPaymentReceivedByInput(profile?.name || "Finance");
                                     setPaymentReceivedRefInput("");
                                   }}
-                                  className="px-2.5 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+                                  className="px-2 py-1 rounded-md bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 shrink-0 whitespace-nowrap"
                                   title="Record payment received from Finance"
                                 >
                                   <Check className="w-3 h-3" /> Receive Payment
@@ -2122,12 +2220,20 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                               ) : (
                                 <button
                                   onClick={() => handleRevokeReceivePayment(claim)}
-                                  className="px-2 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 shrink-0"
+                                  className="px-2 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 shrink-0 whitespace-nowrap"
                                   title="Revoke payment received status and unlock editing"
                                 >
                                   <RotateCcw className="w-3 h-3" /> Revoke
                                 </button>
                               )}
+
+                              <button
+                                onClick={() => handleDeleteSubmittedClaim(claim)}
+                                className="px-2 py-1 rounded-md bg-white hover:bg-red-50 text-red-600 border border-red-200 text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 shrink-0 whitespace-nowrap"
+                                title="Delete Submitted Claim"
+                              >
+                                <Trash2 className="w-3 h-3" /> Delete
+                              </button>
                             </div>
                           </td>
                         </tr>
@@ -2674,6 +2780,12 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                 Created: {formatDateDisplay(viewingClaimDetails.created_at)}
               </span>
               <div className="flex items-center gap-2">
+                <CustomButton
+                  variant="danger"
+                  onClick={() => handleDeleteSubmittedClaim(viewingClaimDetails)}
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete
+                </CustomButton>
                 <CustomButton
                   variant="secondary"
                   onClick={() => handleGeneratePDF(viewingClaimDetails)}
