@@ -23,7 +23,8 @@ import {
   Loader2,
   Globe,
   Download,
-  FileText
+  FileText,
+  Mail
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { generateExportCatalogPdf } from "@/utils/catalogPdf";
@@ -132,7 +133,9 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
     ],
     booking_start_date: "2026-08-27",
     booking_end_date: "2026-08-29",
-    footer_showcase_text: "Fine Food Australia 2026 Official Exhibitor Showcase"
+    footer_showcase_text: "HSG Global Official Export & Trade Showcase",
+    email_subject_tag: "HSG Global Trade",
+    email_greeting: "Thank you for your interest in HSG Global Pte Ltd! We are pleased to share our official export catalog and product portfolio with you."
   });
 
   // Settings Tab States (Email & WhatsApp)
@@ -547,258 +550,286 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                 </span>
               </div>
 
-              {/* Row 1: Top Floating Banner & Footer Showcase Text side-by-side */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                <div>
-                  <label className="block text-[11px] font-bold text-zinc-700 mb-1">
-                    Top Floating Banner Bar
-                  </label>
-                  <input
-                    type="text"
-                    value={layoutConfig.top_banner}
-                    onChange={(e) =>
-                      setLayoutConfig({ ...layoutConfig, top_banner: e.target.value })
-                    }
-                    className="w-full h-8.5 px-3 rounded-lg border border-slate-200 focus:border-[#0B57D0] focus:ring-2 focus:ring-[#0B57D0]/20 text-xs text-zinc-900 bg-white"
-                  />
-                </div>
+              {/* 2-COLUMN STRUCTURED LAYOUT */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* LEFT COLUMN: WEBSITE & CATALOG LAYOUT */}
+                <div className="space-y-4">
+                  {/* Website Layout Section */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-1.5 pb-1 border-b border-slate-100">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      <span className="text-[11px] font-bold text-zinc-900 uppercase tracking-wider">
+                        Website Layout
+                      </span>
+                    </div>
 
-                <div>
-                  <label className="block text-[11px] font-bold text-zinc-700 mb-1">
-                    Footer Showcase Text (Public Web)
-                  </label>
-                  <input
-                    type="text"
-                    value={layoutConfig.footer_showcase_text}
-                    onChange={(e) =>
-                      setLayoutConfig({ ...layoutConfig, footer_showcase_text: e.target.value })
-                    }
-                    className="w-full h-8.5 px-3 rounded-lg border border-slate-200 focus:border-[#0B57D0] focus:ring-2 focus:ring-[#0B57D0]/20 text-xs text-zinc-900 bg-white"
-                  />
-                </div>
-              </div>
-
-              {/* Row 2: Booking Countdown Window */}
-              <div className="bg-[#f8fafc] border border-slate-200/80 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-zinc-800">
-                  <Calendar className="w-3.5 h-3.5 text-[#0B57D0]" />
-                  <span>Booking Countdown Window:</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-zinc-500 font-semibold">Start:</span>
-                    <input
-                      type="date"
-                      value={layoutConfig.booking_start_date}
-                      onChange={(e) =>
-                        setLayoutConfig({ ...layoutConfig, booking_start_date: e.target.value })
-                      }
-                      className="h-7 px-2 rounded-md border border-slate-200 text-xs text-zinc-900 bg-white"
-                    />
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[10px] text-zinc-500 font-semibold">Closes:</span>
-                    <input
-                      type="date"
-                      value={layoutConfig.booking_end_date}
-                      onChange={(e) =>
-                        setLayoutConfig({ ...layoutConfig, booking_end_date: e.target.value })
-                      }
-                      className="h-7 px-2 rounded-md border border-slate-200 text-xs text-zinc-900 bg-white"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Row 3: Hero Typography (Clean Single Direct Editor) */}
-              <div className="space-y-2.5 pt-1">
-                <div>
-                  <h4 className="text-xs font-bold text-zinc-800">
-                    Hero Typography &amp; Hook Text
-                  </h4>
-                  <p className="text-[11px] text-zinc-500">
-                    Configure the main hero title, gold accent, and introductory hook description.
-                  </p>
-                </div>
-
-                <div className="bg-[#f0f4f9]/70 border border-[#D3E3FD] rounded-xl p-3.5 shadow-xs space-y-2.5">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
                     <div>
-                      <label className="block text-[10px] font-bold text-zinc-700 mb-0.5">
-                        Headline 1 <span className="text-rose-500">*</span>
+                      <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
+                        Top Floating Banner
                       </label>
                       <input
                         type="text"
-                        required
-                        placeholder="Connecting Southeast Asian Taste"
-                        value={layoutConfig.hero_headline_1 || layoutConfig.hero_groups?.[0]?.headline_1 || ""}
-                        onChange={(e) => {
-                          setLayoutConfig({ ...layoutConfig, hero_headline_1: e.target.value });
-                        }}
-                        className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white"
+                        placeholder="e.g. OFFICIAL EXHIBITOR • HSG GLOBAL PTE LTD"
+                        value={layoutConfig.top_banner || ""}
+                        onChange={(e) =>
+                          setLayoutConfig({ ...layoutConfig, top_banner: e.target.value })
+                        }
+                        className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:border-[#0B57D0]"
                       />
                     </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-700 mb-0.5">
+                          Hero Text 1 <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Connecting Southeast Asian Taste"
+                          value={layoutConfig.hero_headline_1 || layoutConfig.hero_groups?.[0]?.headline_1 || ""}
+                          onChange={(e) =>
+                            setLayoutConfig({ ...layoutConfig, hero_headline_1: e.target.value })
+                          }
+                          className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:border-[#0B57D0]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-700 mb-0.5">
+                          Hero Text 2 (Gold Accent) <span className="text-rose-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="To Global Shelves & Kitchens"
+                          value={layoutConfig.hero_headline_2 || layoutConfig.hero_groups?.[0]?.headline_2 || ""}
+                          onChange={(e) =>
+                            setLayoutConfig({ ...layoutConfig, hero_headline_2: e.target.value })
+                          }
+                          className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:border-[#0B57D0]"
+                        />
+                      </div>
+                    </div>
+
                     <div>
                       <label className="block text-[10px] font-bold text-zinc-700 mb-0.5">
-                        Headline 2 (Gold Accent) <span className="text-rose-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="To Australian Shelves & Kitchens"
-                        value={layoutConfig.hero_headline_2 || layoutConfig.hero_groups?.[0]?.headline_2 || ""}
-                        onChange={(e) => {
-                          setLayoutConfig({ ...layoutConfig, hero_headline_2: e.target.value });
-                        }}
-                        className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white"
-                      />
-                    </div>
-                    <div className="md:col-span-2">
-                      <label className="block text-[10px] font-bold text-zinc-700 mb-0.5">
-                        Subtext Description <span className="text-rose-500">*</span>
+                        Hero Subtext <span className="text-rose-500">*</span>
                       </label>
                       <textarea
                         rows={2}
                         required
-                        placeholder="Ready-to-cook authentic Asian culinary pastes, ambient Halal food, and refreshing beverages for Australian supermarkets & foodservice — and your trusted FMCG distribution gateway into Singapore."
+                        placeholder="Ready-to-cook authentic Asian culinary pastes, ambient Halal food, and refreshing beverages..."
                         value={layoutConfig.hero_subtext || layoutConfig.hero_groups?.[0]?.subtext || ""}
-                        onChange={(e) => {
-                          setLayoutConfig({ ...layoutConfig, hero_subtext: e.target.value });
-                        }}
+                        onChange={(e) =>
+                          setLayoutConfig({ ...layoutConfig, hero_subtext: e.target.value })
+                        }
+                        className="w-full p-2 rounded-lg border border-slate-200 text-[11px] text-zinc-900 bg-white resize-none focus:border-[#0B57D0]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Catalog Layout Section */}
+                  <div className="space-y-2.5 pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5 pb-1 border-b border-slate-100">
+                      <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
+                      <span className="text-[11px] font-bold text-zinc-900 uppercase tracking-wider">
+                        Catalog Layout (PDF Export)
+                      </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
+                        Catalog Header Title
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="OFFICIAL EXPORT PRODUCT CATALOG"
+                        value={layoutConfig.pdf_header_title ?? "OFFICIAL EXPORT PRODUCT CATALOG"}
+                        onChange={(e) =>
+                          setLayoutConfig({ ...layoutConfig, pdf_header_title: e.target.value })
+                        }
+                        className="w-full h-7.5 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
+                        Catalog Subtext (Contact &amp; Terms)
+                      </label>
+                      <textarea
+                        rows={2}
+                        placeholder="Contact: sales@hsg-global.com | hsgglobal.sg • Global Foodservice & Retail"
+                        value={layoutConfig.pdf_subtext ?? "Contact: sales@hsg-global.com | hsgglobal.sg\nSingapore • Malaysia • Global Foodservice & Retail FMCG | FOB / CIF Terms"}
+                        onChange={(e) =>
+                          setLayoutConfig({ ...layoutConfig, pdf_subtext: e.target.value })
+                        }
                         className="w-full p-2 rounded-lg border border-slate-200 text-[11px] text-zinc-900 bg-white resize-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
+                        Catalog Footer Text
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Official Export Catalog"
+                        value={layoutConfig.pdf_footer_text ?? "Official Export Catalog"}
+                        onChange={(e) =>
+                          setLayoutConfig({ ...layoutConfig, pdf_footer_text: e.target.value })
+                        }
+                        className="w-full h-7.5 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white"
                       />
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Row 4: 3 Feature Value Proposition Cards (Tight Horizontal Grid) */}
-              <div className="pt-2 border-t border-slate-100 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-bold text-zinc-900 uppercase tracking-wider">
-                    Feature Value Proposition Highlights (3 Cards)
-                  </span>
-                  <span className="text-[10px] text-zinc-400 font-medium">
-                    Displayed below Hero with gold icons
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                  {[0, 1, 2].map((idx) => {
-                    const card = layoutConfig.feature_cards?.[idx] || {
-                      icon: idx === 0 ? "Flame" : idx === 1 ? "ShieldCheck" : "Store",
-                      title: idx === 0 ? "Easy to Cook & Ready to Use" : idx === 1 ? "100% Halal & Ambient Ready" : "Direct Supermarket & Retail Network",
-                      description: idx === 0 ? "Pre-sautéed natural spice bases and pastes. Drastically cuts kitchen preparation from hours to minutes." : idx === 1 ? "Sterile retort packaging allows 18–24 months ambient shelf-life. Certified Halal, HACCP & ISO compliant." : "Supplying leading supermarket chains, hypermarkets, and HORECA. We help brands enter regional & international markets."
-                    };
-
-                    const updateCard = (field: string, val: string) => {
-                      const updated = [...(layoutConfig.feature_cards || [
-                        { icon: "Flame", title: "Easy to Cook & Ready to Use", description: "Pre-sautéed natural spice bases and pastes. Drastically cuts kitchen preparation from hours to minutes." },
-                        { icon: "ShieldCheck", title: "100% Halal & Ambient Ready", description: "Sterile retort packaging allows 18–24 months ambient shelf-life. Certified Halal, HACCP & ISO compliant." },
-                        { icon: "Store", title: "Direct Supermarket & Retail Network", description: "Supplying leading supermarket chains, hypermarkets, and HORECA. We help brands enter regional & international markets." }
-                      ])];
-                      updated[idx] = { ...updated[idx], [field]: val };
-                      setLayoutConfig({ ...layoutConfig, feature_cards: updated });
-                    };
-
-                    return (
-                      <div key={`feat-card-${idx}`} className="bg-[#f8fafc] border border-slate-200 rounded-xl p-2.5 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[10px] font-bold text-zinc-700">Card #{idx + 1}</span>
-                          <select
-                            value={card.icon || "Flame"}
-                            onChange={(e) => updateCard("icon", e.target.value)}
-                            className="h-6 px-1.5 text-[10px] font-semibold bg-white border border-slate-200 rounded text-zinc-800 cursor-pointer"
-                          >
-                            <option value="Flame">🔥 Flame</option>
-                            <option value="ShieldCheck">🛡️ ShieldCheck</option>
-                            <option value="Store">🏪 Store</option>
-                            <option value="Globe2">🌐 Globe</option>
-                            <option value="Award">🏆 Award</option>
-                            <option value="Package">📦 Package</option>
-                            <option value="Utensils">🍴 Utensils</option>
-                            <option value="Truck">🚚 Truck</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <input
-                            type="text"
-                            value={card.title || ""}
-                            onChange={(e) => updateCard("title", e.target.value)}
-                            placeholder="Card Title..."
-                            className="w-full h-7 px-2 rounded-md border border-slate-200 text-[11px] font-semibold text-zinc-900 bg-white"
-                          />
-                        </div>
-
-                        <div>
-                          <textarea
-                            rows={2}
-                            value={card.description || ""}
-                            onChange={(e) => updateCard("description", e.target.value)}
-                            placeholder="Card description..."
-                            className="w-full p-1.5 rounded-md border border-slate-200 text-[10px] text-zinc-700 bg-white resize-none"
-                          />
-                        </div>
+                {/* RIGHT COLUMN: EVENTS, HIGHLIGHT CARDS, FOOTER & EMAIL TEMPLATES */}
+                <div className="space-y-4">
+                  {/* Website Layout (Dates, Highlights & Footer) */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                      <div className="flex items-center gap-1.5">
+                        <Calendar className="w-3.5 h-3.5 text-[#0B57D0]" />
+                        <span className="text-[11px] font-bold text-zinc-900 uppercase tracking-wider">
+                          Website Controls &amp; Highlights
+                        </span>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
+                      <div className="flex items-center gap-1.5 text-[10px] text-zinc-600">
+                        <span className="font-semibold text-zinc-400">Event Date:</span>
+                        <input
+                          type="date"
+                          value={layoutConfig.booking_start_date}
+                          onChange={(e) =>
+                            setLayoutConfig({ ...layoutConfig, booking_start_date: e.target.value })
+                          }
+                          className="h-6 px-1.5 rounded border border-slate-200 text-[11px] text-zinc-800 bg-white"
+                        />
+                        <span className="text-zinc-400">-</span>
+                        <input
+                          type="date"
+                          value={layoutConfig.booking_end_date}
+                          onChange={(e) =>
+                            setLayoutConfig({ ...layoutConfig, booking_end_date: e.target.value })
+                          }
+                          className="h-6 px-1.5 rounded border border-slate-200 text-[11px] text-zinc-800 bg-white"
+                        />
+                      </div>
+                    </div>
 
-              {/* Row 5: Export PDF Document Customization (Compact 3-Column Box) */}
-              <div className="pt-2 border-t border-slate-100 space-y-2">
-                <div className="flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
-                  <span className="text-[11px] font-bold text-zinc-900 uppercase tracking-wider">
-                    Export PDF Document Customization
-                  </span>
-                </div>
+                    {/* 3 Feature Highlight Cards (Direct inline rows) */}
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-600 mb-1">
+                        Feature Highlight Cards (3 Cards)
+                      </label>
+                      <div className="space-y-1.5">
+                        {[0, 1, 2].map((idx) => {
+                          const card = layoutConfig.feature_cards?.[idx] || {
+                            icon: idx === 0 ? "Flame" : idx === 1 ? "ShieldCheck" : "Store",
+                            title: idx === 0 ? "Easy to Cook & Ready to Use" : idx === 1 ? "100% Halal & Ambient Ready" : "Direct Supermarket & Retail Network",
+                            description: idx === 0 ? "Pre-sautéed natural spice bases and pastes." : idx === 1 ? "Sterile retort packaging allows 18–24 months ambient shelf-life." : "Supplying leading supermarket chains, hypermarkets, and HORECA."
+                          };
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
-                      PDF Header Title
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="FINE FOOD AUSTRALIA 2026 • OFFICIAL EXPORT PRODUCT CATALOG"
-                      value={layoutConfig.pdf_header_title ?? "FINE FOOD AUSTRALIA 2026 • OFFICIAL EXPORT PRODUCT CATALOG"}
-                      onChange={(e) =>
-                        setLayoutConfig({ ...layoutConfig, pdf_header_title: e.target.value })
-                      }
-                      className="w-full h-7.5 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white"
-                    />
+                          const updateCard = (field: string, val: string) => {
+                            const updated = [...(layoutConfig.feature_cards || [
+                              { icon: "Flame", title: "Easy to Cook & Ready to Use", description: "Pre-sautéed natural spice bases and pastes." },
+                              { icon: "ShieldCheck", title: "100% Halal & Ambient Ready", description: "Sterile retort packaging allows 18–24 months ambient shelf-life." },
+                              { icon: "Store", title: "Direct Supermarket & Retail Network", description: "Supplying leading supermarket chains, hypermarkets, and HORECA." }
+                            ])];
+                            updated[idx] = { ...updated[idx], [field]: val };
+                            setLayoutConfig({ ...layoutConfig, feature_cards: updated });
+                          };
+
+                          return (
+                            <div key={`feat-card-${idx}`} className="p-1.5 rounded-lg border border-slate-200 bg-slate-50/60 flex items-center gap-2">
+                              <select
+                                value={card.icon || "Flame"}
+                                onChange={(e) => updateCard("icon", e.target.value)}
+                                className="h-6 px-1 text-[10px] bg-white border border-slate-200 rounded text-zinc-700 cursor-pointer shrink-0"
+                              >
+                                <option value="Flame">🔥 Flame</option>
+                                <option value="ShieldCheck">🛡️ ShieldCheck</option>
+                                <option value="Store">🏪 Store</option>
+                                <option value="Globe2">🌐 Globe</option>
+                                <option value="Award">🏆 Award</option>
+                                <option value="Package">📦 Package</option>
+                                <option value="Utensils">🍴 Utensils</option>
+                                <option value="Truck">🚚 Truck</option>
+                              </select>
+                              <input
+                                type="text"
+                                value={card.title || ""}
+                                onChange={(e) => updateCard("title", e.target.value)}
+                                placeholder={`Card #${idx + 1} Title`}
+                                className="w-1/3 h-6 px-2 rounded border border-slate-200 text-[11px] font-semibold text-zinc-900 bg-white"
+                              />
+                              <input
+                                type="text"
+                                value={card.description || ""}
+                                onChange={(e) => updateCard("description", e.target.value)}
+                                placeholder="Short description..."
+                                className="flex-1 h-6 px-2 rounded border border-slate-200 text-[10px] text-zinc-600 bg-white"
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
+                        Website Footer Showcase Subtitle
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Official Export Showcase"
+                        value={layoutConfig.footer_showcase_text || ""}
+                        onChange={(e) =>
+                          setLayoutConfig({ ...layoutConfig, footer_showcase_text: e.target.value })
+                        }
+                        className="w-full h-7.5 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:border-[#0B57D0]"
+                      />
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
-                      PDF Footer Text
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Fine Food Australia 2026 Official Export Catalog"
-                      value={layoutConfig.pdf_footer_text ?? "Fine Food Australia 2026 Official Export Catalog"}
-                      onChange={(e) =>
-                        setLayoutConfig({ ...layoutConfig, pdf_footer_text: e.target.value })
-                      }
-                      className="w-full h-7.5 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white"
-                    />
-                  </div>
+                  {/* Email Template Controls */}
+                  <div className="space-y-2.5 pt-2 border-t border-slate-100">
+                    <div className="flex items-center gap-1.5 pb-1 border-b border-slate-100">
+                      <Mail className="w-3.5 h-3.5 text-[#0B57D0]" />
+                      <span className="text-[11px] font-bold text-zinc-900 uppercase tracking-wider">
+                        Email Template Settings
+                      </span>
+                    </div>
 
-                  <div>
-                    <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
-                      PDF Subtext (Contact &amp; Terms)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="Contact: sales@hsg-global.com | hsgglobal.sg • FOB / CIF"
-                      value={layoutConfig.pdf_subtext ?? "Contact: sales@hsg-global.com | hsgglobal.sg\nSingapore • Malaysia • Australia • Global Foodservice & Retail FMCG | FOB / CIF Terms"}
-                      onChange={(e) =>
-                        setLayoutConfig({ ...layoutConfig, pdf_subtext: e.target.value })
-                      }
-                      className="w-full h-7.5 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white"
-                    />
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
+                        Email Event / Lead Subject Tag
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="HSG Global Trade"
+                        value={layoutConfig.email_subject_tag ?? "HSG Global Trade"}
+                        onChange={(e) =>
+                          setLayoutConfig({ ...layoutConfig, email_subject_tag: e.target.value })
+                        }
+                        className="w-full h-7.5 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:border-[#0B57D0]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-600 mb-0.5">
+                        Prospect Email Greeting Text
+                      </label>
+                      <textarea
+                        rows={2}
+                        placeholder="Thank you for your interest in HSG Global Pte Ltd! We are pleased to share our official export catalog and product portfolio with you."
+                        value={layoutConfig.email_greeting ?? "Thank you for your interest in HSG Global Pte Ltd! We are pleased to share our official export catalog and product portfolio with you."}
+                        onChange={(e) =>
+                          setLayoutConfig({ ...layoutConfig, email_greeting: e.target.value })
+                        }
+                        className="w-full p-2 rounded-lg border border-slate-200 text-[11px] text-zinc-900 bg-white resize-none focus:border-[#0B57D0]"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
