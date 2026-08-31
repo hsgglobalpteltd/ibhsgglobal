@@ -213,7 +213,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
         address: "",
         zones: "",
         pin_locations: "",
-        status: "Active",
+        status: "",
         store_rank: ""
       });
     }
@@ -726,12 +726,14 @@ function StoreEditForm({
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Status</label>
             <select
-              value={formData.status || "Active"}
+              value={formData.status || ""}
               onChange={(e) => handleChange("status", e.target.value)}
               className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold cursor-pointer"
             >
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
+              <option value="">-- Select Status --</option>
+              <option value="Carry">Carry</option>
+              <option value="Not Carry">Not Carry</option>
+              <option value="Store Closed">Store Closed</option>
             </select>
           </div>
 
