@@ -5,6 +5,7 @@ import { FeatureCard } from "../feature-card";
 import { FeatureComingSoon } from "../FeatureComingSoon";
 import { InventoryModule } from "../modules/InventoryModule";
 import { DisposeRecordModule } from "../modules/DisposeRecordModule";
+import { ShelfTagBarcodePrintModule } from "../modules/ShelfTagBarcodePrintModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canViewModule } from "@/lib/permissions";
 import { UserProfile } from "@/lib/api";
@@ -66,6 +67,9 @@ export function StockPage({ profile, breadcrumbPath }: StockPageProps) {
         return <InventoryModule profile={profile} />;
       case "Dispose Record":
         return <DisposeRecordModule profile={profile} />;
+      case "Print Manager":
+      case "Shelf Tag & Barcode Print":
+        return <ShelfTagBarcodePrintModule profile={profile} />;
       default:
         return null;
     }

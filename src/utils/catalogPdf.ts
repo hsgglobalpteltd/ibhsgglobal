@@ -287,7 +287,17 @@ export async function generateExportCatalogPdf(
         else if (skuLower.includes("400g") || skuLower.includes("200g")) ctnPerPlt = "96";
       }
 
-      const weight = item.carton_weight ? `${item.carton_weight} kg` : "-";
+      let weight = "-";
+      if (item.carton_weight) {
+        const numWeight = Number(item.carton_weight);
+        if (!isNaN(numWeight) && numWeight > 0) {
+          // If in database as grams (e.g. >= 100), convert to kg (e.g. 5600g -> 5.6 kg)
+          const inKg = numWeight >= 100 ? (numWeight / 1000).toFixed(2).replace(/\.?0+$/, '') : numWeight.toString();
+          weight = `${inKg} kg`;
+        } else {
+          weight = `${item.carton_weight}`;
+        }
+      }
 
       const dimParts: string[] = [];
       if (item.carton_l_mm) dimParts.push(`${(Number(item.carton_l_mm) / 10).toFixed(1).replace(/\.0$/, '')}`);

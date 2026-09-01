@@ -34,7 +34,7 @@ interface Employee {
   logs?: string; // Audit logs stringified JSON
 }
 
-const AVAILABLE_ROLES = ["Picker", "Driver", "Merchandiser", "Promoter", "Warehouse", "Tiktok"];
+const AVAILABLE_ROLES = ["Picker", "Driver", "Merchandiser", "Promoter", "Staff Claim", "Warehouse", "Tiktok"];
 
 export function EmployeesModule({ profile }: EmployeesModuleProps) {
   const [employees, setEmployees] = React.useState<Employee[]>([]);

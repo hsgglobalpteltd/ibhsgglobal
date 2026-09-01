@@ -100,6 +100,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Dispose Record",
         description: "Manage and record damaged, returned, or expired goods disposal.",
+      },
+      {
+        title: "Print Manager",
+        description: "Generate and export custom print templates and warehouse documents as PDF.",
       }
     ]
   },

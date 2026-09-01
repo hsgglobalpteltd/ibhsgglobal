@@ -1460,10 +1460,18 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-bold text-zinc-600 mb-1">Gross Carton Wt (kg)</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-[11px] font-bold text-zinc-600">Carton Weight (g)</label>
+                    {editingProduct.carton_weight && !isNaN(Number(editingProduct.carton_weight)) && (
+                      <span className="text-[10px] text-[#0B57D0] font-semibold">
+                        {(Number(editingProduct.carton_weight) >= 100 ? Number(editingProduct.carton_weight) / 1000 : Number(editingProduct.carton_weight)).toFixed(2)} kg
+                      </span>
+                    )}
+                  </div>
                   <input
-                    type="text"
-                    placeholder="e.g. 5.6"
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 5600 (grams)"
                     value={editingProduct.carton_weight || ""}
                     onChange={(e) =>
                       setEditingProduct({ ...editingProduct, carton_weight: e.target.value })
