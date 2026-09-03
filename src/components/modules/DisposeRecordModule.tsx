@@ -13,7 +13,6 @@ import {
   Search, 
   Image as ImageIcon, 
   Loader2, 
-  Calendar,
   AlertCircle
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
@@ -36,13 +35,13 @@ interface DisposeItem {
 
 interface DisposeRecord {
   id: string;
-  Date: number; // Unix epoch ms
-  Reference: string;
-  Items: string; // JSON string of DisposeItem[]
-  Cost: number;
-  Dispose_By: string;
-  Remarks: string;
-  Proof: string; // JSON string of string[] (URLs)
+  date: number; // Unix epoch ms
+  reference: string;
+  items: string; // JSON string of DisposeItem[] or DisposeItem[]
+  cost: number;
+  dispose_by: string;
+  remarks: string;
+  proof: string; // JSON string of string[] or string[]
 }
 
 export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
@@ -75,48 +74,41 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
   const [filteredProducts, setFilteredProducts] = React.useState<any[]>([]);
   const [showProductDropdown, setShowProductDropdown] = React.useState(false);
 
-  // Global search input for DataTable
-  const [searchQuery, setSearchQuery] = React.useState("");
-
   // Resolve Product Name by SKU
   const lookupProductName = React.useCallback((sku: string) => {
     const prod = products.find(p => String(p.sku || "").trim().toLowerCase() === String(sku).trim().toLowerCase());
-    return prod ? (prod["Display Name"] || prod.Display_Name || prod.Name || sku) : sku;
+    return prod ? (prod.display_name || prod.display_name || prod.name || sku) : sku;
   }, [products]);
 
   // Load Dispose Records and Products
   const loadData = React.useCallback(async (forceSync = false) => {
     setFetching(true);
     try {
-      // 1. Load Products from cache/fetch
-      let cachedProds = localStorage.getItem("products_DB_data");
+      // 1. Load Products from cache/fetch via dedicated endpoint
+      let cachedProds = localStorage.getItem("dispose_products_data");
       let prodList = [];
       if (cachedProds && !forceSync) {
-        prodList = JSON.parse(cachedProds);
-        setProducts(prodList);
-      } else {
-        const prodRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
+        try {
+          prodList = JSON.parse(cachedProds);
+          setProducts(prodList);
+        } catch {}
+      }
+      
+      if (prodList.length === 0 || forceSync) {
+        const prodRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/dispose-goods/products");
         if (prodRes.ok) {
           prodList = await prodRes.json();
-          localStorage.setItem("products_DB_data", JSON.stringify(prodList));
+          localStorage.setItem("dispose_products_data", JSON.stringify(prodList));
           setProducts(prodList);
         }
       }
 
-      // 2. Load Dispose Records
-      const sheetName = "Dispose_Goods";
-      if (forceSync) {
-        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`, {
-          method: "POST"
-        });
-      }
-      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${sheetName}`);
+      // 2. Load Dispose Records via dedicated endpoint
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/dispose-goods/list");
       if (res.ok) {
         const dataList = await res.json();
-        localStorage.setItem(`${sheetName}_data`, JSON.stringify(dataList));
+        localStorage.setItem("dispose_goods_data", JSON.stringify(dataList));
         setRecords(dataList);
-      } else if (res.status === 404) {
-        console.warn("Dispose_Goods database sheet missing. Please initialize in spreadsheet.");
       }
     } catch (err: any) {
       showToast("Error loading data: " + err.message, "error");
@@ -139,13 +131,47 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
   }, [loadData]);
 
   // Format Unix timestamp as dd/mm/yyyy
-  const formatDateDisplay = (timestamp: number) => {
-    if (!timestamp) return "~";
-    const date = new Date(timestamp);
+  const formatDateDisplay = (timestamp: number | string) => {
+    const num = Number(timestamp);
+    if (!num || isNaN(num)) return "~";
+    const date = new Date(num);
     const day = String(date.getDate()).padStart(2, "0");
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const year = date.getFullYear();
     return `${day}/${month}/${year}`;
+  };
+
+  // Safe helper to parse items array from string or array
+  const parseItems = (itemsRaw: any): DisposeItem[] => {
+    if (!itemsRaw) return [];
+    if (Array.isArray(itemsRaw)) return itemsRaw;
+    if (typeof itemsRaw === "string") {
+      try {
+        const parsed = JSON.parse(itemsRaw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
+  // Safe helper to parse proof array from string, array, or comma-separated list
+  const parseProofPhotos = (proofRaw: any): string[] => {
+    if (!proofRaw) return [];
+    if (Array.isArray(proofRaw)) return proofRaw.filter(Boolean);
+    if (typeof proofRaw === "string") {
+      const trimmed = proofRaw.trim();
+      if (!trimmed || trimmed === "[]") return [];
+      if (trimmed.startsWith("[")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+        } catch {}
+      }
+      return trimmed.split(",").map(s => s.trim()).filter(Boolean);
+    }
+    return [];
   };
 
   // Image Compressor (resizes and adjusts JPEG quality until size < 100KB)
@@ -265,7 +291,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     const q = productQuery.toLowerCase();
     const matches = products.filter(p => 
       String(p.sku || "").toLowerCase().includes(q) ||
-      String(p["Display Name"] || p.Display_Name || "").toLowerCase().includes(q)
+      String(p.display_name || p.name || "").toLowerCase().includes(q)
     );
     setFilteredProducts(matches.slice(0, 10));
   }, [productQuery, products]);
@@ -280,7 +306,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     const newItem: DisposeItem = {
       sku: prod.sku,
       qty: 1,
-      cost: Number(prod.Cost) || 0
+      cost: Number(prod.cost) || 0
     };
     setFormItems(prev => [...prev, newItem]);
     setProductQuery("");
@@ -317,31 +343,25 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
 
   // Open Form Panel for Edit
   const handleOpenEditForm = (record: DisposeRecord) => {
-    if (record.Reference) {
+    if (record.reference) {
       showToast("Cannot edit a locked record.", "error");
       return;
     }
 
     // Convert epoch to YYYY-MM-DD
-    const dateObj = new Date(record.Date);
+    const dateEpoch = Number(record.date) || Date.now();
+    const dateObj = new Date(dateEpoch);
     const yyyy = dateObj.getFullYear();
     const mm = String(dateObj.getMonth() + 1).padStart(2, "0");
     const dd = String(dateObj.getDate()).padStart(2, "0");
     
-    let parsedItems: DisposeItem[] = [];
-    try {
-      parsedItems = JSON.parse(record.Items || "[]");
-    } catch (e) {}
-
-    let parsedPhotos: string[] = [];
-    try {
-      parsedPhotos = JSON.parse(record.Proof || "[]");
-    } catch (e) {}
+    const parsedItems = parseItems(record.items);
+    const parsedPhotos = parseProofPhotos(record.proof);
 
     setEditingRecord(record);
     setFormDate(`${yyyy}-${mm}-${dd}`);
-    setFormDisposeBy(record.Dispose_By || "");
-    setFormRemarks(record.Remarks || "");
+    setFormDisposeBy(record.dispose_by || "");
+    setFormRemarks(record.remarks || "");
     setFormItems(parsedItems);
     setFormPhotos(parsedPhotos);
     setView("form");
@@ -361,13 +381,13 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     
     const recordPayload: DisposeRecord = {
       id: recordId,
-      Date: epochDate,
-      Reference: editingRecord ? editingRecord.Reference : "",
-      Items: JSON.stringify(formItems),
-      Cost: totalDisposalCost,
-      Dispose_By: formDisposeBy,
-      Remarks: formRemarks,
-      Proof: JSON.stringify(formPhotos)
+      date: epochDate,
+      reference: editingRecord ? editingRecord.reference : "",
+      items: JSON.stringify(formItems),
+      cost: totalDisposalCost,
+      dispose_by: formDisposeBy,
+      remarks: formRemarks,
+      proof: JSON.stringify(formPhotos)
     };
 
     // Optimistic UI updates
@@ -380,19 +400,15 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     }
 
     setRecords(updatedRecords);
-    localStorage.setItem("Dispose_Goods_data", JSON.stringify(updatedRecords));
+    localStorage.setItem("dispose_goods_data", JSON.stringify(updatedRecords));
     setView("list");
 
-    // Silent background sync
+    // Background sync via dedicated endpoint
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/dispose-goods/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          table: "Dispose_Goods",
-          action: editingRecord ? "update" : "insert",
-          data: recordPayload
-        })
+        body: JSON.stringify(recordPayload)
       });
 
       if (!res.ok) {
@@ -403,13 +419,13 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     } catch (err: any) {
       showToast("Failed to save changes. Rolling back.", "error");
       setRecords(originalRecords);
-      localStorage.setItem("Dispose_Goods_data", JSON.stringify(originalRecords));
+      localStorage.setItem("dispose_goods_data", JSON.stringify(originalRecords));
     }
   };
 
   // Delete Record
   const handleDeleteRecord = async (record: DisposeRecord) => {
-    if (record.Reference) {
+    if (record.reference) {
       showToast("Cannot delete a locked record.", "error");
       return;
     }
@@ -423,17 +439,13 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     const updatedRecords = records.filter(r => r.id !== record.id);
     
     setRecords(updatedRecords);
-    localStorage.setItem("Dispose_Goods_data", JSON.stringify(updatedRecords));
+    localStorage.setItem("dispose_goods_data", JSON.stringify(updatedRecords));
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/dispose-goods/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          table: "Dispose_Goods",
-          action: "delete",
-          data: { id: record.id }
-        })
+        body: JSON.stringify({ id: record.id })
       });
 
       if (!res.ok) {
@@ -444,7 +456,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     } catch (err: any) {
       showToast("Failed to delete record. Rolling back.", "error");
       setRecords(originalRecords);
-      localStorage.setItem("Dispose_Goods_data", JSON.stringify(originalRecords));
+      localStorage.setItem("dispose_goods_data", JSON.stringify(originalRecords));
     }
   };
 
@@ -457,23 +469,22 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
       return;
     }
 
-    const targetRecord = { ...lockingRecord, Reference: lockReference.trim() };
+    const targetRecord = { ...lockingRecord, reference: lockReference.trim() };
     const originalRecords = [...records];
     const updatedRecords = records.map(r => r.id === lockingRecord.id ? targetRecord : r);
 
     setRecords(updatedRecords);
-    localStorage.setItem("Dispose_Goods_data", JSON.stringify(updatedRecords));
+    localStorage.setItem("dispose_goods_data", JSON.stringify(updatedRecords));
     setIsLockOpen(false);
     setLockReference("");
 
     try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db-write", {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/dispose-goods/lock", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          table: "Dispose_Goods",
-          action: "update",
-          data: targetRecord
+          id: lockingRecord.id,
+          reference: targetRecord.reference
         })
       });
 
@@ -486,7 +497,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     } catch (err: any) {
       showToast("Failed to lock record. Rolling back.", "error");
       setRecords(originalRecords);
-      localStorage.setItem("Dispose_Goods_data", JSON.stringify(originalRecords));
+      localStorage.setItem("dispose_goods_data", JSON.stringify(originalRecords));
     }
   };
 
@@ -518,15 +529,8 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
   const handlePrintProof = async (record: DisposeRecord) => {
     showToast("Generating disposal proof document...", "info");
     
-    let parsedItems: DisposeItem[] = [];
-    try {
-      parsedItems = JSON.parse(record.Items || "[]");
-    } catch (e) {}
-
-    let parsedPhotos: string[] = [];
-    try {
-      parsedPhotos = JSON.parse(record.Proof || "[]");
-    } catch (e) {}
+    const parsedItems = parseItems(record.items);
+    const parsedPhotos = parseProofPhotos(record.proof);
 
     const doc = new jsPDF({
       orientation: "portrait",
@@ -557,17 +561,17 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     doc.setFont("helvetica", "bold");
     doc.text("Date:", 15, 41);
     doc.setFont("helvetica", "normal");
-    doc.text(formatDateDisplay(record.Date), 55, 41);
+    doc.text(formatDateDisplay(record.date), 55, 41);
 
     doc.setFont("helvetica", "bold");
     doc.text("Disposed By:", 15, 47);
     doc.setFont("helvetica", "normal");
-    doc.text(record.Dispose_By || "~", 55, 47);
+    doc.text(record.dispose_by || "~", 55, 47);
 
     doc.setFont("helvetica", "bold");
     doc.text("Remarks:", 15, 53);
     doc.setFont("helvetica", "normal");
-    const wrappedRemarks = doc.splitTextToSize(record.Remarks || "~", 140);
+    const wrappedRemarks = doc.splitTextToSize(record.remarks || "~", 140);
     doc.text(wrappedRemarks, 55, 53);
 
     const remarksHeight = Math.max(1, wrappedRemarks.length) * 6;
@@ -577,7 +581,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
     doc.text("Total Disposal Cost:", 15, costY);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(220, 38, 38); // red-600
-    doc.text(`$${Number(record.Cost || 0).toFixed(2)}`, 55, costY);
+    doc.text(`$${Number(record.cost || 0).toFixed(2)}`, 55, costY);
 
     // Table Header
     doc.setTextColor(63, 63, 70);
@@ -623,8 +627,6 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
       currentY += rowHeight;
     });
 
-    let endY = currentY + 15;
-
     // Render Proof Images Under Table
     if (parsedPhotos.length > 0) {
       let imageStartY = currentY + 10;
@@ -665,7 +667,6 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
           }
         }
       }
-      endY = photoY;
     }
 
     // Add Signature Lines to the bottom of EVERY page
@@ -684,7 +685,7 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
       doc.line(15, sigY + 12, 75, sigY + 12);
       doc.text("Dispose By", 15, sigY + 17);
       doc.setFont("helvetica", "bold");
-      doc.text(record.Dispose_By || "~", 15, sigY + 22);
+      doc.text(record.dispose_by || "~", 15, sigY + 22);
 
       // Acknowledge By Signature Line
       doc.setFont("helvetica", "normal");
@@ -706,39 +707,39 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
       accessor: "actions"
     },
     {
-      id: "Date",
+      id: "date",
       header: "Date",
-      accessor: "Date"
+      accessor: "date"
     },
     {
-      id: "Reference",
+      id: "reference",
       header: "Reference",
-      accessor: "Reference"
+      accessor: "reference"
     },
     {
-      id: "Items",
+      id: "items",
       header: "Dispose Items",
-      accessor: "Items"
+      accessor: "items"
     },
     {
-      id: "Cost",
+      id: "cost",
       header: "Dispose Cost",
-      accessor: "Cost"
+      accessor: "cost"
     },
     {
-      id: "Dispose_By",
+      id: "dispose_by",
       header: "Dispose By",
-      accessor: "Dispose_By"
+      accessor: "dispose_by"
     },
     {
-      id: "Remarks",
+      id: "remarks",
       header: "Remarks",
-      accessor: "Remarks"
+      accessor: "remarks"
     },
     {
-      id: "Proof",
+      id: "proof",
       header: "Proof",
-      accessor: "Proof"
+      accessor: "proof"
     }
   ], []);
 
@@ -746,16 +747,10 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
   const tableData = React.useMemo(() => {
     return records.map((record) => {
       // 1. Parse items
-      let parsedItems: DisposeItem[] = [];
-      try {
-        parsedItems = JSON.parse(record.Items || "[]");
-      } catch (e) {}
+      const parsedItems = parseItems(record.items);
 
       // 2. Parse photos
-      let parsedPhotos: string[] = [];
-      try {
-        parsedPhotos = JSON.parse(record.Proof || "[]");
-      } catch (e) {}
+      const parsedPhotos = parseProofPhotos(record.proof);
 
       // 3. Render Badges list
       const itemsBadgeList = (
@@ -794,19 +789,18 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
         </div>
       );
 
-      // 5. Render custom Actions column
+      // 5. Render custom Actions column (Clean icon-only action buttons)
       const customActions = (
-        <div className="flex items-center gap-1.5 justify-end whitespace-nowrap min-w-[155px]">
-          {record.Reference ? (
+        <div className="flex items-center gap-1.5 justify-end whitespace-nowrap min-w-[120px]">
+          {record.reference ? (
             <>
               {/* Locked actions */}
               <button
                 onClick={() => handlePrintProof(record)}
-                className="h-[22px] px-2 bg-[#EEEEEE] hover:bg-blue-50 text-blue-600 hover:text-blue-700 border border-zinc-300 shadow-sm transition-colors cursor-pointer flex items-center gap-1 focus:outline-none text-[10px] font-bold rounded"
+                className="p-1 rounded bg-[#EEEEEE] hover:bg-blue-50 text-blue-600 hover:text-blue-700 border border-zinc-300/85 shadow-xs transition-colors cursor-pointer flex items-center justify-center focus:outline-none"
                 title="Print proof document"
               >
-                <Printer size={11} className="stroke-[2.5]" />
-                <span>Print</span>
+                <Printer size={12} className="stroke-[2.5]" />
               </button>
               <div title="This record is locked because a reference number is uploaded.">
                 <Lock size={13} className="text-zinc-400 ml-1" />
@@ -835,11 +829,10 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
               </button>
               <button
                 onClick={() => handlePrintProof(record)}
-                className="h-[22px] px-2 bg-[#EEEEEE] hover:bg-blue-50 text-blue-600 hover:text-blue-700 border border-zinc-300 shadow-sm transition-colors cursor-pointer flex items-center gap-1 focus:outline-none text-[10px] font-bold rounded"
+                className="p-1 rounded bg-[#EEEEEE] hover:bg-blue-50 text-blue-600 hover:text-blue-700 border border-zinc-300/85 shadow-xs transition-colors cursor-pointer flex items-center justify-center focus:outline-none"
                 title="Print proof document"
               >
-                <Printer size={11} className="stroke-[2.5]" />
-                <span>Print</span>
+                <Printer size={12} className="stroke-[2.5]" />
               </button>
               <button
                 onClick={() => handleDeleteRecord(record)}
@@ -858,27 +851,27 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
 
       return {
         ...record,
-        isLocked: !!record.Reference,
+        isLocked: !!record.reference,
         
         // Custom Render JSX elements
         actions: customActions,
-        Date: formatDateDisplay(record.Date),
-        Reference: record.Reference || "~",
-        Items: itemsBadgeList,
-        Cost: `$${Number(record.Cost || 0).toFixed(2)}`,
-        Dispose_By: record.Dispose_By || "~",
-        Remarks: record.Remarks || "~",
-        Proof: photoViewerButton,
+        date: formatDateDisplay(record.date),
+        reference: record.reference || "~",
+        items: itemsBadgeList,
+        cost: `$${Number(record.cost || 0).toFixed(2)}`,
+        dispose_by: record.dispose_by || "~",
+        remarks: record.remarks || "~",
+        proof: photoViewerButton,
 
         // Raw plain-text properties for search filters
-        actions_raw: record.Reference ? "locked" : "draft",
-        Date_raw: formatDateDisplay(record.Date),
-        Reference_raw: record.Reference || "",
-        Items_raw: itemsRawStr,
-        Cost_raw: String(record.Cost),
-        Dispose_By_raw: record.Dispose_By || "",
-        Remarks_raw: record.Remarks || "",
-        Proof_raw: `${parsedPhotos.length} photos`
+        actions_raw: record.reference ? "locked" : "draft",
+        date_raw: formatDateDisplay(record.date),
+        reference_raw: record.reference || "",
+        items_raw: itemsRawStr,
+        cost_raw: String(record.cost),
+        dispose_by_raw: record.dispose_by || "",
+        remarks_raw: record.remarks || "",
+        proof_raw: `${parsedPhotos.length} photos`
       };
     });
   }, [records, lookupProductName]);
@@ -904,13 +897,13 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
           </div>
 
           {/* Main Table Body */}
-          <div className="content-body flex-1 overflow-hidden flex flex-col">
+          <div className="content-body flex-1 w-full overflow-hidden flex flex-col">
             <DataTable
               columns={columns}
               data={tableData}
               title="Dispose Goods List"
               fetching={fetching}
-              height="h-[calc(100vh-220px)]"
+              height="h-full"
             />
           </div>
         </>
@@ -1071,9 +1064,9 @@ export function DisposeRecordModule({ profile }: DisposeRecordModuleProps) {
                             >
                               <div className="flex flex-col">
                                 <span className="font-bold text-zinc-800">{p.sku}</span>
-                                <span className="text-[10px] text-zinc-500 font-semibold">{p["Display Name"] || p.Display_Name || p.Name}</span>
+                                <span className="text-[10px] text-zinc-500 font-semibold">{p.display_name || p.name}</span>
                               </div>
-                              <span className="text-[10px] font-bold text-[#0B57D0]">${Number(p.Cost || 0).toFixed(2)}</span>
+                              <span className="text-[10px] font-bold text-[#0B57D0]">${Number(p.cost || 0).toFixed(2)}</span>
                             </div>
                           ))}
                         </div>

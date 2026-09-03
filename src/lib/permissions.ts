@@ -8,6 +8,7 @@ export type UserModulePermissions = Record<string, ModulePermission>;
 
 export interface PermissionProfile {
   role?: string;
+  employee_id?: string | null;
   pages_access?: string[] | any;
   modules_access?: any;
   active?: number;
@@ -20,6 +21,11 @@ export interface PermissionProfile {
  */
 export function getModulePermission(profile?: PermissionProfile | null, moduleTitle?: string): ModulePermission {
   if (!profile || !moduleTitle) {
+    return { view: false, edit: false, delete: false };
+  }
+
+  // Staff Claims is strictly hidden and disabled for accounts not bound to an employee record
+  if (moduleTitle === "Staff Claims" && !profile.employee_id) {
     return { view: false, edit: false, delete: false };
   }
 

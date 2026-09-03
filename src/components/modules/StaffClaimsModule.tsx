@@ -30,7 +30,8 @@ import {
   Check,
   Ban,
   ShieldCheck,
-  Edit3
+  Edit3,
+  Search
 } from "lucide-react";
 
 const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
@@ -38,19 +39,13 @@ const MAX_BATCH_LIMIT = 100.00;
 
 interface OperatorExpense {
   id: string;
-  user_email: string;
-  user_name: string;
-  employee_id?: string;
+  employee_id: string;
   employee_name?: string;
-  employee_role?: string;
-  paynow_number?: string;
   date: string;
   description: string;
   amount: number | string;
   remarks?: string;
-  receipt_name?: string;
   receipt_url: string;
-  receipt_file_key?: string;
   status: "unsubmitted" | "submitted" | "paid" | "rejected";
   batch_id?: string;
   created_at: number;
@@ -58,12 +53,8 @@ interface OperatorExpense {
 
 interface OperatorBatch {
   id: string;
-  user_email: string;
-  user_name: string;
-  employee_id?: string;
+  employee_id: string;
   employee_name?: string;
-  employee_role?: string;
-  paynow_number?: string;
   target_admin_email?: string;
   target_admin_name?: string;
   claim_date: string;
@@ -74,7 +65,6 @@ interface OperatorBatch {
     description: string;
     amount: number | string;
     remarks?: string;
-    receipt_name?: string;
     receipt_url: string;
   }>;
   total_amount: number | string;
@@ -108,8 +98,16 @@ function formatCleanPayNow(val?: string): string {
   return clean;
 }
 
-function formatDateDisplay(dStr?: string): string {
-  if (!dStr) return "";
+function formatDateDisplay(d?: string | number): string {
+  if (!d) return "";
+  if (typeof d === "number") {
+    const dateObj = new Date(d);
+    const day = String(dateObj.getDate()).padStart(2, "0");
+    const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+    const year = dateObj.getFullYear();
+    return `${day}/${month}/${year}`;
+  }
+  const dStr = String(d);
   if (dStr.includes("-")) {
     const parts = dStr.split("-");
     if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
@@ -177,6 +175,8 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
   const [loadingData, setLoadingData] = React.useState(false);
   const [isSubmittingExpense, setIsSubmittingExpense] = React.useState(false);
   const [isSubmittingBatch, setIsSubmittingBatch] = React.useState(false);
+  const [batchSearchQuery, setBatchSearchQuery] = React.useState("");
+  const [resubmittingBatch, setResubmittingBatch] = React.useState<OperatorBatch | null>(null);
 
   // Modals
   const [viewingBatch, setViewingBatch] = React.useState<OperatorBatch | null>(null);
@@ -270,16 +270,18 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
 
   // Fetch operator's expenses and submitted batches
   const loadOperatorData = React.useCallback(async () => {
-    if (!userEmail) return;
+    const empId = employeeDetails.id || profile?.employee_id;
+    if (!empId && !userEmail) return;
     setLoadingData(true);
     try {
-      const expRes = await fetch(`${WORKER_URL}/api/claims/operator/expenses?email=${encodeURIComponent(userEmail)}`);
+      const queryParam = empId ? `employee_id=${encodeURIComponent(empId)}` : `email=${encodeURIComponent(userEmail)}`;
+      const expRes = await fetch(`${WORKER_URL}/api/claims/operator/expenses?${queryParam}`);
       if (expRes.ok) {
         const expData = (await expRes.json()) as OperatorExpense[];
         setExpenses(Array.isArray(expData) ? expData : []);
       }
 
-      const batRes = await fetch(`${WORKER_URL}/api/claims/operator/batches?email=${encodeURIComponent(userEmail)}`);
+      const batRes = await fetch(`${WORKER_URL}/api/claims/operator/batches?${queryParam}`);
       if (batRes.ok) {
         const batData = (await batRes.json()) as OperatorBatch[];
         setBatches(Array.isArray(batData) ? batData : []);
@@ -290,7 +292,7 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
     } finally {
       setLoadingData(false);
     }
-  }, [userEmail]);
+  }, [userEmail, employeeDetails.id, profile?.employee_id]);
 
   React.useEffect(() => {
     loadOperatorData();
@@ -348,37 +350,34 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      if (event.target?.result) {
-        setCropSrc(event.target.result as string);
-        setCropFileName(file.name);
-        setCropFileType(file.type || "image/jpeg");
-        setBaseRotation(0);
-        setFineRotation(0);
-        setShowCropModal(true);
-      }
+      setCropSrc(event.target?.result as string);
+      setBaseRotation(0);
+      setFineRotation(0);
+      setShowCropModal(true);
     };
     reader.readAsDataURL(file);
     e.target.value = "";
   };
 
+  // Setup Cropper.js instance inside modal
   React.useEffect(() => {
     if (showCropModal && imageRef.current && (window as any).Cropper) {
-      const Cropper = (window as any).Cropper;
-      if (cropperRef.current) cropperRef.current.destroy();
-
-      cropperRef.current = new Cropper(imageRef.current, {
+      if (cropperRef.current) {
+        cropperRef.current.destroy();
+      }
+      cropperRef.current = new (window as any).Cropper(imageRef.current, {
         viewMode: 1,
         dragMode: "move",
         autoCropArea: 0.9,
         restore: false,
         guides: true,
         center: true,
+        highlight: false,
         cropBoxMovable: true,
         cropBoxResizable: true,
-        aspectRatio: NaN
+        toggleDragModeOnDblclick: false
       });
     }
-
     return () => {
       if (cropperRef.current) {
         cropperRef.current.destroy();
@@ -387,55 +386,65 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
     };
   }, [showCropModal, cropSrc]);
 
+  // Apply Crop & Save to State
   const applyCrop = () => {
     if (!cropperRef.current) return;
-    const canvas = cropperRef.current.getCroppedCanvas({ maxWidth: 1024, maxHeight: 1024 });
-    const croppedSrc = canvas.toDataURL(cropFileType || "image/jpeg");
-
-    setReceiptImage({
-      src: croppedSrc,
-      name: cropFileName,
-      type: cropFileType || "image/jpeg"
+    const canvas = cropperRef.current.getCroppedCanvas({
+      maxWidth: 1600,
+      maxHeight: 1600,
+      imageSmoothingEnabled: true,
+      imageSmoothingQuality: "high"
     });
-    setShowCropModal(false);
-    showToast("Receipt photo attached successfully!", "success");
+    if (canvas) {
+      const croppedBase64 = canvas.toDataURL("image/jpeg", 0.85);
+      setReceiptImage({
+        src: croppedBase64,
+        name: `receipt_${Date.now()}.jpg`,
+        type: "image/jpeg"
+      });
+      setShowCropModal(false);
+    }
   };
 
   // Load expense into form for editing
   const handleEditExpense = (exp: OperatorExpense) => {
+    if (exp.status === "rejected" && (!resubmittingBatch || resubmittingBatch.id !== exp.batch_id)) {
+      showToast(`This expense is locked under rejected claim ${exp.batch_id || ""}. Click "Edit & Resubmit" on that claim in Claim Submitted tab to edit it.`, "warning");
+      return;
+    }
     setEditingExpenseId(exp.id);
-    setExpenseDate(exp.date || new Date().toISOString().split("T")[0]);
-    setDescription(exp.description || "");
-    setAmount(String(exp.amount || ""));
+    setExpenseDate(exp.date);
+    setDescription(exp.description);
+    setAmount(String(exp.amount));
     setRemarks(exp.remarks || "");
     if (exp.receipt_url) {
       setReceiptImage({
         src: exp.receipt_url,
-        name: exp.receipt_name || "receipt.jpg",
-        type: "image/jpeg",
-        url: exp.receipt_url,
-        file_key: exp.receipt_file_key
+        name: "existing_receipt.jpg",
+        type: "image/jpeg"
       });
     } else {
       setReceiptImage(null);
     }
+    setActiveTab("expenses");
   };
 
   const handleCancelEdit = () => {
     setEditingExpenseId(null);
-    setExpenseDate(new Date().toISOString().split("T")[0]);
     setDescription("");
     setAmount("");
     setRemarks("");
     setReceiptImage(null);
+    setExpenseDate(new Date().toISOString().split("T")[0]);
   };
 
   // Save new expense or update existing expense
   const handleSaveExpense = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!userEmail) {
-      showToast("User session not found. Please log in.", "error");
+    const empId = employeeDetails.id || profile?.employee_id;
+    if (!empId) {
+      showToast("Employee binding is required to record expenses.", "error");
       return;
     }
 
@@ -453,12 +462,8 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
     try {
       const payload = {
         ...(editingExpenseId ? { id: editingExpenseId } : {}),
-        user_email: userEmail,
-        user_name: profile?.name || employeeDetails.name,
-        employee_id: employeeDetails.id,
-        employee_name: employeeDetails.name || profile?.name,
-        employee_role: employeeDetails.role,
-        paynow_number: employeeDetails.paynow,
+        employee_id: empId,
+        employee_name: employeeDetails.name || profile?.name || "Staff",
         date: expenseDate,
         description: description.trim(),
         amount: parseFloat(amount),
@@ -497,7 +502,14 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
   };
 
   // Delete unsubmitted expense
-  const handleDeleteExpense = (id: string) => {
+  const handleDeleteExpense = (exp: OperatorExpense | string) => {
+    const id = typeof exp === "string" ? exp : exp.id;
+    const expObj = typeof exp === "string" ? expenses.find((e) => e.id === exp) : exp;
+    if (expObj && expObj.status === "rejected" && (!resubmittingBatch || resubmittingBatch.id !== expObj.batch_id)) {
+      showToast(`This expense is locked under rejected claim ${expObj.batch_id || ""}. Click "Edit & Resubmit" on that claim to modify it.`, "warning");
+      return;
+    }
+
     setConfirmDialog({
       open: true,
       title: "Delete Expense",
@@ -519,10 +531,11 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
           const res = await fetch(`${WORKER_URL}/api/claims/operator/expense/delete`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id, user_email: userEmail })
+            body: JSON.stringify({ id })
           });
           if (!res.ok) throw new Error(await res.text());
-          showToast("Expense removed.", "info");
+          showToast("Expense deleted successfully!", "success");
+          loadOperatorData();
         } catch (err: any) {
           showToast("Failed to delete expense: " + err.message, "error");
           loadOperatorData();
@@ -533,48 +546,120 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
 
   // Toggle selection for batching
   const toggleSelectExpense = (id: string) => {
+    const exp = expenses.find((e) => e.id === id);
+    if (exp && exp.status === "rejected" && (!resubmittingBatch || resubmittingBatch.id !== exp.batch_id)) {
+      showToast(`This expense is locked under rejected claim ${exp.batch_id || ""}. Click "Edit & Resubmit" on that claim in Claim Submitted tab to modify it.`, "warning");
+      return;
+    }
     setSelectedExpenseIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
       return next;
     });
   };
 
-  // Calculate selected total
-  const unsubmittedExpenses = expenses.filter((e) => e.status === "unsubmitted");
-  const selectedExpenses = unsubmittedExpenses.filter((e) => selectedExpenseIds.has(e.id));
+  // Selected totals & validation
+  const unsubmittedExpenses = expenses.filter(
+    (e) => e.status === "unsubmitted" || e.status === "rejected"
+  );
+  const selectedExpenses = expenses.filter(
+    (e) => selectedExpenseIds.has(e.id) && (e.status === "unsubmitted" || (resubmittingBatch && e.batch_id === resubmittingBatch.id))
+  );
   const selectedTotal = selectedExpenses.reduce((sum, e) => sum + Number(e.amount || 0), 0);
   const roundedSelectedTotal = Number(selectedTotal.toFixed(2));
   const isOverLimit = roundedSelectedTotal > MAX_BATCH_LIMIT;
-  const isPayNowMissing = !employeeDetails.paynow || !employeeDetails.paynow.trim();
+  const isPayNowMissing = !employeeDetails.paynow;
+  const isUnboundEmployee = !employeeDetails.id && !profile?.employee_id;
 
-  // Click Submit Batch Handler -> Checks PayNow and opens dialog
+  // Start Resubmitting a Rejected Batch
+  const handleStartResubmitBatch = (batch: OperatorBatch) => {
+    setResubmittingBatch(batch);
+    if (batch.target_admin_email) {
+      setSelectedAdminEmail(batch.target_admin_email);
+    }
+    // Pre-select existing items from this batch
+    const batchExpenseIds = Array.isArray(batch.expense_ids) && batch.expense_ids.length > 0
+      ? batch.expense_ids
+      : (batch.items || []).map((i) => i.id).filter(Boolean);
+    setSelectedExpenseIds(new Set(batchExpenseIds));
+    setViewingBatch(null);
+    setActiveTab("expenses");
+    showToast(`Editing rejected claim ${batch.id}. Modify items and resubmit when ready.`, "info");
+  };
+
+  // Cancel Resubmission
+  const handleCancelResubmit = () => {
+    setResubmittingBatch(null);
+    setSelectedExpenseIds(new Set());
+    showToast("Resubmission cancelled.", "info");
+  };
+
+  // Delete a Rejected Claim Batch (Returns tied expenses to unsubmitted status)
+  const handleDeleteRejectedBatch = async (batch: OperatorBatch) => {
+    if (!confirm(`Are you sure you want to delete rejected claim ${batch.id}?\n\nAll ${batch.items?.length || 0} expense items will be returned to your active ledger as unsubmitted expenses.`)) {
+      return;
+    }
+
+    try {
+      const res = await fetch(`${WORKER_URL}/api/claims/operator/batch/delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: batch.id,
+          employee_id: employeeDetails.id || profile?.employee_id
+        })
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const resData = await res.json();
+      if (resData.error) throw new Error(resData.error);
+
+      if (resubmittingBatch?.id === batch.id) {
+        setResubmittingBatch(null);
+        setSelectedExpenseIds(new Set());
+      }
+      setViewingBatch(null);
+      showToast("Claim deleted. All items returned to your expenses ledger.", "success");
+      loadOperatorData();
+    } catch (err: any) {
+      console.error("Delete batch error:", err);
+      showToast("Failed to delete claim: " + err.message, "error");
+    }
+  };
+
+  // Open submit batch modal
   const handleOpenSubmitBatchModal = () => {
-    if (selectedExpenses.length === 0) {
-      showToast("Please select at least 1 expense to submit.", "warning");
+    if (selectedExpenseIds.size === 0) {
+      showToast("Please select at least one expense to submit.", "warning");
       return;
     }
-
     if (isOverLimit) {
-      showToast(`Selected total is $${roundedSelectedTotal.toFixed(2)}. Max claim limit is $100.00 per batch.`, "warning");
+      showToast(`Selected total is $${roundedSelectedTotal.toFixed(2)}. Max batch limit is $${MAX_BATCH_LIMIT.toFixed(2)}.`, "warning");
       return;
     }
-
     if (isPayNowMissing) {
-      setPayNowInput("");
+      showToast("Please update your PayNow number before submitting for reimbursement.", "warning");
       setShowPayNowModal(true);
-      showToast("Please register your PayNow number before submitting a claim batch.", "warning");
       return;
     }
-
     setShowSubmitModal(true);
   };
 
-  // Submit Claim Batch with Selected Admin
+  // Confirm submit batch to Supervisor
   const handleConfirmSubmitBatch = async () => {
+    const empId = employeeDetails.id || profile?.employee_id;
+    if (!empId) {
+      showToast("Employee binding is required to submit claims.", "error");
+      return;
+    }
+
+    if (selectedExpenseIds.size === 0 || isOverLimit) return;
     if (!selectedAdminEmail) {
-      showToast("Please select an Administrator / Supervisor to send this claim to.", "warning");
+      showToast("Please select an Administrator to route this claim to.", "warning");
       return;
     }
 
@@ -590,19 +675,22 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
 
     setIsSubmittingBatch(true);
     try {
+      const isResubmit = !!resubmittingBatch;
+      const endpoint = isResubmit
+        ? `${WORKER_URL}/api/claims/operator/batch/resubmit`
+        : `${WORKER_URL}/api/claims/operator/batch/submit`;
+
       const payload = {
-        user_email: userEmail,
-        user_name: profile?.name || employeeDetails.name,
-        employee_id: employeeDetails.id,
-        employee_name: employeeDetails.name || profile?.name,
-        employee_role: employeeDetails.role,
+        ...(isResubmit ? { id: resubmittingBatch.id } : {}),
+        employee_id: empId,
+        employee_name: employeeDetails.name || profile?.name || "Staff",
         paynow_number: employeeDetails.paynow,
         target_admin_email: selectedAdminEmail,
         target_admin_name: adminName,
         expense_ids: Array.from(selectedExpenseIds)
       };
 
-      const res = await fetch(`${WORKER_URL}/api/claims/operator/batch/submit`, {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -612,7 +700,12 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
       const resData = await res.json();
       if (resData.error) throw new Error(resData.error);
 
-      showToast(`Claim batch submitted to ${adminName} successfully!`, "success");
+      if (isResubmit) {
+        showToast(`Claim ${resubmittingBatch.id} updated and resubmitted successfully!`, "success");
+        setResubmittingBatch(null);
+      } else {
+        showToast(`Claim batch submitted to ${adminName} successfully!`, "success");
+      }
       setShowSubmitModal(false);
       setSelectedExpenseIds(new Set());
       loadOperatorData();
@@ -641,611 +734,766 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0 font-primary">
       
-      {/* UNIVERSAL TOPBAR NAVIGATION TABS */}
+      {/* TOPBAR NAVIGATION TABS */}
       <NavigationTabs
         tabs={tabs}
         activeTabId={activeTab}
         onTabSelect={(tabId: string) => setActiveTab(tabId as any)}
       />
 
-      {/* PAYNOW MISSING BANNER ALERT */}
-      {isPayNowMissing && (
-        <div className="mx-4 mt-1.5 p-2.5 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2.5">
-            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
-            <div className="text-xs text-amber-900">
-              <span className="font-bold">PayNow Number Required for Reimbursements: </span>
-              <span className="text-[11px] text-amber-700">
-                You can record expenses to your ledger, but you must register your PayNow number before submitting claim batches for payout.
-              </span>
+      {/* UNBOUND EMPLOYEE ACCOUNT NOTICE */}
+      {isUnboundEmployee ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-slate-50/50">
+          <div className="bg-white border border-slate-200 rounded-lg p-6 max-w-md shadow-xs flex flex-col items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-zinc-500">
+              <User className="w-6 h-6 text-[#0B57D0]" />
             </div>
+            <h3 className="text-sm font-semibold text-zinc-900">
+              Employee Profile Required
+            </h3>
+            <p className="text-xs text-zinc-600 leading-relaxed">
+              Your user account is not currently linked to an active Employee record in the system. 
+              Please contact an Administrator to bind your account in <strong>Administrator &gt; Users</strong> to enable Staff Claims.
+            </p>
           </div>
-          <button
-            onClick={() => {
-              setPayNowInput(employeeDetails.paynow || "");
-              setShowPayNowModal(true);
-            }}
-            className="px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold transition-colors shrink-0 shadow-xs cursor-pointer"
-          >
-            Update PayNow
-          </button>
         </div>
-      )}
-
-      {/* TAB 1: COMBINED MY EXPENSES (35% FORM | 65% LEDGER TABLE) */}
-      {activeTab === "expenses" && (
-        <div className="flex-1 overflow-hidden p-3 min-h-0">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full min-h-0">
-            
-            {/* LEFT 35% PANEL: LOG EXPENSE FORM (col-span-4 / col-span-5) */}
-            <div className="lg:col-span-4 xl:col-span-4 bg-white border border-zinc-300 rounded-xl p-4 shadow-xs flex flex-col gap-3 overflow-y-auto min-h-0">
-              
-              {/* Form Header */}
-              <div className="flex items-center justify-between border-b border-zinc-200 pb-2.5 shrink-0">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-xs font-bold text-zinc-950 uppercase tracking-wider">
-                      {editingExpenseId ? "Edit Expense" : "Record Expense"}
-                    </h3>
-                    {editingExpenseId && (
-                      <span className="px-1.5 py-0.5 text-[9px] font-bold bg-blue-100 text-blue-800 rounded border border-blue-200 uppercase">
-                        Editing
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-zinc-400">
-                    {editingExpenseId ? "Update expense details and save to ledger" : "Attach receipt photo to save to ledger"}
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {editingExpenseId && (
-                    <button
-                      type="button"
-                      onClick={handleCancelEdit}
-                      className="px-2 py-0.5 text-[10px] font-bold text-zinc-600 hover:text-zinc-900 bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 rounded cursor-pointer transition-colors"
-                    >
-                      Cancel Edit
-                    </button>
-                  )}
-                  {employeeDetails.paynow ? (
-                    <div className="flex items-center gap-1 px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md text-emerald-800 text-[10px] font-semibold">
-                      <CreditCard className="w-3 h-3 text-emerald-600" />
-                      <span>PayNow: <strong>{employeeDetails.paynow}</strong></span>
-                      <button
-                        onClick={() => {
-                          setPayNowInput(employeeDetails.paynow);
-                          setShowPayNowModal(true);
-                        }}
-                        className="ml-1 text-emerald-700 hover:text-emerald-950 cursor-pointer"
-                        title="Edit PayNow"
-                      >
-                        <Edit3 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => {
-                        setPayNowInput("");
-                        setShowPayNowModal(true);
-                      }}
-                      className="flex items-center gap-1 px-2 py-0.5 bg-amber-100 hover:bg-amber-200 border border-amber-300 rounded-md text-amber-800 text-[10px] font-bold cursor-pointer transition-colors"
-                    >
-                      <Plus className="w-3 h-3" /> Add PayNow
-                    </button>
-                  )}
-                </div>
+      ) : (
+        <>
+          {/* PAYNOW MISSING NOTICE BANNER */}
+          {isPayNowMissing && (
+            <div className="mx-3 mt-2 p-2.5 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between shrink-0 text-xs">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-[#0B57D0] shrink-0" />
+                <span className="text-zinc-700">
+                  <strong className="font-semibold text-zinc-900">PayNow Number Required:</strong> Register your PayNow number to enable reimbursement payouts.
+                </span>
               </div>
+              <button
+                onClick={() => {
+                  setPayNowInput(employeeDetails.paynow || "");
+                  setShowPayNowModal(true);
+                }}
+                className="px-3 py-1 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-medium transition-colors shrink-0 cursor-pointer"
+              >
+                Update PayNow
+              </button>
+            </div>
+          )}
 
-              {/* Form Inputs */}
-              <form onSubmit={handleSaveExpense} className="flex flex-col gap-3 flex-1">
-                
-                <div className="grid grid-cols-2 gap-2.5">
-                  {/* Expense Date */}
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
-                      Expense Date *
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      value={expenseDate}
-                      onChange={(e) => setExpenseDate(e.target.value)}
-                      className="h-9 px-2.5 border border-zinc-300 rounded-lg text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] bg-white"
-                    />
-                  </div>
-
-                  {/* Amount */}
-                  <div className="flex flex-col gap-1">
-                    <label className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
-                      Amount ($ SGD) *
-                    </label>
-                    <div className="relative flex items-center">
-                      <span className="absolute left-2.5 text-xs font-bold text-zinc-400">$</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0.01"
-                        required
-                        placeholder="0.00"
-                        value={amount}
-                        onChange={(e) => setAmount(e.target.value)}
-                        className="h-9 pl-6 pr-2.5 w-full border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] bg-white"
-                      />
+          {/* TAB 1: RECORD EXPENSES & LEDGER */}
+          {activeTab === "expenses" && (
+            <div className="flex-1 overflow-hidden p-3 min-h-0 flex flex-col gap-3">
+              {/* RESUBMISSION BANNER */}
+              {resubmittingBatch && (
+                <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-lg flex items-center justify-between shrink-0 text-xs shadow-xs">
+                  <div className="flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-amber-950">
+                          Editing Rejected Claim: {resubmittingBatch.id}
+                        </span>
+                        {resubmittingBatch.reject_reason && (
+                          <span className="text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 text-[11px] font-medium">
+                            Reason: {resubmittingBatch.reject_reason}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-amber-800 mt-0.5">
+                        Uncheck/remove wrong items or edit particulars on the left. Click "Resubmit Claim" when ready.
+                      </p>
                     </div>
                   </div>
+                  <button
+                    type="button"
+                    onClick={handleCancelResubmit}
+                    className="px-2.5 py-1 text-xs font-medium text-zinc-700 hover:text-zinc-900 bg-white hover:bg-slate-100 border border-slate-300 rounded cursor-pointer transition-colors shrink-0 ml-3"
+                  >
+                    Cancel Resubmission
+                  </button>
                 </div>
+              )}
 
-                {/* Description */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
-                    Description / Particulars *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="e.g. Parking fee at FairPrice Suntec, fuel, materials"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    className="h-9 px-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] bg-white"
-                  />
-                </div>
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 flex-1 min-h-0">
+                
+                {/* LEFT PANEL: RECORD EXPENSE FORM (4 Cols) */}
+                <div className="lg:col-span-4 xl:col-span-4 bg-white border border-slate-200 rounded-lg p-4 shadow-xs flex flex-col gap-3 overflow-y-auto min-h-0">
+                  
+                  {/* Form Header */}
+                  <div className="flex items-center justify-between border-b border-zinc-150 pb-2.5 shrink-0">
+                    <div>
+                      <h3 className="text-xs font-semibold text-zinc-900">
+                        {editingExpenseId ? "Edit Expense" : "Record Expense"}
+                      </h3>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        {editingExpenseId ? "Update details and save to ledger" : "Attach receipt to save to ledger"}
+                      </p>
+                    </div>
 
-                {/* Remarks */}
-                <div className="flex flex-col gap-1">
-                  <label className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
-                    Remarks
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Emergency store visit"
-                    value={remarks}
-                    onChange={(e) => setRemarks(e.target.value)}
-                    className="h-9 px-2.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] bg-white"
-                  />
-                </div>
-
-                {/* Receipt Upload Box */}
-                <div className="border border-zinc-300 rounded-xl p-3 bg-zinc-50/50 flex flex-col gap-2.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold text-zinc-700 uppercase tracking-wider flex items-center gap-1">
-                      <Receipt className="w-3.5 h-3.5 text-zinc-600" />
-                      Receipt Attachment *
-                    </span>
-                    {receiptImage && (
-                      <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-0.5">
-                        <Check className="w-3 h-3" /> Ready
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {editingExpenseId && (
+                        <button
+                          type="button"
+                          onClick={handleCancelEdit}
+                          className="px-2 py-1 text-xs font-medium text-zinc-600 hover:text-zinc-900 bg-zinc-100 hover:bg-zinc-200 border border-zinc-200 rounded cursor-pointer transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                      {employeeDetails.paynow ? (
+                        <div className="flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-200 rounded text-zinc-700 text-xs">
+                          <CreditCard className="w-3.5 h-3.5 text-zinc-500" />
+                          <span>{employeeDetails.paynow}</span>
+                          <button
+                            onClick={() => {
+                              setPayNowInput(employeeDetails.paynow);
+                              setShowPayNowModal(true);
+                            }}
+                            className="text-zinc-400 hover:text-[#0B57D0] cursor-pointer"
+                            title="Edit PayNow"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setPayNowInput("");
+                            setShowPayNowModal(true);
+                          }}
+                          className="flex items-center gap-1 px-2 py-0.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded text-zinc-700 text-xs font-medium cursor-pointer transition-colors"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Add PayNow
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  {receiptImage ? (
-                    <div className="flex items-center justify-between p-2 bg-white border border-zinc-200 rounded-lg">
-                      <div className="flex items-center gap-2 overflow-hidden">
-                        <img
-                          src={receiptImage.src}
-                          alt="Receipt"
-                          className="w-10 h-10 object-cover rounded-md border border-zinc-200 shrink-0"
+                  {/* Form Inputs */}
+                  <form onSubmit={handleSaveExpense} className="flex flex-col gap-3 flex-1">
+                    
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {/* Expense Date */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-zinc-700">
+                          Expense Date *
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={expenseDate}
+                          onChange={(e) => setExpenseDate(e.target.value)}
+                          className="h-9 px-2.5 border border-zinc-300 rounded text-xs text-zinc-800 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] bg-white"
                         />
-                        <div className="truncate">
-                          <span className="text-xs font-bold text-zinc-800 truncate block">
-                            {receiptImage.name}
-                          </span>
-                          <span className="text-[9px] text-zinc-400 font-semibold">
-                            Cropped & Ready
-                          </span>
+                      </div>
+
+                      {/* Amount */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs font-medium text-zinc-700">
+                          Amount ($ SGD) *
+                        </label>
+                        <div className="relative flex items-center">
+                          <span className="absolute left-2.5 text-xs text-zinc-400">$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0.01"
+                            required
+                            placeholder="0.00"
+                            value={amount}
+                            onChange={(e) => setAmount(e.target.value)}
+                            className="h-9 pl-6 pr-2.5 w-full border border-zinc-300 rounded text-xs text-zinc-900 font-medium focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] bg-white"
+                          />
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="text-[10px] font-bold text-blue-600 hover:text-blue-800 px-1.5 py-0.5 bg-blue-50 rounded border border-blue-200 cursor-pointer"
-                        >
-                          Change
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setReceiptImage(null)}
-                          className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
                     </div>
-                  ) : (
-                    <div
-                      onClick={() => fileInputRef.current?.click()}
-                      className="border border-dashed border-zinc-300 hover:border-[#0B57D0] rounded-lg p-3.5 flex flex-col items-center justify-center gap-1 cursor-pointer bg-white transition-colors text-center"
-                    >
-                      <Upload className="w-5 h-5 text-zinc-400" />
-                      <span className="text-[11px] font-bold text-zinc-700">
-                        Upload Receipt Photo
-                      </span>
-                      <span className="text-[9px] text-zinc-400">
-                        Click to capture/crop receipt
-                      </span>
+
+                    {/* Description */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-zinc-700">
+                        Description / Particulars *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="e.g. Parking fee at FairPrice Suntec, fuel, materials"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        className="h-9 px-2.5 border border-zinc-300 rounded text-xs text-zinc-800 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] bg-white"
+                      />
                     </div>
-                  )}
 
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleReceiptUpload}
-                    accept="image/*"
-                    className="hidden"
-                  />
-                </div>
+                    {/* Remarks */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs font-medium text-zinc-700">
+                        Remarks
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Optional remarks (e.g. Emergency store visit)"
+                        value={remarks}
+                        onChange={(e) => setRemarks(e.target.value)}
+                        className="h-9 px-2.5 border border-zinc-300 rounded text-xs text-zinc-800 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] bg-white"
+                      />
+                    </div>
 
-                {/* Submit Form Button */}
-                <div className="pt-1 mt-auto flex gap-2">
-                  {editingExpenseId && (
-                    <CustomButton
-                      type="button"
-                      variant="secondary"
-                      onClick={handleCancelEdit}
-                      className="w-1/3 h-9 text-xs font-bold uppercase tracking-wider shadow-sm"
-                    >
-                      Cancel
-                    </CustomButton>
-                  )}
-                  <CustomButton
-                    type="submit"
-                    variant="default"
-                    disabled={isSubmittingExpense || !receiptImage || !description.trim() || !amount}
-                    className={`h-9 text-xs font-bold uppercase tracking-wider shadow-sm ${editingExpenseId ? "flex-1" : "w-full"}`}
-                  >
-                    {isSubmittingExpense ? (
-                      <>
-                        <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
-                        {editingExpenseId ? "Updating..." : "Recording..."}
-                      </>
-                    ) : editingExpenseId ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 mr-1.5" />
-                        Update Expense
-                      </>
-                    ) : (
-                      <>
-                        <Plus className="w-3.5 h-3.5 mr-1.5" />
-                        Record Expense
-                      </>
-                    )}
-                  </CustomButton>
-                </div>
+                    {/* Receipt Upload Box */}
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-medium text-zinc-700 flex items-center justify-between">
+                        <span>Receipt Attachment *</span>
+                        {receiptImage && (
+                          <span className="text-[11px] font-normal text-emerald-600 flex items-center gap-1">
+                            <Check className="w-3 h-3" /> Ready
+                          </span>
+                        )}
+                      </label>
 
-              </form>
-
-            </div>
-
-            {/* RIGHT 65% PANEL: UNCLAIMED EXPENSES LEDGER TABLE (col-span-8 / col-span-7) */}
-            <div className="lg:col-span-8 xl:col-span-8 bg-white border border-zinc-300 rounded-xl overflow-hidden flex flex-col shadow-xs min-h-0">
-              
-              {/* Header Bar */}
-              <div className="bg-zinc-50 border-b border-zinc-200 p-3 flex items-center justify-between shrink-0">
-                <div>
-                  <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                    Unclaimed Expenses Ledger ({unsubmittedExpenses.length})
-                  </h3>
-                  <span className="text-[11px] text-zinc-500">
-                    Select items to combine into a claim batch. Maximum limit: <strong>$100.00</strong>
-                  </span>
-                </div>
-              </div>
-
-              {/* Scrollable Table */}
-              <div className="flex-1 overflow-y-auto min-h-0">
-                <table className="w-full border-collapse text-left">
-                  <thead className="bg-zinc-50 border-b border-zinc-300 sticky top-0 z-10">
-                    <tr>
-                      <th className="p-3 text-center w-10">
-                        <input
-                          type="checkbox"
-                          checked={
-                            unsubmittedExpenses.length > 0 &&
-                            selectedExpenseIds.size === unsubmittedExpenses.length
-                          }
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedExpenseIds(new Set(unsubmittedExpenses.map((ex) => ex.id)));
-                            } else {
-                              setSelectedExpenseIds(new Set());
-                            }
-                          }}
-                          className="rounded border-zinc-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
-                        />
-                      </th>
-                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-28">Date</th>
-                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase">Description</th>
-                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-24">Amount</th>
-                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-20">Receipt</th>
-                      <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-20">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-200 text-xs">
-                    {loadingData ? (
-                      <tr>
-                        <td colSpan={6} className="p-10 text-center text-zinc-500">
-                          <div className="flex flex-col items-center justify-center gap-2">
-                            <Loader2 className="w-5 h-5 animate-spin text-[#0B57D0]" />
-                            <span className="font-semibold text-xs">Loading ledger...</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : unsubmittedExpenses.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className="p-10 text-center text-zinc-400">
-                          <div className="flex flex-col items-center justify-center gap-1.5">
-                            <Receipt className="w-7 h-7 text-zinc-300" />
-                            <span className="font-semibold text-xs text-zinc-600">
-                              No unclaimed expenses in your ledger.
-                            </span>
-                            <span className="text-[11px] text-zinc-400">
-                              Fill in the form on the left to record an out-of-pocket purchase.
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : (
-                      unsubmittedExpenses.map((exp) => {
-                        const isChecked = selectedExpenseIds.has(exp.id);
-                        const isEditing = editingExpenseId === exp.id;
-                        return (
-                          <tr
-                            key={exp.id}
-                            className={`hover:bg-zinc-50/80 transition-colors cursor-pointer ${
-                              isEditing
-                                ? "bg-amber-50/60 ring-1 ring-amber-300 inset-0"
-                                : isChecked
-                                ? "bg-blue-50/40"
-                                : ""
-                            }`}
-                            onClick={() => toggleSelectExpense(exp.id)}
+                      {receiptImage ? (
+                        <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded">
+                          <div
+                            onClick={() => setPreviewingReceiptUrl(receiptImage.src)}
+                            className="flex items-center gap-2 overflow-hidden cursor-pointer group"
+                            title="Click to view full receipt photo"
                           >
-                            <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => toggleSelectExpense(exp.id)}
-                                className="rounded border-zinc-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
-                              />
-                            </td>
-                            <td className="p-3 font-semibold text-zinc-700 whitespace-nowrap">
-                              {formatDateDisplay(exp.date)}
-                            </td>
-                            <td className="p-3 font-bold text-zinc-900">
-                              <div className="flex items-center gap-1.5">
-                                {exp.description}
-                                {isEditing && (
-                                  <span className="px-1.5 py-0.2 text-[9px] font-bold bg-amber-200 text-amber-900 rounded">
-                                    Editing
-                                  </span>
-                                )}
-                              </div>
-                              {exp.remarks && (
-                                <span className="block text-[10px] text-zinc-400 font-normal">
-                                  {exp.remarks}
-                                </span>
-                              )}
-                            </td>
-                            <td className="p-3 text-right font-mono font-extrabold text-zinc-950 text-sm">
-                              ${Number(exp.amount || 0).toFixed(2)}
-                            </td>
-                            <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                              {exp.receipt_url ? (
-                                <button
-                                  onClick={() => setPreviewingReceiptUrl(exp.receipt_url)}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10px] font-bold border border-zinc-300 cursor-pointer"
-                                >
-                                  <Eye className="w-3 h-3 text-zinc-500" /> View
-                                </button>
-                              ) : (
-                                <span className="text-[10px] text-zinc-400">None</span>
-                              )}
-                            </td>
-                            <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
-                              <div className="flex items-center justify-center gap-1">
-                                <button
-                                  onClick={() => handleEditExpense(exp)}
-                                  className={`p-1.5 rounded transition-colors cursor-pointer ${
-                                    isEditing
-                                      ? "text-[#0B57D0] bg-blue-100 ring-1 ring-[#0B57D0]"
-                                      : "text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50"
-                                  }`}
-                                  title="Edit Expense into Form"
-                                >
-                                  <Edit3 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => handleDeleteExpense(exp.id)}
-                                  className="p-1.5 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors cursor-pointer"
-                                  title="Delete Expense"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                            <img
+                              src={receiptImage.src}
+                              alt="Receipt"
+                              className="w-9 h-9 object-cover rounded border border-slate-200 shrink-0 group-hover:opacity-85 transition-opacity"
+                            />
+                            <div className="truncate">
+                              <span className="text-xs font-medium text-zinc-900 group-hover:text-[#0B57D0] truncate block transition-colors">
+                                {receiptImage.name}
+                              </span>
+                              <span className="text-[11px] text-zinc-500">
+                                Click to preview
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewingReceiptUrl(receiptImage.src)}
+                              className="text-xs font-medium text-zinc-700 hover:text-zinc-950 px-2 py-0.5 bg-white hover:bg-slate-100 rounded border border-slate-200 cursor-pointer inline-flex items-center gap-1 transition-colors"
+                              title="View receipt"
+                            >
+                              <Eye className="w-3.5 h-3.5 text-zinc-500" />
+                              View
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => fileInputRef.current?.click()}
+                              className="text-xs font-medium text-[#0B57D0] hover:text-[#0842A0] px-2 py-0.5 bg-white hover:bg-slate-100 rounded border border-slate-200 cursor-pointer transition-colors"
+                            >
+                              Change
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setReceiptImage(null)}
+                              className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                              title="Remove receipt"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div
+                          onClick={() => fileInputRef.current?.click()}
+                          className="border border-dashed border-zinc-300 hover:border-[#0B57D0] rounded p-4 flex flex-col items-center justify-center gap-1 cursor-pointer bg-slate-50/50 hover:bg-slate-50 transition-colors text-center"
+                        >
+                          <Upload className="w-5 h-5 text-zinc-400" />
+                          <span className="text-xs font-medium text-zinc-700">
+                            Upload Receipt Photo
+                          </span>
+                          <span className="text-[11px] text-zinc-400">
+                            Click to select and crop receipt
+                          </span>
+                        </div>
+                      )}
+
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleReceiptUpload}
+                        accept="image/*"
+                        className="hidden"
+                      />
+                    </div>
+
+                    {/* Submit Form Button */}
+                    <div className="pt-2 mt-auto flex gap-2">
+                      {editingExpenseId && (
+                        <CustomButton
+                          type="button"
+                          variant="secondary"
+                          onClick={handleCancelEdit}
+                          className="w-1/3 h-9 text-xs font-medium rounded"
+                        >
+                          Cancel
+                        </CustomButton>
+                      )}
+                      <CustomButton
+                        type="submit"
+                        variant="default"
+                        disabled={isSubmittingExpense || !receiptImage || !description.trim() || !amount}
+                        className={`h-9 text-xs font-medium rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white ${editingExpenseId ? "flex-1" : "w-full"}`}
+                      >
+                        {isSubmittingExpense ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                            {editingExpenseId ? "Updating..." : "Saving..."}
+                          </>
+                        ) : editingExpenseId ? (
+                          <>
+                            <Check className="w-3.5 h-3.5 mr-1.5" />
+                            Update Expense
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-3.5 h-3.5 mr-1.5" />
+                            Record Expense
+                          </>
+                        )}
+                      </CustomButton>
+                    </div>
+
+                  </form>
+
+                </div>
+
+                {/* RIGHT PANEL: UNCLAIMED EXPENSES LEDGER TABLE (8 Cols) */}
+                <div className="lg:col-span-8 xl:col-span-8 bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col shadow-xs min-h-0">
+                  
+                  {/* Header Bar */}
+                  <div className="bg-slate-50/80 border-b border-zinc-200 px-4 py-3 flex items-center justify-between shrink-0">
+                    <div>
+                      <h3 className="text-xs font-semibold text-zinc-900">
+                        Unclaimed Expenses Ledger ({unsubmittedExpenses.length})
+                      </h3>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        Select items to combine into a claim batch. Maximum limit: $100.00
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Scrollable Table */}
+                  <div className="flex-1 overflow-y-auto min-h-0">
+                    <table className="w-full border-collapse text-left">
+                      <thead className="bg-slate-50/80 border-b border-zinc-200 sticky top-0 z-10 text-[11px] font-medium text-zinc-500">
+                        <tr>
+                          <th className="p-3 text-center w-10">
+                            <input
+                              type="checkbox"
+                              checked={
+                                (() => {
+                                  const selectable = unsubmittedExpenses.filter((e) => e.status === "unsubmitted" || (resubmittingBatch && e.batch_id === resubmittingBatch.id));
+                                  return selectable.length > 0 && selectedExpenseIds.size === selectable.length;
+                                })()
+                              }
+                              onChange={(e) => {
+                                const selectable = unsubmittedExpenses.filter((e) => e.status === "unsubmitted" || (resubmittingBatch && e.batch_id === resubmittingBatch.id));
+                                if (e.target.checked) {
+                                  setSelectedExpenseIds(new Set(selectable.map((ex) => ex.id)));
+                                } else {
+                                  setSelectedExpenseIds(new Set());
+                                }
+                              }}
+                              className="rounded border-zinc-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
+                            />
+                          </th>
+                          <th className="p-3 w-28">Date</th>
+                          <th className="p-3">Description</th>
+                          <th className="p-3 text-right w-24">Amount</th>
+                          <th className="p-3 text-center w-20">Receipt</th>
+                          <th className="p-3 text-center w-20">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-150 text-xs">
+                        {loadingData ? (
+                          <tr>
+                            <td colSpan={6} className="p-10 text-center text-zinc-500">
+                              <div className="flex flex-col items-center justify-center gap-2">
+                                <Loader2 className="w-5 h-5 animate-spin text-[#0B57D0]" />
+                                <span className="font-medium text-xs">Loading ledger...</span>
                               </div>
                             </td>
                           </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Bottom Batch Action Bar */}
-              <div className="bg-zinc-50 border-t border-zinc-300 p-3.5 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs font-semibold text-zinc-600">
-                    {selectedExpenseIds.size} of {unsubmittedExpenses.length} selected
-                  </span>
-
-                  <div
-                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold font-mono ${
-                      isOverLimit
-                        ? "bg-red-50 text-red-700 border-red-300"
-                        : selectedExpenseIds.size > 0
-                        ? "bg-emerald-50 text-emerald-800 border-emerald-300"
-                        : "bg-zinc-100 text-zinc-600 border-zinc-200"
-                    }`}
-                  >
-                    <span>Selected: ${roundedSelectedTotal.toFixed(2)}</span>
-                    <span className="text-[10px] font-normal text-zinc-400">/ $100 max</span>
+                        ) : unsubmittedExpenses.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="p-10 text-center text-zinc-400">
+                              <div className="flex flex-col items-center justify-center gap-1">
+                                <Receipt className="w-6 h-6 text-zinc-300" />
+                                <span className="font-medium text-xs text-zinc-600">
+                                  No unclaimed expenses in your ledger.
+                                </span>
+                                <span className="text-[11px] text-zinc-400">
+                                  Use the form on the left to record an out-of-pocket purchase.
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          unsubmittedExpenses.map((exp) => {
+                            const isLockedByRejected = exp.status === "rejected" && (!resubmittingBatch || resubmittingBatch.id !== exp.batch_id);
+                            const isChecked = selectedExpenseIds.has(exp.id);
+                            const isEditing = editingExpenseId === exp.id;
+                            return (
+                              <tr
+                                key={exp.id}
+                                className={`transition-colors ${
+                                  isLockedByRejected
+                                    ? "bg-slate-50/60 opacity-80 cursor-not-allowed"
+                                    : isEditing
+                                    ? "bg-amber-50/40 cursor-pointer"
+                                    : isChecked
+                                    ? "bg-[#D3E3FD]/20 cursor-pointer"
+                                    : "hover:bg-slate-50/80 cursor-pointer"
+                                }`}
+                                onClick={() => toggleSelectExpense(exp.id)}
+                              >
+                                <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    disabled={isLockedByRejected}
+                                    onChange={() => toggleSelectExpense(exp.id)}
+                                    className={`rounded border-zinc-300 text-[#0B57D0] focus:ring-0 ${
+                                      isLockedByRejected ? "cursor-not-allowed opacity-40" : "cursor-pointer"
+                                    }`}
+                                  />
+                                </td>
+                                <td className="p-3 text-zinc-600 whitespace-nowrap">
+                                  {formatDateDisplay(exp.date)}
+                                </td>
+                                <td className="p-3 text-zinc-900">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span>{exp.description}</span>
+                                    {isEditing && (
+                                      <span className="px-1.5 py-0.2 text-[9px] font-medium bg-amber-100 text-amber-800 rounded">
+                                        Editing
+                                      </span>
+                                    )}
+                                    {isLockedByRejected && (
+                                      <span className="px-1.5 py-0.5 text-[9px] font-medium bg-rose-50 text-rose-700 border border-rose-200 rounded">
+                                        Locked (Rejected Claim)
+                                      </span>
+                                    )}
+                                  </div>
+                                  {exp.remarks && (
+                                    <span className="block text-[11px] text-zinc-400 font-normal mt-0.5">
+                                      {exp.remarks}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-3 text-right font-medium text-zinc-900">
+                                  ${Number(exp.amount || 0).toFixed(2)}
+                                </td>
+                                <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                                  {exp.receipt_url ? (
+                                    <button
+                                      onClick={() => setPreviewingReceiptUrl(exp.receipt_url)}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white hover:bg-slate-100 text-zinc-700 text-[11px] font-medium border border-slate-200 cursor-pointer"
+                                    >
+                                      <Eye className="w-3 h-3 text-zinc-400" /> View
+                                    </button>
+                                  ) : (
+                                    <span className="text-[11px] text-zinc-400">-</span>
+                                  )}
+                                </td>
+                                <td className="p-3 text-center" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center justify-center gap-1">
+                                    <button
+                                      onClick={() => handleEditExpense(exp)}
+                                      className={`p-1 rounded transition-colors ${
+                                        isLockedByRejected
+                                          ? "text-zinc-300 hover:text-zinc-300 hover:bg-transparent cursor-not-allowed"
+                                          : "text-zinc-400 hover:text-[#0B57D0] hover:bg-slate-100 cursor-pointer"
+                                      }`}
+                                      title={isLockedByRejected ? "Locked: Click 'Edit & Resubmit' on claim to modify" : "Edit Expense"}
+                                    >
+                                      <Edit3 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteExpense(exp)}
+                                      className={`p-1 rounded transition-colors ${
+                                        isLockedByRejected
+                                          ? "text-zinc-300 hover:text-zinc-300 hover:bg-transparent cursor-not-allowed"
+                                          : "text-zinc-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                                      }`}
+                                      title={isLockedByRejected ? "Locked: Click 'Edit & Resubmit' on claim to modify" : "Delete Expense"}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
                   </div>
 
-                  {isOverLimit && (
-                    <span className="text-xs font-bold text-red-600 flex items-center gap-1">
-                      <AlertCircle className="w-3.5 h-3.5" /> Over $100 limit
-                    </span>
-                  )}
+                  {/* Bottom Batch Action Bar */}
+                  <div className="bg-slate-50/80 border-t border-zinc-200 px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-zinc-600">
+                        {selectedExpenseIds.size} of {unsubmittedExpenses.length} selected
+                      </span>
+
+                      <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-xs font-medium ${
+                        isOverLimit
+                          ? "bg-red-50 text-red-700 border-red-200"
+                          : selectedExpenseIds.size > 0
+                          ? "bg-white text-zinc-900 border-slate-300"
+                          : "bg-white text-zinc-500 border-zinc-200"
+                      }`}>
+                        <span>Total: ${roundedSelectedTotal.toFixed(2)}</span>
+                        <span className="text-[11px] text-zinc-400">/ $100 max</span>
+                      </div>
+
+                      {isOverLimit && (
+                        <span className="text-xs font-medium text-red-600 flex items-center gap-1">
+                          <AlertCircle className="w-3.5 h-3.5" /> Exceeds $100 limit
+                        </span>
+                      )}
+                    </div>
+
+                    <CustomButton
+                      onClick={handleOpenSubmitBatchModal}
+                      variant="default"
+                      disabled={isSubmittingBatch || selectedExpenseIds.size === 0 || isOverLimit}
+                      className="h-9 px-4 text-xs font-medium rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white"
+                    >
+                      <Send className="w-3.5 h-3.5 mr-1.5" />
+                      {resubmittingBatch
+                        ? `Resubmit Claim ${resubmittingBatch.id} ($${roundedSelectedTotal.toFixed(2)})`
+                        : `Submit Claim Batch ($${roundedSelectedTotal.toFixed(2)})`}
+                    </CustomButton>
+                  </div>
+
                 </div>
 
-                <CustomButton
-                  onClick={handleOpenSubmitBatchModal}
-                  variant="default"
-                  disabled={isSubmittingBatch || selectedExpenseIds.size === 0 || isOverLimit}
-                  className="h-9 px-4 text-xs font-bold uppercase tracking-wider shadow-sm"
-                >
-                  <Send className="w-3.5 h-3.5 mr-1.5" />
-                  Submit Claim Batch (${roundedSelectedTotal.toFixed(2)})
-                </CustomButton>
               </div>
-
             </div>
-
-          </div>
-        </div>
+          )}
+        </>
       )}
 
       {/* TAB 2: CLAIM SUBMITTED & STATUS TRACKING */}
       {activeTab === "batches" && (
-        <div className="flex flex-col flex-1 h-full overflow-hidden gap-3 p-3 min-h-0">
+        <div className="flex flex-col flex-1 h-full overflow-hidden gap-3 pb-2 p-3 min-h-0">
           
-          <div className="flex-1 bg-white border border-zinc-300 rounded-xl overflow-hidden flex flex-col shadow-xs min-h-0">
-            <div className="bg-zinc-50 border-b border-zinc-200 p-3.5 flex items-center justify-between shrink-0">
-              <div>
-                <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                  Claim Submitted ({batches.length})
-                </h3>
-                <p className="text-[11px] text-zinc-500 mt-0.5">
-                  Track supervisor review, approval status, and PayNow payout references.
-                </p>
-              </div>
+          <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
+            {/* Left: Info */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-zinc-900">
+                Claim Submitted ({batches.length})
+              </span>
             </div>
 
-            <div className="flex-1 overflow-y-auto min-h-0">
-              <table className="w-full border-collapse text-left">
-                <thead className="bg-zinc-50 border-b border-zinc-300 sticky top-0 z-10">
+            {/* Right: Search Input Bar */}
+            <div className="relative w-full md:w-72">
+              <Search className="w-4 h-4 text-zinc-400 absolute left-2.5 top-2.5 pointer-events-none" />
+              <input
+                type="text"
+                value={batchSearchQuery}
+                onChange={(e) => setBatchSearchQuery(e.target.value)}
+                placeholder="Search Claim ID, description..."
+                className="w-full h-9 pl-9 pr-7 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0]"
+              />
+              {batchSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setBatchSearchQuery("")}
+                  className="absolute right-2 top-2.5 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex-1 bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col shadow-xs min-h-0">
+            <div className="flex-1 overflow-auto min-h-0">
+              <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1100px]">
+                <thead className="bg-slate-50/80 border-b border-slate-200 sticky top-0 z-10">
                   <tr>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-36">Claim Date</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase w-48">Sent To Supervisor</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase">Items Breakdown</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-right w-28">Total Amount</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-36">Payout Status</th>
-                    <th className="p-3 text-[10px] font-bold text-zinc-500 uppercase text-center w-24">Actions</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-left">Claim ID</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-left">Status</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-left">Submit Date</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-left">Staff Name</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-right">Claim Amount</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-left">Paynow to</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-left">Claim to</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-left">Paid Date</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-left">Payment Ref</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-left">Pay by</th>
+                    <th className="p-3 text-[11px] font-medium text-zinc-500 text-center">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-zinc-200 text-xs">
+                <tbody className="divide-y divide-slate-100 text-xs">
                   {loadingData ? (
                     <tr>
-                      <td colSpan={6} className="p-12 text-center text-zinc-500">
+                      <td colSpan={11} className="p-12 text-center text-zinc-500">
                         <div className="flex flex-col items-center justify-center gap-2">
                           <Loader2 className="w-6 h-6 animate-spin text-[#0B57D0]" />
-                          <span className="font-semibold text-xs">Loading submitted claims...</span>
+                          <span className="font-medium text-xs text-zinc-600">Loading submissions...</span>
                         </div>
                       </td>
                     </tr>
-                  ) : batches.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="p-12 text-center text-zinc-400">
-                        <div className="flex flex-col items-center justify-center gap-2">
-                          <Clock className="w-8 h-8 text-zinc-300" />
-                          <span className="font-semibold text-sm text-zinc-600">
-                            No claims submitted yet.
-                          </span>
-                          <span className="text-xs text-zinc-400">
-                            Select recorded expenses from your ledger to submit a claim batch.
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  ) : (
-                    batches.map((batch) => {
-                      const itemsList = Array.isArray(batch.items) ? batch.items : [];
+                  ) : (() => {
+                    const filtered = batches.filter((b) => {
+                      if (batchSearchQuery.trim()) {
+                        const q = batchSearchQuery.toLowerCase();
+                        const idMatch = (b.id || "").toLowerCase().includes(q);
+                        const empName = (b.employee_name || employeeDetails.name || "").toLowerCase();
+                        const nameMatch = empName.includes(q);
+                        const adminMatch = (b.target_admin_name || b.target_admin_email || "").toLowerCase().includes(q);
+                        const itemsMatch = Array.isArray(b.items) && b.items.some((it: any) =>
+                          (it.description || "").toLowerCase().includes(q) || (it.remarks || "").toLowerCase().includes(q)
+                        );
+                        if (!idMatch && !nameMatch && !adminMatch && !itemsMatch) return false;
+                      }
+                      return true;
+                    });
+
+                    if (filtered.length === 0) {
                       return (
-                        <tr key={batch.id} className="hover:bg-zinc-50/80 transition-colors">
-                          <td className="p-3">
-                            <span className="font-bold text-zinc-900 block text-xs flex items-center gap-1">
-                              <Calendar className="w-3.5 h-3.5 text-zinc-400" />
-                              {formatDateDisplay(batch.claim_date)}
-                            </span>
-                            <span className="font-mono text-[10px] text-zinc-400 font-semibold block mt-0.5">
-                              {batch.id}
-                            </span>
-                          </td>
-                          <td className="p-3">
-                            <span className="font-bold text-zinc-900 block truncate max-w-[170px]">
-                              {batch.target_admin_name || batch.target_admin_email || "Administrator"}
-                            </span>
-                            {batch.target_admin_email && (
-                              <span className="text-[10px] text-zinc-400 block truncate max-w-[170px]">
-                                {batch.target_admin_email}
+                        <tr>
+                          <td colSpan={11} className="p-12 text-center text-zinc-400">
+                            <div className="flex flex-col items-center justify-center gap-1.5">
+                              <Clock className="w-7 h-7 text-zinc-300" />
+                              <span className="font-medium text-sm text-zinc-600">
+                                {batchSearchQuery.trim()
+                                  ? `No claims matching "${batchSearchQuery}".`
+                                  : "No claims submitted yet."}
                               </span>
-                            )}
-                          </td>
-                          <td className="p-3">
-                            <span className="font-medium text-zinc-800 block truncate max-w-md">
-                              {itemsList.map((i) => i.description).join(", ")}
-                            </span>
-                            <span className="text-[10px] text-zinc-400 font-semibold">
-                              {itemsList.length} expense item{itemsList.length !== 1 ? "s" : ""}
-                            </span>
-                          </td>
-                          <td className="p-3 text-right font-mono font-extrabold text-zinc-950 text-sm">
-                            ${Number(batch.total_amount || 0).toFixed(2)}
-                          </td>
-                          <td className="p-3 text-center">
-                            {batch.status === "paid" || batch.status === "claimed_to_finance" ? (
-                              <div>
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                                  <Check className="w-3 h-3" /> Paid by Supervisor
-                                </span>
-                                {batch.payment_reference && (
-                                  <span className="block text-[9px] text-zinc-500 font-mono mt-0.5">
-                                    Ref: {batch.payment_reference}
-                                  </span>
-                                )}
-                              </div>
-                            ) : batch.status === "rejected" ? (
-                              <div>
-                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                                  <Ban className="w-3 h-3" /> Rejected
-                                </span>
-                                {batch.reject_reason && (
-                                  <span className="block text-[9px] text-rose-600 truncate max-w-[140px] mt-0.5">
-                                    {batch.reject_reason}
-                                  </span>
-                                )}
-                              </div>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                                <Clock className="w-3 h-3" /> Pending Review
+                              <span className="text-xs text-zinc-400">
+                                Select recorded expenses from your ledger to submit a claim batch.
                               </span>
-                            )}
-                          </td>
-                          <td className="p-3 text-center">
-                            <button
-                              onClick={() => setViewingBatch(batch)}
-                              className="px-2.5 py-1 rounded bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-xs font-bold border border-zinc-300 transition-colors cursor-pointer"
-                            >
-                              Details
-                            </button>
+                            </div>
                           </td>
                         </tr>
                       );
-                    })
-                  )}
+                    }
+
+                    return filtered.map((batch) => {
+                      const isRejected = batch.status === "rejected";
+                      const staffPayNow = employeeDetails.paynow || "";
+                      const staffName = batch.employee_name || employeeDetails.name || "Staff";
+
+                      return (
+                        <tr
+                          key={batch.id}
+                          className={`hover:bg-slate-50/70 transition-colors h-11 ${
+                            isRejected ? "bg-rose-50/10" : ""
+                          }`}
+                        >
+                          {/* 1. Claim ID */}
+                          <td className="p-3 text-left font-mono text-xs text-zinc-700">
+                            {batch.id}
+                          </td>
+
+                          {/* 2. Status */}
+                          <td className="p-3 text-left">
+                            {isRejected ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-rose-50 text-rose-800 border border-rose-200">
+                                Rejected
+                              </span>
+                            ) : batch.status === "paid" ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                <Check className="w-3 h-3" /> Paid
+                              </span>
+                            ) : batch.status === "claimed_to_finance" ? (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-blue-800 border border-blue-200">
+                                Imported
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                                <Clock className="w-3 h-3" /> Pending
+                              </span>
+                            )}
+                          </td>
+
+                          {/* 3. Submit Date */}
+                          <td className="p-3 text-left text-xs text-zinc-700">
+                            {formatDateDisplay(batch.claim_date || batch.created_at)}
+                          </td>
+
+                          {/* 4. Staff Name */}
+                          <td className="p-3 text-left text-xs font-medium text-zinc-900">
+                            {staffName}
+                          </td>
+
+                          {/* 5. Claim Amount */}
+                          <td className="p-3 text-right text-xs font-semibold text-zinc-900 tabular-nums">
+                            ${Number(batch.total_amount || 0).toFixed(2)}
+                          </td>
+
+                          {/* 6. Paynow to */}
+                          <td className="p-3 text-left text-xs font-mono text-zinc-700">
+                            {formatCleanPayNow(staffPayNow) || "-"}
+                          </td>
+
+                          {/* 7. Claim to */}
+                          <td className="p-3 text-left text-xs text-zinc-700 truncate max-w-[160px]" title={batch.target_admin_name || batch.target_admin_email || "-"}>
+                            {batch.target_admin_name || batch.target_admin_email || "-"}
+                          </td>
+
+                          {/* 8. Paid Date */}
+                          <td className="p-3 text-left text-xs text-zinc-600">
+                            {batch.approved_at ? formatDateDisplay(batch.approved_at) : "-"}
+                          </td>
+
+                          {/* 9. Payment Ref */}
+                          <td className="p-3 text-left text-xs font-mono text-zinc-600 truncate max-w-[150px]" title={batch.payment_reference}>
+                            {batch.payment_reference || "-"}
+                          </td>
+
+                          {/* 10. Pay by */}
+                          <td className="p-3 text-left text-xs text-zinc-700 truncate max-w-[140px]">
+                            {batch.approved_by || "-"}
+                          </td>
+
+                          {/* 11. Action */}
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setViewingBatch(batch)}
+                                className="h-7 px-2.5 text-xs font-medium text-zinc-700 hover:text-zinc-950 bg-white hover:bg-slate-100 rounded border border-slate-200 cursor-pointer inline-flex items-center justify-center gap-1.5 transition-colors shrink-0"
+                                title="View Claim Details & Receipts"
+                              >
+                                <Eye className="w-3.5 h-3.5 text-zinc-500" /> View Claim
+                              </button>
+                              {isRejected && (
+                                <>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleStartResubmitBatch(batch)}
+                                    className="h-7 px-2.5 text-xs font-medium text-[#0B57D0] hover:text-[#0842A0] bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 cursor-pointer inline-flex items-center justify-center gap-1.5 transition-colors shrink-0"
+                                    title="Edit and Resubmit this Claim"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5" /> Edit & Resubmit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteRejectedBatch(batch)}
+                                    className="h-7 px-2.5 text-xs font-medium text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 rounded border border-rose-200 cursor-pointer inline-flex items-center justify-center gap-1.5 transition-colors shrink-0"
+                                    title="Delete this rejected claim and return expenses to ledger"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" /> Delete Claim
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -1254,50 +1502,52 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
         </div>
       )}
 
-      {/* SUBMIT CLAIM BATCH MODAL (WITH ADMIN SELECTOR & PAYNOW CONFIRMATION) */}
+      {/* SUBMIT CLAIM BATCH MODAL */}
       {showSubmitModal && (
-        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-zinc-300 shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-pop-in">
-            <div className="px-6 py-4 bg-zinc-50 border-b border-zinc-200 flex items-center justify-between">
+        <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-zinc-950">Submit Claim Batch for Payout</h3>
+                <h3 className="text-sm font-semibold text-zinc-900">
+                  {resubmittingBatch ? `Resubmit Claim Batch (${resubmittingBatch.id})` : "Submit Claim Batch for Payout"}
+                </h3>
                 <span className="text-xs text-zinc-500">
                   {selectedExpenses.length} expense(s) selected
                 </span>
               </div>
               <button
                 onClick={() => setShowSubmitModal(false)}
-                className="w-7 h-7 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-100 flex items-center justify-center text-zinc-500 cursor-pointer"
+                className="w-7 h-7 rounded border border-slate-200 bg-white hover:bg-slate-100 flex items-center justify-center text-zinc-500 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-6 flex flex-col gap-4">
+            <div className="p-5 flex flex-col gap-4">
               
               {/* Reimbursement info */}
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between">
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded flex items-center justify-between text-xs">
                 <div>
-                  <span className="text-[10px] font-bold text-emerald-800 uppercase block">Reimbursement Target</span>
-                  <span className="text-sm font-bold text-emerald-950">{employeeDetails.name}</span>
-                  <span className="text-xs font-mono font-bold text-emerald-700 block">PayNow: {employeeDetails.paynow}</span>
+                  <span className="text-[11px] text-zinc-500 block">Reimbursement Target</span>
+                  <span className="font-semibold text-zinc-900">{employeeDetails.name}</span>
+                  <span className="text-[11px] text-zinc-600 block mt-0.5">PayNow: {employeeDetails.paynow}</span>
                 </div>
                 <div className="text-right">
-                  <span className="text-[10px] font-bold text-emerald-800 uppercase block">Total Claim</span>
-                  <span className="text-lg font-mono font-extrabold text-emerald-950">${roundedSelectedTotal.toFixed(2)}</span>
+                  <span className="text-[11px] text-zinc-500 block">Total Claim</span>
+                  <span className="text-base font-semibold text-zinc-900">${roundedSelectedTotal.toFixed(2)}</span>
                 </div>
               </div>
 
               {/* Admin Selection Dropdown */}
               <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] font-bold text-zinc-700 uppercase tracking-wider flex items-center gap-1">
+                <label className="text-xs font-medium text-zinc-700 flex items-center gap-1">
                   <ShieldCheck className="w-4 h-4 text-[#0B57D0]" />
                   Select Administrator / Supervisor to Claim *
                 </label>
                 <select
                   value={selectedAdminEmail}
                   onChange={(e) => setSelectedAdminEmail(e.target.value)}
-                  className="h-10 px-3 border border-zinc-300 rounded-lg text-xs font-semibold text-zinc-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  className="h-9 px-3 border border-zinc-300 rounded text-xs text-zinc-900 bg-white focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]"
                 >
                   {adminsList.length === 0 ? (
                     <option value="">No Administrators found</option>
@@ -1309,25 +1559,26 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                     ))
                   )}
                 </select>
-                <span className="text-[10px] text-zinc-400">
-                  The selected manager will receive your claim batch in their review queue.
+                <span className="text-[11px] text-zinc-400">
+                  The selected supervisor will receive your claim in their review queue.
                 </span>
               </div>
 
-              <div className="text-[11px] text-zinc-500 border-t border-zinc-200 pt-3">
-                ⚠️ Once submitted, these expenses are locked and cannot be edited or deleted while under review.
+              <div className="text-xs text-zinc-500 border-t border-zinc-150 pt-2.5">
+                Once submitted, these expenses are locked and cannot be edited while under review.
               </div>
 
             </div>
 
-            <div className="p-4 bg-zinc-50 border-t border-zinc-200 flex justify-end gap-2">
-              <CustomButton variant="secondary" onClick={() => setShowSubmitModal(false)}>
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end gap-2">
+              <CustomButton variant="secondary" onClick={() => setShowSubmitModal(false)} className="h-9 text-xs rounded">
                 Cancel
               </CustomButton>
               <CustomButton
                 variant="default"
                 disabled={isSubmittingBatch || !selectedAdminEmail}
                 onClick={handleConfirmSubmitBatch}
+                className="h-9 text-xs rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white"
               >
                 {isSubmittingBatch ? (
                   <>
@@ -1337,7 +1588,9 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                 ) : (
                   <>
                     <Send className="w-4 h-4 mr-1.5" />
-                    Confirm & Submit ($ {roundedSelectedTotal.toFixed(2)})
+                    {resubmittingBatch
+                      ? `Confirm & Resubmit (${resubmittingBatch.id})`
+                      : `Confirm & Submit ($${roundedSelectedTotal.toFixed(2)})`}
                   </>
                 )}
               </CustomButton>
@@ -1348,28 +1601,28 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
 
       {/* QUICK PAYNOW UPDATE MODAL */}
       {showPayNowModal && (
-        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-zinc-300 shadow-2xl w-full max-w-md overflow-hidden flex flex-col animate-pop-in">
-            <div className="px-6 py-4 bg-zinc-50 border-b border-zinc-200 flex items-center justify-between">
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-slate-950/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl w-full max-w-md overflow-hidden flex flex-col">
+            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CreditCard className="w-4 h-4 text-[#0B57D0]" />
-                <h3 className="text-sm font-bold text-zinc-950">Update Employee PayNow Number</h3>
+                <h3 className="text-sm font-semibold text-zinc-900">Update PayNow Number</h3>
               </div>
               <button
                 onClick={() => setShowPayNowModal(false)}
-                className="w-7 h-7 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-100 flex items-center justify-center text-zinc-500 cursor-pointer"
+                className="w-7 h-7 rounded border border-slate-200 bg-white hover:bg-slate-100 flex items-center justify-center text-zinc-500 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleSavePayNow} className="p-6 flex flex-col gap-4">
+            <form onSubmit={handleSavePayNow} className="p-5 flex flex-col gap-3.5">
               <p className="text-xs text-zinc-600">
-                Enter your mobile number, UEN, or NRIC registered with PayNow so supervisors can send your reimbursement directly.
+                Enter your mobile number, UEN, or NRIC registered with PayNow so supervisors can send reimbursement payouts.
               </p>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] font-bold text-zinc-600 uppercase tracking-wider">
+                <label className="text-xs font-medium text-zinc-700">
                   PayNow Number / Mobile *
                 </label>
                 <input
@@ -1378,22 +1631,22 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                   placeholder="e.g. 91234567 or 201912345A"
                   value={payNowInput}
                   onChange={(e) => setPayNowInput(e.target.value)}
-                  className="h-10 px-3 border border-zinc-300 rounded-lg text-xs font-bold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] bg-white font-mono"
+                  className="h-9 px-3 border border-zinc-300 rounded text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] bg-white font-mono"
                 />
               </div>
 
-              <div className="p-4 -mx-6 -mb-6 bg-zinc-50 border-t border-zinc-200 flex justify-end gap-2 mt-2">
-                <CustomButton variant="secondary" onClick={() => setShowPayNowModal(false)}>
+              <div className="px-5 py-3 -mx-5 -mb-5 bg-slate-50 border-t border-slate-200 flex justify-end gap-2 mt-2">
+                <CustomButton variant="secondary" onClick={() => setShowPayNowModal(false)} className="h-9 text-xs rounded">
                   Cancel
                 </CustomButton>
-                <CustomButton type="submit" variant="default" disabled={isSavingPayNow || !payNowInput.trim()}>
+                <CustomButton type="submit" variant="default" disabled={isSavingPayNow || !payNowInput.trim()} className="h-9 text-xs rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white">
                   {isSavingPayNow ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
                       Saving...
                     </>
                   ) : (
-                    "Save PayNow Number"
+                    "Save PayNow"
                   )}
                 </CustomButton>
               </div>
@@ -1402,67 +1655,173 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
         </div>
       )}
 
-      {/* BATCH DETAILS MODAL */}
+      {/* BATCH CLAIM DETAILS MODAL (SIMPLIFIED FULL-WIDTH RECEIPT & DETAILS ON TOP) */}
       {viewingBatch && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-zinc-300 shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[85vh] animate-pop-in">
-            <div className="px-6 py-4 bg-zinc-50 border-b border-zinc-200 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950">Claim Batch {viewingBatch.id}</h3>
-                <span className="text-xs text-zinc-500">Submitted on {viewingBatch.claim_date}</span>
+          <div className="bg-white rounded-lg border border-slate-200 shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh] animate-pop-in">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-zinc-900">
+                      {viewingBatch.employee_name || employeeDetails.name || "Staff"}
+                    </h3>
+                    {viewingBatch.status === "paid" || viewingBatch.status === "claimed_to_finance" ? (
+                      <span className="px-2 py-0.5 text-[11px] font-medium bg-emerald-50 text-emerald-800 rounded border border-emerald-200 flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Paid
+                      </span>
+                    ) : viewingBatch.status === "rejected" ? (
+                      <span className="px-2 py-0.5 text-[11px] font-medium bg-rose-50 text-rose-800 rounded border border-rose-200 flex items-center gap-1">
+                        <Ban className="w-3 h-3" /> Rejected
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 text-[11px] font-medium bg-amber-50 text-amber-800 rounded border border-amber-200 flex items-center gap-1">
+                        <Clock className="w-3 h-3" /> Pending
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-zinc-500 mt-0.5">
+                    Submitted on {formatDateDisplay(viewingBatch.claim_date || viewingBatch.created_at)}
+                  </div>
+                </div>
               </div>
-              <button
-                onClick={() => setViewingBatch(null)}
-                className="w-7 h-7 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-100 flex items-center justify-center text-zinc-500 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">Total Amount</span>
+                  <span className="font-semibold text-base text-zinc-900 block tabular-nums">
+                    ${Number(viewingBatch.total_amount || 0).toFixed(2)}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setViewingBatch(null)}
+                  className="w-7 h-7 rounded-md hover:bg-slate-200/70 flex items-center justify-center text-zinc-500 hover:text-zinc-800 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            <div className="p-6 overflow-y-auto flex flex-col gap-4">
-              <div className="flex items-center justify-between bg-zinc-50 p-3 rounded-lg border border-zinc-200 text-xs font-semibold">
-                <div>
-                  <span className="text-zinc-500 block text-[10px] uppercase">Reimbursement Target</span>
-                  <span className="font-bold text-zinc-900">{viewingBatch.employee_name} ({formatCleanPayNow(viewingBatch.paynow_number) || "-"})</span>
-                  {viewingBatch.target_admin_name && (
-                    <span className="text-[10px] text-zinc-500 block mt-0.5">
-                      Assigned To: <strong>{viewingBatch.target_admin_name}</strong>
-                    </span>
-                  )}
-                </div>
-                <div className="text-right">
-                  <span className="text-zinc-500 block text-[10px] uppercase">Total Payout</span>
-                  <span className="font-extrabold text-base font-mono text-zinc-950">${Number(viewingBatch.total_amount || 0).toFixed(2)}</span>
-                </div>
+            {/* Sub-banner: References or Rejection Alerts */}
+            {(viewingBatch.payment_reference || viewingBatch.reject_reason) && (
+              <div className="px-5 py-2 bg-slate-50 border-b border-slate-200 text-xs shrink-0 flex items-center justify-between">
+                {viewingBatch.payment_reference && (
+                  <span className="text-emerald-800 font-mono text-xs">
+                    Ref: <strong>{viewingBatch.payment_reference}</strong>
+                  </span>
+                )}
+                {viewingBatch.reject_reason && (
+                  <span className="text-rose-700 text-xs">
+                    Reason: {viewingBatch.reject_reason}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {/* Modal Body: Scrollable Itemized List */}
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4 bg-slate-50/50">
+              <div className="flex items-center justify-between text-xs text-zinc-500 font-medium px-0.5">
+                <span>{(viewingBatch.items || []).length} Expense Item{(viewingBatch.items || []).length !== 1 ? "s" : ""}</span>
               </div>
 
-              <div className="flex flex-col gap-2">
-                <span className="text-[11px] font-bold text-zinc-600 uppercase tracking-wider">Itemized Expenses</span>
-                <div className="divide-y divide-zinc-200 border border-zinc-200 rounded-lg overflow-hidden bg-white">
-                  {(viewingBatch.items || []).map((it, idx) => (
-                    <div key={idx} className="p-3 flex items-center justify-between text-xs">
-                      <div>
-                        <span className="font-bold text-zinc-900 block">{it.description}</span>
-                        <span className="text-[10px] text-zinc-400 font-semibold">{formatDateDisplay(it.date)} {it.remarks ? `• ${it.remarks}` : ""}</span>
+              <div className="flex flex-col gap-4">
+                {(viewingBatch.items || []).map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-2xs flex flex-col"
+                  >
+                    {/* Item Details on Top */}
+                    <div className="p-3.5 flex items-start justify-between gap-4 bg-white">
+                      {/* Left: Description & Remark */}
+                      <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                        <span className="w-5 h-5 rounded bg-slate-100 text-zinc-700 text-[11px] font-semibold flex items-center justify-center shrink-0 mt-0.5 border border-slate-200">
+                          {idx + 1}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-zinc-900 text-xs">
+                              {item.description}
+                            </span>
+                          </div>
+                          {item.remarks && (
+                            <p className="text-xs text-zinc-500 mt-0.5">
+                              {item.remarks}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="font-mono font-bold text-zinc-900">${Number(it.amount || 0).toFixed(2)}</span>
-                        {it.receipt_url && (
-                          <button
-                            onClick={() => setPreviewingReceiptUrl(it.receipt_url)}
-                            className="px-2 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 text-[10px] font-bold border border-blue-200 cursor-pointer"
-                          >
-                            Receipt
-                          </button>
-                        )}
+
+                      {/* Right: Date & Amount */}
+                      <div className="text-right shrink-0 flex flex-col items-end">
+                        <span className="text-xs text-zinc-500">
+                          {formatDateDisplay(item.date)}
+                        </span>
+                        <span className="font-semibold text-zinc-900 text-sm tabular-nums mt-0.5">
+                          ${Number(item.amount || 0).toFixed(2)}
+                        </span>
                       </div>
                     </div>
-                  ))}
-                </div>
+
+                    {/* Full-width Receipt Photo Underneath */}
+                    {item.receipt_url ? (
+                      <div
+                        onClick={() => setPreviewingReceiptUrl(item.receipt_url)}
+                        className="w-full bg-slate-100/70 border-t border-slate-200 p-2 flex items-center justify-center cursor-pointer group relative"
+                        title="Click to zoom receipt"
+                      >
+                        <img
+                          src={item.receipt_url}
+                          alt={item.description}
+                          className="max-w-full max-h-[460px] w-auto h-auto object-contain rounded group-hover:opacity-95 transition-opacity"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).style.display = "none";
+                            const parent = e.currentTarget.parentElement;
+                            if (parent && !parent.querySelector(".img-fallback")) {
+                              const fb = document.createElement("div");
+                              fb.className = "img-fallback w-full py-6 flex flex-col items-center justify-center text-zinc-400 text-xs text-center";
+                              fb.innerHTML = '<span class="font-medium text-rose-500">Image Missing</span><span class="text-[10px] text-zinc-400 mt-0.5">Please re-upload</span>';
+                              parent.appendChild(fb);
+                            }
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-full py-6 bg-slate-50 border-t border-slate-100 flex items-center justify-center text-zinc-400 text-xs gap-1.5">
+                        <FileText className="w-4 h-4 text-zinc-300" />
+                        <span>No receipt attached</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
 
-            <div className="p-4 bg-zinc-50 border-t border-zinc-200 flex justify-end">
+            {/* Modal Footer */}
+            <div className="px-5 py-3 bg-slate-50/80 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                {viewingBatch.status === "rejected" && (
+                  <>
+                    <CustomButton
+                      variant="default"
+                      onClick={() => handleStartResubmitBatch(viewingBatch)}
+                      className="h-9 text-xs rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white"
+                    >
+                      <Edit3 className="w-3.5 h-3.5 mr-1.5" />
+                      Edit & Resubmit Claim
+                    </CustomButton>
+                    <CustomButton
+                      variant="secondary"
+                      onClick={() => handleDeleteRejectedBatch(viewingBatch)}
+                      className="h-9 text-xs rounded text-rose-700 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 border border-rose-200"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                      Delete Claim
+                    </CustomButton>
+                  </>
+                )}
+              </div>
               <CustomButton variant="secondary" onClick={() => setViewingBatch(null)}>
                 Close
               </CustomButton>
@@ -1471,24 +1830,24 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
         </div>
       )}
 
-      {/* RECEIPT FULL PREVIEW MODAL */}
+      {/* RECEIPT PREVIEW MODAL */}
       {previewingReceiptUrl && (
-        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-slate-950/80 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-zinc-300 shadow-2xl max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
-            <div className="px-4 py-3 bg-zinc-50 border-b border-zinc-200 flex items-center justify-between">
-              <span className="text-xs font-bold text-zinc-900">Receipt Image Preview</span>
+        <div className="fixed inset-0 z-[160] flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <span className="text-xs font-semibold text-zinc-900">Receipt Image Preview</span>
               <button
                 onClick={() => setPreviewingReceiptUrl(null)}
-                className="w-7 h-7 rounded-lg border border-zinc-300 bg-white hover:bg-zinc-100 flex items-center justify-center text-zinc-500 cursor-pointer"
+                className="w-7 h-7 rounded border border-slate-200 bg-white hover:bg-slate-100 flex items-center justify-center text-zinc-500 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="p-4 flex items-center justify-center overflow-auto max-h-[75vh] bg-zinc-100">
+            <div className="p-4 flex items-center justify-center overflow-auto max-h-[75vh] bg-slate-100">
               <img
                 src={previewingReceiptUrl}
-                alt="Receipt Full Preview"
-                className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-sm"
+                alt="Receipt Preview"
+                className="max-w-full max-h-[70vh] object-contain rounded shadow-xs"
               />
             </div>
           </div>
@@ -1497,21 +1856,21 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
 
       {/* CROP & ROTATE MODAL */}
       {showCropModal && (
-        <div className="fixed inset-0 z-[150] flex flex-col items-center justify-center bg-slate-950/60 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-2xl border border-zinc-300 shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh] animate-pop-in">
-            <div className="px-6 py-4 bg-zinc-50 border-b border-zinc-200 flex items-center justify-between">
-              <h3 className="text-xs font-bold text-zinc-950 uppercase tracking-widest">
+        <div className="fixed inset-0 z-[150] flex flex-col items-center justify-center bg-slate-950/50 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-xl w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <h3 className="text-xs font-semibold text-zinc-900">
                 Crop & Rotate Receipt
               </h3>
               <button
                 onClick={() => setShowCropModal(false)}
-                className="w-7 h-7 rounded-lg border border-zinc-300 bg-[#EEEEEE] hover:bg-zinc-100 flex items-center justify-center text-zinc-500 cursor-pointer"
+                className="w-7 h-7 rounded border border-slate-200 bg-white hover:bg-slate-100 flex items-center justify-center text-zinc-500 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="flex-grow p-6 bg-zinc-100 flex items-center justify-center overflow-hidden min-h-[300px] max-h-[50vh]">
+            <div className="flex-grow p-4 bg-slate-100 flex items-center justify-center overflow-hidden min-h-[300px] max-h-[50vh]">
               <div className="w-full h-full max-h-[350px] flex justify-center items-center">
                 <img
                   ref={imageRef}
@@ -1522,8 +1881,8 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
               </div>
             </div>
 
-            <div className="p-4 bg-zinc-50 border-t border-zinc-200 flex flex-col gap-4">
-              <div className="flex items-center justify-center gap-6">
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col gap-3">
+              <div className="flex items-center justify-center gap-4">
                 <button
                   type="button"
                   onClick={() => {
@@ -1531,14 +1890,14 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                     setBaseRotation(rot);
                     cropperRef.current?.rotateTo(rot + fineRotation);
                   }}
-                  className="p-2.5 bg-white border border-zinc-200 hover:border-zinc-500 rounded-lg flex items-center justify-center cursor-pointer"
+                  className="p-2 bg-white border border-slate-200 hover:border-slate-400 rounded flex items-center justify-center cursor-pointer"
                   title="Rotate Left 90°"
                 >
                   <RotateCcw className="w-4 h-4 text-zinc-700" />
                 </button>
 
-                <div className="flex items-center gap-3 flex-grow max-w-xs">
-                  <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Angle</span>
+                <div className="flex items-center gap-2 flex-grow max-w-xs">
+                  <span className="text-[11px] font-medium text-zinc-500">Angle</span>
                   <input
                     type="range"
                     min="-45"
@@ -1549,9 +1908,9 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                       setFineRotation(val);
                       cropperRef.current?.rotateTo(baseRotation + val);
                     }}
-                    className="w-full accent-zinc-800 h-1 rounded-lg bg-zinc-200 cursor-pointer"
+                    className="w-full accent-[#0B57D0] h-1 rounded bg-zinc-200 cursor-pointer"
                   />
-                  <span className="text-xs font-mono font-bold text-zinc-600 w-10 text-right">{fineRotation}°</span>
+                  <span className="text-xs font-mono text-zinc-600 w-8 text-right">{fineRotation}°</span>
                 </div>
 
                 <button
@@ -1561,18 +1920,18 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                     setBaseRotation(rot);
                     cropperRef.current?.rotateTo(rot + fineRotation);
                   }}
-                  className="p-2.5 bg-white border border-zinc-200 hover:border-zinc-500 rounded-lg flex items-center justify-center cursor-pointer"
+                  className="p-2 bg-white border border-slate-200 hover:border-slate-400 rounded flex items-center justify-center cursor-pointer"
                   title="Rotate Right 90°"
                 >
                   <RotateCw className="w-4 h-4 text-zinc-700" />
                 </button>
               </div>
 
-              <div className="flex justify-end gap-3">
-                <CustomButton variant="secondary" onClick={() => setShowCropModal(false)}>
+              <div className="flex justify-end gap-2">
+                <CustomButton variant="secondary" onClick={() => setShowCropModal(false)} className="h-9 text-xs rounded">
                   Cancel
                 </CustomButton>
-                <CustomButton variant="dark" onClick={applyCrop}>
+                <CustomButton variant="default" onClick={applyCrop} className="h-9 text-xs rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white">
                   Apply Crop
                 </CustomButton>
               </div>

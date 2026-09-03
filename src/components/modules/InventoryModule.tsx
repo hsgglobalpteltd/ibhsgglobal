@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataTable, Column } from "../data-table";
-import { Eye, User, Calendar, ClipboardCheck, X, FileText, CheckCircle2, AlertCircle, Layers, History, Search, Printer } from "lucide-react";
+import { Eye, User, Calendar, ClipboardCheck, X, FileText, CheckCircle2, AlertCircle, Layers, History, Search, Printer, Plus, Check, Camera, Sparkles } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "../custom-button";
 import { NavigationTabs } from "../navigation-tabs";
@@ -11,6 +11,7 @@ interface InventoryModuleProps {
   profile?: {
     role: string;
     modules_access: string[];
+    name?: string;
   } | null;
 }
 
@@ -34,9 +35,21 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
   const [products, setProducts] = React.useState<any[]>([]);
   const [brands, setBrands] = React.useState<any[]>([]);
   const [users, setUsers] = React.useState<any[]>([]);
+  const [trackOrders, setTrackOrders] = React.useState<any[]>([]);
+  const [stockMovements, setStockMovements] = React.useState<any[]>([]);
   const [fetching, setFetching] = React.useState(false);
   const [syncStatus, setSyncStatus] = React.useState<"idle" | "syncing" | "synced">("idle");
   const [selectedLog, setSelectedLog] = React.useState<ParsedLog | null>(null);
+
+  // Manual stock take submission modal state
+  const [showSubmitModal, setShowSubmitModal] = React.useState(false);
+  const [submitAuditDate, setSubmitAuditDate] = React.useState("");
+  const [submitAuditTime, setSubmitAuditTime] = React.useState("");
+  const [submitAuditor, setSubmitAuditor] = React.useState("Admin");
+  const [stockTakeForm, setStockTakeForm] = React.useState<Record<string, { qty: number | string; skipped: boolean }>>({});
+  const [isSubmitting, setIsSubmitting] = React.useState(false);
+  const [isScanning, setIsScanning] = React.useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Sub-tabs: "stock" or "logs"
   const [subTab, setSubTab] = React.useState<"stock" | "logs">("stock");
@@ -86,18 +99,308 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
   const lookupProduct = React.useCallback((sku: string) => {
     const prod = products.find(p => String(p.sku || p.SKU || p.Code || "").trim().toLowerCase() === String(sku).trim().toLowerCase());
     if (prod) {
-      const brandId = prod["Brands ID"] || prod.Brands_ID || prod.brandId || "";
-      const brandObj = brands.find(b => String(b.id || b.ID || "").trim() === String(brandId).trim());
-      const brandName = brandObj ? (brandObj["Display Name"] || brandObj.Display_Name || brandObj.name || brandId) : "Unbranded";
+      const brandId = String(prod.brands_id || prod["Brands ID"] || prod.Brands_ID || prod.brandId || "").trim();
+      const brandObj = brands.find(b => String(b.id || b.ID || "").trim().toLowerCase() === brandId.toLowerCase());
+      const brandName = brandObj ? (brandObj.display_name || brandObj["Display Name"] || brandObj.Display_Name || brandObj.name || brandId) : (brandId || "Unbranded");
 
       return {
-        name: prod["Display Name"] || prod.Display_Name || prod.productName || prod.Name || "Unknown Product",
+        name: prod.display_name || prod["Display Name"] || prod.Display_Name || prod.productName || prod.Name || "Unknown Product",
         brand: brandName,
-        uom: Number(prod.Carton || prod.uom || prod.UOM) || 1
+        uom: Number(prod.carton || prod.Carton || prod.uom || prod.UOM) || 1
       };
     }
     return { name: "Unknown Product", brand: "N/A", uom: 1 };
   }, [products, brands]);
+
+  // Group all products by brand for manual stock take modal
+  const productsByBrand = React.useMemo(() => {
+    // Map brand ID to brand metadata
+    const brandMap: Record<string, { id: string; name: string; rank: number }> = {};
+    brands.forEach((b: any) => {
+      const bId = String(b.id || b.ID || "").trim();
+      if (!bId) return;
+      const bName = String(b.display_name || b["Display Name"] || b.Display_Name || b.name || bId).trim();
+      const bRank = Number(b.rank || b.Rank || 999);
+      brandMap[bId.toLowerCase()] = { id: bId, name: bName, rank: isNaN(bRank) ? 999 : bRank };
+    });
+
+    // Group items by combined Brand Display Name
+    const groupsByName: Record<string, {
+      brandName: string;
+      minBrandId: string;
+      minRank: number;
+      items: Array<{ sku: string; name: string; uom: number; brandId: string }>;
+    }> = {};
+
+    products.forEach((p: any) => {
+      const status = String(p.status || p.Status || "").trim().toLowerCase();
+      if (status !== "active") return;
+
+      const rawSku = String(p.sku || p.SKU || p.Code || "").trim();
+      if (!rawSku) return;
+
+      const rawBrandId = String(p.brands_id || p["Brands ID"] || p.Brands_ID || p.brandId || "").trim();
+      const bMeta = brandMap[rawBrandId.toLowerCase()];
+      const brandName = bMeta ? bMeta.name : (rawBrandId || "Unbranded");
+      const brandRank = bMeta ? bMeta.rank : 999;
+      const brandKey = brandName.toLowerCase();
+
+      const name = p.display_name || p["Display Name"] || p.Display_Name || p.productName || p.Name || "Unknown Product";
+      const uom = Number(p.carton || p.Carton || p.uom || p.UOM) || 1;
+
+      if (!groupsByName[brandKey]) {
+        groupsByName[brandKey] = {
+          brandName,
+          minBrandId: rawBrandId,
+          minRank: brandRank,
+          items: []
+        };
+      } else {
+        if (brandRank < groupsByName[brandKey].minRank) {
+          groupsByName[brandKey].minRank = brandRank;
+        }
+        if (rawBrandId && (!groupsByName[brandKey].minBrandId || rawBrandId < groupsByName[brandKey].minBrandId)) {
+          groupsByName[brandKey].minBrandId = rawBrandId;
+        }
+      }
+
+      groupsByName[brandKey].items.push({
+        sku: rawSku,
+        name,
+        uom,
+        brandId: rawBrandId
+      });
+    });
+
+    // Sort products inside each group by brandId, then by SKU
+    Object.values(groupsByName).forEach(group => {
+      group.items.sort((a, b) => {
+        if (a.brandId !== b.brandId) {
+          return a.brandId.localeCompare(b.brandId, undefined, { numeric: true });
+        }
+        return a.sku.localeCompare(b.sku, undefined, { numeric: true });
+      });
+    });
+
+    // Sort brand groups by brand ID / rank
+    const sortedGroups = Object.values(groupsByName).sort((a, b) => {
+      if (a.minRank !== b.minRank) return a.minRank - b.minRank;
+      if (a.minBrandId && b.minBrandId) {
+        return a.minBrandId.localeCompare(b.minBrandId, undefined, { numeric: true });
+      }
+      return a.brandName.localeCompare(b.brandName);
+    });
+
+    return sortedGroups;
+  }, [products, brands]);
+
+  // Helper for current Singapore Date & Time
+  const getSingaporeDateTime = () => {
+    const now = new Date();
+    const sgDateStr = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(now);
+
+    const sgTimeStr = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Singapore",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).format(now);
+
+    return { date: sgDateStr, time: sgTimeStr };
+  };
+
+  // Open manual stock take submission modal
+  const handleOpenSubmitModal = () => {
+    const { date, time } = getSingaporeDateTime();
+
+    setSubmitAuditDate(date);
+    setSubmitAuditTime(time);
+    setSubmitAuditor(profile?.name || "Admin");
+
+    const initialForm: Record<string, { qty: number | string; skipped: boolean }> = {};
+    products.forEach(p => {
+      const status = String(p.status || p.Status || "").trim().toLowerCase();
+      if (status !== "active") return;
+
+      const rawSku = String(p.sku || p.SKU || p.Code || "").trim();
+      if (rawSku) {
+        initialForm[rawSku.toLowerCase()] = { qty: "", skipped: false };
+      }
+    });
+    setStockTakeForm(initialForm);
+    setShowSubmitModal(true);
+  };
+
+  // Submit manual stock take to backend
+  const handleSubmitStockTake = async () => {
+    if (!submitAuditDate) {
+      showToast("Please select the audit date", "error");
+      return;
+    }
+    if (!submitAuditor.trim()) {
+      showToast("Please specify the auditor name", "error");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const sgNow = getSingaporeDateTime();
+      const currentSec = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Singapore", second: "2-digit" }).format(new Date());
+      
+      const timePart = (submitAuditTime && submitAuditTime.trim() !== "00:00" && submitAuditTime.trim() !== "") 
+        ? submitAuditTime.trim() 
+        : sgNow.time;
+      
+      const fullTimeStr = timePart.includes(":") && timePart.split(":").length === 2 
+        ? `${timePart}:${currentSec}` 
+        : timePart;
+      
+      // Parse ISO with Singapore GMT+8 (+08:00)
+      const isoStr = `${submitAuditDate}T${fullTimeStr}+08:00`;
+      let selectedTimestamp = new Date(isoStr).getTime();
+      if (isNaN(selectedTimestamp) || selectedTimestamp <= 0) {
+        selectedTimestamp = Date.now();
+      }
+
+      const itemsList = products
+        .filter(p => String(p.status || p.Status || "").trim().toLowerCase() === "active")
+        .map(p => {
+          const rawSku = String(p.sku || p.SKU || p.Code || "").trim();
+          const normSku = rawSku.toLowerCase();
+          const entry = stockTakeForm[normSku] || { qty: 0, skipped: false };
+          return {
+            sku: rawSku,
+            qty: entry.skipped ? 0 : (Number(entry.qty) || 0),
+            skipped: Boolean(entry.skipped)
+          };
+        }).filter(i => i.sku);
+
+      if (itemsList.length === 0) {
+        showToast("No products available to submit", "error");
+        setIsSubmitting(false);
+        return;
+      }
+
+      const logPayload = {
+        timestamp: selectedTimestamp,
+        audit_by: submitAuditor.trim(),
+        audit: itemsList
+      };
+
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/inventory/logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(logPayload)
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || `Server returned ${res.status}`);
+      }
+
+      showToast("Stock take submitted successfully!", "success");
+      setShowSubmitModal(false);
+      await fetchFreshData(true);
+    } catch (err: any) {
+      console.error(err);
+      showToast("Failed to submit stock take: " + err.message, "error");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Scanned Paper PDF Parser
+  const handleScanPaper = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const file = files[0];
+    if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
+      showToast("Please select a PDF file containing the scanned paper.", "warning");
+      return;
+    }
+
+    setIsScanning(true);
+    showToast("Reading scanned PDF document...", "info");
+
+    try {
+      // Read PDF file as base64
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          const cleanBase64 = result.replace(/^data:[^;]+;base64,/, "");
+          resolve(cleanBase64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/inventory/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          pdf: base64Data,
+          type: "application/pdf"
+        })
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || `Server returned ${res.status}`);
+      }
+
+      const resData = await res.json();
+      const scannedItems: Array<{ sku: string; actual_qty?: number; qty?: number; skipped?: boolean }> = resData.items || [];
+
+      if (scannedItems.length === 0) {
+        showToast("No product SKUs found in scanned PDF. Please check document clarity.", "warning");
+        return;
+      }
+
+      let matchedCount = 0;
+      setStockTakeForm(prev => {
+        const next = { ...prev };
+        scannedItems.forEach(item => {
+          const scannedSku = String(item.sku || "").trim().toLowerCase();
+          if (!scannedSku) return;
+
+          // Match against catalog products
+          const matchedProd = products.find(p => {
+            const pSku = String(p.sku || p.SKU || p.Code || "").trim().toLowerCase();
+            return pSku === scannedSku || pSku.replace(/[^a-z0-9]/g, "") === scannedSku.replace(/[^a-z0-9]/g, "");
+          });
+
+          if (matchedProd) {
+            const realSku = String(matchedProd.sku || matchedProd.SKU || matchedProd.Code || "").trim().toLowerCase();
+            const qtyVal = item.actual_qty !== undefined ? item.actual_qty : (item.qty !== undefined ? item.qty : "");
+            const isSkipped = Boolean(item.skipped);
+            next[realSku] = {
+              qty: isSkipped ? "" : (qtyVal !== "" ? Number(qtyVal) : ""),
+              skipped: isSkipped
+            };
+            matchedCount++;
+          }
+        });
+        return next;
+      });
+
+      showToast(`Successfully extracted and matched ${matchedCount} SKUs from paper!`, "success");
+    } catch (err: any) {
+      console.error("Scan error:", err);
+      showToast("Scan failed: " + (err.message || String(err)), "error");
+    } finally {
+      setIsScanning(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
+  };
 
   // Reusable parser to parse raw logs row items case-insensitively
   const parseLogs = React.useCallback((rawData: any[]): ParsedLog[] => {
@@ -105,7 +408,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       // Find keys case-insensitively
       const auditKey = Object.keys(row).find(k => k.trim().toLowerCase() === "audit");
       const timestampKey = Object.keys(row).find(k => k.trim().toLowerCase() === "timestamp");
-      const auditByKey = Object.keys(row).find(k => k.trim().toLowerCase() === "audit by");
+      const auditByKey = Object.keys(row).find(k => k.trim().toLowerCase() === "audit by" || k.trim().toLowerCase() === "audit_by");
 
       const rawAudit = auditKey ? row[auditKey] : null;
       const rawTimestamp = timestampKey ? row[timestampKey] : null;
@@ -153,70 +456,51 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
     }
 
     try {
-      // 1. Fetch Brands list for brand name lookups
-      let cachedBrands = localStorage.getItem("brands_DB_data");
-      let brandList = [];
-      if (cachedBrands) {
-        brandList = JSON.parse(cachedBrands);
-        setBrands(brandList);
-      } else {
-        const brandRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=brands_DB");
-        if (brandRes.ok) {
-          brandList = await brandRes.json();
-          localStorage.setItem("brands_DB_data", JSON.stringify(brandList));
-          setBrands(brandList);
-        }
+      // Fetch fresh live data without any local cache
+      const [brandRes, prodRes, usersRes, logsRes, toRes, smRes] = await Promise.all([
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/inventory/brands", { cache: "no-store" }),
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/inventory/products", { cache: "no-store" }),
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/inventory/users", { cache: "no-store" }),
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/inventory/logs", { cache: "no-store" }),
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", { cache: "no-store" }).catch(() => null),
+        fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/app4/stock-movement", { cache: "no-store" }).catch(() => null)
+      ]);
+
+      if (brandRes && brandRes.ok) {
+        const brandList = await brandRes.json();
+        setBrands(Array.isArray(brandList) ? brandList : []);
       }
 
-      // 2. Fetch Products database for SKU name lookups
-      let cachedProds = localStorage.getItem("products_DB_data");
-      let prodList = [];
-      if (cachedProds) {
-        prodList = JSON.parse(cachedProds);
-        setProducts(prodList);
-      } else {
-        const prodRes = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=products_DB");
-        if (prodRes.ok) {
-          prodList = await prodRes.json();
-          localStorage.setItem("products_DB_data", JSON.stringify(prodList));
-          setProducts(prodList);
-        }
+      if (prodRes && prodRes.ok) {
+        const prodList = await prodRes.json();
+        setProducts(Array.isArray(prodList) ? prodList : []);
       }
 
-      // 3. Fetch Users mapping table (Stock_Take_Users)
-      const usersSheet = "Stock_Take_Users";
-      if (forceSync) {
-        await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${usersSheet}`, {
-          method: "POST"
-        });
-      }
-      const usersRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${usersSheet}`);
-      if (usersRes.ok) {
+      if (usersRes && usersRes.ok) {
         const userList = await usersRes.json();
-        localStorage.setItem(`${usersSheet}_data`, JSON.stringify(userList));
-        setUsers(userList);
+        setUsers(Array.isArray(userList) ? userList : []);
       }
 
-      // 4. Fetch Stock Take Logs
-      const logsSheet = "Stock_Take_Log";
-      if (forceSync) {
-        const syncRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${logsSheet}`, {
-          method: "POST"
-        });
-        if (!syncRes.ok) throw new Error("Failed to refresh server cache");
+      if (logsRes && logsRes.ok) {
+        const rawLogs = await logsRes.json();
+        const parsed = parseLogs(Array.isArray(rawLogs) ? rawLogs : []);
+        parsed.sort((a, b) => b.timestamp - a.timestamp);
+        setLogs(parsed);
       }
 
-      const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/db?table=${logsSheet}`);
-      if (!res.ok) throw new Error(`Server returned status ${res.status}`);
-      const rawData = await res.json();
-      
-      localStorage.setItem(`${logsSheet}_data`, JSON.stringify(rawData));
+      if (toRes && toRes.ok) {
+        const toData = await toRes.json();
+        if (Array.isArray(toData)) {
+          setTrackOrders(toData);
+        }
+      }
 
-      // Parse logs
-      const parsed = parseLogs(rawData);
-      // Sort logs descending (most recent first)
-      parsed.sort((a, b) => b.timestamp - a.timestamp);
-      setLogs(parsed);
+      if (smRes && smRes.ok) {
+        const smData = await smRes.json();
+        if (Array.isArray(smData)) {
+          setStockMovements(smData);
+        }
+      }
 
       if (forceSync) {
         setSyncStatus("synced");
@@ -231,46 +515,10 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
     }
   };
 
-  // Load cached data on mount, otherwise fetch fresh
+  // Always fetch fresh live data on mount
   React.useEffect(() => {
-    // A. Load brands
-    const cachedBrands = localStorage.getItem("brands_DB_data");
-    if (cachedBrands) {
-      setBrands(JSON.parse(cachedBrands));
-    }
-
-    // B. Load products
-    const cachedProds = localStorage.getItem("products_DB_data");
-    if (cachedProds) {
-      setProducts(JSON.parse(cachedProds));
-    }
-
-    // C. Load users
-    const cachedUsers = localStorage.getItem("Stock_Take_Users_data");
-    if (cachedUsers) {
-      setUsers(JSON.parse(cachedUsers));
-    }
-
-    // D. Load logs
-    const cachedLogs = localStorage.getItem("Stock_Take_Log_data");
-    if (cachedLogs) {
-      try {
-        const rawData = JSON.parse(cachedLogs);
-        const parsed = parseLogs(rawData);
-        parsed.sort((a, b) => b.timestamp - a.timestamp);
-        setLogs(parsed);
-      } catch (e) {
-        fetchFreshData(false);
-      }
-    } else {
-      fetchFreshData(false);
-    }
-
-    // Trigger fresh load if caches are not present
-    if (!cachedProds || !cachedUsers || !cachedBrands) {
-      fetchFreshData(false);
-    }
-  }, [parseLogs]);
+    fetchFreshData(false);
+  }, []);
 
   // Listen for the global db-refresh event
   React.useEffect(() => {
@@ -289,13 +537,30 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
   const brandsList = React.useMemo(() => {
     const set = new Set<string>();
     brands.forEach(b => {
-      const name = b["Display Name"] || b.name || b.id;
+      const name = b.display_name || b["Display Name"] || b.Display_Name || b.name || b.id || b.ID;
       if (name) set.add(name);
     });
     return Array.from(set).sort();
   }, [brands]);
 
-  // Compute Current Stock levels: products grouped by brand, with latest stock take quantity
+  // Helper to format carton / loose for positive and negative numbers
+  const formatCartonLoose = (qty: number, uom: number) => {
+    if (!uom || uom <= 0) uom = 1;
+    const absQty = Math.abs(qty);
+    const cartons = Math.floor(absQty / uom);
+    const loose = absQty % uom;
+    const sign = qty < 0 ? "-" : "";
+
+    if (cartons > 0 && loose > 0) {
+      return `${sign}${cartons}ctn ${loose}pcs`;
+    } else if (cartons > 0) {
+      return `${sign}${cartons}ctn`;
+    } else {
+      return `${sign}${loose}pcs`;
+    }
+  };
+
+  // Compute Current Stock levels: products grouped by combined brand, with latest stock take quantity & deductions
   const currentStockLevels = React.useMemo(() => {
     // 1. Map SKU -> latest count info (newest count overrides older count)
     const latestCounts: Record<string, { qty: number; timestamp: number; dateStr: string; auditorId: string; skipped: boolean }> = {};
@@ -317,30 +582,51 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       });
     });
 
-    // 2. Group products by brand
-    const groups: Record<string, Array<{
-      sku: string;
-      name: string;
-      uom: number;
-      qty: number;
-      dateStr: string;
-      auditor: string;
-      hasRecord: boolean;
-      skipped: boolean;
-    }>> = {};
+    // Map brand ID to brand metadata
+    const brandMap: Record<string, { id: string; name: string; rank: number }> = {};
+    brands.forEach((b: any) => {
+      const bId = String(b.id || b.ID || "").trim();
+      if (!bId) return;
+      const bName = String(b.display_name || b["Display Name"] || b.Display_Name || b.name || bId).trim();
+      const bRank = Number(b.rank || b.Rank || 999);
+      brandMap[bId.toLowerCase()] = { id: bId, name: bName, rank: isNaN(bRank) ? 999 : bRank };
+    });
+
+    // 2. Group products by combined brand name
+    const groupsByName: Record<string, {
+      brandName: string;
+      minBrandId: string;
+      minRank: number;
+      items: Array<{
+        sku: string;
+        name: string;
+        uom: number;
+        brandId: string;
+        qty: number;
+        dateStr: string;
+        auditor: string;
+        hasRecord: boolean;
+        skipped: boolean;
+      }>;
+    }> = {};
 
     products.forEach(p => {
+      const status = String(p.status || p.Status || "").trim().toLowerCase();
+      if (status !== "active") return;
+
       const rawSku = p.sku || p.SKU || p.Code || "";
       const sku = String(rawSku).trim();
       const normSku = sku.toLowerCase();
 
       // Resolve Brand Name from Brands ID using brands_DB
-      const brandId = p["Brands ID"] || p.Brands_ID || p.brandId || "";
-      const brandObj = brands.find(b => String(b.id || b.ID || "").trim() === String(brandId).trim());
-      const brand = brandObj ? (brandObj["Display Name"] || brandObj.Display_Name || brandObj.name || brandId) : "Unbranded";
+      const rawBrandId = String(p.brands_id || p["Brands ID"] || p.Brands_ID || p.brandId || "").trim();
+      const bMeta = brandMap[rawBrandId.toLowerCase()];
+      const brand = bMeta ? bMeta.name : (rawBrandId || "Unbranded");
+      const brandRank = bMeta ? bMeta.rank : 999;
+      const brandKey = brand.toLowerCase();
 
-      const name = p["Display Name"] || p.productName || p.Name || "Unknown Product";
-      const uom = Number(p.Carton || p.uom || p.UOM) || 1;
+      const name = p.display_name || p["Display Name"] || p.Display_Name || p.productName || p.Name || "Unknown Product";
+      const uom = Number(p.carton || p.Carton || p.uom || p.UOM) || 1;
 
       // Filter by search query if present
       if (searchQuery) {
@@ -351,30 +637,139 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       }
 
       // Filter by brand if selected
-      if (selectedBrand !== "all" && brand !== selectedBrand) {
+      if (selectedBrand !== "all" && brand.toLowerCase() !== selectedBrand.toLowerCase()) {
         return;
       }
 
       const count = latestCounts[normSku];
 
-      if (!groups[brand]) {
-        groups[brand] = [];
+      // Math deduction calculation:
+      // (A) = count.qty
+      // (B) = track_orders delivered after stocktake date (type not return)
+      // (C) = stock_movement out/transfer after stocktake date
+      // (D) = A - (B + C)
+      let finalQty = 0;
+      let hasRecord = false;
+      let skipped = false;
+      let dateStr = "N/A";
+      let auditor = "N/A";
+
+      if (count) {
+        hasRecord = true;
+        skipped = count.skipped;
+        dateStr = count.dateStr;
+        auditor = lookupUser(count.auditorId);
+        const A = count.qty;
+
+        // (B) Track Orders deduction
+        let B = 0;
+        trackOrders.forEach(order => {
+          const type = String(order.type || "").trim().toLowerCase();
+          const status = String(order.status || "").trim().toLowerCase();
+          if (type !== "return" && status === "delivered") {
+            let deliveredTs = Number(order.delivered_at) || 0;
+            if (!deliveredTs) {
+              try {
+                const logsArr = typeof order.logs === "string" ? JSON.parse(order.logs) : (order.logs || []);
+                const match = logsArr.find((l: any) => l.action && l.action.toLowerCase().includes("delivered"));
+                if (match) deliveredTs = Number(match.timestamp) || 0;
+              } catch (_) {}
+            }
+            if (!deliveredTs) {
+              deliveredTs = Number(order.timestamp) || 0;
+            }
+
+            if (deliveredTs > count.timestamp) {
+              try {
+                const items = typeof order.items === "string" ? JSON.parse(order.items) : (order.items || []);
+                if (Array.isArray(items)) {
+                  items.forEach((it: any) => {
+                    const itSku = String(it.sku || it.Code || it.code || "").trim().toLowerCase();
+                    if (itSku === normSku) {
+                      B += Number(it.qty || it.quantity || 0) || 0;
+                    }
+                  });
+                }
+              } catch (_) {}
+            }
+          }
+        });
+
+        // (C) Stock Movement deduction (Stock Out & Transfer)
+        let C = 0;
+        stockMovements.forEach(m => {
+          const act = String(m.action_type || m.reference?.action_type || m.reference?.action || "").trim().toLowerCase();
+          if (act.includes("out") || act.includes("transfer")) {
+            const moveTs = Number(m.timestamp) || 0;
+            if (moveTs > count.timestamp) {
+              try {
+                const mItems = Array.isArray(m.items) ? m.items : (typeof m.items === "string" ? JSON.parse(m.items) : []);
+                if (Array.isArray(mItems)) {
+                  mItems.forEach((it: any) => {
+                    const itSku = String(it.sku || it.Code || it.code || "").trim().toLowerCase();
+                    if (itSku === normSku) {
+                      C += Number(it.qty || it.quantity || 0) || 0;
+                    }
+                  });
+                }
+              } catch (_) {}
+            }
+          }
+        });
+
+        finalQty = A - (B + C);
       }
 
-      groups[brand].push({
+      if (!groupsByName[brandKey]) {
+        groupsByName[brandKey] = {
+          brandName: brand,
+          minBrandId: rawBrandId,
+          minRank: brandRank,
+          items: []
+        };
+      } else {
+        if (brandRank < groupsByName[brandKey].minRank) {
+          groupsByName[brandKey].minRank = brandRank;
+        }
+        if (rawBrandId && (!groupsByName[brandKey].minBrandId || rawBrandId < groupsByName[brandKey].minBrandId)) {
+          groupsByName[brandKey].minBrandId = rawBrandId;
+        }
+      }
+
+      groupsByName[brandKey].items.push({
         sku,
         name,
         uom,
-        qty: count ? count.qty : 0,
-        dateStr: count ? count.dateStr : "N/A",
-        auditor: count ? lookupUser(count.auditorId) : "N/A",
-        hasRecord: !!count,
-        skipped: count ? count.skipped : false
+        brandId: rawBrandId,
+        qty: finalQty,
+        dateStr,
+        auditor,
+        hasRecord,
+        skipped
       });
     });
 
-    return groups;
-  }, [logs, products, brands, searchQuery, selectedBrand, lookupUser]);
+    // Sort products inside each group by brandId, then by SKU
+    Object.values(groupsByName).forEach(group => {
+      group.items.sort((a, b) => {
+        if (a.brandId !== b.brandId) {
+          return a.brandId.localeCompare(b.brandId, undefined, { numeric: true });
+        }
+        return a.sku.localeCompare(b.sku, undefined, { numeric: true });
+      });
+    });
+
+    // Sort brand groups by brand ID / rank
+    const sortedGroups = Object.values(groupsByName).sort((a, b) => {
+      if (a.minRank !== b.minRank) return a.minRank - b.minRank;
+      if (a.minBrandId && b.minBrandId) {
+        return a.minBrandId.localeCompare(b.minBrandId, undefined, { numeric: true });
+      }
+      return a.brandName.localeCompare(b.brandName);
+    });
+
+    return sortedGroups;
+  }, [logs, products, brands, trackOrders, stockMovements, searchQuery, selectedBrand, lookupUser]);
 
   // Filter logs based on inputs (for history tab)
   const filteredLogs = React.useMemo(() => {
@@ -423,37 +818,34 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
 
   // Print function helper matching the provided template layout exactly
   const generatePrintReport = (auditorName: string, auditDate: string, stockLevels: typeof currentStockLevels) => {
-    const brandSectionsHtml = Object.entries(stockLevels).map(([brandName, brandItems]) => {
+    const brandSectionsHtml = stockLevels.map(({ brandName, items: brandItems }) => {
       const rowsHtml = brandItems.map(item => {
-        const cartons = Math.floor(item.qty / item.uom);
-        const loose = item.qty % item.uom;
+        const cartons = Math.floor(Math.abs(item.qty) / item.uom);
+        const loose = Math.abs(item.qty) % item.uom;
+        const sign = item.qty < 0 ? "-" : "";
         let displayCartonLoose = "-";
-        if (item.hasRecord && !item.skipped) {
+        if (item.hasRecord) {
           if (cartons > 0 && loose > 0) {
-            displayCartonLoose = `${cartons}ctn ${loose}pcs`;
+            displayCartonLoose = `${sign}${cartons}ctn ${loose}pcs`;
           } else if (cartons > 0) {
-            displayCartonLoose = `${cartons}ctn`;
+            displayCartonLoose = `${sign}${cartons}ctn`;
           } else {
-            displayCartonLoose = `${loose}pcs`;
+            displayCartonLoose = `${sign}${loose}pcs`;
           }
         }
 
-        const stockQtyText = item.skipped 
-          ? `<span class="skipped-badge">Skipped</span>` 
-          : item.hasRecord 
-            ? `<span class="qty-text">${item.qty} pcs</span>` 
-            : `<span class="no-record">No count</span>`;
+        const stockQtyText = item.hasRecord
+          ? `<span class="qty-text">${item.qty}${item.skipped ? "*" : ""} pcs</span>`
+          : `<span class="no-record">No count</span>`;
 
-        const cartonLooseText = item.skipped 
-          ? `<span class="no-record">-</span>` 
-          : item.hasRecord 
-            ? `<span style="font-weight:700; color:#334155;">${displayCartonLoose}</span>` 
-            : `<span class="no-record">-</span>`;
+        const cartonLooseText = item.hasRecord 
+          ? `<span style="color:#475569;">${displayCartonLoose}</span>` 
+          : `<span class="no-record">-</span>`;
 
         return `
           <tr>
-            <td style="font-weight:700; color:#475569;">${item.sku}</td>
-            <td style="font-weight:600; color:#0F172A;">${item.name}</td>
+            <td style="color:#64748B;">${item.sku}</td>
+            <td style="color:#0F172A;">${item.name}</td>
             <td class="right-align">${stockQtyText}</td>
             <td class="right-align">${cartonLooseText}</td>
           </tr>
@@ -615,8 +1007,8 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
             text-align: right;
           }
           .qty-text {
-            color: #0B57D0;
-            font-weight: 700;
+            color: #0F172A;
+            font-weight: 500;
           }
           .skipped-badge {
             display: inline-block;
@@ -660,6 +1052,9 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
             <span class="meta-value">${auditDate}</span>
           </div>
         </div>
+        <div style="font-size: 10px; color: #64748B; margin-top: -20px; margin-bottom: 25px; font-style: italic;">
+          * Quantities marked with an asterisk (*) were skipped and not counted in the latest stock take.
+        </div>
 
         ${brandSectionsHtml}
 
@@ -692,19 +1087,42 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
     const auditorName = lookupUser(log.auditorId);
     
     // Group this log's items by brand
-    const stockLevels: typeof currentStockLevels = {};
+    const groupsByName: Record<string, {
+      brandName: string;
+      minBrandId: string;
+      minRank: number;
+      items: Array<{
+        sku: string;
+        name: string;
+        uom: number;
+        brandId: string;
+        qty: number;
+        dateStr: string;
+        auditor: string;
+        hasRecord: boolean;
+        skipped: boolean;
+      }>;
+    }> = {};
+
     log.items.forEach(item => {
       const prodInfo = lookupProduct(item.sku);
       const brand = prodInfo.brand || "Unbranded";
+      const brandKey = brand.toLowerCase();
       
-      if (!stockLevels[brand]) {
-        stockLevels[brand] = [];
+      if (!groupsByName[brandKey]) {
+        groupsByName[brandKey] = {
+          brandName: brand,
+          minBrandId: "",
+          minRank: 999,
+          items: []
+        };
       }
       
-      stockLevels[brand].push({
+      groupsByName[brandKey].items.push({
         sku: item.sku,
         name: prodInfo.name,
         uom: prodInfo.uom,
+        brandId: "",
         qty: item.qty,
         dateStr: log.dateStr,
         auditor: auditorName,
@@ -712,6 +1130,8 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         skipped: item.skipped
       });
     });
+
+    const stockLevels = Object.values(groupsByName).sort((a, b) => a.brandName.localeCompare(b.brandName));
 
     const logDate = new Date(log.timestamp);
     const day = String(logDate.getDate()).padStart(2, "0");
@@ -733,13 +1153,20 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
 
       {/* Filters bar */}
       <div className="flex flex-wrap items-center justify-between bg-[#F0F4F9]/60 border border-slate-200/80 rounded-lg p-3 shrink-0 gap-4">
-        <div className="flex items-center gap-2">
-          <ClipboardCheck size={18} className="text-zinc-600" />
-          <span className="text-xs font-bold text-zinc-700 uppercase tracking-wider">
-            {subTab === "stock"
-              ? (latestLogDateStr ? `Current Inventory Levels (as of ${latestLogDateStr})` : "Current Inventory Levels")
-              : "Stock Audit Records Database"}
-          </span>
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <ClipboardCheck size={18} className="text-zinc-600" />
+            <span className="text-xs font-bold text-zinc-700 uppercase tracking-wider">
+              {subTab === "stock"
+                ? (latestLogDateStr ? `Current Stock Level (last stock take ${latestLogDateStr})` : "Current Stock Level")
+                : "Stock Audit Records Database"}
+            </span>
+          </div>
+          {subTab === "stock" && (
+            <span className="text-[11px] text-zinc-500 font-normal ml-6.5">
+              * Quantities marked with an asterisk (*) were skipped and not counted in the latest stock take.
+            </span>
+          )}
         </div>
 
         {subTab === "stock" ? (
@@ -792,6 +1219,16 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
               <Printer size={13} className="text-zinc-500" />
               <span>Print Report</span>
             </CustomButton>
+
+            {/* Manual Stock Take Button */}
+            <CustomButton
+              onClick={handleOpenSubmitModal}
+              variant="default"
+              className="h-9 gap-1.5 font-bold cursor-pointer bg-[#0B57D0] text-white hover:bg-[#0842A0]"
+            >
+              <Plus size={14} className="stroke-[2.5]" />
+              <span>Submit Stock Take</span>
+            </CustomButton>
           </div>
         ) : (
           // Logs Tab Filters
@@ -841,12 +1278,22 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
                 className="bg-white border border-zinc-300 rounded p-1.5 font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-9 text-xs"
               />
             </div>
+
+            {/* Manual Stock Take Button */}
+            <CustomButton
+              onClick={handleOpenSubmitModal}
+              variant="default"
+              className="h-9 gap-1.5 font-bold cursor-pointer bg-[#0B57D0] text-white hover:bg-[#0842A0]"
+            >
+              <Plus size={14} className="stroke-[2.5]" />
+              <span>Submit Stock Take</span>
+            </CustomButton>
           </div>
         )}
       </div>
 
       {/* Main View Area */}
-      <div className="flex-grow overflow-y-auto min-h-0 pr-1">
+      <div className={`flex-1 min-h-0 ${subTab === "stock" ? "overflow-y-auto pr-1" : "overflow-hidden flex flex-col h-full"}`}>
         {fetching && logs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3 text-zinc-500">
             <span className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-500" />
@@ -855,18 +1302,18 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         ) : subTab === "stock" ? (
           // 1. Current Stock Levels View (Grouped by Brand - Masonry Columns Layout)
           <div className="columns-1 xl:columns-2 gap-6 pb-6 [column-fill:balance]">
-            {Object.keys(currentStockLevels).length === 0 ? (
+            {currentStockLevels.length === 0 ? (
               <div className="flex items-center justify-center h-48 bg-[#F0F4F9] border border-dashed border-slate-200 rounded select-none w-full">
                 <span className="font-primary text-sm text-zinc-500 italic">
                   No matching products found.
                 </span>
               </div>
             ) : (
-              Object.entries(currentStockLevels).map(([brandName, brandItems]) => (
+              currentStockLevels.map(({ brandName, items: brandItems }) => (
                 <div key={brandName} className="break-inside-avoid bg-white border border-slate-200 rounded p-4 shadow-xs flex flex-col gap-3 mb-6">
                   {/* Brand Header */}
                   <div className="flex items-center justify-between border-b border-zinc-150 pb-2">
-                    <span className="text-xs font-bold text-zinc-800 uppercase tracking-wide">Brand: {brandName}</span>
+                    <span className="text-xs font-bold text-zinc-800 uppercase tracking-wide">{brandName}</span>
                     <span className="text-[10px] font-bold text-zinc-400 bg-slate-100 border border-slate-200 rounded-full px-2 py-0.5 uppercase tracking-wider">
                       {brandItems.length} {brandItems.length === 1 ? "Product" : "Products"}
                     </span>
@@ -885,39 +1332,24 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
                       </thead>
                       <tbody className="divide-y divide-zinc-150 text-xs">
                         {brandItems.map((item) => {
-                          const cartons = Math.floor(item.qty / item.uom);
-                          const loose = item.qty % item.uom;
-                          let displayCartonLoose = "-";
-                          if (item.hasRecord && !item.skipped) {
-                            if (cartons > 0 && loose > 0) {
-                              displayCartonLoose = `${cartons}ctn ${loose}pcs`;
-                            } else if (cartons > 0) {
-                              displayCartonLoose = `${cartons}ctn`;
-                            } else {
-                              displayCartonLoose = `${loose}pcs`;
-                            }
-                          }
+                          const displayCartonLoose = item.hasRecord ? formatCartonLoose(item.qty, item.uom) : "-";
 
                           return (
-                            <tr key={item.sku} className="hover:bg-slate-50 font-semibold text-zinc-900">
-                              <td className="py-2 px-3 font-bold text-zinc-650">{item.sku}</td>
-                              <td className="py-2 px-3 text-zinc-950 font-semibold truncate max-w-[150px]" title={item.name}>{item.name}</td>
+                            <tr key={item.sku} className="hover:bg-slate-50 text-zinc-800">
+                              <td className="py-2 px-3 text-zinc-600 font-medium">{item.sku}</td>
+                              <td className="py-2 px-3 text-zinc-900 truncate max-w-[150px]" title={item.name}>{item.name}</td>
                               <td className="py-2 px-3 text-right">
-                                {item.skipped ? (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 border border-amber-250 text-[10px] text-amber-600 font-bold select-none">
-                                    Skipped
+                                {item.hasRecord ? (
+                                  <span className="text-zinc-800 font-medium">
+                                    {item.qty}{item.skipped ? "*" : ""} pcs
                                   </span>
-                                ) : item.hasRecord ? (
-                                  <span className="text-blue-600 font-bold">{item.qty} pcs</span>
                                 ) : (
                                   <span className="text-zinc-400 font-normal italic">No count recorded</span>
                                 )}
                               </td>
-                              <td className="py-2 px-3 text-right text-zinc-650 font-bold">
-                                {item.skipped ? (
-                                  <span className="text-zinc-400 font-normal italic">-</span>
-                                ) : item.hasRecord ? (
-                                  <span>{displayCartonLoose}</span>
+                              <td className="py-2 px-3 text-right">
+                                {item.hasRecord ? (
+                                  <span className="text-zinc-600">{displayCartonLoose}</span>
                                 ) : (
                                   <span className="text-zinc-400 font-normal italic">-</span>
                                 )}
@@ -934,7 +1366,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
           </div>
         ) : (
           // 2. Logs Table View
-          <div className="overflow-hidden flex flex-col h-full">
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col h-full">
             <DataTable
               columns={columns}
               data={logsTableData}
@@ -942,7 +1374,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
               userRole="viewer"
               fetching={fetching}
               syncStatus={syncStatus}
-              height="h-[calc(100vh-270px)]"
+              height="h-full"
             />
           </div>
         )}
@@ -1004,13 +1436,13 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
                     }
 
                     return (
-                      <tr key={idx} className="hover:bg-slate-50 font-semibold text-zinc-900">
-                        <td className="py-2 px-4 font-bold text-zinc-650">{item.sku}</td>
-                        <td className="py-2 px-4 max-w-[200px] truncate" title={prodInfo.name}>
+                      <tr key={idx} className="hover:bg-slate-50 text-zinc-800">
+                        <td className="py-2 px-4 text-zinc-600 font-medium">{item.sku}</td>
+                        <td className="py-2 px-4 max-w-[200px] truncate text-zinc-900" title={prodInfo.name}>
                           {prodInfo.name}
                         </td>
-                        <td className="py-2 px-4 text-zinc-500 font-medium">{prodInfo.brand}</td>
-                        <td className="py-2 px-4 text-right font-bold text-blue-600">{item.skipped ? "-" : displayQty}</td>
+                        <td className="py-2 px-4 text-zinc-500">{prodInfo.brand}</td>
+                        <td className={`py-2 px-4 text-right ${item.skipped ? "text-red-600 font-medium" : "text-zinc-800"}`}>{displayQty}</td>
                         <td className="py-2 px-4 text-center">
                           {item.skipped ? (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] text-amber-600 font-bold">
@@ -1040,6 +1472,270 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
               <CustomButton onClick={() => setSelectedLog(null)} variant="secondary" className="px-4">
                 Close Report
               </CustomButton>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Manual Stock Take Submission Modal */}
+      {showSubmitModal && (
+        <div className="fixed inset-0 bg-zinc-900/60 backdrop-blur-xs z-50 flex items-center justify-center p-6 animate-fadeIn animate-duration-150">
+          <div className="bg-white border border-slate-200 w-full max-w-4xl rounded-xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-scaleIn animate-duration-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-200">
+              <div>
+                <h3 className="text-base font-bold text-zinc-900">Manual Stock Take Submission</h3>
+                <p className="text-xs text-zinc-500">Record a physical stock take count grouped by brand.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSubmitModal(false)}
+                className="text-zinc-400 hover:text-zinc-600 transition-colors p-1.5 rounded-full hover:bg-slate-100 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Subheader Inputs: Date, Auditor & AI Scanner */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 px-6 py-3 border-b border-zinc-200 bg-slate-50/50 text-xs items-end">
+              <div className="flex flex-col gap-1">
+                <label className="text-zinc-600 font-medium flex items-center gap-1.5">
+                  <Calendar size={13} className="text-zinc-400" />
+                  <span>Stock Take Date & Time</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={submitAuditDate}
+                    onChange={(e) => setSubmitAuditDate(e.target.value)}
+                    className="flex-1 bg-white border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-500 h-9 text-xs"
+                  />
+                  <input
+                    type="time"
+                    value={submitAuditTime}
+                    onChange={(e) => setSubmitAuditTime(e.target.value)}
+                    className="w-24 bg-white border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-500 h-9 text-xs"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-zinc-600 font-medium flex items-center gap-1.5">
+                  <User size={13} className="text-zinc-400" />
+                  <span>Auditor / Counted By</span>
+                </label>
+                <input
+                  type="text"
+                  placeholder="Auditor name..."
+                  value={submitAuditor}
+                  onChange={(e) => setSubmitAuditor(e.target.value)}
+                  className="bg-white border border-zinc-300 rounded p-2 text-zinc-900 focus:outline-none focus:border-zinc-500 h-9 text-xs"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-zinc-600 font-medium flex items-center gap-1.5">
+                  <FileText size={13} className="text-zinc-500" />
+                  <span>Scan Paper PDF</span>
+                </label>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleScanPaper}
+                  accept="application/pdf,.pdf"
+                  className="hidden"
+                />
+                <CustomButton
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  variant="default"
+                  disabled={isScanning}
+                  className="h-9 gap-1.5 font-semibold text-xs cursor-pointer bg-white hover:bg-slate-100 text-zinc-800 border border-zinc-300 shadow-xs w-full justify-center"
+                >
+                  {isScanning ? (
+                    <>
+                      <span className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-zinc-700" />
+                      <span>Reading PDF...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileText size={14} className="text-zinc-600" />
+                      <span>Upload Scanned PDF</span>
+                    </>
+                  )}
+                </CustomButton>
+              </div>
+            </div>
+
+            {/* Single Cohesive Table Body */}
+            <div className="flex-grow overflow-y-auto border-b border-zinc-200">
+              <table className="w-full text-left border-collapse">
+                <thead className="sticky top-0 z-10 bg-slate-50 border-b border-zinc-200 text-zinc-500 font-semibold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="py-2.5 px-4">SKU Code</th>
+                    <th className="py-2.5 px-4">Product Name</th>
+                    <th className="py-2.5 px-4 text-center w-24">Carton Size</th>
+                    <th className="py-2.5 px-4 text-right w-36">Counted Qty (pcs)</th>
+                    <th className="py-2.5 px-4 text-right w-32">Carton / Loose</th>
+                    <th className="py-2.5 px-4 text-center w-20">Skip</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-150 text-xs">
+                  {productsByBrand.map(({ brandName, items: brandItems }) => (
+                    <React.Fragment key={brandName}>
+                      {/* Brand Group Row */}
+                      <tr className="bg-slate-100/90 border-y border-slate-200">
+                        <td colSpan={6} className="py-2 px-4">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-bold text-zinc-800 uppercase tracking-wide">{brandName}</span>
+                              <span className="text-[11px] text-zinc-500 font-normal">({brandItems.length} Products)</span>
+                            </div>
+                            <div className="flex items-center gap-2.5 text-xs">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStockTakeForm(prev => {
+                                    const next = { ...prev };
+                                    brandItems.forEach(item => {
+                                      const norm = item.sku.toLowerCase();
+                                      next[norm] = { ...(next[norm] || { qty: "" }), skipped: false };
+                                    });
+                                    return next;
+                                  });
+                                }}
+                                className="text-[11px] text-zinc-600 hover:text-zinc-900 font-medium hover:underline cursor-pointer"
+                              >
+                                Mark All Counted
+                              </button>
+                              <span className="text-zinc-300">|</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setStockTakeForm(prev => {
+                                    const next = { ...prev };
+                                    brandItems.forEach(item => {
+                                      const norm = item.sku.toLowerCase();
+                                      next[norm] = { ...(next[norm] || { qty: 0 }), skipped: true };
+                                    });
+                                    return next;
+                                  });
+                                }}
+                                className="text-[11px] text-zinc-600 hover:text-zinc-900 font-medium hover:underline cursor-pointer"
+                              >
+                                Mark All Skipped
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* Brand Product Rows */}
+                      {brandItems.map((item) => {
+                        const normSku = item.sku.toLowerCase();
+                        const entry = stockTakeForm[normSku] || { qty: "", skipped: false };
+                        const numQty = Number(entry.qty) || 0;
+                        const displayCartonLoose = entry.skipped ? "-" : (entry.qty !== "" ? formatCartonLoose(numQty, item.uom) : "-");
+
+                        return (
+                          <tr key={item.sku} className={`hover:bg-slate-50 ${entry.skipped ? "bg-zinc-50/60 text-zinc-400" : "text-zinc-800"}`}>
+                            <td className="py-2 px-4 font-medium text-zinc-600">{item.sku}</td>
+                            <td className="py-2 px-4 text-zinc-900 truncate max-w-[220px]" title={item.name}>
+                              {item.name}
+                            </td>
+                            <td className="py-2 px-4 text-center text-zinc-500">
+                              {item.uom} pcs/ctn
+                            </td>
+                            <td className="py-2 px-4 text-right">
+                              <input
+                                type="number"
+                                disabled={entry.skipped}
+                                placeholder="0"
+                                value={entry.skipped ? "" : entry.qty}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setStockTakeForm(prev => ({
+                                    ...prev,
+                                    [normSku]: {
+                                      ...(prev[normSku] || { skipped: false }),
+                                      qty: val === "" ? "" : Number(val)
+                                    }
+                                  }));
+                                }}
+                                className={`w-28 text-right bg-white border rounded p-1 text-xs focus:outline-none h-8 ${
+                                  entry.skipped
+                                    ? "bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed"
+                                    : "border-zinc-300 text-zinc-900 focus:border-zinc-500"
+                                }`}
+                              />
+                            </td>
+                            <td className="py-2 px-4 text-right text-zinc-600">
+                              {displayCartonLoose}
+                            </td>
+                            <td className="py-2 px-4 text-center">
+                              <input
+                                type="checkbox"
+                                checked={entry.skipped}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  setStockTakeForm(prev => ({
+                                    ...prev,
+                                    [normSku]: {
+                                      ...(prev[normSku] || { qty: "" }),
+                                      skipped: checked
+                                    }
+                                  }));
+                                }}
+                                className="rounded border-zinc-300 text-zinc-700 h-4 w-4 cursor-pointer"
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between px-6 py-3.5 bg-slate-50">
+              <div className="text-xs text-zinc-600 font-medium">
+                {(() => {
+                  const total = products.length;
+                  const skippedCount = Object.values(stockTakeForm).filter(e => e.skipped).length;
+                  const countedCount = total - skippedCount;
+                  return (
+                    <span>
+                      {total} Products Total • {countedCount} Counted • {skippedCount} Skipped
+                    </span>
+                  );
+                })()}
+              </div>
+              <div className="flex items-center gap-2">
+                <CustomButton
+                  onClick={() => setShowSubmitModal(false)}
+                  variant="secondary"
+                  className="px-4"
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </CustomButton>
+                <CustomButton
+                  onClick={handleSubmitStockTake}
+                  variant="default"
+                  className="px-5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="animate-spin rounded-full h-3.5 w-3.5 border-b-2 border-white" />
+                      <span>Submitting...</span>
+                    </span>
+                  ) : (
+                    <span>Submit Stock Take</span>
+                  )}
+                </CustomButton>
+              </div>
             </div>
           </div>
         </div>
