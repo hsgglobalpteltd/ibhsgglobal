@@ -732,7 +732,7 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
   ];
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0 font-primary">
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
       
       {/* TOPBAR NAVIGATION TABS */}
       <NavigationTabs
@@ -740,6 +740,40 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
         activeTabId={activeTab}
         onTabSelect={(tabId: string) => setActiveTab(tabId as any)}
       />
+
+      {/* TOP HEADER BAR */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            {activeTab === "expenses" ? "Staff Claims & Out-of-Pocket Expenses" : "Claim Submitted History"}
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {activeTab === "expenses"
+              ? "Record out-of-pocket expenses, attach receipts, and submit batches up to $100.00 for reimbursement."
+              : "Track supervisor approval status and PayNow reimbursement disbursement records."}
+          </p>
+        </div>
+
+        {/* Top Header Actions */}
+        <div className="flex items-center gap-2">
+          {employeeDetails.paynow && (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-zinc-700 text-xs font-medium">
+              <CreditCard className="w-3.5 h-3.5 text-[#0B57D0]" />
+              <span>PayNow: <strong>{employeeDetails.paynow}</strong></span>
+              <button
+                type="button"
+                onClick={() => {
+                  setPayNowInput(employeeDetails.paynow);
+                  setShowPayNowModal(true);
+                }}
+                className="ml-1 text-[11px] text-[#0B57D0] hover:underline cursor-pointer font-semibold"
+              >
+                Edit
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* UNBOUND EMPLOYEE ACCOUNT NOTICE */}
       {isUnboundEmployee ? (
@@ -838,32 +872,6 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
                           className="px-2 py-1 text-xs font-medium text-zinc-600 hover:text-zinc-900 bg-zinc-100 hover:bg-zinc-200 border border-zinc-200 rounded cursor-pointer transition-colors"
                         >
                           Cancel
-                        </button>
-                      )}
-                      {employeeDetails.paynow ? (
-                        <div className="flex items-center gap-1 px-2 py-0.5 bg-slate-50 border border-slate-200 rounded text-zinc-700 text-xs">
-                          <CreditCard className="w-3.5 h-3.5 text-zinc-500" />
-                          <span>{employeeDetails.paynow}</span>
-                          <button
-                            onClick={() => {
-                              setPayNowInput(employeeDetails.paynow);
-                              setShowPayNowModal(true);
-                            }}
-                            className="text-zinc-400 hover:text-[#0B57D0] cursor-pointer"
-                            title="Edit PayNow"
-                          >
-                            <Edit3 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setPayNowInput("");
-                            setShowPayNowModal(true);
-                          }}
-                          className="flex items-center gap-1 px-2 py-0.5 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded text-zinc-700 text-xs font-medium cursor-pointer transition-colors"
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Add PayNow
                         </button>
                       )}
                     </div>
@@ -1283,39 +1291,40 @@ export function StaffClaimsModule({ profile }: StaffClaimsModuleProps) {
 
       {/* TAB 2: CLAIM SUBMITTED & STATUS TRACKING */}
       {activeTab === "batches" && (
-        <div className="flex flex-col flex-1 h-full overflow-hidden gap-3 pb-2 p-3 min-h-0">
+        <div className="flex flex-col flex-1 h-full overflow-hidden min-h-0 bg-[#F8F9FA]/40">
           
-          <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
+          {/* Filter Toolbar */}
+          <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
             {/* Left: Info */}
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-zinc-900">
-                Claim Submitted ({batches.length})
+              <span className="text-xs font-semibold text-zinc-700">
+                Filter Submissions ({batches.length})
               </span>
             </div>
 
             {/* Right: Search Input Bar */}
-            <div className="relative w-full md:w-72">
-              <Search className="w-4 h-4 text-zinc-400 absolute left-2.5 top-2.5 pointer-events-none" />
+            <div className="relative w-full sm:w-72">
+              <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-2.5 pointer-events-none" />
               <input
                 type="text"
                 value={batchSearchQuery}
                 onChange={(e) => setBatchSearchQuery(e.target.value)}
                 placeholder="Search Claim ID, description..."
-                className="w-full h-9 pl-9 pr-7 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0]"
+                className="w-full h-8 pl-8 pr-7 text-xs bg-white border border-zinc-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0]"
               />
               {batchSearchQuery && (
                 <button
                   type="button"
                   onClick={() => setBatchSearchQuery("")}
-                  className="absolute right-2 top-2.5 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                  className="absolute right-2 top-2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
           </div>
 
-          <div className="flex-1 bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col shadow-xs min-h-0">
+          <div className="flex-1 overflow-hidden flex flex-col min-h-0 bg-white">
             <div className="flex-1 overflow-auto min-h-0">
               <table className="w-full border-collapse text-left whitespace-nowrap min-w-[1100px]">
                 <thead className="bg-slate-50/80 border-b border-slate-200 sticky top-0 z-10">

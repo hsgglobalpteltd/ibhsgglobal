@@ -517,7 +517,7 @@ export function DataTable({
       tabIndex={0}
       onKeyDown={handleGlobalKeyDown}
       onFocus={() => setIsFocused(true)}
-      className={`flex flex-col w-full ${height} rounded-lg bg-white border border-slate-200 shadow-xs overflow-hidden focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 select-none font-primary`}
+      className={`flex flex-col w-full ${height} bg-white overflow-hidden focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 select-none font-primary`}
       style={{ outline: "none" }}
     >
       <style dangerouslySetInnerHTML={{__html: `

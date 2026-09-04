@@ -735,7 +735,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0 font-primary">
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
       
       {/* 1. TOPBAR NAVIGATION TABS */}
       <NavigationTabs
@@ -744,8 +744,33 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         onTabSelect={(tabId: string) => setActiveTab(tabId as any)}
       />
 
-      {/* 2. DATE CYCLE & FILTER CONTROLS BAR */}
-      <div className="bg-white border-b border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0 shadow-2xs">
+      {/* 2. TOP HEADER BAR */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            Stock Card Ledger
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Analyze stock in, stock out, transfers, DO deliveries, and returns by weekly or custom cycles.
+          </p>
+        </div>
+
+        {/* Top Action / Export Buttons */}
+        <div className="flex items-center gap-2">
+          <CustomButton
+            variant="secondary"
+            onClick={handleExportExcel}
+            className="h-8 px-3 text-xs rounded-lg border-slate-300 hover:bg-slate-50 text-zinc-800"
+            title="Download formatted Excel report"
+          >
+            <Download className="w-3.5 h-3.5 mr-1 text-[#0B57D0]" />
+            Export Excel
+          </CustomButton>
+        </div>
+      </div>
+
+      {/* 3. DATE CYCLE & FILTER CONTROLS BAR */}
+      <div className="bg-[#F8F9FA] border-b border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0">
         
         {/* Left: Cycle Selector & Custom Date Range */}
         <div className="flex items-center flex-wrap gap-2 text-xs">
@@ -874,17 +899,6 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
               </button>
             )}
           </div>
-
-          {/* Excel Export Button */}
-          <CustomButton
-            variant="secondary"
-            onClick={handleExportExcel}
-            className="h-8 px-3 text-xs rounded-lg border-slate-300 hover:bg-slate-50"
-            title="Download formatted Excel report"
-          >
-            <Download className="w-3.5 h-3.5 mr-1 text-[#0B57D0]" />
-            Export Excel
-          </CustomButton>
         </div>
 
       </div>

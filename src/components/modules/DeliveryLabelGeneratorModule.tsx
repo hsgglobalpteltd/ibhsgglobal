@@ -242,8 +242,44 @@ export function DeliveryLabelGeneratorModule() {
   const isFormValid = receiverName.trim() !== "" && receiverAddress.trim() !== "";
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0">
-      <div className="content-body flex-1 w-full overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-8 h-full items-stretch">
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
+      
+      {/* 1. TOP HEADER BAR */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            Delivery Label Generator
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Configure parcel sticker particulars, sender/receiver details, and packing lists with real-time live preview.
+          </p>
+        </div>
+
+        {/* Top Header Action Trigger */}
+        <div className="flex items-center gap-2">
+          <CustomButton
+            onClick={handleGenerateLabel}
+            variant="dark"
+            disabled={!isFormValid || isGenerating}
+            className="h-8 px-3 text-xs font-bold rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <FileText className="w-3.5 h-3.5 mr-1.5" />
+                Generate Label (PDF)
+              </>
+            )}
+          </CustomButton>
+        </div>
+      </div>
+
+      {/* 2. MAIN WORKSPACE */}
+      <div className="content-body flex-1 w-full overflow-hidden grid grid-cols-1 lg:grid-cols-12 gap-4 h-full items-stretch p-4 bg-[#F8F9FA]/40">
         
         {/* Left Side - Settings & Form inputs */}
         <div className="lg:col-span-7 flex flex-col h-full overflow-hidden w-full">

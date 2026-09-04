@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { DataTable, Column } from "../data-table";
-import { Eye, User, Calendar, ClipboardCheck, X, FileText, CheckCircle2, AlertCircle, Layers, History, Search, Printer, Plus, Check, Camera, Sparkles } from "lucide-react";
+import { Eye, User, Calendar, ClipboardCheck, X, FileText, CheckCircle2, AlertCircle, Layers, History, Search, Printer, Plus, Check, Camera, Sparkles, Info } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "../custom-button";
 import { NavigationTabs } from "../navigation-tabs";
@@ -1143,7 +1143,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[15px] animate-tableFadeInOnly min-w-0">
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
       {/* Headless component to project the sub-tabs into TopBar (with no icons) */}
       <NavigationTabs
         tabs={tabsListItems}
@@ -1151,21 +1151,58 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         onTabSelect={(id) => setSubTab(id as "stock" | "logs")}
       />
 
-      {/* Filters bar */}
-      <div className="flex flex-wrap items-center justify-between bg-[#F0F4F9]/60 border border-slate-200/80 rounded-lg p-3 shrink-0 gap-4">
-        <div className="flex flex-col gap-0.5">
-          <div className="flex items-center gap-2">
-            <ClipboardCheck size={18} className="text-zinc-600" />
-            <span className="text-xs font-bold text-zinc-700 uppercase tracking-wider">
-              {subTab === "stock"
-                ? (latestLogDateStr ? `Current Stock Level (last stock take ${latestLogDateStr})` : "Current Stock Level")
-                : "Stock Audit Records Database"}
-            </span>
-          </div>
+      {/* 1. TOP HEADER BAR */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            {subTab === "stock" ? "Inventory & Current Stock Levels" : "Stock Audit Records Database"}
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {subTab === "stock"
+              ? (latestLogDateStr 
+                  ? `Current stock is counted from the last physical stock take (${latestLogDateStr}), adjusted (+/-) for all subsequent stock movements.`
+                  : "Current stock is counted from the last physical stock take, adjusted (+/-) for all subsequent stock movements.")
+              : "Historical ledger of all manual and warehouse physical stock take counts."}
+          </p>
+        </div>
+
+        {/* Top Action Buttons */}
+        <div className="flex items-center gap-2">
           {subTab === "stock" && (
-            <span className="text-[11px] text-zinc-500 font-normal ml-6.5">
-              * Quantities marked with an asterisk (*) were skipped and not counted in the latest stock take.
-            </span>
+            <CustomButton
+              onClick={handlePrintStockReport}
+              variant="secondary"
+              className="h-8 px-3 text-xs rounded-lg border-slate-300 hover:bg-slate-50 text-zinc-800"
+              title="Print current stock inventory report"
+            >
+              <Printer className="w-3.5 h-3.5 mr-1 text-zinc-600" />
+              Print Report
+            </CustomButton>
+          )}
+
+          <CustomButton
+            onClick={handleOpenSubmitModal}
+            variant="dark"
+            className="h-8 px-3 text-xs rounded-lg bg-[#0B57D0] hover:bg-[#0842A0]"
+          >
+            <Plus className="w-3.5 h-3.5 mr-1" />
+            Submit Stock Take
+          </CustomButton>
+        </div>
+      </div>
+
+      {/* 2. FILTER TOOLBAR */}
+      <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-2">
+          {subTab === "stock" ? (
+            <div className="flex items-center gap-1.5 text-xs text-zinc-650">
+              <Info className="w-3.5 h-3.5 text-[#0B57D0] shrink-0" />
+              <span className="text-zinc-600 font-medium text-[11px] sm:text-xs">
+                Counted by <strong className="text-zinc-900 font-bold">last stock take</strong> and <strong className="text-zinc-900 font-bold">(+/-) movements</strong> recorded after stock take.
+              </span>
+            </div>
+          ) : (
+            <span className="text-xs font-semibold text-zinc-700">Filter Logs:</span>
           )}
         </div>
 
@@ -1209,26 +1246,6 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
                 <option key={b} value={b}>{b}</option>
               ))}
             </select>
-
-            {/* Print Stock Report Button */}
-            <CustomButton
-              onClick={handlePrintStockReport}
-              variant="default"
-              className="h-9 gap-1.5 font-bold cursor-pointer"
-            >
-              <Printer size={13} className="text-zinc-500" />
-              <span>Print Report</span>
-            </CustomButton>
-
-            {/* Manual Stock Take Button */}
-            <CustomButton
-              onClick={handleOpenSubmitModal}
-              variant="default"
-              className="h-9 gap-1.5 font-bold cursor-pointer bg-[#0B57D0] text-white hover:bg-[#0842A0]"
-            >
-              <Plus size={14} className="stroke-[2.5]" />
-              <span>Submit Stock Take</span>
-            </CustomButton>
           </div>
         ) : (
           // Logs Tab Filters
@@ -1278,22 +1295,12 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
                 className="bg-white border border-zinc-300 rounded p-1.5 font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-9 text-xs"
               />
             </div>
-
-            {/* Manual Stock Take Button */}
-            <CustomButton
-              onClick={handleOpenSubmitModal}
-              variant="default"
-              className="h-9 gap-1.5 font-bold cursor-pointer bg-[#0B57D0] text-white hover:bg-[#0842A0]"
-            >
-              <Plus size={14} className="stroke-[2.5]" />
-              <span>Submit Stock Take</span>
-            </CustomButton>
           </div>
         )}
       </div>
 
       {/* Main View Area */}
-      <div className={`flex-1 min-h-0 ${subTab === "stock" ? "overflow-y-auto pr-1" : "overflow-hidden flex flex-col h-full"}`}>
+      <div className={`flex-1 min-h-0 ${subTab === "stock" ? "overflow-y-auto p-4 bg-[#F8F9FA]/40" : "overflow-hidden flex flex-col h-full"}`}>
         {fetching && logs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 gap-3 text-zinc-500">
             <span className="animate-spin rounded-full h-8 w-8 border-b-2 border-zinc-500" />
@@ -1301,7 +1308,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
           </div>
         ) : subTab === "stock" ? (
           // 1. Current Stock Levels View (Grouped by Brand - Masonry Columns Layout)
-          <div className="columns-1 xl:columns-2 gap-6 pb-6 [column-fill:balance]">
+          <div className="columns-1 xl:columns-2 gap-4 pb-2 [column-fill:balance]">
             {currentStockLevels.length === 0 ? (
               <div className="flex items-center justify-center h-48 bg-[#F0F4F9] border border-dashed border-slate-200 rounded select-none w-full">
                 <span className="font-primary text-sm text-zinc-500 italic">

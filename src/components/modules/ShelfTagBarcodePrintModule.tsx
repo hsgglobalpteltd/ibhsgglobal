@@ -1008,39 +1008,34 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
   }, [selectedProducts, previewPage, itemsPerPage]);
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0 font-primary">
-      {/* Top Header Bar */}
-      <div className="content-header flex items-center justify-between px-3 py-2 border-b border-zinc-300/40 bg-white/50 backdrop-blur-xs">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#D3E3FD] flex items-center justify-center text-[#0B57D0]">
-            <Printer size={18} />
-          </div>
-          <div>
-            <h2 className="text-base font-bold text-zinc-950 leading-tight">
-              Print Manager
-            </h2>
-            <p className="text-xs text-zinc-500">
-              Generate and export custom print templates and warehouse documents as PDF.
-            </p>
-          </div>
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
+      {/* 1. TOP HEADER BAR */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            Print Manager
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Generate and export custom shelf tags, barcode labels, and warehouse printable templates.
+          </p>
         </div>
 
-        {/* Generate / Open Blob Action */}
+        {/* Top Action Button */}
         <div className="flex items-center gap-2">
           <CustomButton
             onClick={handleGeneratePdfBlob}
             variant="dark"
             disabled={selectedProducts.length === 0 || isGenerating || loadingData}
-            className="h-9 px-4 text-xs font-bold gap-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg shadow-xs"
+            className="h-8 px-3 text-xs font-bold gap-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg shadow-xs"
           >
             {isGenerating ? (
               <>
-                <Loader2 className="w-4 h-4 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 <span>{generationProgress || "Compiling PDF..."}</span>
               </>
             ) : (
               <>
-                <ExternalLink className="w-4 h-4" />
+                <ExternalLink className="w-3.5 h-3.5 mr-1" />
                 <span>Generate & Open PDF ({selectedProducts.length})</span>
               </>
             )}
@@ -1049,7 +1044,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
       </div>
 
       {/* Main Workspace split into 2 Columns: Left Controls & Right A4 Preview */}
-      <div className="content-body flex-1 w-full overflow-hidden flex flex-row gap-4 p-4">
+      <div className="content-body flex-1 w-full overflow-hidden flex flex-row gap-4 p-4 bg-[#F8F9FA]/60">
         
         {/* LEFT COLUMN: Controls, Filters & Product Selection Table */}
         <div className="w-[420px] shrink-0 flex flex-col gap-3 h-full overflow-hidden bg-white rounded-xl border border-slate-200 shadow-2xs p-3.5">

@@ -259,115 +259,132 @@ export function InvoiceBarcodeGeneratorModule() {
   const isFormValid = currentPdfData && invoiceNumber.length === 9 && !isScanning;
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0">
-      <div className="content-body flex-1 w-full overflow-y-auto pr-1 pb-4 flex items-center justify-center">
-        <div className="max-w-md w-full flex flex-col gap-6">
-        {/* Upload Zone */}
-        <div
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={`relative border-2 border-dashed rounded p-8 flex flex-col items-center justify-center cursor-pointer transition-all ${
-            currentPdfData
-              ? "border-emerald-500 bg-emerald-50/10"
-              : isDragging
-              ? "border-blue-500 bg-[#F0F4F9]"
-              : "border-slate-300 bg-[#F0F4F9]/40 hover:border-blue-400 hover:bg-[#F0F4F9]/70"
-          }`}
-        >
-          {currentPdfData && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                resetTool();
-              }}
-              className="absolute top-3 right-3 p-1.5 rounded border border-slate-200 bg-white text-red-600 hover:bg-red-50 transition-colors shadow-xs"
-              title="Clear Uploaded PDF"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
-          )}
-
-          <div
-            className={`w-12 h-12 rounded border border-slate-100 bg-[#F0F4F9] flex items-center justify-center shadow-xs mb-3 ${
-              currentPdfData ? "text-emerald-600" : "text-zinc-500"
-            }`}
-          >
-            {isScanning ? (
-              <Loader2 className="w-6 h-6 animate-spin text-zinc-700" />
-            ) : (
-              <FileText className="w-6 h-6" />
-            )}
-          </div>
-
-          <span className="text-xs font-bold text-zinc-700 text-center truncate max-w-xs">
-            {fileName || "Click or Drag PDF invoice here"}
-          </span>
-          <span className="text-[10px] text-zinc-500 mt-1 uppercase tracking-wider">
-            {isScanning ? "Scanning PDF..." : "PDF file formats only"}
-          </span>
-
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept="application/pdf"
-            className="hidden"
-          />
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
+      
+      {/* 1. TOP HEADER BAR */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            Invoice Barcode Ingestion & Overlay
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            Upload an existing invoice PDF and inject automated high-resolution barcodes directly into the document header.
+          </p>
         </div>
 
-        {/* Controls */}
-        {currentPdfData && (
-          <div className="flex flex-col gap-4 animate-fade-in">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest pl-1">
-                Invoice Number (9 Digits)
-              </label>
-              <input
-                type="text"
-                value={invoiceNumber}
-                onChange={handleInvoiceNumberChange}
-                maxLength={9}
-                placeholder="000000000"
-                className="h-10 w-full px-4 border border-zinc-300 rounded-lg text-center font-bold tracking-widest text-lg focus:outline-none focus:ring-1 focus:ring-zinc-400 bg-white"
-              />
-              {statusMsg && (
-                <span
-                  className={`text-[10px] font-bold uppercase tracking-wider text-center mt-1 ${
-                    statusType === "success"
-                      ? "text-emerald-600"
-                      : statusType === "error"
-                      ? "text-red-600"
-                      : "text-zinc-500"
-                  }`}
-                >
-                  {statusMsg}
-                </span>
+        {/* Top Header Action Buttons */}
+        <div className="flex items-center gap-2">
+          {currentPdfData && (
+            <CustomButton
+              onClick={resetTool}
+              variant="secondary"
+              className="h-8 px-3 text-xs rounded-lg border-slate-300 hover:bg-slate-50 text-zinc-800"
+            >
+              <Trash2 className="w-3.5 h-3.5 mr-1 text-zinc-500" />
+              Clear PDF
+            </CustomButton>
+          )}
+
+          <CustomButton
+            onClick={handleGenerate}
+            variant="dark"
+            disabled={!isFormValid || isGenerating}
+            className="h-8 px-3 text-xs font-bold rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" />
+                Processing...
+              </>
+            ) : (
+              <>
+                <Barcode className="w-3.5 h-3.5 mr-1.5" />
+                Generate & Ingest Barcode
+              </>
+            )}
+          </CustomButton>
+        </div>
+      </div>
+
+      {/* 2. MAIN CONTENT BODY */}
+      <div className="content-body flex-1 w-full overflow-y-auto p-6 flex items-center justify-center bg-[#F8F9FA]/40">
+        <div className="max-w-md w-full bg-white border border-slate-200 rounded-xl p-6 shadow-xs flex flex-col gap-5">
+          
+          {/* Upload Zone */}
+          <div
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`relative border-2 border-dashed rounded-lg p-8 flex flex-col items-center justify-center cursor-pointer transition-all ${
+              currentPdfData
+                ? "border-emerald-500 bg-emerald-50/20"
+                : isDragging
+                ? "border-[#0B57D0] bg-[#D3E3FD]/20"
+                : "border-slate-300 bg-slate-50/50 hover:border-[#0B57D0] hover:bg-[#D3E3FD]/10"
+            }`}
+          >
+            <div
+              className={`w-12 h-12 rounded-full flex items-center justify-center mb-3 ${
+                currentPdfData ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-zinc-500"
+              }`}
+            >
+              {isScanning ? (
+                <Loader2 className="w-6 h-6 animate-spin text-[#0B57D0]" />
+              ) : (
+                <FileText className="w-6 h-6" />
               )}
             </div>
 
-            <CustomButton
-              onClick={handleGenerate}
-              variant="dark"
-              disabled={!isFormValid || isGenerating}
-              className="w-full h-10 text-xs font-bold uppercase tracking-wider mt-2"
-            >
-              {isGenerating ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Generating...
-                </>
-              ) : (
-                <>
-                  <Barcode className="w-4 h-4" />
-                  Generate & Ingest Barcode
-                </>
-              )}
-            </CustomButton>
+            <span className="text-xs font-semibold text-zinc-800 text-center truncate max-w-xs">
+              {fileName || "Click or Drag PDF invoice here"}
+            </span>
+            <span className="text-[11px] text-zinc-400 mt-1">
+              {isScanning ? "Scanning PDF for invoice number..." : "Supports single and multi-page PDF documents"}
+            </span>
+
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileChange}
+              accept="application/pdf"
+              className="hidden"
+            />
           </div>
-        )}
-      </div>
+
+          {/* Controls */}
+          {currentPdfData && (
+            <div className="flex flex-col gap-4 animate-fadeIn">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-700">
+                  Invoice Number (9 Digits)
+                </label>
+                <input
+                  type="text"
+                  value={invoiceNumber}
+                  onChange={handleInvoiceNumberChange}
+                  maxLength={9}
+                  placeholder="e.g. 000000000"
+                  className="h-10 w-full px-4 border border-zinc-300 rounded-lg text-center font-bold tracking-widest text-lg focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] bg-white text-zinc-950"
+                />
+                {statusMsg && (
+                  <span
+                    className={`text-xs font-medium text-center mt-1 ${
+                      statusType === "success"
+                        ? "text-emerald-600"
+                        : statusType === "error"
+                        ? "text-red-600"
+                        : "text-zinc-500"
+                    }`}
+                  >
+                    {statusMsg}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
+        </div>
       </div>
 
       {/* Hidden Canvas for JsBarcode generation */}

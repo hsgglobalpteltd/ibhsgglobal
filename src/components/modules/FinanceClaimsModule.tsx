@@ -1286,7 +1286,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
   ];
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden relative min-w-0 font-primary">
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
       
       {/* UNIVERSAL TOPBAR NAVIGATION TABS */}
       <NavigationTabs
@@ -1295,9 +1295,57 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
         onTabSelect={(tabId: string) => setActiveTab(tabId as any)}
       />
 
+      {/* TOP HEADER BAR */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            {activeTab === "form"
+              ? (editingClaimId ? "Edit Operations Claim Form" : "Operations to Finance Claim Form")
+              : activeTab === "staff_approvals"
+              ? "Staff Claims Approvals & Reimbursements"
+              : "Official Claims Submitted"}
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {activeTab === "form"
+              ? "Compile itemized expenses, attach receipts, import staff claims, and generate official claim documents."
+              : activeTab === "staff_approvals"
+              ? "Review staff out-of-pocket submissions, verify attached receipts, and record PayNow reimbursements."
+              : "Ledger of submitted finance claim forms, payout confirmations, and payment tracking."}
+          </p>
+        </div>
+
+        {/* Top Header Action Buttons */}
+        <div className="flex items-center gap-2">
+          {activeTab === "form" && (
+            <CustomButton
+              onClick={handleResetForm}
+              variant="secondary"
+              className="h-8 px-3 text-xs rounded-lg border-slate-300 hover:bg-slate-50 text-zinc-800"
+            >
+              <RefreshCw className="w-3.5 h-3.5 mr-1 text-zinc-500" />
+              Reset Form
+            </CustomButton>
+          )}
+
+          {activeTab === "finance_claims" && (
+            <CustomButton
+              onClick={() => {
+                setEditingClaimId(null);
+                setActiveTab("form");
+              }}
+              variant="dark"
+              className="h-8 px-3 text-xs rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white"
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              New Claim Form
+            </CustomButton>
+          )}
+        </div>
+      </div>
+
       {/* TAB 1: OFFICIAL FINANCE CLAIM FORM */}
       {activeTab === "form" && (
-        <div className="flex-1 overflow-hidden p-3 min-h-0">
+        <div className="flex-1 overflow-hidden p-3 min-h-0 bg-[#F8F9FA]/40">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 h-full min-h-0">
             
             {/* LEFT PANEL: CLAIM DETAILS FORM (4 Cols) */}
@@ -1729,14 +1777,6 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
 
                 <div className="flex items-center gap-2">
                   <CustomButton
-                    onClick={handleResetForm}
-                    variant="secondary"
-                    className="h-9 px-3 text-xs font-medium rounded"
-                  >
-                    Reset Form
-                  </CustomButton>
-
-                  <CustomButton
                     onClick={handleSaveClaim}
                     variant="default"
                     disabled={!isFormValid || isSavingClaim || isEditingLocked}
@@ -1772,18 +1812,18 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
 
       {/* TAB 2: STAFF CLAIMS & PAYOUTS (ADMIN / SUPERVISOR) */}
       {activeTab === "staff_approvals" && (
-        <div className="flex flex-col flex-1 h-full overflow-hidden gap-3 pb-2 p-3 min-h-0">
+        <div className="flex flex-col flex-1 h-full overflow-hidden min-h-0 bg-[#F8F9FA]/40">
           
-          <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
+          <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
             {/* Left: Sub Tabs Toggle */}
             <div className="flex items-center gap-2">
-              <div className="flex items-center p-0.5 bg-slate-100/80 rounded-lg border border-slate-200 text-xs">
+              <div className="flex items-center p-0.5 bg-white rounded-lg border border-slate-200 text-xs shadow-2xs">
                 <button
                   type="button"
                   onClick={() => setStaffSubTab("active")}
                   className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
                     staffSubTab === "active"
-                      ? "bg-white text-[#0B57D0] shadow-xs font-semibold"
+                      ? "bg-[#0B57D0] text-white font-semibold"
                       : "text-zinc-600 hover:text-zinc-900"
                   }`}
                 >
@@ -1795,7 +1835,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                   onClick={() => setStaffSubTab("rejected")}
                   className={`px-3 py-1 rounded-md font-medium transition-all cursor-pointer flex items-center gap-1.5 ${
                     staffSubTab === "rejected"
-                      ? "bg-white text-rose-600 shadow-xs font-semibold"
+                      ? "bg-rose-600 text-white font-semibold"
                       : "text-zinc-600 hover:text-zinc-900"
                   }`}
                 >
@@ -1805,13 +1845,13 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
               </div>
 
               {staffSubTab === "active" && (
-                <div className="flex items-center p-0.5 bg-slate-100/80 rounded-lg border border-slate-200 text-xs ml-1">
+                <div className="flex items-center p-0.5 bg-white rounded-lg border border-slate-200 text-xs ml-1 shadow-2xs">
                   <button
                     type="button"
                     onClick={() => setAdminFilter("assigned_to_me")}
                     className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
                       adminFilter === "assigned_to_me"
-                        ? "bg-white text-[#0B57D0] shadow-xs font-semibold"
+                        ? "bg-[#0B57D0] text-white font-semibold"
                         : "text-zinc-600 hover:text-zinc-900 font-medium"
                     }`}
                   >
@@ -1822,7 +1862,7 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
                     onClick={() => setAdminFilter("all")}
                     className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
                       adminFilter === "all"
-                        ? "bg-white text-[#0B57D0] shadow-xs font-semibold"
+                        ? "bg-[#0B57D0] text-white font-semibold"
                         : "text-zinc-600 hover:text-zinc-900 font-medium"
                     }`}
                   >
@@ -2121,24 +2161,24 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
         </div>
       )}
 
-      {/* TAB 3 & 4: OFFICIAL FINANCE CLA      {/* TAB 3: OFFICIAL CLAIMS SUBMITTED */}
+      {/* TAB 3: OFFICIAL CLAIMS SUBMITTED */}
       {activeTab === "finance_claims" && (
-        <div className="flex flex-col flex-1 h-full overflow-hidden gap-3 pb-2">
+        <div className="flex flex-col flex-1 h-full overflow-hidden min-h-0 bg-[#F8F9FA]/40">
           
-          <div className="flex items-center justify-between gap-4 bg-white p-3 rounded-lg border border-slate-200 shadow-xs shrink-0">
+          <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
             <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+              <Search className="absolute left-2.5 top-2.5 w-3.5 h-3.5 text-zinc-400 pointer-events-none" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search submitted claims by ID, project, claimant..."
-                className="w-full pl-9 pr-8 py-1.5 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] bg-white"
+                className="w-full pl-8 pr-7 h-8 border border-zinc-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] bg-white"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                  className="absolute right-2 top-2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -2146,21 +2186,13 @@ export function FinanceClaimsModule({ profile }: FinanceClaimsModuleProps) {
             </div>
 
             <div className="flex items-center gap-2">
-              <CustomButton
-                onClick={() => {
-                  setEditingClaimId(null);
-                  setActiveTab("form");
-                }}
-                variant="default"
-                className="h-8 px-3 text-xs"
-              >
-                <Plus className="w-3.5 h-3.5 mr-1.5" />
-                New Claim Form
-              </CustomButton>
+              <span className="text-xs text-zinc-500 font-medium">
+                Total Claims: {claims.length}
+              </span>
             </div>
           </div>
 
-          <div className="flex-1 bg-white border border-slate-200 rounded-lg overflow-hidden flex flex-col shadow-xs min-h-0">
+          <div className="flex-1 bg-white overflow-hidden flex flex-col min-h-0">
             <div className="flex-1 overflow-y-auto">
               <table className="w-full border-collapse text-left table-fixed">
                 <thead className="bg-slate-50/80 border-b border-slate-200 sticky top-0 z-10">

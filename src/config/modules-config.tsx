@@ -84,8 +84,8 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
         description: "Manage brand sponsorships, output distribution tracking, and receiver limit registries.",
       },
       {
-        title: "Customer Service",
-        description: "Manage customer service knowledge base context, configure delivery & MOQ rules, and review visitor chat logs.",
+        title: "Manage POS",
+        description: "Configure POS catalog pricing, allocate retail stock, and review cashier transactions.",
       }
     ]
   },
@@ -155,7 +155,7 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       },
       {
         title: "Catalog Web",
-        description: "Manage export catalog website layout, headlines, products & brands showcase, assets, and inquiry routing.",
+        description: "Manage export catalog website layout, headlines, products & brands showcase, AI customer service concierge, assets, and inquiry routing.",
       }
     ]
   },

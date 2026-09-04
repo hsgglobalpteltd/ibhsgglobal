@@ -663,8 +663,7 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
       {/* 1. TOP HEADER BAR */}
       <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div>
-          <h1 className="text-base font-bold text-zinc-950 flex items-center gap-2">
-            <Layers className="w-5 h-5 text-[#0B57D0]" />
+          <h1 className="text-base font-bold text-zinc-950">
             Manage Stock Movements
           </h1>
           <p className="text-xs text-zinc-500 mt-0.5">

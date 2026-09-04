@@ -476,22 +476,35 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative min-w-0">
-      {/* Reusable Sub-Navigation NavigationTabs Component */}
-      <div className="content-header">
-        <NavigationTabs 
-          tabs={tabs}
-          activeTabId={activeTab}
-          onTabSelect={(tabId) => {
-            setActiveTab(tabId as any);
-            setIsEditMode(false);
-          }}
-          titleSuffix="Record"
-        />
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
+      
+      {/* 1. TOPBAR NAVIGATION TABS */}
+      <NavigationTabs 
+        tabs={tabs}
+        activeTabId={activeTab}
+        onTabSelect={(tabId) => {
+          setActiveTab(tabId as any);
+          setIsEditMode(false);
+        }}
+        titleSuffix="Record"
+      />
+
+      {/* 2. TOP HEADER BAR */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            {activeTab === "brands" ? "Brands Master Registry" : "Products Master Database"}
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {activeTab === "brands"
+              ? "Manage brand profiles, display names, logos, and display rankings."
+              : "Master catalog of active SKUs, barcodes, packaging specifications, UOM, and brand assignments."}
+          </p>
+        </div>
       </div>
 
-      {/* Data Table */}
-      <div className="content-body flex-1 w-full overflow-hidden">
+      {/* 3. DATA TABLE BODY */}
+      <div className="flex-1 w-full overflow-hidden min-h-0">
         <DataTable
           columns={columns}
           data={processedData}
