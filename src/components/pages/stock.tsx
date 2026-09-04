@@ -4,6 +4,8 @@ import * as React from "react";
 import { FeatureCard } from "../feature-card";
 import { FeatureComingSoon } from "../FeatureComingSoon";
 import { InventoryModule } from "../modules/InventoryModule";
+import { ManageStockModule } from "../modules/ManageStockModule";
+import { StockCardModule } from "../modules/StockCardModule";
 import { DisposeRecordModule } from "../modules/DisposeRecordModule";
 import { ShelfTagBarcodePrintModule } from "../modules/ShelfTagBarcodePrintModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
@@ -65,6 +67,10 @@ export function StockPage({ profile, breadcrumbPath }: StockPageProps) {
     switch (activeSubModule) {
       case "Inventory":
         return <InventoryModule profile={profile} />;
+      case "Manage Stock":
+        return <ManageStockModule profile={profile} />;
+      case "Stock Card":
+        return <StockCardModule profile={profile} />;
       case "Dispose Record":
         return <DisposeRecordModule profile={profile} />;
       case "Print Manager":

@@ -98,6 +98,14 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
         description: "Monitor and manage stock take logs, stock levels, and inventory adjustments.",
       },
       {
+        title: "Manage Stock",
+        description: "Audit, edit, and batch-combine stock movements with Million reference numbers, custom dates, and verification status.",
+      },
+      {
+        title: "Stock Card",
+        description: "Analyze stock in, stock out, transfers, DO deliveries, and returns by weekly or custom cycles.",
+      },
+      {
         title: "Dispose Record",
         description: "Manage and record damaged, returned, or expired goods disposal.",
       },
