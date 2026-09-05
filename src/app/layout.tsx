@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Outfit, Plus_Jakarta_Sans, Lora } from "next/font/google";
+import { Outfit, Plus_Jakarta_Sans, Lora, Orbitron } from "next/font/google";
 import "./globals.css";
 
 const outfit = Outfit({
@@ -20,9 +20,17 @@ const lora = Lora({
   preload: false,
 });
 
+const orbitron = Orbitron({
+  variable: "--font-orbitron",
+  subsets: ["latin"],
+  weight: ["600", "700", "800", "900"],
+  preload: false,
+});
+
 import { ZoomBlocker } from "@/components/zoom-blocker";
 import { PwaRegister } from "@/components/pwa-register";
 import { PwaUpdateManager } from "@/components/pwa-update-manager";
+import { DeviceGuard } from "@/components/device-guard";
 
 export const metadata: Metadata = {
   title: "iB - HSG Global Internal Bridge",
@@ -48,14 +56,16 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${outfit.variable} ${plusJakartaSans.variable} ${lora.variable} h-full antialiased`}
+      className={`${outfit.variable} ${plusJakartaSans.variable} ${lora.variable} ${orbitron.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <PwaRegister />
         <PwaUpdateManager />
         <ZoomBlocker />
-        {children}
+        <DeviceGuard>
+          {children}
+        </DeviceGuard>
       </body>
     </html>
   );

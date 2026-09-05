@@ -31,7 +31,14 @@ import {
   MessageSquare,
   ShieldCheck,
   KeyRound,
-  UserCheck
+  UserCheck,
+  Maximize,
+  Minimize,
+  Coins,
+  HeartHandshake,
+  Calculator,
+  Delete,
+  Equal
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 
@@ -92,6 +99,7 @@ interface CashierProfile {
 export default function POSCashierTerminal() {
   // Cashier Session & PIN Lock
   const [cashier, setCashier] = React.useState<CashierProfile | null>(null);
+  const [isInitializingSession, setIsInitializingSession] = React.useState<boolean>(true);
   const [pinInput, setPinInput] = React.useState<string>("");
   const [pinVerifying, setPinVerifying] = React.useState<boolean>(false);
   const [pinError, setPinError] = React.useState<string>("");
@@ -132,17 +140,84 @@ export default function POSCashierTerminal() {
   // Payment Checkout State
   const [paymentMethod, setPaymentMethod] = React.useState<"Cash" | "QR" | "Transfer Bank" | "FOC">("Cash");
   const [cashTendered, setCashTendered] = React.useState<string>("");
+  const [showCashCalculator, setShowCashCalculator] = React.useState<boolean>(false);
+  const [calcInput, setCalcInput] = React.useState<string>("");
   const [isCheckingOut, setIsCheckingOut] = React.useState<boolean>(false);
   const [completedOrder, setCompletedOrder] = React.useState<any | null>(null);
   const [nextRefCode, setNextRefCode] = React.useState<string>("A");
   const [loadingRefCode, setLoadingRefCode] = React.useState<boolean>(false);
 
-  // Live Clock
+  // Cashier Register Code & Screen Pairing Modal
+  const [registerId, setRegisterId] = React.useState<string>("REG-1");
+  const [pairModalOpen, setPairModalOpen] = React.useState<boolean>(false);
+  const [editingRegisterId, setEditingRegisterId] = React.useState<string>("REG-1");
+
+  // Load Register ID from localStorage
+  React.useEffect(() => {
+    try {
+      const savedReg = localStorage.getItem("pos_register_id");
+      if (savedReg) {
+        setRegisterId(savedReg.toUpperCase());
+        setEditingRegisterId(savedReg.toUpperCase());
+      }
+    } catch (e) {
+      console.warn("Storage read error:", e);
+    }
+  }, []);
+
+  // Live Clock & Fullscreen State
   const [timeStr, setTimeStr] = React.useState<string>("");
+  const [isFullscreen, setIsFullscreen] = React.useState<boolean>(false);
+  const [fullscreenPromptOpen, setFullscreenPromptOpen] = React.useState<boolean>(false);
+
+  React.useEffect(() => {
+    const handleFullscreenChange = () => {
+      const active = !!document.fullscreenElement;
+      setIsFullscreen(active);
+      if (active) {
+        setFullscreenPromptOpen(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  // 1-minute timer to prompt user to enter fullscreen if not already in fullscreen
+  React.useEffect(() => {
+    if (!cashier || isFullscreen) {
+      setFullscreenPromptOpen(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (!document.fullscreenElement) {
+        setFullscreenPromptOpen(true);
+      }
+    }, 60000); // 1 minute
+
+    return () => clearTimeout(timer);
+  }, [cashier, isFullscreen]);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setFullscreenPromptOpen(false);
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        }
+      }
+    } catch (err: any) {
+      console.warn("Fullscreen toggle error:", err);
+      showToast("Fullscreen is not supported or was blocked by browser", "warning");
+    }
+  };
+
   React.useEffect(() => {
     const updateTime = () => {
       const now = new Date();
-      setTimeStr(now.toLocaleTimeString("en-SG", { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+      setTimeStr(now.toLocaleTimeString("en-GB", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }));
     };
     updateTime();
     const interval = setInterval(updateTime, 1000);
@@ -158,6 +233,8 @@ export default function POSCashierTerminal() {
       }
     } catch (e) {
       console.warn("Session restore error:", e);
+    } finally {
+      setIsInitializingSession(false);
     }
   }, []);
 
@@ -367,13 +444,24 @@ export default function POSCashierTerminal() {
     });
   }, [filteredProducts]);
 
-  // Add Item to Cart
+  // Add Item to Cart with Stock Limit Enforcement
   const handleAddToCart = (product: POSProduct) => {
+    const availableStock = Number(product.stock_allocated) || 0;
+    
+    if (availableStock <= 0) {
+      showToast(`Out of Stock: ${product.display_name} has 0 units available.`, "warning");
+      return;
+    }
+
     setCart(prev => {
       const idx = prev.findIndex(item => item.sku === product.sku);
       if (idx >= 0) {
+        const existing = prev[idx];
+        if (existing.qty >= availableStock) {
+          showToast(`Stock Limit Reached: Only ${availableStock} units of ${product.display_name} available in stock.`, "warning");
+          return prev;
+        }
         const next = [...prev];
-        const existing = next[idx];
         const newQty = existing.qty + 1;
         const sub = existing.is_foc ? 0 : (existing.price * newQty);
         next[idx] = { ...existing, qty: newQty, subtotal: sub };
@@ -399,6 +487,38 @@ export default function POSCashierTerminal() {
     });
   };
 
+  // Add Custom Tip / Adjustment Amount ($1.00, $0.01, etc.)
+  const handleAddAdjustment = (amount: number, label: string) => {
+    const sku = amount === 1 ? "ADJ-TIP-100" : "ADJ-TIP-001";
+    setCart(prev => {
+      const idx = prev.findIndex(item => item.sku === sku);
+      if (idx >= 0) {
+        const next = [...prev];
+        const existing = next[idx];
+        const newQty = existing.qty + 1;
+        const sub = existing.price * newQty;
+        next[idx] = { ...existing, qty: newQty, subtotal: sub };
+        return next;
+      } else {
+        return [...prev, {
+          sku: sku,
+          name: label,
+          brand_id: "CUSTOM",
+          brand_name: "Adjustment",
+          original_price: amount,
+          price: amount,
+          qty: 1,
+          is_foc: false,
+          discount_type: "none",
+          discount_val: 0,
+          discount_amount: 0,
+          subtotal: amount
+        }];
+      }
+    });
+    showToast(`Added ${label}`, "success");
+  };
+
   // Barcode Scanner Enter Key Listener on Search Bar
   const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -415,16 +535,30 @@ export default function POSCashierTerminal() {
       if (exactMatch) {
         handleAddToCart(exactMatch);
         setSearchQuery("");
-        showToast(`Added: ${exactMatch.display_name}`, "success");
       }
     }
   };
 
-  // Update Cart Item Quantity
+  // Update Cart Item Quantity with Stock Limit Check
   const handleUpdateQty = (index: number, delta: number) => {
     setCart(prev => {
+      const item = prev[index];
+      if (!item) return prev;
+
+      // For custom adjustments (non-inventory items), allow without stock limit
+      const isCustomAdjustment = item.sku.startsWith("ADJ-TIP-");
+
+      if (delta > 0 && !isCustomAdjustment) {
+        const matchedProduct = products.find(p => p.sku.toLowerCase() === item.sku.toLowerCase());
+        const availableStock = matchedProduct ? (Number(matchedProduct.stock_allocated) || 0) : 0;
+        
+        if (item.qty >= availableStock) {
+          showToast(`Stock limit reached: Only ${availableStock} units available for ${item.name}`, "warning");
+          return prev;
+        }
+      }
+
       const next = [...prev];
-      const item = next[index];
       const newQty = item.qty + delta;
       if (newQty <= 0) {
         next.splice(index, 1);
@@ -558,7 +692,7 @@ export default function POSCashierTerminal() {
     let globalDiscountAmt = 0;
     const baseAfterItemAndBrandDiscounts = Math.max(0, subtotal - itemsDiscountTotal - brandPromoDiscountTotal);
 
-    if (cartDiscountType === "foc") {
+    if (cartDiscountType === "foc" || paymentMethod === "FOC") {
       globalDiscountAmt = baseAfterItemAndBrandDiscounts;
     } else if (cartDiscountType === "percent") {
       globalDiscountAmt = baseAfterItemAndBrandDiscounts * (Math.min(100, Math.max(0, cartDiscountVal)) / 100);
@@ -566,8 +700,8 @@ export default function POSCashierTerminal() {
       globalDiscountAmt = Math.min(baseAfterItemAndBrandDiscounts, Math.max(0, cartDiscountVal));
     }
 
-    const totalDiscount = itemsDiscountTotal + brandPromoDiscountTotal + globalDiscountAmt;
-    const grandTotal = Math.max(0, subtotal - totalDiscount);
+    const totalDiscount = (paymentMethod === "FOC" || cartDiscountType === "foc") ? subtotal : (itemsDiscountTotal + brandPromoDiscountTotal + globalDiscountAmt);
+    const grandTotal = (paymentMethod === "FOC" || cartDiscountType === "foc") ? 0 : Math.max(0, subtotal - totalDiscount);
     const totalItemCount = cart.reduce((acc, it) => acc + it.qty, 0);
 
     return {
@@ -580,13 +714,58 @@ export default function POSCashierTerminal() {
       grandTotal,
       totalItemCount
     };
-  }, [cart, brandPromos, cartDiscountType, cartDiscountVal]);
+  }, [cart, brandPromos, cartDiscountType, cartDiscountVal, paymentMethod]);
 
   // Cash Change calculation
   const cashChange = React.useMemo(() => {
     const tender = parseFloat(cashTendered) || 0;
     return Math.max(0, tender - cartTotals.grandTotal);
   }, [cashTendered, cartTotals.grandTotal]);
+
+  // Real-Time Broadcast to Customer Dual Display Screen (Local + Cloud Wireless Multi-Device)
+  React.useEffect(() => {
+    const syncPayload = {
+      type: "CART_UPDATE",
+      register_id: registerId,
+      cart,
+      totals: cartTotals,
+      completedOrder,
+      paymentState: {
+        isOpen: paymentModalOpen,
+        method: paymentMethod,
+        refCode: nextRefCode,
+        cash_received: parseFloat(cashTendered) || 0,
+        cash_change: cashChange
+      },
+      timestamp: Date.now()
+    };
+
+    // 1. Local 0ms Sync (BroadcastChannel + LocalStorage)
+    try {
+      localStorage.setItem("pos_display_sync", JSON.stringify(syncPayload));
+      if (typeof BroadcastChannel !== "undefined") {
+        const channel = new BroadcastChannel("pos_display_channel");
+        channel.postMessage(syncPayload);
+        channel.close();
+      }
+    } catch (e) {
+      console.warn("Display broadcast sync error:", e);
+    }
+
+    // 2. Cloud Wireless Sync for separate tablets/iPads/phones
+    const timer = setTimeout(() => {
+      fetch(`${WORKER_URL}/api/pos/sync/push`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          register_id: registerId,
+          payload: syncPayload
+        })
+      }).catch(err => console.warn("Cloud sync push error:", err));
+    }, 120);
+
+    return () => clearTimeout(timer);
+  }, [registerId, cart, cartTotals, completedOrder, paymentModalOpen, paymentMethod, nextRefCode, cashTendered, cashChange]);
 
   // Complete Sale & Checkout
   const handleCompleteSale = async () => {
@@ -802,11 +981,48 @@ export default function POSCashierTerminal() {
   };
 
   // -------------------------------------------------------------
+  // RENDER 0: SESSION RESTORE LOADING (PREVENTS FLASH OF PIN GATE)
+  // -------------------------------------------------------------
+  if (isInitializingSession) {
+    return (
+      <div className="fixed inset-0 bg-[#F0F4F9] flex flex-col items-center justify-center p-4 font-primary select-none z-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-12 h-12 rounded-2xl bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex items-center justify-center text-[#0B57D0] shadow-xs">
+            <RefreshCw className="w-6 h-6 animate-spin text-[#0B57D0]" />
+          </div>
+          <span className="text-xs font-semibold text-zinc-500">Loading terminal session...</span>
+        </div>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------
   // RENDER 1: FULLSCREEN PIN GATE (LOCK SCREEN)
   // -------------------------------------------------------------
   if (!cashier) {
     return (
       <div className="fixed inset-0 bg-[#F0F4F9] flex flex-col items-center justify-center p-4 font-primary select-none z-50">
+        <div className="absolute top-4 right-4">
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            className="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 text-xs font-semibold rounded-lg shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+            title={isFullscreen ? "Exit Fullscreen (Esc)" : "Enter Fullscreen (F11)"}
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize className="w-4 h-4 text-zinc-600" />
+                <span>Exit Fullscreen</span>
+              </>
+            ) : (
+              <>
+                <Maximize className="w-4 h-4 text-zinc-600" />
+                <span>Fullscreen</span>
+              </>
+            )}
+          </button>
+        </div>
+
         <div className="bg-white border border-slate-200 shadow-2xl rounded-2xl p-8 max-w-sm w-full flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-200">
           <div className="flex flex-col items-center text-center gap-1.5">
             <div className="w-14 h-14 rounded-2xl bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex items-center justify-center text-[#0B57D0] mb-1">
@@ -896,7 +1112,7 @@ export default function POSCashierTerminal() {
   return (
     <div className="h-screen w-screen bg-[#F0F4F9] flex flex-col overflow-hidden font-primary select-none">
       {/* 1. TOP STATUS / CASHIER HEADER BAR */}
-      <header className="h-14 bg-white border-b border-slate-200 px-4 flex items-center justify-between gap-4 shrink-0 shadow-2xs z-20">
+      <header className="relative h-14 bg-white border-b border-slate-200 px-4 flex items-center justify-between gap-4 shrink-0 shadow-2xs z-20">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-[#0B57D0] text-white flex items-center justify-center font-bold text-sm shadow-xs">
             iB
@@ -907,12 +1123,44 @@ export default function POSCashierTerminal() {
           </div>
         </div>
 
-        {/* Live Clock & Actions */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs text-zinc-700 font-mono font-semibold">
-            <Clock className="w-3.5 h-3.5 text-zinc-400" />
-            <span>{timeStr}</span>
-          </div>
+        {/* Centered 24-Hour Digital Clock (Fixed Width Slots to prevent shifting) */}
+        <div className="absolute left-1/2 -translate-x-1/2 flex items-center pointer-events-none select-none font-digital text-sm tracking-wider text-slate-600 font-bold">
+          {timeStr.split("").map((ch, idx) => (
+            <span
+              key={idx}
+              className={`inline-block text-center ${ch === ":" ? "w-2.5 opacity-60" : "w-3.5"}`}
+            >
+              {ch}
+            </span>
+          ))}
+        </div>
+
+        {/* Actions & Cashier Controls */}
+        <div className="flex items-center gap-2.5">
+          {/* Register ID Badge & Pairing Button */}
+          <button
+            type="button"
+            onClick={() => setPairModalOpen(true)}
+            className="h-9 px-3 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-bold rounded-lg transition-all flex items-center gap-2 cursor-pointer shadow-xs"
+            title="Wireless Customer Screen Pairing (Connect iPad/Tablet or separate monitor)"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-mono text-zinc-900 font-black">{registerId}</span>
+            <QrCode className="w-3.5 h-3.5 text-[#0B57D0]" />
+            <span className="hidden xl:inline text-zinc-600 font-semibold">Pair Screen</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              window.open(`/pos/display?reg=${encodeURIComponent(registerId)}`, "_blank", "width=1200,height=800");
+            }}
+            className="h-9 px-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+            title="Open Customer-Facing Dual Screen Display (/pos/display)"
+          >
+            <Maximize className="w-3.5 h-3.5 text-[#0B57D0]" />
+            <span className="hidden lg:inline">Open Display</span>
+          </button>
 
           <button
             type="button"
@@ -932,10 +1180,7 @@ export default function POSCashierTerminal() {
               <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 font-bold text-xs flex items-center justify-center border border-emerald-300">
                 {cashier.name.charAt(0).toUpperCase()}
               </div>
-              <div className="flex flex-col text-left">
-                <span className="text-xs font-bold text-zinc-900 leading-tight">{cashier.name}</span>
-                <span className="text-[10px] text-zinc-400">Cashier ID: {cashier.id}</span>
-              </div>
+              <span className="text-xs font-bold text-zinc-900 leading-tight">{cashier.name}</span>
             </div>
 
             <button
@@ -945,6 +1190,22 @@ export default function POSCashierTerminal() {
               title="Lock POS Terminal"
             >
               <Lock className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Fullscreen Toggle Button at very end right */}
+          <div className="pl-1 border-l border-slate-200">
+            <button
+              type="button"
+              onClick={toggleFullscreen}
+              className="p-2 text-zinc-500 hover:text-zinc-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              title={isFullscreen ? "Exit Fullscreen (Esc)" : "Enter Fullscreen (F11)"}
+            >
+              {isFullscreen ? (
+                <Minimize className="w-4 h-4 text-zinc-700" />
+              ) : (
+                <Maximize className="w-4 h-4 text-zinc-700" />
+              )}
             </button>
           </div>
         </div>
@@ -1024,7 +1285,12 @@ export default function POSCashierTerminal() {
                       key={p.sku}
                       type="button"
                       onClick={() => handleAddToCart(p)}
-                      className="group bg-white rounded-xl border border-slate-200 hover:border-[#0B57D0]/60 p-3 shadow-2xs hover:shadow-md transition-all flex flex-col text-left cursor-pointer active:scale-98 relative overflow-hidden"
+                      disabled={!hasStock}
+                      className={`group bg-white rounded-xl border p-3 shadow-2xs transition-all flex flex-col text-left relative overflow-hidden ${
+                        hasStock 
+                          ? "border-slate-200 hover:border-[#0B57D0]/60 hover:shadow-md cursor-pointer active:scale-98" 
+                          : "border-slate-200 opacity-60 cursor-not-allowed bg-slate-50/70"
+                      }`}
                     >
                       {/* Product Image */}
                       <div className="w-full aspect-square rounded-lg bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden mb-2 relative">
@@ -1082,6 +1348,73 @@ export default function POSCashierTerminal() {
                     </button>
                   );
                 })}
+
+                {/* Quick Tip / Rounding Cards at the END of catalog */}
+                {(!searchQuery || "tip adjustment one dollar $1 1.00".includes(searchQuery.toLowerCase())) && (
+                  <button
+                    type="button"
+                    onClick={() => handleAddAdjustment(1.00, "Tip / Rounding ($1.00)")}
+                    className="group bg-gradient-to-b from-blue-50/60 via-white to-blue-50/40 rounded-xl border-2 border-dashed border-[#0B57D0]/40 hover:border-[#0B57D0] p-3 shadow-2xs hover:shadow-md transition-all flex flex-col text-left cursor-pointer active:scale-98 relative overflow-hidden"
+                  >
+                    <div className="w-full aspect-square rounded-lg bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex flex-col items-center justify-center overflow-hidden mb-2 text-[#0B57D0]">
+                      <span className="text-3xl font-black font-mono tracking-tight group-hover:scale-110 transition-transform drop-shadow-xs">
+                        $1
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600/80 mt-1">
+                        Adjustment
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col flex-1 justify-between">
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                          <span className="text-[10px] text-blue-600 font-mono font-bold uppercase truncate">QUICK ADD</span>
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-900 truncate">
+                          Tip / Rounding $1
+                        </h4>
+                      </div>
+
+                      <div className="flex items-center justify-between mt-2 pt-1 border-t border-blue-100">
+                        <span className="text-sm font-mono font-black text-[#0B57D0]">+$1.00</span>
+                        <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.2 rounded">+ $1.00</span>
+                      </div>
+                    </div>
+                  </button>
+                )}
+
+                {(!searchQuery || "tip adjustment one cent 1c ¢1 0.01".includes(searchQuery.toLowerCase())) && (
+                  <button
+                    type="button"
+                    onClick={() => handleAddAdjustment(0.01, "Tip / Rounding (1¢)")}
+                    className="group bg-gradient-to-b from-blue-50/60 via-white to-blue-50/40 rounded-xl border-2 border-dashed border-[#0B57D0]/40 hover:border-[#0B57D0] p-3 shadow-2xs hover:shadow-md transition-all flex flex-col text-left cursor-pointer active:scale-98 relative overflow-hidden"
+                  >
+                    <div className="w-full aspect-square rounded-lg bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex flex-col items-center justify-center overflow-hidden mb-2 text-[#0B57D0]">
+                      <span className="text-3xl font-black font-mono tracking-tight group-hover:scale-110 transition-transform drop-shadow-xs">
+                        1¢
+                      </span>
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600/80 mt-1">
+                        Adjustment
+                      </span>
+                    </div>
+
+                    <div className="flex flex-col flex-1 justify-between">
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-0.5">
+                          <span className="text-[10px] text-blue-600 font-mono font-bold uppercase truncate">QUICK ADD</span>
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-900 truncate">
+                          Tip / Rounding 1¢
+                        </h4>
+                      </div>
+
+                      <div className="flex items-center justify-between mt-2 pt-1 border-t border-blue-100">
+                        <span className="text-sm font-mono font-black text-[#0B57D0]">+$0.01</span>
+                        <span className="text-[10px] font-semibold text-blue-600 bg-blue-100 px-1.5 py-0.2 rounded">+ 1¢</span>
+                      </div>
+                    </div>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -1153,13 +1486,27 @@ export default function POSCashierTerminal() {
                       <span className="w-8 text-center text-xs font-bold text-zinc-900 font-mono">
                         {item.qty}
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => handleUpdateQty(idx, 1)}
-                        className="w-7 h-7 flex items-center justify-center hover:bg-slate-200 text-zinc-700 cursor-pointer font-bold"
-                      >
-                        <Plus className="w-3 h-3" />
-                      </button>
+                      {(() => {
+                        const isCustom = item.sku.startsWith("ADJ-TIP-");
+                        const matched = products.find(p => p.sku.toLowerCase() === item.sku.toLowerCase());
+                        const maxStock = matched ? (Number(matched.stock_allocated) || 0) : 0;
+                        const atLimit = !isCustom && item.qty >= maxStock;
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQty(idx, 1)}
+                            disabled={atLimit}
+                            className={`w-7 h-7 flex items-center justify-center font-bold transition-colors ${
+                              atLimit 
+                                ? "opacity-30 cursor-not-allowed bg-slate-100 text-zinc-400" 
+                                : "hover:bg-slate-200 text-zinc-700 cursor-pointer"
+                            }`}
+                            title={atLimit ? `Max stock (${maxStock}) reached` : "Add one"}
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        );
+                      })()}
                     </div>
 
                     <div className="text-right w-16">
@@ -1528,168 +1875,325 @@ export default function POSCashierTerminal() {
       {/* 5. PAYMENT & CHECKOUT MODAL */}
       {paymentModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[1px] flex items-center justify-center p-4 font-primary">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-6 max-w-lg w-full flex flex-col gap-5 animate-in fade-in zoom-in duration-150 max-h-[95vh] overflow-y-auto">
-            <div className="flex items-start justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-base font-bold text-zinc-950">Payment &amp; Checkout</h3>
-                <span className="text-xs text-zinc-500">Select customer payment method</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setPaymentModalOpen(false)}
-                className="p-1 rounded-lg hover:bg-slate-100 text-zinc-400"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Amount Due Big Banner */}
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center justify-between">
-              <span className="text-xs font-bold text-zinc-600 uppercase tracking-wider">Total Amount Due</span>
-              <span className="text-3xl font-mono font-bold text-emerald-700">
-                ${cartTotals.grandTotal.toFixed(2)}
-              </span>
-            </div>
-
-            {/* Payment Mode Selector */}
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Payment Method</label>
-              <div className="grid grid-cols-4 gap-2">
-                {[
-                  { id: "Cash", label: "Cash", icon: DollarSign },
-                  { id: "QR", label: "QR", icon: QrCode },
-                  { id: "Transfer Bank", label: "Transfer Bank", icon: Landmark },
-                  { id: "FOC", label: "FOC Takeout", icon: Tag }
-                ].map((mode) => {
-                  const Icon = mode.icon;
-                  const active = paymentMethod === mode.id;
-                  return (
-                    <button
-                      key={mode.id}
-                      type="button"
-                      onClick={() => setPaymentMethod(mode.id as any)}
-                      className={`p-3 rounded-xl border text-xs font-bold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
-                        active 
-                          ? "bg-[#0B57D0] text-white border-[#0B57D0] shadow-sm scale-102" 
-                          : "bg-slate-50 border-slate-200 text-zinc-700 hover:bg-slate-100"
-                      }`}
-                    >
-                      <Icon className="w-5 h-5" />
-                      <span>{mode.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Cash Tender Calculation */}
-            {paymentMethod === "Cash" && (
-              <div className="flex flex-col gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-bold text-zinc-700">Cash Received ($)</label>
-                  <input
-                    type="number"
-                    step="0.50"
-                    value={cashTendered}
-                    onChange={(e) => setCashTendered(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-lg font-bold font-mono text-zinc-950 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                  />
-                </div>
-
-                {/* Quick Bills Tender */}
-                <div className="flex items-center gap-2">
-                  {[10, 20, 50, 100].map((bill) => (
-                    <button
-                      key={bill}
-                      type="button"
-                      onClick={() => setCashTendered(String(bill))}
-                      className="flex-1 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-md text-xs font-bold font-mono text-zinc-800 shadow-2xs"
-                    >
-                      ${bill}
-                    </button>
-                  ))}
+          <div className="relative max-w-lg w-full flex items-center justify-center">
+            
+            {/* FLOATING LEFT SIDE: POPUP CALCULATOR WIDGET (Absolute positioned to never shift modal) */}
+            {showCashCalculator && (
+              <div className="absolute right-full mr-4 top-1/2 -translate-y-1/2 w-72 bg-white rounded-2xl border border-slate-200 shadow-2xl p-4 flex flex-col gap-3 shrink-0 animate-in fade-in slide-in-from-right-4 duration-200 z-50">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5 text-zinc-900 font-bold text-xs">
+                    <Calculator className="w-4 h-4 text-[#0B57D0]" />
+                    <span>Quick Calculator</span>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setCashTendered(String(cartTotals.grandTotal.toFixed(2)))}
-                    className="px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-md text-xs font-bold text-zinc-800 shadow-2xs"
+                    onClick={() => setShowCashCalculator(false)}
+                    className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-slate-100"
                   >
-                    Exact
+                    <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
 
-                {/* Change Due */}
-                <div className="flex justify-between items-center pt-2 border-t border-slate-200">
-                  <span className="text-xs font-bold text-zinc-700">Change Due:</span>
-                  <span className={`text-xl font-bold font-mono ${cashChange >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                    ${cashChange.toFixed(2)}
+                {/* Calculator Screen */}
+                <div className="flex flex-col gap-0.5 p-3 bg-slate-50 border border-slate-200 rounded-xl text-right">
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Input</span>
+                  <span className="font-mono text-xl font-black text-zinc-950 truncate">
+                    {calcInput || "0"}
                   </span>
+                </div>
+
+                {/* Calculator Buttons Grid */}
+                <div className="grid grid-cols-4 gap-1.5 font-mono">
+                  {["7", "8", "9", "÷"].map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setCalcInput((prev) => prev + (k === "÷" ? "/" : k))}
+                      className={`py-2.5 rounded-lg font-bold text-xs transition-colors cursor-pointer ${
+                        k === "÷" ? "bg-blue-50 text-[#0B57D0] hover:bg-blue-100" : "bg-slate-50 text-zinc-800 hover:bg-slate-100 border border-slate-200/60"
+                      }`}
+                    >
+                      {k}
+                    </button>
+                  ))}
+
+                  {["4", "5", "6", "×"].map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setCalcInput((prev) => prev + (k === "×" ? "*" : k))}
+                      className={`py-2.5 rounded-lg font-bold text-xs transition-colors cursor-pointer ${
+                        k === "×" ? "bg-blue-50 text-[#0B57D0] hover:bg-blue-100" : "bg-slate-50 text-zinc-800 hover:bg-slate-100 border border-slate-200/60"
+                      }`}
+                    >
+                      {k}
+                    </button>
+                  ))}
+
+                  {["1", "2", "3", "-"].map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setCalcInput((prev) => prev + k)}
+                      className={`py-2.5 rounded-lg font-bold text-xs transition-colors cursor-pointer ${
+                        k === "-" ? "bg-blue-50 text-[#0B57D0] hover:bg-blue-100" : "bg-slate-50 text-zinc-800 hover:bg-slate-100 border border-slate-200/60"
+                      }`}
+                    >
+                      {k}
+                    </button>
+                  ))}
+
+                  {["C", "0", ".", "+"].map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => {
+                        if (k === "C") setCalcInput("");
+                        else setCalcInput((prev) => prev + k);
+                      }}
+                      className={`py-2.5 rounded-lg font-bold text-xs transition-colors cursor-pointer ${
+                        k === "C" ? "bg-red-50 text-red-600 hover:bg-red-100" : k === "+" ? "bg-blue-50 text-[#0B57D0] hover:bg-blue-100" : "bg-slate-50 text-zinc-800 hover:bg-slate-100 border border-slate-200/60"
+                      }`}
+                    >
+                      {k}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Evaluate & Apply Actions */}
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        const sanitized = calcInput.replace(/[^0-9+\-*/.]/g, "");
+                        if (sanitized) {
+                          // eslint-disable-next-line no-eval
+                          const res = Function(`'use strict'; return (${sanitized})`)();
+                          setCalcInput(String(Number(res).toFixed(2)));
+                        }
+                      } catch (e) {
+                        showToast("Invalid calculation", "warning");
+                      }
+                    }}
+                    className="w-full py-1.5 bg-slate-100 hover:bg-slate-200 text-zinc-800 text-xs font-bold font-mono rounded-lg transition-colors cursor-pointer"
+                  >
+                    = Calculate
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      let finalVal = calcInput;
+                      try {
+                        const sanitized = calcInput.replace(/[^0-9+\-*/.]/g, "");
+                        if (sanitized) {
+                          // eslint-disable-next-line no-eval
+                          const res = Function(`'use strict'; return (${sanitized})`)();
+                          finalVal = String(Number(res).toFixed(2));
+                        }
+                      } catch (e) {}
+                      if (finalVal && !isNaN(Number(finalVal))) {
+                        setCashTendered(finalVal);
+                        setCalcInput(finalVal);
+                        setShowCashCalculator(false);
+                        showToast(`Applied $${finalVal} to cash received`, "success");
+                      }
+                    }}
+                    className="w-full py-2.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-xs cursor-pointer font-primary"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Apply to Amount</span>
+                  </button>
                 </div>
               </div>
             )}
 
-            {/* QR / Bank Transfer Running Reference & WhatsApp Workflow Indicator */}
-            {(paymentMethod === "QR" || paymentMethod === "Transfer Bank") && (
-              <div className="p-4 bg-blue-50/70 rounded-xl border-2 border-blue-200 flex flex-col gap-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-lg bg-[#0B57D0] text-white flex items-center justify-center">
-                      <Camera className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <span className="text-xs font-bold text-zinc-950 block">Payment Proof Snapshot</span>
-                      <span className="text-[11px] text-zinc-500">Snap customer payment & send to WhatsApp</span>
+            {/* MAIN PAYMENT MODAL CARD (Sticks perfectly at Center) */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl p-6 w-full flex flex-col gap-5 animate-in fade-in zoom-in duration-150 max-h-[95vh] overflow-y-auto">
+              <div className="flex items-start justify-between border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-base font-bold text-zinc-950">Payment &amp; Checkout</h3>
+                  <span className="text-xs text-zinc-500">Select customer payment method</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaymentModalOpen(false);
+                    setShowCashCalculator(false);
+                  }}
+                  className="p-1 rounded-lg hover:bg-slate-100 text-zinc-400"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Amount Due Big Banner */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center justify-between">
+                <span className="text-xs font-bold text-zinc-600 uppercase tracking-wider">Total Amount Due</span>
+                <span className="text-3xl font-mono font-bold text-emerald-700">
+                  ${cartTotals.grandTotal.toFixed(2)}
+                </span>
+              </div>
+
+              {/* Payment Mode Selector */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Payment Method</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {[
+                    { id: "Cash", label: "Cash", icon: DollarSign },
+                    { id: "QR", label: "QR", icon: QrCode },
+                    { id: "Transfer Bank", label: "Transfer Bank", icon: Landmark },
+                    { id: "FOC", label: "FOC Takeout", icon: Tag }
+                  ].map((mode) => {
+                    const Icon = mode.icon;
+                    const active = paymentMethod === mode.id;
+                    return (
+                      <button
+                        key={mode.id}
+                        type="button"
+                        onClick={() => setPaymentMethod(mode.id as any)}
+                        className={`p-3 rounded-xl border text-xs font-bold flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
+                          active 
+                            ? "bg-[#0B57D0] text-white border-[#0B57D0] shadow-sm scale-102" 
+                            : "bg-slate-50 border-slate-200 text-zinc-700 hover:bg-slate-100"
+                        }`}
+                      >
+                        <Icon className="w-5 h-5" />
+                        <span>{mode.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Cash Tender Calculation */}
+              {paymentMethod === "Cash" && (
+                <div className="flex flex-col gap-3 p-4 bg-slate-50 rounded-xl border border-slate-200">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-zinc-700">Cash Received ($)</label>
+
+                    <div
+                      onClick={() => {
+                        setShowCashCalculator(true);
+                        setCalcInput(cashTendered || "");
+                      }}
+                      className="relative cursor-pointer group"
+                    >
+                      <input
+                        type="text"
+                        readOnly
+                        inputMode="none"
+                        value={cashTendered ? `$${cashTendered}` : ""}
+                        placeholder="Click to enter cash amount..."
+                        className="w-full px-3.5 py-2.5 bg-white group-hover:bg-slate-50 border border-slate-200 group-hover:border-[#0B57D0] rounded-xl text-lg font-bold font-mono text-zinc-950 cursor-pointer shadow-2xs transition-colors"
+                      />
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[#0B57D0] pointer-events-none">
+                        <Calculator className="w-4 h-4" />
+                        <span className="text-xs font-bold hidden sm:inline">Keypad</span>
+                      </div>
                     </div>
                   </div>
 
-                  <div className="flex flex-col items-center">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Ref Mark</span>
-                    <span className="px-3 py-0.5 bg-[#0B57D0] text-white font-mono font-black text-lg rounded-lg shadow-xs">
-                      {loadingRefCode ? "..." : nextRefCode}
+                  {/* Quick Bills Tender */}
+                  <div className="flex items-center gap-2">
+                    {[10, 20, 50, 100].map((bill) => (
+                      <button
+                        key={bill}
+                        type="button"
+                        onClick={() => setCashTendered(String(bill))}
+                        className="flex-1 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-md text-xs font-bold font-mono text-zinc-800 shadow-2xs cursor-pointer"
+                      >
+                        ${bill}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setCashTendered(String(cartTotals.grandTotal.toFixed(2)))}
+                      className="px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 rounded-md text-xs font-bold text-zinc-800 shadow-2xs cursor-pointer"
+                    >
+                      Exact
+                    </button>
+                  </div>
+
+                  {/* Change Due */}
+                  <div className="flex justify-between items-center pt-2 border-t border-slate-200">
+                    <span className="text-xs font-bold text-zinc-700">Change Due:</span>
+                    <span className={`text-xl font-bold font-mono ${cashChange >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                      ${cashChange.toFixed(2)}
                     </span>
                   </div>
                 </div>
+              )}
 
-                <div className="bg-white p-3 rounded-lg border border-blue-100 flex items-start gap-2.5">
-                  <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                  <div className="text-[11px] text-zinc-700 leading-relaxed">
-                    <strong>Cashier Step:</strong> Snap picture of customer's payment screen on WhatsApp collection group. Type <span className="font-mono font-bold text-[#0B57D0] px-1.5 py-0.5 bg-blue-100 rounded text-xs">"{nextRefCode}"</span> and send to admin.
+              {/* QR / Bank Transfer Running Reference & WhatsApp Workflow Indicator */}
+              {(paymentMethod === "QR" || paymentMethod === "Transfer Bank") && (
+                <div className="p-4 bg-blue-50/70 rounded-xl border-2 border-blue-200 flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-lg bg-[#0B57D0] text-white flex items-center justify-center">
+                        <Camera className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold text-zinc-950 block">Payment Proof Snapshot</span>
+                        <span className="text-[11px] text-zinc-500">Snap customer payment &amp; send to WhatsApp</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col items-center">
+                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Ref Mark</span>
+                      <span className="px-3 py-0.5 bg-[#0B57D0] text-white font-mono font-black text-lg rounded-lg shadow-xs">
+                        {loadingRefCode ? "..." : nextRefCode}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="bg-white p-3 rounded-lg border border-blue-100 flex items-start gap-2.5">
+                    <MessageSquare className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <div className="text-[11px] text-zinc-700 leading-relaxed">
+                      <strong>Cashier Step:</strong> Snap picture of customer&apos;s payment screen on WhatsApp collection group. Type <span className="font-mono font-bold text-[#0B57D0] px-1.5 py-0.5 bg-blue-100 rounded text-xs">&quot;{nextRefCode}&quot;</span> and send to admin.
+                    </div>
                   </div>
                 </div>
+              )}
+
+              {/* Remarks / Reference Notes */}
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-bold text-zinc-700">Notes / Reference (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Customer name, phone, FOC takeout justification..."
+                  value={cartNotes}
+                  onChange={(e) => setCartNotes(e.target.value)}
+                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                />
               </div>
-            )}
 
-            {/* Remarks / Reference Notes */}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-bold text-zinc-700">Notes / Reference (Optional)</label>
-              <input
-                type="text"
-                placeholder="e.g. Customer name, phone, FOC takeout justification..."
-                value={cartNotes}
-                onChange={(e) => setCartNotes(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-              />
+              {/* Complete Sale Button */}
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaymentModalOpen(false);
+                    setShowCashCalculator(false);
+                  }}
+                  disabled={isCheckingOut}
+                  className="px-4 py-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-bold text-xs rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCompleteSale}
+                  disabled={isCheckingOut}
+                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 disabled:opacity-50"
+                >
+                  {isCheckingOut ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                  <span>Complete Sale (${cartTotals.grandTotal.toFixed(2)})</span>
+                </button>
+              </div>
             </div>
 
-            {/* Complete Sale Button */}
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setPaymentModalOpen(false)}
-                disabled={isCheckingOut}
-                className="px-4 py-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-bold text-xs rounded-xl"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleCompleteSale}
-                disabled={isCheckingOut}
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:scale-98 text-white font-bold text-xs rounded-xl shadow-md flex items-center gap-2 disabled:opacity-50"
-              >
-                {isCheckingOut ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-                <span>Complete Sale (${cartTotals.grandTotal.toFixed(2)})</span>
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -1979,6 +2483,134 @@ export default function POSCashierTerminal() {
               >
                 {isVoiding ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
                 Authorize &amp; Void
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 10. WIRELESS CUSTOMER SCREEN PAIRING MODAL */}
+      {pairModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[1.5px] flex items-center justify-center p-4 font-primary animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 flex flex-col items-center text-center gap-5 animate-in zoom-in-95 duration-150">
+            
+            <div className="w-12 h-12 rounded-2xl bg-blue-50 text-[#0B57D0] border border-blue-100 flex items-center justify-center">
+              <QrCode className="w-6 h-6" />
+            </div>
+
+            <div className="space-y-1">
+              <h3 className="text-base font-bold text-zinc-950">Pair Customer Display Screen</h3>
+              <p className="text-xs text-zinc-500 leading-relaxed max-w-xs mx-auto">
+                Scan this QR code with any iPad, tablet, or phone camera to wirelessly link this register’s live cart.
+              </p>
+            </div>
+
+            {/* Generated QR Code for Display URL */}
+            <div className="w-56 h-56 bg-slate-50 border border-slate-200 rounded-2xl p-3 flex flex-col items-center justify-center relative shadow-inner">
+              <img
+                src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(
+                  typeof window !== "undefined"
+                    ? `${window.location.origin}/pos/display?reg=${registerId}`
+                    : `https://ib.hsgglobalpteltd.com/pos/display?reg=${registerId}`
+                )}`}
+                alt="Pairing QR Code"
+                className="w-full h-full object-contain rounded-xl"
+              />
+            </div>
+
+            {/* Register Identifier Configuration */}
+            <div className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-zinc-600">Register ID:</span>
+                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  Ready to Sync
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={editingRegisterId}
+                  onChange={(e) => setEditingRegisterId(e.target.value.toUpperCase().trim())}
+                  placeholder="e.g. REG-1, COUNTER-2"
+                  className="flex-1 h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold uppercase focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const newReg = editingRegisterId || "REG-1";
+                    setRegisterId(newReg);
+                    localStorage.setItem("pos_register_id", newReg);
+                    showToast(`Register ID updated to ${newReg}`, "success");
+                  }}
+                  className="h-9 px-3 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-bold rounded-lg transition-all cursor-pointer"
+                >
+                  Save ID
+                </button>
+              </div>
+            </div>
+
+            {/* Direct URL & Copy Button */}
+            <div className="w-full flex items-center justify-between text-xs bg-slate-100/70 p-2.5 rounded-lg border border-slate-200">
+              <span className="font-mono text-zinc-600 truncate text-[11px] max-w-[260px]">
+                /pos/display?reg={registerId}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const url = `${window.location.origin}/pos/display?reg=${registerId}`;
+                  navigator.clipboard.writeText(url);
+                  showToast("Pairing link copied to clipboard!", "success");
+                }}
+                className="px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-zinc-800 text-[11px] font-bold rounded transition-colors"
+              >
+                Copy Link
+              </button>
+            </div>
+
+            <div className="w-full pt-2 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setPairModalOpen(false)}
+                className="w-full py-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* 9. FULLSCREEN PROMPT MODAL (1-MINUTE REMINDER) */}
+      {fullscreenPromptOpen && !isFullscreen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[1.5px] flex items-center justify-center p-4 font-primary animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-sm w-full p-6 flex flex-col items-center text-center gap-4 animate-in zoom-in-95 duration-150">
+            <div className="w-14 h-14 rounded-2xl bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex items-center justify-center text-[#0B57D0]">
+              <Maximize className="w-7 h-7" />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <h3 className="text-base font-bold text-zinc-950">Switch to Fullscreen Mode?</h3>
+              <p className="text-xs text-zinc-500 leading-relaxed">
+                For the best cashier checkout experience and to prevent accidental browser tab switching, switch this terminal to Fullscreen.
+              </p>
+            </div>
+
+            <div className="flex gap-2 w-full mt-2">
+              <button
+                type="button"
+                onClick={() => setFullscreenPromptOpen(false)}
+                className="flex-1 py-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+              >
+                Later
+              </button>
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                className="flex-1 py-2.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+              >
+                <Maximize className="w-4 h-4" />
+                <span>Go Fullscreen</span>
               </button>
             </div>
           </div>

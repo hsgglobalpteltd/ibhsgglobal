@@ -2,6 +2,13 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
+.font-digital {
+  font-family: var(--font-orbitron), monospace, sans-serif;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {

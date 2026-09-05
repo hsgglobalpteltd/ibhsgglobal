@@ -24,7 +24,23 @@ import {
   PlusCircle,
   Ban,
   Archive,
-  RotateCcw
+  RotateCcw,
+  QrCode,
+  Building,
+  CreditCard,
+  Save,
+  Image as ImageIcon,
+  HelpCircle,
+  Video,
+  Tv,
+  Upload,
+  UploadCloud,
+  Play,
+  Film,
+  Sliders,
+  ChevronLeft,
+  ChevronRight,
+  Eye
 } from "lucide-react";
 import { NavigationTabs } from "../navigation-tabs";
 
@@ -114,18 +130,72 @@ interface POSVoidOrder extends POSOrder {
 const mainTabs = [
   { id: "catalog", label: "POS Catalog & Stock", desc: "Add products to POS, set selling prices, allocate and deduct retail stocks." },
   { id: "promos", label: "Brand Mix & Match Promos", desc: "Configure quantity bundle discounts across multiple SKUs within the same brand." },
-  { id: "ledger", label: "Sales & Orders Ledger", desc: "View transaction records, revenue summaries, and export sales reports." },
-  { id: "voided", label: "Voided Transactions", desc: "Audit trail of cancelled / voided sales transactions." }
+  { id: "transactions", label: "Transactions", desc: "View sales orders ledger, voided transaction audit trails, and export financial summaries." },
+  { id: "settings", label: "Settings", desc: "Configure Customer Display idle ads (video/photo), Universal QR code, PayNow UEN, and Bank transfer details." }
 ];
 
 export function ManagePOSModule({ profile }: ManagePOSModuleProps) {
-  const [activeTab, setActiveTab] = React.useState<"catalog" | "promos" | "ledger" | "voided">("catalog");
+  const [activeTab, setActiveTab] = React.useState<"catalog" | "promos" | "transactions" | "settings">("catalog");
+  const [transactionSubTab, setTransactionSubTab] = React.useState<"sales" | "void">("sales");
   const [posProducts, setPosProducts] = React.useState<POSProduct[]>([]);
   const [masterProducts, setMasterProducts] = React.useState<POSProduct[]>([]);
   const [brandPromos, setBrandPromos] = React.useState<BrandPromo[]>([]);
   const [orders, setOrders] = React.useState<POSOrder[]>([]);
   const [voidOrders, setVoidOrders] = React.useState<POSVoidOrder[]>([]);
   const [loading, setLoading] = React.useState(false);
+
+  // POS Payment & QR Settings State
+  const [posSettings, setPosSettings] = React.useState({
+    qr_image_url: "",
+    paynow_uen: "",
+    paynow_name: "HSG GLOBAL PTE LTD",
+    bank_name: "",
+    bank_account_no: "",
+    bank_account_name: "HSG GLOBAL PTE LTD",
+    instructions: "Scan PayNow QR or transfer to bank account above. Inform cashier once payment is complete.",
+    ad_mode: "photos" as "photos" | "video",
+    ad_slides: [] as string[],
+    ad_transition: "fade" as "fade" | "slide",
+    ad_interval_sec: 5,
+    ad_video_url: "",
+    ad_media_url: "",
+    ad_media_type: "image" as "image" | "video"
+  });
+  const [settingsSaving, setSettingsSaving] = React.useState(false);
+  const [uploadingQR, setUploadingQR] = React.useState(false);
+  const [uploadingSlide, setUploadingSlide] = React.useState(false);
+  const [uploadingVideo, setUploadingVideo] = React.useState(false);
+
+  // Direct R2 File Upload Helper
+  const uploadFileToR2 = async (file: File, folder: string = "pos-media"): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const result = reader.result as string;
+          const base64Data = result.split(",")[1];
+          const res = await fetch(`${WORKER_URL}/api/pos/upload`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fileName: file.name,
+              contentType: file.type,
+              base64Data,
+              folder
+            })
+          });
+          if (!res.ok) throw new Error(await res.text());
+          const data = await res.json();
+          if (!data.success || !data.url) throw new Error(data.error || "R2 upload failed");
+          resolve(data.url);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      reader.onerror = (e) => reject(e);
+      reader.readAsDataURL(file);
+    });
+  };
 
   // Brand Promos Modal
   const [isPromoModalOpen, setIsPromoModalOpen] = React.useState(false);
@@ -224,6 +294,31 @@ export function ManagePOSModule({ profile }: ManagePOSModuleProps) {
       if (voidRes.ok) {
         const voidData = await voidRes.json();
         setVoidOrders(Array.isArray(voidData) ? voidData : []);
+      }
+
+      // 6. Fetch POS Payment & QR Settings
+      const settingsRes = await fetch(`${WORKER_URL}/api/pos/settings`);
+      if (settingsRes.ok) {
+        const settingsData = await settingsRes.json();
+        const s = settingsData.settings || settingsData.data;
+        if (s) {
+          setPosSettings({
+            qr_image_url: s.qr_image_url || "",
+            paynow_uen: s.paynow_uen || "",
+            paynow_name: s.paynow_name || "HSG GLOBAL PTE LTD",
+            bank_name: s.bank_name || "",
+            bank_account_no: s.bank_account_no || "",
+            bank_account_name: s.bank_account_name || "HSG GLOBAL PTE LTD",
+            instructions: s.instructions || "Scan PayNow QR or transfer to bank account above. Inform cashier once payment is complete.",
+            ad_mode: (s.ad_mode === "video" ? "video" : "photos") as "photos" | "video",
+            ad_slides: Array.isArray(s.ad_slides) ? s.ad_slides : (s.ad_slides ? JSON.parse(s.ad_slides) : []),
+            ad_transition: (s.ad_transition === "slide" ? "slide" : "fade") as "fade" | "slide",
+            ad_interval_sec: Number(s.ad_interval_sec) || 5,
+            ad_video_url: s.ad_video_url || "",
+            ad_media_url: s.ad_media_url || "",
+            ad_media_type: (s.ad_media_type === "video" ? "video" : "image") as "image" | "video"
+          });
+        }
       }
     } catch (err: any) {
       showToast("Failed to load POS data: " + err.message, "error");
@@ -592,6 +687,28 @@ export function ManagePOSModule({ profile }: ManagePOSModuleProps) {
     }
   };
 
+  // Handle Save Payment & QR Settings
+  const handleSaveSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setSettingsSaving(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/pos/settings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(posSettings)
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed to save POS settings");
+
+      showToast("Payment & QR settings updated successfully!", "success");
+    } catch (err: any) {
+      showToast("Failed to save settings: " + err.message, "error");
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
   // Export Sales Ledger to Excel
   const handleExportExcel = () => {
     if (filteredOrders.length === 0) {
@@ -752,18 +869,39 @@ export function ManagePOSModule({ profile }: ManagePOSModuleProps) {
               ? "POS Catalog & Allocated Stock" 
               : activeTab === "promos"
                 ? "Brand Mix & Match Promotions"
-                : "POS Sales Ledger & Financial Summary"}
+                : activeTab === "transactions"
+                  ? (transactionSubTab === "sales" ? "Sales & Orders Ledger" : "Voided Transactions Audit")
+                  : "POS & Customer Display Settings"}
           </h1>
           <p className="text-xs text-zinc-500 mt-0.5">
             {activeTab === "catalog" 
               ? "Explicitly add products to POS, set selling prices, and allocate/deduct retail stock."
               : activeTab === "promos"
                 ? "Configure automatic bundle pricing (e.g. Any 5 Hausboom items for $3.00) across all SKUs under the same brand."
-                : "Audit cashier checkout transactions, payment records (Cash, QR, Bank Transfer), and export reports."}
+                : activeTab === "transactions"
+                  ? (transactionSubTab === "sales" 
+                      ? "Audit cashier checkout transactions, payment records (Cash, QR, Bank Transfer), and export reports."
+                      : "Audit trail of cancelled or voided cashier sales transactions.")
+                  : "Configure Customer Display idle ad media (video/photo), Universal QR code, PayNow UEN, and bank transfer credentials."}
           </p>
         </div>
 
         <div className="flex items-center gap-2">
+          {activeTab === "settings" && (
+            <button
+              onClick={() => handleSaveSettings()}
+              disabled={settingsSaving}
+              className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
+            >
+              {settingsSaving ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Save className="w-3.5 h-3.5" />
+              )}
+              Save Settings
+            </button>
+          )}
+
           {activeTab === "catalog" && (
             <button
               onClick={() => {
@@ -806,7 +944,7 @@ export function ManagePOSModule({ profile }: ManagePOSModuleProps) {
             </button>
           )}
 
-          {activeTab === "ledger" && (
+          {activeTab === "transactions" && transactionSubTab === "sales" && (
             <button
               onClick={handleExportExcel}
               disabled={filteredOrders.length === 0}
@@ -1142,346 +1280,828 @@ export function ManagePOSModule({ profile }: ManagePOSModuleProps) {
             </table>
           </div>
         </div>
-      ) : activeTab === "ledger" ? (
-        /* Sales Ledger & Analytics Tab */
+      ) : activeTab === "transactions" ? (
+        /* Unified Transactions Tab (with Sales / Void Sub-tabs) */
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          {/* KPI Summary Cards */}
-          <div className="p-4 bg-[#F8F9FA] border-b border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
-            <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
-              <div>
-                <span className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">Total Sales</span>
-                <h3 className="text-lg font-bold text-zinc-950">${ledgerMetrics.totalSales.toFixed(2)}</h3>
-              </div>
-              <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                <TrendingUp className="w-4 h-4" />
-              </div>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
-              <div>
-                <span className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">Total Orders</span>
-                <h3 className="text-lg font-bold text-zinc-950">{ledgerMetrics.totalOrders}</h3>
-              </div>
-              <div className="w-8 h-8 rounded-full bg-blue-50 text-[#0B57D0] flex items-center justify-center">
-                <Receipt className="w-4 h-4" />
-              </div>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
-              <div>
-                <span className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">Items Sold</span>
-                <h3 className="text-lg font-bold text-zinc-950">{ledgerMetrics.totalItems} pcs</h3>
-              </div>
-              <div className="w-8 h-8 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center">
-                <Package className="w-4 h-4" />
-              </div>
-            </div>
-
-            <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
-              <div>
-                <span className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">Discounts / FOC</span>
-                <h3 className="text-lg font-bold text-amber-700">${ledgerMetrics.totalDiscount.toFixed(2)}</h3>
-              </div>
-              <div className="w-8 h-8 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center">
-                <Tag className="w-4 h-4" />
-              </div>
-            </div>
-          </div>
-
-          {/* Filter Toolbar */}
-          <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative w-52">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                <input
-                  type="text"
-                  placeholder="Search Order ID, Cashier..."
-                  value={ledgerSearch}
-                  onChange={(e) => setLedgerSearch(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                />
-              </div>
-
-              <select
-                value={ledgerPayment}
-                onChange={(e) => setLedgerPayment(e.target.value)}
-                className="px-2.5 py-1.5 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold text-zinc-800 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+          
+          {/* Sub-Tabs Bar */}
+          <div className="px-4 py-2 bg-white border-b border-slate-200 flex items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setTransactionSubTab("sales")}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 cursor-pointer ${
+                  transactionSubTab === "sales"
+                    ? "bg-white text-[#0B57D0] shadow-xs"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
               >
-                <option value="all">All Payment Modes</option>
-                <option value="Cash">Cash</option>
-                <option value="QR">QR</option>
-                <option value="Transfer Bank">Transfer Bank</option>
-                <option value="FOC">FOC (Complimentary)</option>
-              </select>
-
-              <div className="flex items-center gap-1.5 text-xs text-zinc-500 font-medium">
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="px-2 py-1 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold text-zinc-800"
-                />
-                <span>to</span>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="px-2 py-1 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold text-zinc-800"
-                />
-              </div>
-
-              {(ledgerSearch || ledgerPayment !== "all" || startDate || endDate) && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setLedgerSearch("");
-                    setLedgerPayment("all");
-                    setStartDate("");
-                    setEndDate("");
-                  }}
-                  className="text-xs text-zinc-500 hover:text-zinc-800 underline font-semibold transition-colors cursor-pointer"
-                >
-                  Clear Filters
-                </button>
-              )}
+                <Receipt className="w-3.5 h-3.5" />
+                <span>Sales Orders ({orders.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setTransactionSubTab("void")}
+                className={`px-3 py-1 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 cursor-pointer ${
+                  transactionSubTab === "void"
+                    ? "bg-white text-red-600 shadow-xs"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                <Ban className="w-3.5 h-3.5 text-red-500" />
+                <span>Voided Transactions ({voidOrders.length})</span>
+              </button>
             </div>
 
-            <span className="text-xs text-zinc-500">
-              Showing <strong className="text-zinc-900">{filteredOrders.length}</strong> orders
-            </span>
-          </div>
-
-          {/* Orders Table */}
-          <div className="flex-1 overflow-auto min-h-0">
-            <table className="min-w-full divide-y divide-slate-100 text-xs">
-              <thead className="bg-[#F0F4F9] sticky top-0 z-10 border-b border-slate-200">
-                <tr>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-36">Order ID</th>
-                  <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Ref Mark</th>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-36">Date & Time</th>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Cashier</th>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px]">Items Summary</th>
-                  <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Subtotal</th>
-                  <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Discount</th>
-                  <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Total Paid</th>
-                  <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Payment Mode</th>
-                  <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Status</th>
-                  <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-slate-100">
-                {filteredOrders.length === 0 ? (
-                  <tr>
-                    <td colSpan={11} className="px-3 py-16 text-center text-zinc-400 italic">
-                      No sales transactions found for selected filters.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredOrders.map((o) => (
-                    <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="px-3.5 py-2.5 font-mono font-bold text-zinc-900">{o.id}</td>
-                      <td className="px-3.5 py-2.5 text-center">
-                        {o.ref_code ? (
-                          <span className="px-2.5 py-0.5 rounded-md bg-blue-100 text-[#0B57D0] border border-blue-200 font-mono font-black text-xs">
-                            {o.ref_code}
-                          </span>
-                        ) : (
-                          <span className="text-zinc-400 font-mono">-</span>
-                        )}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-zinc-500 font-medium">
-                        {new Date(Number(o.created_at)).toLocaleString("en-SG", {
-                          day: "2-digit",
-                          month: "2-digit",
-                          year: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit"
-                        })}
-                      </td>
-                      <td className="px-3.5 py-2.5 font-semibold text-zinc-800">{o.cashier_name}</td>
-                      <td className="px-3.5 py-2.5 text-zinc-600">
-                        {Array.isArray(o.items) && (
-                          <div className="flex flex-col">
-                            <span>{o.items.map(it => `${it.name} (x${it.qty})`).join(", ")}</span>
-                            <span className="text-[10px] text-zinc-400">{o.items.reduce((acc, it) => acc + (it.qty || 1), 0)} total pcs</span>
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-right font-mono font-medium text-zinc-700">${Number(o.subtotal).toFixed(2)}</td>
-                      <td className="px-3.5 py-2.5 text-right font-mono font-medium text-amber-700">
-                        {Number(o.discount_amount || 0) > 0 ? `-$${Number(o.discount_amount).toFixed(2)}` : "-"}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-right font-mono font-bold text-emerald-700">${Number(o.total_amount).toFixed(2)}</td>
-                      <td className="px-3.5 py-2.5 text-center">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                          o.is_foc || o.payment_method === "FOC" 
-                            ? "bg-purple-50 text-purple-700 border-purple-200"
-                            : o.payment_method === "QR" || o.payment_method === "PayNow"
-                              ? "bg-blue-50 text-[#0B57D0] border-blue-200"
-                              : o.payment_method === "Transfer Bank" || o.payment_method === "Bank Transfer"
-                                ? "bg-amber-50 text-amber-700 border-amber-200"
-                                : "bg-emerald-50 text-emerald-700 border-emerald-200"
-                        }`}>
-                          {o.is_foc ? "FOC" : o.payment_method}
-                        </span>
-                      </td>
-                      <td className="px-3.5 py-2.5 text-center">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          COMPLETED
-                        </span>
-                      </td>
-                      <td className="px-3.5 py-2.5 text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setViewingOrder(o)}
-                            className="p-1 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 rounded-md transition-all shadow-xs cursor-pointer"
-                            title="View Receipt Details"
-                          >
-                            <Receipt className="w-3.5 h-3.5 text-[#0B57D0]" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDeletingOrder(o);
-                              setDeleteOrderRestoreStock(true);
-                            }}
-                            className="p-1 border border-red-200 bg-red-50/50 hover:bg-red-100 text-red-600 rounded-md transition-all shadow-xs cursor-pointer"
-                            title="Delete Transaction"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : (
-        /* Voided Transactions Tab */
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          {/* Filter Toolbar */}
-          <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
             <div className="flex items-center gap-2">
-              <div className="relative w-72">
-                <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                <input
-                  type="text"
-                  placeholder="Search Void ID, Ref, Reason, Staff..."
-                  value={voidSearch}
-                  onChange={(e) => setVoidSearch(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                />
+              <span className="text-xs text-zinc-500">
+                Showing <strong className="text-zinc-900">{transactionSubTab === "sales" ? filteredOrders.length : filteredVoidOrders.length}</strong> {transactionSubTab === "sales" ? "orders" : "voided records"}
+              </span>
+            </div>
+          </div>
+
+          {/* SUB-TAB 1: SALES ORDERS */}
+          {transactionSubTab === "sales" && (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* KPI Summary Cards */}
+              <div className="p-4 bg-[#F8F9FA] border-b border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-3 shrink-0">
+                <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">Total Sales</span>
+                    <h3 className="text-lg font-bold text-zinc-950">${ledgerMetrics.totalSales.toFixed(2)}</h3>
+                  </div>
+                  <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <TrendingUp className="w-4 h-4" />
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">Total Orders</span>
+                    <h3 className="text-lg font-bold text-zinc-950">{ledgerMetrics.totalOrders}</h3>
+                  </div>
+                  <div className="w-8 h-8 rounded-full bg-blue-50 text-[#0B57D0] flex items-center justify-center">
+                    <Receipt className="w-4 h-4" />
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">Items Sold</span>
+                    <h3 className="text-lg font-bold text-zinc-950">{ledgerMetrics.totalItems} pcs</h3>
+                  </div>
+                  <div className="w-8 h-8 rounded-full bg-purple-50 text-purple-600 flex items-center justify-center">
+                    <Package className="w-4 h-4" />
+                  </div>
+                </div>
+
+                <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
+                  <div>
+                    <span className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider">Discounts / FOC</span>
+                    <h3 className="text-lg font-bold text-amber-700">${ledgerMetrics.totalDiscount.toFixed(2)}</h3>
+                  </div>
+                  <div className="w-8 h-8 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center">
+                    <Tag className="w-4 h-4" />
+                  </div>
+                </div>
               </div>
 
-              {voidSearch && (
-                <button
-                  type="button"
-                  onClick={() => setVoidSearch("")}
-                  className="text-xs text-zinc-500 hover:text-zinc-800 underline font-semibold transition-colors cursor-pointer"
-                >
-                  Clear Search
-                </button>
-              )}
+              {/* Filter Toolbar */}
+              <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative w-52">
+                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                    <input
+                      type="text"
+                      placeholder="Search Order ID, Cashier..."
+                      value={ledgerSearch}
+                      onChange={(e) => setLedgerSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                    />
+                  </div>
+
+                  <select
+                    value={ledgerPayment}
+                    onChange={(e) => setLedgerPayment(e.target.value)}
+                    className="px-2.5 py-1.5 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold text-zinc-800 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  >
+                    <option value="all">All Payment Modes</option>
+                    <option value="Cash">Cash</option>
+                    <option value="QR">QR</option>
+                    <option value="Transfer Bank">Transfer Bank</option>
+                    <option value="FOC">FOC (Complimentary)</option>
+                  </select>
+
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-500 font-medium">
+                    <input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="px-2 py-1 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold text-zinc-800"
+                    />
+                    <span>to</span>
+                    <input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="px-2 py-1 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold text-zinc-800"
+                    />
+                  </div>
+
+                  {(ledgerSearch || ledgerPayment !== "all" || startDate || endDate) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLedgerSearch("");
+                        setLedgerPayment("all");
+                        setStartDate("");
+                        setEndDate("");
+                      }}
+                      className="text-xs text-zinc-500 hover:text-zinc-800 underline font-semibold transition-colors cursor-pointer"
+                    >
+                      Clear Filters
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Orders Table */}
+              <div className="flex-1 overflow-auto min-h-0">
+                <table className="min-w-full divide-y divide-slate-100 text-xs">
+                  <thead className="bg-[#F0F4F9] sticky top-0 z-10 border-b border-slate-200">
+                    <tr>
+                      <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-36">Order ID</th>
+                      <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Ref Mark</th>
+                      <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-36">Date & Time</th>
+                      <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Cashier</th>
+                      <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px]">Items Summary</th>
+                      <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Subtotal</th>
+                      <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Discount</th>
+                      <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Total Paid</th>
+                      <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Payment Mode</th>
+                      <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Status</th>
+                      <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-slate-100">
+                    {filteredOrders.length === 0 ? (
+                      <tr>
+                        <td colSpan={11} className="px-3 py-16 text-center text-zinc-400 italic">
+                          No sales transactions found for selected filters.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredOrders.map((o) => (
+                        <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="px-3.5 py-2.5 font-mono font-bold text-zinc-900">{o.id}</td>
+                          <td className="px-3.5 py-2.5 text-center">
+                            {o.ref_code ? (
+                              <span className="px-2.5 py-0.5 rounded-md bg-blue-100 text-[#0B57D0] border border-blue-200 font-mono font-black text-xs">
+                                {o.ref_code}
+                              </span>
+                            ) : (
+                              <span className="text-zinc-400 font-mono">-</span>
+                            )}
+                          </td>
+                          <td className="px-3.5 py-2.5 text-zinc-500 font-medium">
+                            {new Date(Number(o.created_at)).toLocaleString("en-SG", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit"
+                            })}
+                          </td>
+                          <td className="px-3.5 py-2.5 font-semibold text-zinc-800">{o.cashier_name}</td>
+                          <td className="px-3.5 py-2.5 text-zinc-600">
+                            {Array.isArray(o.items) && (
+                              <div className="flex flex-col">
+                                <span>{o.items.map(it => `${it.name} (x${it.qty})`).join(", ")}</span>
+                                <span className="text-[10px] text-zinc-400">{o.items.reduce((acc, it) => acc + (it.qty || 1), 0)} total pcs</span>
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3.5 py-2.5 text-right font-mono font-medium text-zinc-700">${Number(o.subtotal).toFixed(2)}</td>
+                          <td className="px-3.5 py-2.5 text-right font-mono font-medium text-amber-700">
+                            {Number(o.discount_amount || 0) > 0 ? `-$${Number(o.discount_amount).toFixed(2)}` : "-"}
+                          </td>
+                          <td className="px-3.5 py-2.5 text-right font-mono font-bold text-emerald-700">${Number(o.total_amount).toFixed(2)}</td>
+                          <td className="px-3.5 py-2.5 text-center">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                              o.is_foc || o.payment_method === "FOC" 
+                                ? "bg-purple-50 text-purple-700 border-purple-200"
+                                : o.payment_method === "QR" || o.payment_method === "PayNow"
+                                  ? "bg-blue-50 text-[#0B57D0] border-blue-200"
+                                  : o.payment_method === "Transfer Bank" || o.payment_method === "Bank Transfer"
+                                    ? "bg-amber-50 text-amber-700 border-amber-200"
+                                    : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                            }`}>
+                              {o.is_foc ? "FOC" : o.payment_method}
+                            </span>
+                          </td>
+                          <td className="px-3.5 py-2.5 text-center">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              COMPLETED
+                            </span>
+                          </td>
+                          <td className="px-3.5 py-2.5 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => setViewingOrder(o)}
+                                className="p-1 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 rounded-md transition-all shadow-xs cursor-pointer"
+                                title="View Receipt Details"
+                              >
+                                <Receipt className="w-3.5 h-3.5 text-[#0B57D0]" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setDeletingOrder(o);
+                                  setDeleteOrderRestoreStock(true);
+                                }}
+                                className="p-1 border border-red-200 bg-red-50/50 hover:bg-red-100 text-red-600 rounded-md transition-all shadow-xs cursor-pointer"
+                                title="Delete Transaction"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* SUB-TAB 2: VOIDED TRANSACTIONS */}
+          {transactionSubTab === "void" && (
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* Filter Toolbar */}
+              <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className="relative w-72">
+                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                    <input
+                      type="text"
+                      placeholder="Search Void ID, Ref, Reason, Staff..."
+                      value={voidSearch}
+                      onChange={(e) => setVoidSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 bg-[#F8F9FA] border border-slate-200 rounded-lg text-xs font-semibold focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                    />
+                  </div>
+
+                  {voidSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setVoidSearch("")}
+                      className="text-xs text-zinc-500 hover:text-zinc-800 underline font-semibold transition-colors cursor-pointer"
+                    >
+                      Clear Search
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Voided Table */}
+              <div className="flex-1 overflow-auto min-h-0">
+                <table className="min-w-full divide-y divide-slate-100 text-xs">
+                  <thead className="bg-[#F0F4F9] sticky top-0 z-10 border-b border-slate-200">
+                    <tr>
+                      <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-36">Void ID</th>
+                      <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Ref Mark</th>
+                      <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-36">Voided At</th>
+                      <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-32">Voided By (Staff)</th>
+                      <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-32">Approved By (2nd Staff)</th>
+                      <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px]">Void Reason</th>
+                      <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Amount ($)</th>
+                      <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Status</th>
+                      <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-20">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-slate-100">
+                    {filteredVoidOrders.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="px-3 py-12 text-center text-zinc-400 italic">
+                          No voided transactions found in archive.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredVoidOrders.map((vo) => (
+                        <tr key={vo.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="px-3.5 py-2.5">
+                            <div className="flex flex-col">
+                              <span className="font-mono font-bold text-red-600">{vo.id}</span>
+                              <span className="text-[10px] text-zinc-400 font-mono">Ref: {vo.original_order_id || vo.id}</span>
+                            </div>
+                          </td>
+                          <td className="px-3.5 py-2.5 text-center">
+                            {vo.ref_code ? (
+                              <span className="px-2 py-0.5 rounded bg-blue-100 text-[#0B57D0] border border-blue-200 font-mono font-bold text-xs">
+                                {vo.ref_code}
+                              </span>
+                            ) : (
+                              <span className="text-zinc-400 font-mono">-</span>
+                            )}
+                          </td>
+                          <td className="px-3.5 py-2.5 text-zinc-500 font-medium">
+                            {new Date(Number(vo.voided_at || vo.created_at)).toLocaleString("en-SG", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit"
+                            })}
+                          </td>
+                          <td className="px-3.5 py-2.5 font-semibold text-zinc-800">{vo.voided_by || vo.cashier_name}</td>
+                          <td className="px-3.5 py-2.5 font-semibold text-amber-800">
+                            {vo.approved_by ? (
+                              <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[11px]">
+                                {vo.approved_by}
+                              </span>
+                            ) : (
+                              <span className="text-zinc-400">-</span>
+                            )}
+                          </td>
+                          <td className="px-3.5 py-2.5 text-zinc-700">
+                            <span className="px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 font-medium text-[11px]">
+                              {vo.void_reason || "Voided at POS Cashier"}
+                            </span>
+                          </td>
+                          <td className="px-3.5 py-2.5 text-right font-mono font-bold text-zinc-700 line-through">
+                            ${Number(vo.total_amount).toFixed(2)}
+                          </td>
+                          <td className="px-3.5 py-2.5 text-center">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 border border-red-300">
+                              VOIDED
+                            </span>
+                          </td>
+                          <td className="px-3.5 py-2.5 text-center">
+                            <button
+                              type="button"
+                              onClick={() => setViewingOrder(vo)}
+                              className="p-1 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 rounded-md transition-all shadow-xs cursor-pointer"
+                              title="View Void Details"
+                            >
+                              <Receipt className="w-3.5 h-3.5 text-[#0B57D0]" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+        </div>
+      ) : null}
+
+      {/* 5. PAYMENT & QR SETTINGS TAB */}
+      {activeTab === "settings" && (
+        <div className="flex-1 min-h-0 overflow-y-auto p-6 bg-[#F8F9FA]">
+          <form onSubmit={handleSaveSettings} className="w-full flex flex-col gap-6">
+            
+            {/* Top Info Banner with Open Display Screen Button */}
+            <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-4 flex items-center justify-between gap-4">
+              <div className="flex items-start gap-3 min-w-0">
+                <QrCode className="w-5 h-5 text-[#0B57D0] shrink-0 mt-0.5" />
+                <div className="text-xs text-zinc-700 leading-relaxed">
+                  <p className="font-bold text-[#0B57D0] mb-0.5">Universal Static QR &amp; Payment Configuration</p>
+                  <p>
+                    Configure the company&apos;s static PayNow / Universal QR code and bank account information.
+                    These details will be rendered directly on the <strong>Customer-Facing Dual Display</strong> (<code className="bg-blue-100 px-1 py-0.5 rounded font-mono text-[11px] text-blue-900">/pos/display</code>) and in the cashier checkout modal for direct transfers.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => window.open("/pos/display", "_blank", "width=1200,height=800")}
+                className="px-4 py-2.5 bg-white hover:bg-slate-50 text-[#0B57D0] border border-blue-300 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 shadow-xs cursor-pointer"
+              >
+                <ExternalLink className="w-4 h-4" />
+                Open Display Screen
+              </button>
             </div>
 
-            <span className="text-xs text-zinc-500">
-              Showing <strong className="text-zinc-900">{filteredVoidOrders.length}</strong> voided records
-            </span>
-          </div>
+            {/* 2-Column Responsive Desktop Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+              
+              {/* COLUMN 1: Customer Display Idle Media (Photos / Video) */}
+              <div className="flex flex-col gap-5">
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col gap-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Tv className="w-4 h-4 text-[#0B57D0]" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">Customer Display Idle Media</h3>
+                    </div>
+                    <span className="px-2.5 py-0.5 rounded bg-blue-50 text-[#0B57D0] border border-blue-200 text-[10px] font-bold">
+                      Full-Screen Idle Screen
+                    </span>
+                  </div>
 
-          {/* Voided Table */}
-          <div className="flex-1 overflow-auto min-h-0">
-            <table className="min-w-full divide-y divide-slate-100 text-xs">
-              <thead className="bg-[#F0F4F9] sticky top-0 z-10 border-b border-slate-200">
-                <tr>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-36">Void ID</th>
-                  <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Ref Mark</th>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-36">Voided At</th>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-32">Voided By (Staff)</th>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-32">Approved By (2nd Staff)</th>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px]">Void Reason</th>
-                  <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Amount ($)</th>
-                  <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Status</th>
-                  <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-20">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-slate-100">
-                {filteredVoidOrders.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-3 py-12 text-center text-zinc-400 italic">
-                      No voided transactions found in archive.
-                    </td>
-                  </tr>
-                ) : (
-                  filteredVoidOrders.map((vo) => (
-                    <tr key={vo.id} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="px-3.5 py-2.5">
-                        <div className="flex flex-col">
-                          <span className="font-mono font-bold text-red-600">{vo.id}</span>
-                          <span className="text-[10px] text-zinc-400 font-mono">Ref: {vo.original_order_id || vo.id}</span>
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                    When the POS is idle (empty cart), the customer screen automatically displays this media in <strong>edge-to-edge full screen</strong> (no header, no borders). When items are scanned, the media smoothly shrinks to the left while the live cart appears on the right.
+                  </p>
+
+                  {/* Mode Selector: Photo Slideshow vs Single Video Loop */}
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-zinc-700">Display Mode</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPosSettings({ ...posSettings, ad_mode: "photos" })}
+                        className={`py-2.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                          posSettings.ad_mode === "photos"
+                            ? "bg-[#0B57D0] text-white border-[#0B57D0] shadow-xs"
+                            : "bg-white border-slate-200 text-zinc-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        <ImageIcon className="w-4 h-4" />
+                        Photo Slideshow (Max 10)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPosSettings({ ...posSettings, ad_mode: "video" })}
+                        className={`py-2.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                          posSettings.ad_mode === "video"
+                            ? "bg-[#0B57D0] text-white border-[#0B57D0] shadow-xs"
+                            : "bg-white border-slate-200 text-zinc-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        <Video className="w-4 h-4" />
+                        1 Looped Video
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* PHOTO SLIDESHOW MODE */}
+                  {posSettings.ad_mode === "photos" && (
+                    <div className="flex flex-col gap-4 p-4 bg-[#F8F9FA] rounded-xl border border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-xs font-bold text-zinc-900">Slideshow Photos ({posSettings.ad_slides?.length || 0} / 10)</h4>
+                          <p className="text-[11px] text-zinc-500">Upload high-resolution promotional banners or posters</p>
                         </div>
-                      </td>
-                      <td className="px-3.5 py-2.5 text-center">
-                        {vo.ref_code ? (
-                          <span className="px-2 py-0.5 rounded bg-blue-100 text-[#0B57D0] border border-blue-200 font-mono font-bold text-xs">
-                            {vo.ref_code}
-                          </span>
+
+                        {/* Add Photo Button */}
+                        <label className={`px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shadow-xs ${
+                          uploadingSlide || (posSettings.ad_slides?.length || 0) >= 10 ? "opacity-50 pointer-events-none" : ""
+                        }`}>
+                          {uploadingSlide ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                          <span>Upload Photo</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            disabled={uploadingSlide || (posSettings.ad_slides?.length || 0) >= 10}
+                            className="hidden"
+                            onChange={async (e) => {
+                              const files = e.target.files;
+                              if (!files || files.length === 0) return;
+                              const availableSlots = 10 - (posSettings.ad_slides?.length || 0);
+                              if (availableSlots <= 0) {
+                                showToast("Maximum 10 slides reached", "warning");
+                                return;
+                              }
+                              const filesToUpload = Array.from(files).slice(0, availableSlots);
+                              setUploadingSlide(true);
+                              try {
+                                const newUrls: string[] = [];
+                                for (const f of filesToUpload) {
+                                  const url = await uploadFileToR2(f, "pos-slides");
+                                  newUrls.push(url);
+                                }
+                                setPosSettings(prev => ({
+                                  ...prev,
+                                  ad_slides: [...(prev.ad_slides || []), ...newUrls].slice(0, 10)
+                                }));
+                                showToast(`${newUrls.length} slide photo(s) uploaded successfully!`, "success");
+                              } catch (err: any) {
+                                showToast("Upload error: " + err.message, "error");
+                              } finally {
+                                setUploadingSlide(false);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      {/* Thumbnails Grid */}
+                      {posSettings.ad_slides && posSettings.ad_slides.length > 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                          {posSettings.ad_slides.map((slideUrl, idx) => (
+                            <div key={idx} className="relative group rounded-lg overflow-hidden border border-slate-200 bg-white aspect-4/3 flex items-center justify-center">
+                              <img src={slideUrl} alt={`Slide ${idx + 1}`} className="w-full h-full object-cover" />
+                              <div className="absolute top-1 left-1 bg-black/70 text-white font-mono text-[9px] font-bold px-1.5 py-0.5 rounded">
+                                #{idx + 1}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPosSettings(prev => ({
+                                    ...prev,
+                                    ad_slides: prev.ad_slides.filter((_, i) => i !== idx)
+                                  }));
+                                }}
+                                className="absolute top-1 right-1 bg-red-600/90 hover:bg-red-700 text-white p-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
+                                title="Remove slide"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="p-4 bg-white rounded-lg border border-dashed border-slate-300 text-center text-xs text-zinc-400">
+                          No photos added. Upload up to 10 photos to start the customer display slideshow.
+                        </div>
+                      )}
+
+                      {/* Slideshow Transition & Interval */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-200/80">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-semibold text-zinc-700">Transition Effect</label>
+                          <select
+                            value={posSettings.ad_transition}
+                            onChange={(e) => setPosSettings({ ...posSettings, ad_transition: e.target.value as "fade" | "slide" })}
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                          >
+                            <option value="fade">✨ Smooth Cross-Fade</option>
+                            <option value="slide">➡️ Horizontal Slide</option>
+                          </select>
+                        </div>
+
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs font-semibold text-zinc-700">Slide Duration (Seconds)</label>
+                          <div className="relative">
+                            <input
+                              type="number"
+                              min="2"
+                              max="60"
+                              value={posSettings.ad_interval_sec}
+                              onChange={(e) => setPosSettings({ ...posSettings, ad_interval_sec: Math.max(2, parseInt(e.target.value, 10) || 5) })}
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                            />
+                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-400">sec/slide</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* VIDEO LOOP MODE */}
+                  {posSettings.ad_mode === "video" && (
+                    <div className="flex flex-col gap-4 p-4 bg-[#F8F9FA] rounded-xl border border-slate-200">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h4 className="text-xs font-bold text-zinc-900">Promo Video (Single MP4/WebM Loop)</h4>
+                          <p className="text-[11px] text-zinc-500">Upload looped commercial or paste direct video URL</p>
+                        </div>
+
+                        {/* Upload Video Button */}
+                        <label className={`px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shadow-xs ${
+                          uploadingVideo ? "opacity-50 pointer-events-none" : ""
+                        }`}>
+                          {uploadingVideo ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                          <span>Upload Video</span>
+                          <input
+                            type="file"
+                            accept="video/mp4,video/webm"
+                            disabled={uploadingVideo}
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              if (file.size > 50 * 1024 * 1024) {
+                                showToast("Video size exceeds 50MB limit", "warning");
+                                return;
+                              }
+                              setUploadingVideo(true);
+                              try {
+                                const url = await uploadFileToR2(file, "pos-videos");
+                                setPosSettings(prev => ({
+                                  ...prev,
+                                  ad_video_url: url
+                                }));
+                                showToast("Promo video uploaded successfully!", "success");
+                              } catch (err: any) {
+                                showToast("Upload error: " + err.message, "error");
+                              } finally {
+                                setUploadingVideo(false);
+                                e.target.value = "";
+                              }
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-zinc-700">Video Direct URL</label>
+                        <input
+                          type="url"
+                          placeholder="https://.../video.mp4"
+                          value={posSettings.ad_video_url}
+                          onChange={(e) => setPosSettings({ ...posSettings, ad_video_url: e.target.value })}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-xs font-mono text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                        />
+                      </div>
+
+                      {posSettings.ad_video_url && (
+                        <div className="rounded-lg overflow-hidden border border-slate-200 bg-black aspect-video max-h-56 flex items-center justify-center">
+                          <video
+                            src={posSettings.ad_video_url}
+                            controls
+                            muted
+                            className="w-full h-full object-contain"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* COLUMN 2: Payment Details (QR, PayNow, Bank & Instructions) */}
+              <div className="flex flex-col gap-5">
+                
+                {/* Universal Static QR Code Section */}
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col gap-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <QrCode className="w-4 h-4 text-[#0B57D0]" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">Universal Static Payment QR</h3>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-20 h-20 bg-slate-50 rounded-xl border border-slate-200 p-1 flex items-center justify-center shrink-0 overflow-hidden">
+                        {posSettings.qr_image_url ? (
+                          <img src={posSettings.qr_image_url} alt="QR Code" className="w-full h-full object-contain" />
                         ) : (
-                          <span className="text-zinc-400 font-mono">-</span>
+                          <QrCode className="w-8 h-8 text-zinc-300" />
                         )}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-zinc-500 font-medium">
-                        {new Date(Number(vo.voided_at || vo.created_at)).toLocaleString("en-SG", {
-                          day: "2-digit",
-                          month: "2-digit",
-                          year: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit"
-                        })}
-                      </td>
-                      <td className="px-3.5 py-2.5 font-semibold text-zinc-800">{vo.voided_by || vo.cashier_name}</td>
-                      <td className="px-3.5 py-2.5 font-semibold text-amber-800">
-                        {vo.approved_by ? (
-                          <span className="px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[11px]">
-                            {vo.approved_by}
-                          </span>
-                        ) : (
-                          <span className="text-zinc-400">-</span>
-                        )}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-zinc-700">
-                        <span className="px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 font-medium text-[11px]">
-                          {vo.void_reason || "Voided at POS Cashier"}
-                        </span>
-                      </td>
-                      <td className="px-3.5 py-2.5 text-right font-mono font-bold text-zinc-700 line-through">
-                        ${Number(vo.total_amount).toFixed(2)}
-                      </td>
-                      <td className="px-3.5 py-2.5 text-center">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-800 border border-red-300">
-                          VOIDED
-                        </span>
-                      </td>
-                      <td className="px-3.5 py-2.5 text-center">
-                        <button
-                          type="button"
-                          onClick={() => setViewingOrder(vo)}
-                          className="p-1 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 rounded-md transition-all shadow-xs cursor-pointer"
-                          title="View Void Details"
-                        >
-                          <Receipt className="w-3.5 h-3.5 text-[#0B57D0]" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                      </div>
+
+                      <div className="flex-1 flex flex-col gap-2">
+                        <div className="flex items-center gap-2">
+                          <label className={`px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg text-xs font-bold cursor-pointer transition-all flex items-center gap-1.5 shadow-xs ${
+                            uploadingQR ? "opacity-50 pointer-events-none" : ""
+                          }`}>
+                            {uploadingQR ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                            <span>Upload QR Code</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              disabled={uploadingQR}
+                              className="hidden"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                setUploadingQR(true);
+                                try {
+                                  const url = await uploadFileToR2(file, "pos-qr");
+                                  setPosSettings(prev => ({
+                                    ...prev,
+                                    qr_image_url: url
+                                  }));
+                                  showToast("Payment QR uploaded successfully!", "success");
+                                } catch (err: any) {
+                                  showToast("Upload error: " + err.message, "error");
+                                } finally {
+                                  setUploadingQR(false);
+                                  e.target.value = "";
+                                }
+                              }}
+                            />
+                          </label>
+
+                          {posSettings.qr_image_url && (
+                            <button
+                              type="button"
+                              onClick={() => setPosSettings(prev => ({ ...prev, qr_image_url: "" }))}
+                              className="px-2.5 py-1.5 border border-slate-200 hover:bg-slate-50 text-red-600 rounded-lg text-xs font-semibold"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+
+                        <input
+                          type="url"
+                          placeholder="Or paste QR image direct URL..."
+                          value={posSettings.qr_image_url}
+                          onChange={(e) => setPosSettings({ ...posSettings, qr_image_url: e.target.value })}
+                          className="w-full px-3 py-1.5 bg-[#F8F9FA] focus:bg-white border border-slate-200 rounded-lg text-xs font-mono text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PayNow / UEN Transfer Section */}
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col gap-4">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <CreditCard className="w-4 h-4 text-purple-600" />
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">PayNow / Instant QR Details</h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-semibold text-zinc-700">PayNow UEN / Mobile No.</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 202412345M or 91234567"
+                        value={posSettings.paynow_uen}
+                        onChange={(e) => setPosSettings({ ...posSettings, paynow_uen: e.target.value })}
+                        className="w-full px-3.5 py-2.5 bg-[#F8F9FA] focus:bg-white border border-slate-200 rounded-lg text-xs font-bold text-zinc-900 font-mono focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] transition-all"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <label className="text-xs font-semibold text-zinc-700">PayNow Account Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. HSG GLOBAL PTE LTD"
+                        value={posSettings.paynow_name}
+                        onChange={(e) => setPosSettings({ ...posSettings, paynow_name: e.target.value })}
+                        className="w-full px-3.5 py-2.5 bg-[#F8F9FA] focus:bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] transition-all"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bank Account Details Section */}
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col gap-4">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <Building className="w-4 h-4 text-emerald-600" />
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">Direct Bank Account Transfer</h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                    <div className="flex flex-col gap-1.5 sm:col-span-1">
+                      <label className="text-xs font-semibold text-zinc-700">Bank Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. DBS / OCBC / UOB"
+                        value={posSettings.bank_name}
+                        onChange={(e) => setPosSettings({ ...posSettings, bank_name: e.target.value })}
+                        className="w-full px-3.5 py-2.5 bg-[#F8F9FA] focus:bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] transition-all"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 sm:col-span-2">
+                      <label className="text-xs font-semibold text-zinc-700">Account Number</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 012-345678-9"
+                        value={posSettings.bank_account_no}
+                        onChange={(e) => setPosSettings({ ...posSettings, bank_account_no: e.target.value })}
+                        className="w-full px-3.5 py-2.5 bg-[#F8F9FA] focus:bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] transition-all"
+                      />
+                    </div>
+
+                    <div className="flex flex-col gap-1.5 sm:col-span-3">
+                      <label className="text-xs font-semibold text-zinc-700">Account Holder Name</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. HSG GLOBAL PTE LTD"
+                        value={posSettings.bank_account_name}
+                        onChange={(e) => setPosSettings({ ...posSettings, bank_account_name: e.target.value })}
+                        className="w-full px-3.5 py-2.5 bg-[#F8F9FA] focus:bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] transition-all"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Customer Display Instructions */}
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col gap-4">
+                  <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+                    <HelpCircle className="w-4 h-4 text-amber-600" />
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-900">Customer Display Instruction Note</h3>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <textarea
+                      rows={3}
+                      placeholder="Instructions shown to customers under the QR code..."
+                      value={posSettings.instructions}
+                      onChange={(e) => setPosSettings({ ...posSettings, instructions: e.target.value })}
+                      className="w-full px-3.5 py-2.5 bg-[#F8F9FA] focus:bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] transition-all"
+                    />
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+          </form>
         </div>
       )}
 
