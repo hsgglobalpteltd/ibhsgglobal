@@ -102,14 +102,16 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       const brandId = String(prod.brands_id || prod["Brands ID"] || prod.Brands_ID || prod.brandId || "").trim();
       const brandObj = brands.find(b => String(b.id || b.ID || "").trim().toLowerCase() === brandId.toLowerCase());
       const brandName = brandObj ? (brandObj.display_name || brandObj["Display Name"] || brandObj.Display_Name || brandObj.name || brandId) : (brandId || "Unbranded");
+      const category = String(prod.product_meta?.Category || prod.product_meta?.category || prod.category || prod.Category || prod["Category"] || "").trim();
 
       return {
         name: prod.display_name || prod["Display Name"] || prod.Display_Name || prod.productName || prod.Name || "Unknown Product",
         brand: brandName,
+        category,
         uom: Number(prod.carton || prod.Carton || prod.uom || prod.UOM) || 1
       };
     }
-    return { name: "Unknown Product", brand: "N/A", uom: 1 };
+    return { name: "Unknown Product", brand: "N/A", category: "", uom: 1 };
   }, [products, brands]);
 
   // Group all products by brand for manual stock take modal
@@ -602,6 +604,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         name: string;
         uom: number;
         brandId: string;
+        category?: string;
         qty: number;
         dateStr: string;
         auditor: string;
@@ -736,11 +739,22 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         }
       }
 
+      const category = String(
+        p.product_meta?.Category ||
+        p.product_meta?.category ||
+        (typeof p.product_meta === "string" ? (() => { try { return JSON.parse(p.product_meta).Category || ""; } catch (_) { return ""; } })() : "") ||
+        p.category ||
+        p.Category ||
+        p["Category"] ||
+        ""
+      ).trim();
+
       groupsByName[brandKey].items.push({
         sku,
         name,
         uom,
         brandId: rawBrandId,
+        category,
         qty: finalQty,
         dateStr,
         auditor,
@@ -816,247 +830,196 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
     }));
   }, [filteredLogs, lookupUser]);
 
-  // Print function helper matching the provided template layout exactly
-  const generatePrintReport = (auditorName: string, auditDate: string, stockLevels: typeof currentStockLevels) => {
-    const brandSectionsHtml = stockLevels.map(({ brandName, items: brandItems }) => {
-      const rowsHtml = brandItems.map(item => {
-        const cartons = Math.floor(Math.abs(item.qty) / item.uom);
-        const loose = Math.abs(item.qty) % item.uom;
-        const sign = item.qty < 0 ? "-" : "";
-        let displayCartonLoose = "-";
-        if (item.hasRecord) {
-          if (cartons > 0 && loose > 0) {
-            displayCartonLoose = `${sign}${cartons}ctn ${loose}pcs`;
-          } else if (cartons > 0) {
-            displayCartonLoose = `${sign}${cartons}ctn`;
-          } else {
-            displayCartonLoose = `${sign}${loose}pcs`;
-          }
-        }
+  // Print function helper: simple stock count sheet
+  const generatePrintReport = (stockLevels: typeof currentStockLevels) => {
+    // Flatten and sort products by Category, then Brand Name, then Brand ID, then SKU
+    const allItems: Array<{
+      sku: string;
+      name: string;
+      category: string;
+      brandName: string;
+      brandId: string;
+      qty: number;
+      hasRecord: boolean;
+    }> = [];
 
-        const stockQtyText = item.hasRecord
-          ? `<span class="qty-text">${item.qty}${item.skipped ? "*" : ""} pcs</span>`
-          : `<span class="no-record">No count</span>`;
+    stockLevels.forEach(group => {
+      group.items.forEach(item => {
+        allItems.push({
+          sku: item.sku,
+          name: item.name,
+          category: item.category || "",
+          brandName: group.brandName,
+          brandId: item.brandId,
+          qty: item.qty,
+          hasRecord: item.hasRecord
+        });
+      });
+    });
 
-        const cartonLooseText = item.hasRecord 
-          ? `<span style="color:#475569;">${displayCartonLoose}</span>` 
-          : `<span class="no-record">-</span>`;
+    // Sort by category first, then by brand name, then if same brand name sort by brand id, then SKU
+    allItems.sort((a, b) => {
+      const catCompare = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
+      if (catCompare !== 0) return catCompare;
+      const brandCompare = a.brandName.localeCompare(b.brandName, undefined, { sensitivity: "base" });
+      if (brandCompare !== 0) return brandCompare;
+      const brandIdCompare = (a.brandId || "").localeCompare(b.brandId || "", undefined, { numeric: true });
+      if (brandIdCompare !== 0) return brandIdCompare;
+      return a.sku.localeCompare(b.sku, undefined, { numeric: true });
+    });
 
-        return `
-          <tr>
-            <td style="color:#64748B;">${item.sku}</td>
-            <td style="color:#0F172A;">${item.name}</td>
-            <td class="right-align">${stockQtyText}</td>
-            <td class="right-align">${cartonLooseText}</td>
-          </tr>
-        `;
-      }).join("");
-
+    const rowsHtml = allItems.map((item, idx) => {
+      const systemQtyText = `${item.hasRecord ? item.qty : 0} pcs`;
       return `
-        <div class="brand-section">
-          <div class="brand-header">
-            <h2 class="brand-title">${brandName}</h2>
-            <span class="product-count">${brandItems.length} ${brandItems.length === 1 ? "Product" : "Products"}</span>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th style="width: 20%;">SKU</th>
-                <th style="width: 45%;">Description</th>
-                <th style="width: 17%;" class="right-align">Current Stock</th>
-                <th style="width: 18%;" class="right-align">Carton/Loose</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rowsHtml}
-            </tbody>
-          </table>
-        </div>
+        <tr>
+          <td class="col-num">${idx + 1}</td>
+          <td class="col-sku font-mono">${item.sku}</td>
+          <td class="col-desc">${item.name}</td>
+          <td class="col-sys-qty text-right font-mono">${systemQtyText}</td>
+          <td class="col-actual-qty"></td>
+        </tr>
       `;
     }).join("");
+
+    const printDate = new Date().toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric"
+    });
 
     const printHtml = `
       <!DOCTYPE html>
       <html>
       <head>
-        <title>HSG Global Stock Take Report</title>
+        <title>HSG Global - Stock Count Sheet</title>
         <style>
+          @page {
+            size: A4 portrait;
+            margin: 12mm 10mm;
+          }
+          * {
+            box-sizing: border-box;
+          }
           body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            color: #1e293b;
-            padding: 20mm;
+            color: #0f172a;
             margin: 0;
+            padding: 0;
             background-color: #ffffff;
-            line-height: 1.5;
+            line-height: 1.4;
+            font-size: 11px;
           }
-          .page-header {
+          .header {
             display: flex;
             justify-content: space-between;
-            align-items: flex-start;
-            border-bottom: 2px solid #0B57D0;
-            padding-bottom: 15px;
-            margin-bottom: 25px;
+            align-items: flex-end;
+            border-bottom: 2px solid #0f172a;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
           }
-          .title-area h1 {
-            font-size: 24px;
+          .header h1 {
+            font-size: 18px;
             font-weight: 800;
-            color: #0F172A;
-            margin: 0 0 5px 0;
-          }
-          .title-area p {
-            font-size: 12px;
-            color: #64748B;
             margin: 0;
-            font-weight: 500;
-          }
-          .brand-logo {
-            font-size: 16px;
-            font-weight: 800;
-            color: #0B57D0;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-          }
-          .meta-card {
-            background-color: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            padding: 12px 16px;
-            margin-bottom: 30px;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            font-size: 13px;
-          }
-          .meta-item {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-          }
-          .meta-label {
-            color: #64748B;
-            font-weight: 600;
-            font-size: 10px;
             text-transform: uppercase;
             letter-spacing: 0.5px;
+            color: #0f172a;
           }
-          .meta-value {
-            color: #0F172A;
-            font-weight: 700;
-          }
-          .brand-section {
-            margin-bottom: 30px;
-            page-break-inside: avoid;
-          }
-          .brand-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 10px;
-          }
-          .brand-title {
-            font-size: 14px;
-            font-weight: 800;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #0F172A;
-            margin: 0;
-            border-left: 3px solid #0B57D0;
-            padding-left: 8px;
-          }
-          .product-count {
+          .header .meta {
             font-size: 10px;
-            font-weight: 700;
-            background-color: #f1f5f9;
-            border: 1px solid #e2e8f0;
             color: #475569;
-            padding: 2px 8px;
-            border-radius: 20px;
-            text-transform: uppercase;
+            font-weight: 600;
+            text-align: right;
           }
           table {
             width: 100%;
-            border-collapse: separate;
-            border-spacing: 0;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            overflow: hidden;
-            margin-bottom: 10px;
+            border-collapse: collapse;
+            margin-top: 4px;
           }
           th, td {
-            padding: 8px 12px;
-            font-size: 11px;
+            border: 1px solid #cbd5e1;
+            padding: 6px 8px;
             text-align: left;
-            border-bottom: 1px solid #e2e8f0;
-            border-right: 1px solid #e2e8f0;
-          }
-          tr:last-child td {
-            border-bottom: none;
-          }
-          th:last-child, td:last-child {
-            border-right: none;
+            vertical-align: middle;
           }
           th {
-            background-color: #f8fafc;
-            color: #475569;
+            background-color: #f1f5f9;
+            color: #0f172a;
             font-weight: 700;
             text-transform: uppercase;
-            font-size: 9px;
+            font-size: 9.5px;
             letter-spacing: 0.5px;
           }
-          th.right-align, td.right-align {
+          .col-num {
+            width: 32px;
+            text-align: center;
+            color: #64748B;
+            font-size: 10px;
+          }
+          .col-sku {
+            width: 140px;
+            font-weight: 600;
+            color: #0f172a;
+          }
+          .col-desc {
+            color: #1e293b;
+          }
+          .col-sys-qty {
+            width: 110px;
+            font-weight: 700;
+            color: #0f172a;
+          }
+          .col-actual-qty {
+            width: 120px;
+            background-color: #ffffff;
+          }
+          .text-right {
             text-align: right;
           }
-          .qty-text {
-            color: #0F172A;
-            font-weight: 500;
+          .font-mono {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
           }
-          .skipped-badge {
-            display: inline-block;
-            background-color: #fef3c7;
-            border: 1px solid #fde68a;
-            color: #b45309;
-            font-size: 9px;
-            font-weight: 700;
-            padding: 1px 6px;
-            border-radius: 4px;
-            text-transform: uppercase;
-          }
-          .no-record {
-            color: #94a3b8;
-            font-style: italic;
+          tr:nth-child(even) td:not(.col-actual-qty) {
+            background-color: #f8fafc;
           }
           @media print {
             body {
-              padding: 10mm;
+              padding: 0;
             }
-            .brand-section {
+            tr {
               page-break-inside: avoid;
+            }
+            thead {
+              display: table-header-group;
             }
           }
         </style>
       </head>
       <body>
-        <div class="page-header">
-          <div class="title-area">
-            <h1>HSG Global Stock Take Report</h1>
+        <div class="header">
+          <div>
+            <h1>HSG Global - Stock Count Sheet</h1>
           </div>
-        </div>
-        
-        <div class="meta-card">
-          <div class="meta-item">
-            <span class="meta-label">Audit by</span>
-            <span class="meta-value">${auditorName}</span>
+          <div class="meta">
+            <div>Printed Date: ${printDate}</div>
+            <div>Total Items: ${allItems.length}</div>
           </div>
-          <div class="meta-item">
-            <span class="meta-label">Audit date</span>
-            <span class="meta-value">${auditDate}</span>
-          </div>
-        </div>
-        <div style="font-size: 10px; color: #64748B; margin-top: -20px; margin-bottom: 25px; font-style: italic;">
-          * Quantities marked with an asterisk (*) were skipped and not counted in the latest stock take.
         </div>
 
-        ${brandSectionsHtml}
+        <table>
+          <thead>
+            <tr>
+              <th class="col-num">#</th>
+              <th class="col-sku">SKU</th>
+              <th class="col-desc">Description</th>
+              <th class="col-sys-qty text-right">System Qty</th>
+              <th class="col-actual-qty">Actual Qty</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rowsHtml}
+          </tbody>
+        </table>
 
         <script>
           window.onload = function() {
@@ -1077,9 +1040,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
 
   // Handler to print overall current inventory status
   const handlePrintStockReport = () => {
-    const auditorName = logs.length > 0 ? lookupUser(logs[0].auditorId) : "Unknown";
-    const auditDate = latestLogDateStr || "N/A";
-    generatePrintReport(auditorName, auditDate, currentStockLevels);
+    generatePrintReport(currentStockLevels);
   };
 
   // Handler to print a specific audit log from history
@@ -1096,6 +1057,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         name: string;
         uom: number;
         brandId: string;
+        category?: string;
         qty: number;
         dateStr: string;
         auditor: string;
@@ -1106,13 +1068,16 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
 
     log.items.forEach(item => {
       const prodInfo = lookupProduct(item.sku);
+      const prod = products.find(p => String(p.sku || p.SKU || p.Code || "").trim().toLowerCase() === String(item.sku).trim().toLowerCase());
+      const rawBrandId = prod ? String(prod.brands_id || prod["Brands ID"] || prod.Brands_ID || prod.brandId || "").trim() : "";
+      const category = prodInfo.category || (prod ? String(prod.category || prod.Category || prod["Category"] || "").trim() : "");
       const brand = prodInfo.brand || "Unbranded";
       const brandKey = brand.toLowerCase();
       
       if (!groupsByName[brandKey]) {
         groupsByName[brandKey] = {
           brandName: brand,
-          minBrandId: "",
+          minBrandId: rawBrandId,
           minRank: 999,
           items: []
         };
@@ -1122,7 +1087,8 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         sku: item.sku,
         name: prodInfo.name,
         uom: prodInfo.uom,
-        brandId: "",
+        brandId: rawBrandId,
+        category,
         qty: item.qty,
         dateStr: log.dateStr,
         auditor: auditorName,
@@ -1131,15 +1097,8 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       });
     });
 
-    const stockLevels = Object.values(groupsByName).sort((a, b) => a.brandName.localeCompare(b.brandName));
-
-    const logDate = new Date(log.timestamp);
-    const day = String(logDate.getDate()).padStart(2, "0");
-    const month = String(logDate.getMonth() + 1).padStart(2, "0");
-    const year = logDate.getFullYear();
-    const formattedDate = `${day}/${month}/${year}`;
-
-    generatePrintReport(auditorName, formattedDate, stockLevels);
+    const stockLevels = Object.values(groupsByName);
+    generatePrintReport(stockLevels);
   };
 
   return (
