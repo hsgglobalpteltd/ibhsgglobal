@@ -49,6 +49,7 @@ import {
   Lock,
   ClipboardCheck,
   FileText,
+  FileSpreadsheet,
   Sparkles,
   Settings,
   Building2,
@@ -324,10 +325,12 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
 
   // Close & Reconcile Modal State
   const [closingAct, setClosingAct] = React.useState<POSActivation | null>(null);
+  const [closingAllocations, setClosingAllocations] = React.useState<Record<string, number>>({});
   const [closingReturns, setClosingReturns] = React.useState<Record<string, number>>({});
   const [closingDamaged, setClosingDamaged] = React.useState<Record<string, number>>({});
   const [closingDamagedReasons, setClosingDamagedReasons] = React.useState<Record<string, string>>({});
   const [isClosingAct, setIsClosingAct] = React.useState(false);
+  const [isSavingReturn, setIsSavingReturn] = React.useState(false);
 
   // Print Activation Report Modal State
   const [printingAct, setPrintingAct] = React.useState<POSActivation | null>(null);
@@ -340,6 +343,13 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   const [receiptRawImage, setReceiptRawImage] = React.useState<string | null>(null);
   const [receiptRotation, setReceiptRotation] = React.useState<number>(0);
   const [receiptCropBox, setReceiptCropBox] = React.useState<{ x: number; y: number; width: number; height: number }>({ x: 0, y: 0, width: 100, height: 100 });
+  const [cropInteraction, setCropInteraction] = React.useState<{
+    type: "drag" | "resize";
+    handle?: string;
+    startX: number;
+    startY: number;
+    box: { x: number; y: number; width: number; height: number };
+  } | null>(null);
   const [isUploadingReceipt, setIsUploadingReceipt] = React.useState<boolean>(false);
   const receiptFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
@@ -352,6 +362,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   const [cashCropBox, setCashCropBox] = React.useState<{ x: number; y: number; width: number; height: number }>({ x: 0, y: 0, width: 100, height: 100 });
   const cashFileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [viewingPhotoUrl, setViewingPhotoUrl] = React.useState<string | null>(null);
+  const [viewingStaffAct, setViewingStaffAct] = React.useState<POSActivation | null>(null);
 
   // Load all data
   const loadAllData = React.useCallback(async () => {
@@ -461,6 +472,21 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
     });
     return Array.from(set).sort();
   }, [posProducts]);
+
+  // Master products sorted by Brand Name, Brand ID, and SKU for dropdown selection
+  const sortedMasterProducts = React.useMemo(() => {
+    return [...masterProducts].sort((a, b) => {
+      const brandNameA = (a.brand_name || "").toLowerCase();
+      const brandNameB = (b.brand_name || "").toLowerCase();
+      if (brandNameA !== brandNameB) return brandNameA.localeCompare(brandNameB);
+
+      const brandIdA = String(a.brand_id || "").toLowerCase();
+      const brandIdB = String(b.brand_id || "").toLowerCase();
+      if (brandIdA !== brandIdB) return brandIdA.localeCompare(brandIdB);
+
+      return (a.sku || "").localeCompare(b.sku || "");
+    });
+  }, [masterProducts]);
 
   // Filtered POS Products
   const filteredProducts = React.useMemo(() => {
@@ -779,7 +805,18 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
 
     const validStock = newActAllocatedItems
       .map(it => ({ sku: String(it.sku).trim(), qty: Number(it.qty) || 0 }))
-      .filter(it => it.sku && it.qty > 0);
+      .filter(it => it.sku && it.qty > 0)
+      .sort((a, b) => {
+        const prodA = masterProducts.find(p => p.sku.toLowerCase() === a.sku.toLowerCase()) || posProducts.find(p => p.sku.toLowerCase() === a.sku.toLowerCase());
+        const prodB = masterProducts.find(p => p.sku.toLowerCase() === b.sku.toLowerCase()) || posProducts.find(p => p.sku.toLowerCase() === b.sku.toLowerCase());
+        const brandA = (prodA?.brand_name || "").toLowerCase();
+        const brandB = (prodB?.brand_name || "").toLowerCase();
+        if (brandA !== brandB) return brandA.localeCompare(brandB);
+        const brandIdA = String(prodA?.brand_id || "");
+        const brandIdB = String(prodB?.brand_id || "");
+        if (brandIdA !== brandIdB) return brandIdA.localeCompare(brandIdB);
+        return a.sku.localeCompare(b.sku);
+      });
 
     const participantObjs = newActParticipants.map(id => {
       const emp = employees.find(e => e.id === id);
@@ -866,11 +903,27 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
     setNewActFocDesc(act.foc_description || "");
     setNewActUsePos(act.use_pos !== false);
     setNewActParticipants((act.participants || []).map(p => p.id));
-    setNewActAllocatedItems(
-      Array.isArray(act.stock_allocated) && act.stock_allocated.length > 0
-        ? act.stock_allocated.map(it => ({ sku: it.sku, qty: it.qty }))
-        : [{ sku: "", qty: "" }]
-    );
+    
+    let rawAlloc = Array.isArray(act.stock_allocated) && act.stock_allocated.length > 0
+      ? act.stock_allocated.map(it => ({ sku: it.sku, qty: it.qty }))
+      : [{ sku: "", qty: "" }];
+
+    // Sort the allocated items rows by Brand Name, Brand ID, and SKU
+    if (rawAlloc.length > 1) {
+      rawAlloc.sort((a, b) => {
+        const prodA = masterProducts.find(p => p.sku.toLowerCase() === (a.sku || "").toLowerCase()) || posProducts.find(p => p.sku.toLowerCase() === (a.sku || "").toLowerCase());
+        const prodB = masterProducts.find(p => p.sku.toLowerCase() === (b.sku || "").toLowerCase()) || posProducts.find(p => p.sku.toLowerCase() === (b.sku || "").toLowerCase());
+        const brandA = (prodA?.brand_name || "").toLowerCase();
+        const brandB = (prodB?.brand_name || "").toLowerCase();
+        if (brandA !== brandB) return brandA.localeCompare(brandB);
+        const brandIdA = String(prodA?.brand_id || "");
+        const brandIdB = String(prodB?.brand_id || "");
+        if (brandIdA !== brandIdB) return brandIdA.localeCompare(brandIdB);
+        return (a.sku || "").localeCompare(b.sku || "");
+      });
+    }
+
+    setNewActAllocatedItems(rawAlloc);
     setIsCreateActModalOpen(true);
   };
 
@@ -954,14 +1007,81 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       });
     });
 
-    // Default return to expected unsold float
+    // Check if there are already saved returns in act.stock_returned
+    const hasExistingReturns = Array.isArray(act.stock_returned) && act.stock_returned.length > 0;
+    const existingReturnsMap: Record<string, number> = {};
+    if (hasExistingReturns) {
+      act.stock_returned.forEach(r => {
+        if (r.sku) existingReturnsMap[r.sku] = Number(r.qty) || 0;
+      });
+    }
+
+    const initialAlloc: Record<string, number> = {};
     (act.stock_allocated || []).forEach(it => {
-      const sold = salesMap[it.sku] || 0;
-      const foc = focMap[it.sku] || 0;
-      initialReturns[it.sku] = Math.max(0, it.qty - sold - foc);
+      if (it.sku) initialAlloc[it.sku] = Number(it.qty) || 0;
+    });
+    setClosingAllocations(initialAlloc);
+
+    // Default return to previously saved returns or expected unsold float
+    (act.stock_allocated || []).forEach(it => {
+      if (hasExistingReturns && existingReturnsMap[it.sku] !== undefined) {
+        initialReturns[it.sku] = existingReturnsMap[it.sku];
+      } else {
+        const sold = salesMap[it.sku] || 0;
+        const foc = focMap[it.sku] || 0;
+        initialReturns[it.sku] = Math.max(0, it.qty - sold - foc);
+      }
     });
 
     setClosingReturns(initialReturns);
+  };
+
+  // Save Physical Stock Return Draft (without final closing)
+  const handleSaveStockReturn = async () => {
+    if (!closingAct) return;
+    setIsSavingReturn(true);
+    try {
+      const returnedList: { sku: string; qty: number }[] = [];
+      Object.entries(closingReturns).forEach(([sku, qty]) => {
+        const num = Number(qty) || 0;
+        if (num >= 0) {
+          returnedList.push({ sku, qty: num });
+        }
+      });
+
+      const allocatedList: { sku: string; qty: number }[] = [];
+      Object.entries(closingAllocations).forEach(([sku, qty]) => {
+        const num = Number(qty) || 0;
+        if (num >= 0) {
+          allocatedList.push({ sku, qty: num });
+        }
+      });
+
+      const res = await fetch(`${WORKER_URL}/api/pos/activations/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: closingAct.id,
+          stock_allocated: allocatedList,
+          stock_returned: returnedList,
+          cash_deposit_receipts: cashDepositPhotos
+        })
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed to save stock return");
+
+      // Update local state
+      setClosingAct(prev => prev ? { ...prev, stock_allocated: allocatedList, stock_returned: returnedList, cash_deposit_receipts: cashDepositPhotos } : null);
+      setActivations(prev => prev.map(a => a.id === closingAct.id ? { ...a, stock_allocated: allocatedList, stock_returned: returnedList, cash_deposit_receipts: cashDepositPhotos } : a));
+
+      showToast("Allocation, Return counts and receipts saved!", "success");
+    } catch (err: any) {
+      showToast("Save failed: " + err.message, "error");
+    } finally {
+      setIsSavingReturn(false);
+    }
   };
 
   // Confirm Close & Reconcile Activation
@@ -1008,14 +1128,23 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       const returnedList: { sku: string; qty: number }[] = [];
       const damagedList: { sku: string; qty: number; reason?: string }[] = [];
 
+      const allocatedList: { sku: string; qty: number }[] = [];
+      Object.entries(closingAllocations).forEach(([sku, qty]) => {
+        const num = Number(qty) || 0;
+        if (num >= 0) {
+          allocatedList.push({ sku, qty: num });
+        }
+      });
+
       const allSkus = Array.from(new Set([
+        ...allocatedList.map(it => it.sku),
         ...(closingAct.stock_allocated || []).map(it => it.sku),
         ...Object.keys(salesMap),
         ...Object.keys(focMap)
       ]));
 
       allSkus.forEach(sku => {
-        const alloc = (closingAct.stock_allocated || []).find(it => it.sku === sku)?.qty || 0;
+        const alloc = closingAllocations[sku] !== undefined ? closingAllocations[sku] : ((closingAct.stock_allocated || []).find(it => it.sku === sku)?.qty || 0);
         const sold = salesMap[sku] || 0;
         const foc = focMap[sku] || 0;
         const ret = Number(closingReturns[sku]) || 0;
@@ -1024,11 +1153,8 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
           returnedList.push({ sku, qty: ret });
         }
 
-        // Any discrepancy between allocated and (sold + foc + returned) is considered lost/damaged
-        const discrepancy = alloc - (sold + foc + ret);
-        if (discrepancy > 0) {
-          damagedList.push({ sku, qty: discrepancy, reason: "Stock Discrepancy / Lost during event" });
-        }
+        // Discrepancy is automatically absorbed into FOC Sampling / Tester (not Damaged/Lost)
+        // damagedList remains empty unless physically broken goods are recorded
       });
 
       const res = await fetch(`${WORKER_URL}/api/pos/activations/close`, {
@@ -1037,6 +1163,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         body: JSON.stringify({
           id: closingAct.id,
           closed_by: profile?.name || "Admin",
+          stock_allocated: allocatedList,
           stock_returned: returnedList,
           stock_damaged: damagedList,
           cash_deposit_receipts: cashDepositPhotos
@@ -1388,7 +1515,13 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         const ret = (act.stock_returned || []).find(it => it.sku === sku)?.qty || 0;
         const dmg = (act.stock_damaged || []).find(it => it.sku === sku)?.qty || 0;
         const sold = salesMap[sku] || (act.stock_sales || []).find(it => it.sku === sku)?.qty || 0;
-        const foc = focMap[sku] || (act.stock_foc || []).find(it => it.sku === sku)?.qty || 0;
+        const recordedFoc = focMap[sku] || 0;
+        const savedFoc = (act.stock_foc || []).find(it => it.sku === sku)?.qty || 0;
+        
+        // Discrepancy absorbed into Sample: Current Stock (alloc - sold) - Returned to warehouse
+        const currentStock = Math.max(0, alloc - sold);
+        const sampleFromDiscrepancy = ret > 0 || isClosed ? Math.max(0, currentStock - ret) : 0;
+        const effectiveFoc = Math.max(recordedFoc, sampleFromDiscrepancy, savedFoc);
 
         // Truncate cleanly so product name fits comfortably within the 62mm column
         const truncatedName = prodName.length > 38 ? prodName.substring(0, 36) + "..." : prodName;
@@ -1397,7 +1530,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
           { content: truncatedName ? `${sku}\n${truncatedName}` : sku },
           String(alloc),
           String(sold),
-          String(foc),
+          String(effectiveFoc),
           String(ret),
           String(dmg)
         ];
@@ -1547,10 +1680,10 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
     }
   };
 
-  // Generate & Open PDF Blob for Invoice Summary Draft (Simple items list for Million system invoice entry)
+  // Generate & Open PDF Blob for Sales Report (Simple items list for Million system / sales audit entry)
   const handlePrintInvoicePDF = async (act: POSActivation) => {
     try {
-      showToast("Generating Invoice PDF...", "info");
+      showToast("Generating Sales Report PDF...", "info");
       const { jsPDF } = await import("jspdf");
       const autoTable = (await import("jspdf-autotable")).default;
 
@@ -1574,7 +1707,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(0, 0, 0);
-      doc.text("EVENT SALES INVOICE DRAFT (MILLION SYSTEM ENTRY)", margin, 23);
+      doc.text("EVENT SALES REPORT", margin, 23);
 
       // Top Right Reference & Date
       doc.setFontSize(10);
@@ -1629,9 +1762,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
           ],
           [
             { content: "Location:" },
-            { content: act.location || "N/A" },
-            { content: "Status:" },
-            { content: act.status === "closed" ? "CLOSED" : "ACTIVE" }
+            { content: act.location || "N/A", colSpan: 3 }
           ]
         ],
         margin: { left: margin, right: margin }
@@ -1647,7 +1778,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       
       actOrders.forEach(ord => {
         const isOrdFoc = ord.is_foc || ord.payment_method === "FOC" || ord.discount_type === "foc";
-        if (isOrdFoc) return; // Only billed invoice items
+        if (isOrdFoc) return; // Only billed sales items
 
         (ord.items || []).forEach(it => {
           if (it.is_foc || it.discount_type === "foc") return;
@@ -1705,7 +1836,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(0, 0, 0);
-      doc.text("INVOICE ITEMS SUMMARY", margin, curY);
+      doc.text("SALES ITEMS SUMMARY", margin, curY);
 
       autoTable(doc, {
         startY: curY + 3,
@@ -1748,7 +1879,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       doc.setFontSize(8);
       doc.setFont("helvetica", "italic");
       doc.setTextColor(0, 0, 0);
-      doc.text("* This document is an itemized sales draft generated for Million accounting system invoice entry.", margin, finalY + 8);
+      doc.text("* This document is an itemized sales report generated from POS event activation transactions.", margin, finalY + 8);
 
       // Page numbers
       const totalPages = (doc.internal as any).getNumberOfPages();
@@ -1757,7 +1888,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         doc.setFontSize(7.5);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(0, 0, 0);
-        doc.text(`Page ${i} of ${totalPages} — Invoice Draft: ${act.id}`, pageWidth / 2, pageHeight - 6, { align: "center" });
+        doc.text(`Page ${i} of ${totalPages} — Sales Report: ${act.id}`, pageWidth / 2, pageHeight - 6, { align: "center" });
       }
 
       // Open PDF Blob
@@ -1765,15 +1896,266 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       const pdfBlobUrl = URL.createObjectURL(pdfBlob);
       window.open(pdfBlobUrl, "_blank");
     } catch (err: any) {
-      console.error("Invoice PDF generation error:", err);
-      showToast("Failed to generate Invoice PDF: " + err.message, "error");
+      console.error("Sales Report PDF generation error:", err);
+      showToast("Failed to generate Sales Report PDF: " + err.message, "error");
     }
   };
 
-  // Generate & Open PDF Blob for Single Order Invoice Draft (Million System Entry)
+  // Generate & Open PDF Blob for Sample Report (Items list with quantity only, no amount / $0)
+  const handlePrintSamplePDF = async (act: POSActivation) => {
+    try {
+      showToast("Generating Sample Report PDF...", "info");
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default;
+
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4"
+      });
+
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 14;
+
+      // 1. Header (Minimal High-Contrast Design)
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("HSG GLOBAL PTE LTD", margin, 17);
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(0, 0, 0);
+      doc.text("EVENT SAMPLE REPORT", margin, 23);
+
+      // Top Right Reference & Date
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text(`REF: ${act.id}`, pageWidth - margin, 17, { align: "right" });
+
+      doc.setFontSize(8.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(0, 0, 0);
+      const printDateStr = new Date().toLocaleDateString("en-SG", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+      doc.text(`Date: ${printDateStr}`, pageWidth - margin, 23, { align: "right" });
+
+      // Clean Solid Divider
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.5);
+      doc.line(margin, 27, pageWidth - margin, 27);
+
+      // 2. Event Summary Header
+      let curY = 34;
+      const formatToDDMMYYYY = (dateStr?: string) => {
+        if (!dateStr) return "N/A";
+        const parts = dateStr.split("-");
+        if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+        return dateStr;
+      };
+
+      const eventDatesStr = act.start_date === act.end_date || !act.end_date 
+        ? formatToDDMMYYYY(act.start_date) 
+        : `${formatToDDMMYYYY(act.start_date)} to ${formatToDDMMYYYY(act.end_date)}`;
+
+      autoTable(doc, {
+        startY: curY,
+        theme: "plain",
+        styles: {
+          cellPadding: { top: 1, bottom: 1, left: 0, right: 0 },
+          fontSize: 9,
+          textColor: [0, 0, 0]
+        },
+        columnStyles: {
+          0: { cellWidth: 26, fontStyle: "bold" },
+          1: { cellWidth: 70 },
+          2: { cellWidth: 24, fontStyle: "bold" },
+          3: { cellWidth: 62 }
+        },
+        body: [
+          [
+            { content: "Event Name:" },
+            { content: act.name || "N/A" },
+            { content: "Event Dates:" },
+            { content: eventDatesStr }
+          ],
+          [
+            { content: "Location:" },
+            { content: act.location || "N/A", colSpan: 3 }
+          ]
+        ],
+        margin: { left: margin, right: margin }
+      });
+
+      curY = (doc as any).lastAutoTable?.finalY || (curY + 16);
+
+      // 3. Aggregate Sample Items for this Activation:
+      // - FOC inside POS
+      // - Current Stock minus Stock Return to Warehouse (lost/damaged absorbed into Sample)
+      const actOrders = orders.filter(o => o.activation_id === act.id);
+      const sampleMap: Record<string, { sku: string; name: string; qty: number }> = {};
+
+      // A. Count FOC transactions inside POS
+      actOrders.forEach(ord => {
+        const isOrdFoc = ord.is_foc || ord.payment_method === "FOC" || ord.discount_type === "foc";
+        (ord.items || []).forEach(it => {
+          if (!isOrdFoc && !it.is_foc && it.discount_type !== "foc") return;
+          const sku = it.sku;
+          const qty = Number(it.qty || 1);
+          if (!sampleMap[sku]) {
+            const prod = posProducts.find(p => p.sku.toLowerCase() === sku.toLowerCase());
+            sampleMap[sku] = {
+              sku,
+              name: it.name || prod?.display_name || sku,
+              qty: 0
+            };
+          }
+          sampleMap[sku].qty += qty;
+        });
+      });
+
+      // B. Count non-FOC billed Sales to derive Current Stock remaining before return
+      const billedSalesMap: Record<string, number> = {};
+      actOrders.forEach(ord => {
+        const isOrdFoc = ord.is_foc || ord.payment_method === "FOC" || ord.discount_type === "foc";
+        if (isOrdFoc) return;
+        (ord.items || []).forEach(it => {
+          if (it.is_foc || it.discount_type === "foc") return;
+          const sku = it.sku;
+          const qty = Number(it.qty || 1);
+          billedSalesMap[sku] = (billedSalesMap[sku] || 0) + qty;
+        });
+      });
+
+      // C. Reconcile with Allocated & Returned stock (Absorb discrepancy into Sample)
+      const allAllocatedSkus = new Set([
+        ...(act.stock_allocated || []).map(it => it.sku),
+        ...(act.stock_returned || []).map(it => it.sku),
+        ...(act.stock_foc || []).map(it => it.sku)
+      ]);
+
+      allAllocatedSkus.forEach(sku => {
+        const alloc = (act.stock_allocated || []).find(it => it.sku === sku)?.qty || 0;
+        const returned = (act.stock_returned || []).find(it => it.sku === sku)?.qty || 0;
+        const billedSold = billedSalesMap[sku] || (act.stock_sales || []).find(it => it.sku === sku)?.qty || 0;
+        const recordedFoc = sampleMap[sku]?.qty || 0;
+
+        // Current Stock = Allocated - Billed Sales
+        const currentStock = Math.max(0, alloc - billedSold);
+        // Sample count from discrepancy = Current Stock - Stock Return to Warehouse
+        const sampleFromDiscrepancy = Math.max(0, currentStock - returned);
+
+        // If saved stock_foc exists from closed activation, compare with saved record
+        const savedFoc = (act.stock_foc || []).find(it => it.sku === sku)?.qty || 0;
+        const effectiveSample = Math.max(recordedFoc, sampleFromDiscrepancy, savedFoc);
+
+        if (effectiveSample > 0) {
+          if (!sampleMap[sku]) {
+            const prod = posProducts.find(p => p.sku.toLowerCase() === sku.toLowerCase());
+            sampleMap[sku] = {
+              sku,
+              name: prod?.display_name || sku,
+              qty: effectiveSample
+            };
+          } else {
+            sampleMap[sku].qty = effectiveSample;
+          }
+        }
+      });
+
+      // Sort by SKU
+      const sortedSamples = Object.values(sampleMap).filter(s => s.qty > 0).sort((a, b) => a.sku.localeCompare(b.sku));
+
+      let grandTotalQty = 0;
+      const sampleRows = sortedSamples.map(item => {
+        grandTotalQty += item.qty;
+        return [
+          item.sku,
+          item.name,
+          String(item.qty)
+        ];
+      });
+
+      // Append Grand Total Row
+      if (sampleRows.length > 0) {
+        sampleRows.push([
+          { content: "TOTAL SAMPLE QUANTITY", colSpan: 2, styles: { halign: "right", fontStyle: "bold" } } as any,
+          { content: String(grandTotalQty), styles: { halign: "center", fontStyle: "bold" } } as any
+        ]);
+      }
+
+      curY += 6;
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text("SAMPLE ITEMS SUMMARY", margin, curY);
+
+      autoTable(doc, {
+        startY: curY + 3,
+        head: [["SKU", "Description", "Qty"]],
+        body: sampleRows.length > 0 ? sampleRows : [["-", "No sample items recorded", "-"]],
+        theme: "plain",
+        pageBreak: "auto",
+        showHead: "everyPage",
+        headStyles: {
+          fillColor: [240, 240, 240],
+          textColor: [0, 0, 0],
+          fontStyle: "bold",
+          fontSize: 8.5,
+          halign: "left",
+          valign: "middle",
+          cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
+          lineWidth: 0.3,
+          lineColor: [0, 0, 0]
+        },
+        columnStyles: {
+          0: { halign: "left", cellWidth: 40, fontStyle: "bold" },
+          1: { halign: "left", cellWidth: 112 },
+          2: { halign: "center", cellWidth: 30 }
+        },
+        styles: {
+          fontSize: 9,
+          cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
+          textColor: [0, 0, 0],
+          lineWidth: 0.2,
+          lineColor: [0, 0, 0]
+        },
+        margin: { left: margin, right: margin }
+      });
+
+      const finalY = (doc as any).lastAutoTable?.finalY || curY + 30;
+
+      // Remarks note
+      doc.setFontSize(8);
+      doc.setFont("helvetica", "italic");
+      doc.setTextColor(0, 0, 0);
+      doc.text("* This document is an itemized sample / tester report generated from POS event activation transactions.", margin, finalY + 8);
+
+      // Page numbers
+      const totalPages = (doc.internal as any).getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(0, 0, 0);
+        doc.text(`Page ${i} of ${totalPages} — Sample Report: ${act.id}`, pageWidth / 2, pageHeight - 6, { align: "center" });
+      }
+
+      // Open PDF Blob
+      const pdfBlob = doc.output("blob");
+      const pdfBlobUrl = URL.createObjectURL(pdfBlob);
+      window.open(pdfBlobUrl, "_blank");
+    } catch (err: any) {
+      console.error("Sample Report PDF generation error:", err);
+      showToast("Failed to generate Sample Report PDF: " + err.message, "error");
+    }
+  };
+
+  // Generate & Open PDF Blob for Single Order Sales Slip
   const handlePrintOrderInvoicePDF = async (order: POSOrder) => {
     try {
-      showToast("Generating Invoice PDF...", "info");
+      showToast("Generating Sales Order Slip PDF...", "info");
       const { jsPDF } = await import("jspdf");
       const autoTable = (await import("jspdf-autotable")).default;
 
@@ -1796,13 +2178,13 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       doc.setFontSize(10);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(0, 0, 0);
-      doc.text("SALES INVOICE DRAFT (MILLION SYSTEM ENTRY)", margin, 23);
+      doc.text("SALES ORDER REPORT", margin, 23);
 
       // Ref & Date
       doc.setFontSize(10);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(0, 0, 0);
-      doc.text(`INVOICE REF: ${order.id}`, pageWidth - margin, 17, { align: "right" });
+      doc.text(`ORDER REF: ${order.id}`, pageWidth - margin, 17, { align: "right" });
 
       doc.setFontSize(8.5);
       doc.setFont("helvetica", "normal");
@@ -1923,15 +2305,15 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       doc.setFontSize(8);
       doc.setFont("helvetica", "italic");
       doc.setTextColor(0, 0, 0);
-      doc.text("* This document is an itemized sales draft generated for Million accounting system invoice entry.", margin, finalY + 8);
+      doc.text("* This document is an itemized sales order report generated from POS event transactions.", margin, finalY + 8);
 
       // Open PDF Blob
       const pdfBlob = doc.output("blob");
       const pdfBlobUrl = URL.createObjectURL(pdfBlob);
       window.open(pdfBlobUrl, "_blank");
     } catch (err: any) {
-      console.error("Order invoice PDF generation error:", err);
-      showToast("Failed to generate Invoice PDF: " + err.message, "error");
+      console.error("Order sales report PDF generation error:", err);
+      showToast("Failed to generate Sales Report PDF: " + err.message, "error");
     }
   };
 
@@ -2456,7 +2838,6 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                 <tr>
                   <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px]">Activation Name &amp; Details</th>
                   <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-48">Event Date(s)</th>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px]">Staff Joined</th>
                   <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Status</th>
                   <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-52">Actions</th>
                 </tr>
@@ -2464,7 +2845,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
               <tbody className="divide-y divide-slate-100 bg-white">
                 {activations.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-3 py-16 text-center text-zinc-500">
+                    <td colSpan={4} className="px-3 py-16 text-center text-zinc-500">
                       <div className="flex flex-col items-center justify-center gap-3">
                         <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-[#0B57D0]">
                           <Calendar className="w-6 h-6" />
@@ -2504,11 +2885,12 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                       if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
                       return dateStr;
                     };
+                    const staffCount = Array.isArray(act.participants) ? act.participants.length : 0;
 
                     return (
                       <tr key={act.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="px-3.5 py-2.5">
-                          <div className="flex flex-col gap-0.5">
+                          <div className="flex flex-col gap-1">
                             <div className="flex items-center gap-2">
                               <span className="font-mono text-[10px] text-zinc-400 font-semibold tracking-tight">{act.id}</span>
                               {act.use_pos !== false ? (
@@ -2518,12 +2900,25 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                               )}
                             </div>
                             <span className="font-bold text-sm text-zinc-900 leading-tight">{act.name}</span>
-                            {act.location ? (
-                              <span className="text-xs text-zinc-500 flex items-center gap-1 mt-0.5">
-                                <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
-                                <span>{act.location}</span>
-                              </span>
-                            ) : null}
+                            <div className="flex flex-wrap items-center gap-3 mt-0.5">
+                              {act.location ? (
+                                <span className="text-xs text-zinc-500 flex items-center gap-1">
+                                  <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
+                                  <span>{act.location}</span>
+                                </span>
+                              ) : null}
+
+                              {/* (qty) Staff Join Button */}
+                              <button
+                                type="button"
+                                onClick={() => setViewingStaffAct(act)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 hover:border-[#0B57D0]/40 bg-slate-50 hover:bg-blue-50 text-[#0B57D0] text-[11px] font-semibold transition-all cursor-pointer shadow-2xs select-none"
+                                title="Click to view joined staff roster"
+                              >
+                                <Users className="w-3 h-3 text-[#0B57D0]" />
+                                <span>({staffCount}) Staff Join</span>
+                              </button>
+                            </div>
                           </div>
                         </td>
                         <td className="px-3.5 py-2.5 text-zinc-700 font-medium whitespace-nowrap">
@@ -2531,15 +2926,6 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                             <span>{formatToDDMMYYYY(act.start_date)}</span>
                           ) : (
                             <span>{formatToDDMMYYYY(act.start_date)} → {formatToDDMMYYYY(act.end_date)}</span>
-                          )}
-                        </td>
-                        <td className="px-3.5 py-2.5 text-zinc-700">
-                          {Array.isArray(act.participants) && act.participants.length > 0 ? (
-                            <span className="text-xs text-zinc-700 font-medium">
-                              {act.participants.map(p => p.name).filter(Boolean).join(", ")}
-                            </span>
-                          ) : (
-                            <span className="text-zinc-400 italic text-[11px]">-</span>
                           )}
                         </td>
                         <td className="px-3.5 py-2.5 text-center whitespace-nowrap">
@@ -2584,40 +2970,26 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                               </button>
                             )}
 
-                            {/* Close & Final Button - Only enabled when event date is finished */}
-                            {!isClosed && (
-                              isEnded ? (
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenCloseModal(act)}
-                                  className="h-8 px-3 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap shrink-0"
-                                  title="Close & Reconcile Activation"
-                                >
-                                  <Lock className="w-3.5 h-3.5 shrink-0" />
-                                  <span>Close &amp; Final</span>
-                                </button>
-                              ) : (
-                                <span
-                                  className="h-8 px-2.5 bg-slate-100 border border-slate-200 text-zinc-400 font-semibold text-[11px] rounded-lg flex items-center gap-1 cursor-not-allowed shrink-0 select-none"
-                                  title={`Cannot close until event ends on ${formatToDDMMYYYY(act.end_date)}`}
-                                >
-                                  <Clock className="w-3 h-3 shrink-0" />
-                                  <span>In Progress</span>
-                                </span>
-                              )
-                            )}
-
-                            {/* Report Button - Only appears after event date has finished or when closed */}
+                            {/* Report Buttons - Appear after event date has finished or when closed */}
                             {(isEnded || isClosed) && (
                               <>
                                 <button
                                   type="button"
                                   onClick={() => handlePrintInvoicePDF(act)}
                                   className="h-8 px-3 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap shrink-0"
-                                  title="Print Sales Invoice Draft (Million System Entry)"
+                                  title="Print Sales Report"
                                 >
                                   <FileText className="w-3.5 h-3.5 text-[#0B57D0] shrink-0" />
-                                  <span>Invoice</span>
+                                  <span>Sales Report</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintSamplePDF(act)}
+                                  className="h-8 px-3 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap shrink-0"
+                                  title="Print Sample Report (Tester & FOC items with Qty)"
+                                >
+                                  <FileSpreadsheet className="w-3.5 h-3.5 text-purple-600 shrink-0" />
+                                  <span>Sample Report</span>
                                 </button>
                                 <button
                                   type="button"
@@ -2629,6 +3001,29 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                                   <span>Report</span>
                                 </button>
                               </>
+                            )}
+
+                            {/* Close Activation Button - At very end of row actions */}
+                            {!isClosed && (
+                              isEnded ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenCloseModal(act)}
+                                  className="h-8 px-3 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap shrink-0"
+                                  title="Close & Reconcile Activation"
+                                >
+                                  <Lock className="w-3.5 h-3.5 shrink-0" />
+                                  <span>Close Activation</span>
+                                </button>
+                              ) : (
+                                <span
+                                  className="h-8 px-2.5 bg-slate-100 border border-slate-200 text-zinc-400 font-semibold text-[11px] rounded-lg flex items-center gap-1 cursor-not-allowed shrink-0 select-none"
+                                  title={`Cannot close until event ends on ${formatToDDMMYYYY(act.end_date)}`}
+                                >
+                                  <Clock className="w-3 h-3 shrink-0" />
+                                  <span>In Progress</span>
+                                </span>
+                              )
                             )}
                           </div>
                         </td>
@@ -3183,7 +3578,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                                   type="button"
                                   onClick={() => handlePrintOrderInvoicePDF(o)}
                                   className="p-1 text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 rounded transition-all cursor-pointer"
-                                  title="Print Sales Invoice Draft (Million Entry)"
+                                  title="Print Sales Order Report"
                                 >
                                   <FileText className="w-3.5 h-3.5" />
                                 </button>
@@ -4314,7 +4709,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                     className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-100 text-zinc-800 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer"
                   >
                     <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
-                    Print Invoice (PDF)
+                    Print Sales Report (PDF)
                   </button>
                   <button
                     type="button"
@@ -4767,9 +5162,9 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                         className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-800 focus:outline-hidden"
                       >
                         <option value="">-- Select Product / SKU --</option>
-                        {masterProducts.map(p => (
+                        {sortedMasterProducts.map(p => (
                           <option key={p.sku} value={p.sku}>
-                            {p.sku} - {p.display_name}
+                            {p.brand_name ? `[${p.brand_name}] ` : ""}{p.sku} - {p.display_name}
                           </option>
                         ))}
                       </select>
@@ -4831,8 +5226,8 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
 
       {/* 10. CLOSE & RECONCILE ACTIVATION MODAL (STOCK CHECK & RECEIPTS) */}
       {closingAct && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-4xl w-full overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in duration-150 font-primary">
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-6xl w-full overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in duration-150 font-primary">
             {/* Header */}
             <div className="px-5 py-3.5 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
               <div>
@@ -4848,8 +5243,8 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
               </button>
             </div>
 
-            {/* 2-COLUMN BODY (SIDE BY SIDE) */}
-            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
+            {/* 2-COLUMN BODY (SIDE BY SIDE: 5 cols receipt, 7 cols stock) */}
+            <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
               {(() => {
                 const assignedOrders = orders.filter(o => o.activation_id === closingAct.id);
                 const unverifiedNonCash = assignedOrders.filter(o => 
@@ -4863,7 +5258,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                 return (
                   <>
                     {/* LEFT COLUMN: RECEIPT VERIFICATION & CASH SLIP */}
-                    <div className="flex flex-col p-4 overflow-y-auto gap-4 bg-slate-50/50">
+                    <div className="flex flex-col p-4 overflow-y-auto gap-4 bg-slate-50/50 lg:col-span-5">
                       {/* Section Title */}
                       <div className="flex items-center justify-between pb-1 border-b border-slate-200">
                         <span className="text-xs font-bold text-zinc-900">Receipt Verification</span>
@@ -4957,10 +5352,22 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                     </div>
 
                     {/* RIGHT COLUMN: STOCK RETURN TABLE */}
-                    <div className="flex flex-col flex-1 min-h-0 bg-white overflow-hidden">
+                    <div className="flex flex-col flex-1 min-h-0 bg-white overflow-hidden lg:col-span-7">
                       <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between shrink-0">
-                        <span className="text-xs font-bold text-zinc-900">Physical Stock Return</span>
-                        <span className="text-[10px] text-zinc-500">Confirm unsold count</span>
+                        <div className="flex flex-col">
+                          <span className="text-xs font-bold text-zinc-900">Physical Stock Return</span>
+                          <span className="text-[10px] text-zinc-500">Confirm unsold count</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSaveStockReturn}
+                          disabled={isSavingReturn || isClosingAct}
+                          className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 text-zinc-700 font-semibold text-xs rounded-md transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer disabled:opacity-50"
+                          title="Save physical return counts without closing the activation"
+                        >
+                          {isSavingReturn ? <RefreshCw className="w-3 h-3 animate-spin text-[#0B57D0]" /> : <Save className="w-3 h-3 text-[#0B57D0]" />}
+                          <span>Save Stock Return</span>
+                        </button>
                       </div>
 
                       <div className="flex-1 overflow-y-auto">
@@ -4968,9 +5375,9 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                           <thead className="bg-[#F8F9FA] sticky top-0 z-10">
                             <tr>
                               <th className="px-3 py-2 text-left font-bold text-zinc-700">Product / SKU</th>
-                              <th className="px-2 py-2 text-center font-bold text-zinc-700 w-16">Alloc</th>
-                              <th className="px-2 py-2 text-center font-bold text-zinc-700 w-14">Sold</th>
-                              <th className="px-2 py-2 text-center font-bold text-zinc-700 w-14">FOC</th>
+                              <th className="px-2 py-2 text-center font-bold text-zinc-700 w-14">Alloc</th>
+                              <th className="px-2 py-2 text-center font-bold text-zinc-700 w-12">Sold</th>
+                              <th className="px-2 py-2 text-center font-bold text-purple-700 w-16">Sample</th>
                               <th className="px-3 py-2 text-right font-bold text-zinc-700 w-24">Return</th>
                             </tr>
                           </thead>
@@ -4993,12 +5400,23 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                               });
 
                               const allSkus = Array.from(new Set([
+                                ...Object.keys(closingAllocations),
                                 ...(closingAct.stock_allocated || []).map(it => it.sku),
                                 ...Object.keys(salesMap),
                                 ...Object.keys(focMap)
                               ]));
 
-                              allSkus.sort((a, b) => a.localeCompare(b));
+                              allSkus.sort((a, b) => {
+                                const prodA = masterProducts.find(p => p.sku.toLowerCase() === a.toLowerCase()) || posProducts.find(p => p.sku.toLowerCase() === a.toLowerCase());
+                                const prodB = masterProducts.find(p => p.sku.toLowerCase() === b.toLowerCase()) || posProducts.find(p => p.sku.toLowerCase() === b.toLowerCase());
+                                const brandA = (prodA?.brand_name || "").toLowerCase();
+                                const brandB = (prodB?.brand_name || "").toLowerCase();
+                                if (brandA !== brandB) return brandA.localeCompare(brandB);
+                                const brandIdA = String(prodA?.brand_id || "");
+                                const brandIdB = String(prodB?.brand_id || "");
+                                if (brandIdA !== brandIdB) return brandIdA.localeCompare(brandIdB);
+                                return a.localeCompare(b);
+                              });
 
                               if (allSkus.length === 0) {
                                 return (
@@ -5011,32 +5429,53 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                               }
 
                               return allSkus.map(sku => {
-                                const prod = posProducts.find(p => p.sku.toLowerCase() === sku.toLowerCase());
+                                const prod = masterProducts.find(p => p.sku.toLowerCase() === sku.toLowerCase()) || posProducts.find(p => p.sku.toLowerCase() === sku.toLowerCase());
                                 const prodName = prod?.display_name || "";
-                                const alloc = (closingAct.stock_allocated || []).find(it => it.sku === sku)?.qty || 0;
+                                const brandName = prod?.brand_name || "";
+                                const alloc = closingAllocations[sku] !== undefined ? closingAllocations[sku] : ((closingAct.stock_allocated || []).find(it => it.sku === sku)?.qty || 0);
                                 const sold = salesMap[sku] || 0;
                                 const foc = focMap[sku] || 0;
                                 const retVal = closingReturns[sku] !== undefined ? closingReturns[sku] : Math.max(0, alloc - sold - foc);
+                                const totalSample = Math.max(0, alloc - sold - retVal);
 
                                 return (
                                   <tr key={sku} className="hover:bg-slate-50/60">
                                     <td className="px-3 py-2">
+                                      {brandName && <div className="text-[10px] font-bold text-[#0B57D0] uppercase tracking-wider">{brandName}</div>}
                                       <div className="font-mono font-bold text-zinc-900">{sku}</div>
                                       {prodName && <div className="text-[10px] text-zinc-500 truncate max-w-[170px]">{prodName}</div>}
                                     </td>
-                                    <td className="px-2 py-2 text-center text-zinc-600 font-mono">{alloc}</td>
+                                    <td className="px-2 py-2 text-center">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        value={alloc}
+                                        onChange={(e) => {
+                                          const val = Math.max(0, parseInt(e.target.value, 10) || 0);
+                                          setClosingAllocations(prev => ({ ...prev, [sku]: val }));
+                                        }}
+                                        className="w-14 px-1.5 py-1 bg-[#F8F9FA] focus:bg-white border border-slate-200 rounded text-center font-mono font-bold text-zinc-900 text-xs focus:ring-1 focus:ring-[#0B57D0]"
+                                        title="Initial Allocated Goods (Editable)"
+                                      />
+                                    </td>
                                     <td className="px-2 py-2 text-center text-zinc-600 font-mono">{sold}</td>
-                                    <td className="px-2 py-2 text-center text-zinc-600 font-mono">{foc}</td>
+                                    <td className="px-2 py-2 text-center font-mono">
+                                      <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-purple-50 text-purple-800 font-bold text-[11px]" title={`POS FOC: ${foc}, Unreturned / Discrepancy: ${Math.max(0, totalSample - foc)}`}>
+                                        {totalSample}
+                                      </span>
+                                    </td>
                                     <td className="px-3 py-2 text-right">
                                       <input
                                         type="number"
                                         min="0"
+                                        max={Math.max(0, alloc - sold)}
                                         value={retVal}
                                         onChange={(e) => {
-                                          const val = parseInt(e.target.value, 10) || 0;
+                                          const val = Math.max(0, parseInt(e.target.value, 10) || 0);
                                           setClosingReturns(prev => ({ ...prev, [sku]: val }));
                                         }}
                                         className="w-18 px-2 py-1 bg-[#F8F9FA] focus:bg-white border border-slate-200 rounded text-right font-mono font-bold text-zinc-900 text-xs focus:ring-1 focus:ring-[#0B57D0]"
+                                        title="Physical Stock Return to Warehouse"
                                       />
                                     </td>
                                   </tr>
@@ -5076,15 +5515,25 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                     <button
                       type="button"
                       onClick={() => setClosingAct(null)}
-                      disabled={isClosingAct}
+                      disabled={isClosingAct || isSavingReturn}
                       className="px-4 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all cursor-pointer"
                     >
                       Cancel
                     </button>
                     <button
                       type="button"
+                      onClick={handleSaveStockReturn}
+                      disabled={isClosingAct || isSavingReturn}
+                      className="px-3.5 py-1.5 border border-slate-300 bg-white hover:bg-slate-50 text-zinc-800 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
+                      title="Save physical return counts and receipts without final closing"
+                    >
+                      {isSavingReturn ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" /> : <Save className="w-3.5 h-3.5 text-[#0B57D0]" />}
+                      <span>Save Stock Return</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleConfirmCloseActivation}
-                      disabled={isClosingAct || isBlocked}
+                      disabled={isClosingAct || isSavingReturn || isBlocked}
                       className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
                     >
                       {isClosingAct ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
@@ -5581,32 +6030,26 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       {/* 13. PHOTO RECEIPT UPLOAD, CROP & ROTATE MODAL */}
       {receiptUploadOrder && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[1px] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-150 font-primary">
-            {/* Header */}
-            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950 flex items-center gap-1.5">
-                  <ImageIcon className="w-4 h-4 text-[#0B57D0]" />
-                  Upload Payment Receipt Proof
-                </h3>
-                <p className="text-xs text-zinc-500">
-                  Order: <span className="font-mono font-semibold text-zinc-800">{receiptUploadOrder.id}</span> ({receiptUploadOrder.payment_method} - ${Number(receiptUploadOrder.total_amount).toFixed(2)})
-                </p>
-              </div>
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-150 font-primary">
+            {/* Header: Exact img2 styling */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-zinc-900">
+                Crop &amp; Rotate Receipt
+              </h3>
               <button
                 type="button"
                 onClick={() => {
                   setReceiptUploadOrder(null);
                   setReceiptRawImage(null);
                 }}
-                className="p-1 rounded-lg hover:bg-slate-200 text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+                className="p-1 rounded-lg hover:bg-slate-100 text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Body */}
-            <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-4">
+            <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-5">
               <input
                 ref={receiptFileInputRef}
                 type="file"
@@ -5629,11 +6072,60 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                   </div>
                 </div>
               ) : (
-                <div className="flex flex-col gap-3">
-                  {/* Image Crop & Rotate Preview Canvas */}
-                  <div className="relative w-full h-72 bg-zinc-950 rounded-xl overflow-hidden flex items-center justify-center select-none shadow-inner">
+                <div className="flex flex-col gap-5">
+                  {/* Interactive Crop & Rotate Canvas with Checkerboard Background */}
+                  <div
+                    className="relative w-full h-84 rounded overflow-hidden select-none flex items-center justify-center"
+                    style={{
+                      backgroundColor: "#f0f2f5",
+                      backgroundImage: "linear-gradient(45deg, #71717a 25%, transparent 25%), linear-gradient(-45deg, #71717a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #71717a 75%), linear-gradient(-45deg, transparent 75%, #71717a 75%)",
+                      backgroundSize: "16px 16px",
+                      backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px"
+                    }}
+                    onMouseMove={(e) => {
+                      if (!cropInteraction) return;
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const xPercent = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
+                      const yPercent = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+
+                      if (cropInteraction.type === "drag") {
+                        const newX = Math.max(0, Math.min(100 - cropInteraction.box.width, cropInteraction.box.x + (xPercent - cropInteraction.startX)));
+                        const newY = Math.max(0, Math.min(100 - cropInteraction.box.height, cropInteraction.box.y + (yPercent - cropInteraction.startY)));
+                        setReceiptCropBox((prev) => ({ ...prev, x: newX, y: newY }));
+                      } else if (cropInteraction.type === "resize" && cropInteraction.handle) {
+                        const h = cropInteraction.handle;
+                        const b = cropInteraction.box;
+                        let newX = b.x;
+                        let newY = b.y;
+                        let newW = b.width;
+                        let newH = b.height;
+
+                        if (h.includes("w")) {
+                          const right = b.x + b.width;
+                          newX = Math.max(0, Math.min(right - 10, xPercent));
+                          newW = right - newX;
+                        }
+                        if (h.includes("e")) {
+                          newW = Math.max(10, Math.min(100 - b.x, xPercent - b.x));
+                        }
+                        if (h.includes("n")) {
+                          const bottom = b.y + b.height;
+                          newY = Math.max(0, Math.min(bottom - 10, yPercent));
+                          newH = bottom - newY;
+                        }
+                        if (h.includes("s")) {
+                          newH = Math.max(10, Math.min(100 - b.y, yPercent - b.y));
+                        }
+
+                        setReceiptCropBox({ x: newX, y: newY, width: newW, height: newH });
+                      }
+                    }}
+                    onMouseUp={() => setCropInteraction(null)}
+                    onMouseLeave={() => setCropInteraction(null)}
+                  >
+                    {/* Centered Image with smooth rotation */}
                     <div
-                      className="relative transition-transform duration-200"
+                      className="absolute inset-0 flex items-center justify-center pointer-events-none transition-transform duration-100"
                       style={{
                         transform: `rotate(${receiptRotation}deg)`
                       }}
@@ -5641,115 +6133,136 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                       <img
                         src={receiptRawImage}
                         alt="Receipt Preview"
-                        className="max-h-64 max-w-full object-contain pointer-events-none rounded"
+                        className="max-h-full max-w-full object-contain pointer-events-none select-none"
                       />
                     </div>
 
-                    {/* Subtle Rule-of-Thirds Grid Overlay */}
-                    <div className="absolute inset-0 border-2 border-white/40 pointer-events-none grid grid-cols-3 grid-rows-3">
-                      <div className="border-r border-b border-white/20"></div>
-                      <div className="border-r border-b border-white/20"></div>
-                      <div className="border-b border-white/20"></div>
-                      <div className="border-r border-b border-white/20"></div>
-                      <div className="border-r border-b border-white/20"></div>
-                      <div className="border-b border-white/20"></div>
-                      <div className="border-r border-white/20"></div>
-                      <div className="border-r border-white/20"></div>
-                      <div></div>
+                    {/* Darkened semi-transparent overlay surrounding the crop box */}
+                    <div
+                      className="absolute inset-0 pointer-events-none"
+                      style={{
+                        boxShadow: `0 0 0 9999px rgba(0, 0, 0, 0.45)`,
+                        left: `${receiptCropBox.x}%`,
+                        top: `${receiptCropBox.y}%`,
+                        width: `${receiptCropBox.width}%`,
+                        height: `${receiptCropBox.height}%`
+                      }}
+                    />
+
+                    {/* Draggable & Resizable Blue Bounding Box (Exact img2 design) */}
+                    <div
+                      className="absolute cursor-move border border-[#1973E8]"
+                      style={{
+                        left: `${receiptCropBox.x}%`,
+                        top: `${receiptCropBox.y}%`,
+                        width: `${receiptCropBox.width}%`,
+                        height: `${receiptCropBox.height}%`
+                      }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        const rect = e.currentTarget.parentElement?.getBoundingClientRect();
+                        if (!rect) return;
+                        const startX = ((e.clientX - rect.left) / rect.width) * 100;
+                        const startY = ((e.clientY - rect.top) / rect.height) * 100;
+                        setCropInteraction({
+                          type: "drag",
+                          startX,
+                          startY,
+                          box: { ...receiptCropBox }
+                        });
+                      }}
+                    >
+                      {/* Dashed 3x3 Rule-of-Thirds Grid lines */}
+                      <div className="absolute inset-0 pointer-events-none grid grid-cols-3 grid-rows-3">
+                        <div className="border-r border-b border-dashed border-white/60"></div>
+                        <div className="border-r border-b border-dashed border-white/60"></div>
+                        <div className="border-b border-dashed border-white/60"></div>
+                        <div className="border-r border-b border-dashed border-white/60"></div>
+                        <div className="border-r border-b border-dashed border-white/60"></div>
+                        <div className="border-b border-dashed border-white/60"></div>
+                        <div className="border-r border-dashed border-white/60"></div>
+                        <div className="border-r border-dashed border-white/60"></div>
+                        <div></div>
+                      </div>
+
+                      {/* 8 Handles (Corners & Midpoints) - Exact Blue Squares matching img2 */}
+                      {[
+                        { handle: "nw", cursor: "nwse-resize", style: { top: "-4px", left: "-4px" } },
+                        { handle: "n", cursor: "ns-resize", style: { top: "-4px", left: "calc(50% - 4px)" } },
+                        { handle: "ne", cursor: "nesw-resize", style: { top: "-4px", right: "-4px" } },
+                        { handle: "e", cursor: "ew-resize", style: { top: "calc(50% - 4px)", right: "-4px" } },
+                        { handle: "se", cursor: "nwse-resize", style: { bottom: "-4px", right: "-4px" } },
+                        { handle: "s", cursor: "ns-resize", style: { bottom: "-4px", left: "calc(50% - 4px)" } },
+                        { handle: "sw", cursor: "nesw-resize", style: { bottom: "-4px", left: "-4px" } },
+                        { handle: "w", cursor: "ew-resize", style: { top: "calc(50% - 4px)", left: "-4px" } }
+                      ].map((item) => (
+                        <div
+                          key={item.handle}
+                          className="absolute w-2 h-2 bg-[#1973E8] border border-white z-10"
+                          style={{ ...item.style, cursor: item.cursor }}
+                          onMouseDown={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            setCropInteraction({
+                              type: "resize",
+                              handle: item.handle,
+                              startX: 0,
+                              startY: 0,
+                              box: { ...receiptCropBox }
+                            });
+                          }}
+                        />
+                      ))}
                     </div>
                   </div>
 
-                  {/* Crop & Rotate Toolbar */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => setReceiptRotation((prev) => (prev + 90) % 360)}
-                        className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-zinc-800 font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
-                        title="Rotate 90 degrees clockwise"
-                      >
-                        <RotateCw className="w-3.5 h-3.5 text-[#0B57D0]" />
-                        <span>Rotate ({receiptRotation}°)</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => receiptFileInputRef.current?.click()}
-                        className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-zinc-700 font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
-                      >
-                        <Upload className="w-3.5 h-3.5 text-zinc-500" />
-                        <span>Change Photo</span>
-                      </button>
-                    </div>
-
+                  {/* Angle & Rotate Controls: Exact 100% img2 match */}
+                  <div className="flex items-center justify-between gap-3 px-1 pt-1">
+                    {/* Left Counter-Clockwise Rotate Button */}
                     <button
                       type="button"
-                      onClick={() => {
-                        setReceiptRotation(0);
-                        setReceiptCropBox({ x: 0, y: 0, width: 100, height: 100 });
-                      }}
-                      className="text-[11px] text-zinc-400 hover:text-zinc-700 font-semibold transition-colors cursor-pointer"
+                      onClick={() => setReceiptRotation((prev) => (prev - 90 < 0 ? (prev - 90 + 360) : (prev - 90)))}
+                      className="w-10 h-10 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 flex items-center justify-center text-zinc-700 transition-colors cursor-pointer shrink-0 shadow-2xs"
+                      title="Rotate counter-clockwise"
                     >
-                      Reset
+                      <RotateCcw className="w-4 h-4 text-zinc-700" />
                     </button>
-                  </div>
 
-                  {/* Crop Slider Controls */}
-                  <div className="p-3 bg-white border border-slate-200 rounded-xl flex flex-col gap-2 text-xs">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-zinc-800 flex items-center gap-1">
-                        <Crop className="w-3.5 h-3.5 text-[#0B57D0]" />
-                        Adjust Margin / Framing
+                    {/* Angle Slider + Dynamic Indicator */}
+                    <div className="flex-1 flex items-center gap-3">
+                      <span className="text-xs font-semibold text-zinc-600 shrink-0 select-none">
+                        Angle
                       </span>
-                      <span className="text-[10px] text-zinc-400">Trim excess background</span>
+                      <input
+                        type="range"
+                        min="0"
+                        max="360"
+                        step="1"
+                        value={receiptRotation}
+                        onChange={(e) => setReceiptRotation(parseInt(e.target.value, 10))}
+                        className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1973E8]"
+                      />
+                      <span className="text-xs font-semibold text-zinc-600 w-8 text-right tabular-nums select-none">
+                        {receiptRotation}°
+                      </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3 pt-1">
-                      <div className="flex flex-col gap-1">
-                        <div className="flex justify-between text-[11px] text-zinc-600">
-                          <span>Horizontal Crop:</span>
-                          <span className="font-mono font-bold">{receiptCropBox.width}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="40"
-                          max="100"
-                          value={receiptCropBox.width}
-                          onChange={(e) => {
-                            const w = parseInt(e.target.value, 10);
-                            const x = (100 - w) / 2;
-                            setReceiptCropBox((prev) => ({ ...prev, width: w, x }));
-                          }}
-                          className="w-full accent-[#0B57D0]"
-                        />
-                      </div>
-
-                      <div className="flex flex-col gap-1">
-                        <div className="flex justify-between text-[11px] text-zinc-600">
-                          <span>Vertical Crop:</span>
-                          <span className="font-mono font-bold">{receiptCropBox.height}%</span>
-                        </div>
-                        <input
-                          type="range"
-                          min="40"
-                          max="100"
-                          value={receiptCropBox.height}
-                          onChange={(e) => {
-                            const h = parseInt(e.target.value, 10);
-                            const y = (100 - h) / 2;
-                            setReceiptCropBox((prev) => ({ ...prev, height: h, y }));
-                          }}
-                          className="w-full accent-[#0B57D0]"
-                        />
-                      </div>
-                    </div>
+                    {/* Right Clockwise Rotate Button */}
+                    <button
+                      type="button"
+                      onClick={() => setReceiptRotation((prev) => (prev + 90) % 360)}
+                      className="w-10 h-10 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 flex items-center justify-center text-zinc-700 transition-colors cursor-pointer shrink-0 shadow-2xs"
+                      title="Rotate clockwise"
+                    >
+                      <RotateCw className="w-4 h-4 text-zinc-700" />
+                    </button>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Footer */}
-            <div className="flex justify-end gap-2 p-4 bg-slate-50 border-t border-slate-200">
+            {/* Footer: Exact img2 styling (Cancel & Apply Crop) */}
+            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-white border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => {
@@ -5757,7 +6270,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                   setReceiptRawImage(null);
                 }}
                 disabled={isUploadingReceipt}
-                className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all cursor-pointer"
+                className="px-6 py-2 bg-[#EBF2FE] hover:bg-[#DDE9FD] text-[#0B57D0] font-bold text-xs rounded-lg transition-colors cursor-pointer select-none"
               >
                 Cancel
               </button>
@@ -5765,10 +6278,81 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                 type="button"
                 onClick={handleSaveReceiptPhoto}
                 disabled={isUploadingReceipt || !receiptRawImage}
-                className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
+                className="px-6 py-2 bg-white hover:bg-slate-50 border border-slate-300 text-zinc-900 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-2xs select-none"
               >
-                {isUploadingReceipt ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                Save &amp; Attach Receipt
+                {isUploadingReceipt ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" /> : null}
+                Apply Crop
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 14. VIEW JOINED STAFF MODAL */}
+      {viewingStaffAct && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[0.5px] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden flex flex-col max-h-[85vh] animate-in fade-in zoom-in duration-150 font-primary">
+            {/* Header */}
+            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950 flex items-center gap-1.5">
+                  <Users className="w-4 h-4 text-[#0B57D0]" />
+                  Joined Staff Roster ({Array.isArray(viewingStaffAct.participants) ? viewingStaffAct.participants.length : 0})
+                </h3>
+                <p className="text-xs text-zinc-500 font-medium truncate max-w-xs mt-0.5">
+                  {viewingStaffAct.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingStaffAct(null)}
+                className="p-1 rounded-lg hover:bg-slate-200 text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Staff List */}
+            <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-2">
+              {Array.isArray(viewingStaffAct.participants) && viewingStaffAct.participants.length > 0 ? (
+                viewingStaffAct.participants.map((staff, idx) => (
+                  <div
+                    key={staff.id || idx}
+                    className="flex items-center justify-between p-2.5 bg-slate-50/70 border border-slate-200/80 rounded-lg text-xs hover:bg-blue-50/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-full bg-blue-100 text-[#0B57D0] font-bold flex items-center justify-center text-[11px] shrink-0">
+                        {(staff.name || "S").charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="font-semibold text-zinc-900 leading-tight">{staff.name}</p>
+                        {staff.type ? (
+                          <p className="text-[10px] text-zinc-400 mt-0.5 capitalize">{staff.type}</p>
+                        ) : null}
+                      </div>
+                    </div>
+                    {staff.type && (
+                      <span className="px-2 py-0.5 bg-white border border-slate-200 rounded text-[10px] font-medium text-zinc-600 shrink-0 capitalize">
+                        {staff.type}
+                      </span>
+                    )}
+                  </div>
+                ))
+              ) : (
+                <div className="py-8 text-center text-zinc-400 text-xs italic">
+                  No staff members assigned to this activation.
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewingStaffAct(null)}
+                className="px-4 py-1.5 bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 font-semibold text-xs rounded-lg transition-colors cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>

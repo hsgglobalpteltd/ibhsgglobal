@@ -448,6 +448,44 @@ const getOrderEditsRemark = (oldOrder: DbOrder, newFields: Partial<DbOrder>): st
   return changes.length > 0 ? `Edited: ${changes.join(", ")}` : "Order details updated";
 };
 
+// Check if an order was completed today (Singapore Time / UTC+8)
+export const isOrderDoneToday = (order: DbOrder): boolean => {
+  const isDelivered = order.type !== "Return" && (order.status === "Delivered" || String(order.completed) === "true" || order.completed === true);
+  const isCollected = order.type === "Return" && (order.status === "Collected" || order.status === "Return Collected" || String(order.completed) === "true" || order.completed === true);
+  if (!isDelivered && !isCollected) return false;
+
+  const now = new Date();
+  const sgTimeString = now.toLocaleString("en-US", { timeZone: "Asia/Singapore" });
+  const sgDate = new Date(sgTimeString);
+  sgDate.setHours(0, 0, 0, 0);
+  const diff = now.getTime() - new Date(sgTimeString).getTime();
+  const startOfTodayMs = sgDate.getTime() + diff;
+
+  try {
+    const logs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
+    if (Array.isArray(logs)) {
+      const compLog = logs.find((l: any) => {
+        const act = String(l.action || "").toLowerCase();
+        return (act.includes("delivered") || act.includes("collected") || act.includes("completed") || act.includes("complete"));
+      });
+      if (compLog && Number(compLog.timestamp) >= startOfTodayMs) {
+        return true;
+      } else if (!compLog && order.timestamp && Number(order.timestamp) >= startOfTodayMs) {
+        return true;
+      }
+    } else {
+      if (order.timestamp && Number(order.timestamp) >= startOfTodayMs) {
+        return true;
+      }
+    }
+  } catch (_) {
+    if (order.timestamp && Number(order.timestamp) >= startOfTodayMs) {
+      return true;
+    }
+  }
+  return false;
+};
+
 export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [driverLogs, setDriverLogs] = React.useState<DriverLogRecord[]>([]);
   const [activeDriverLogSubTab, setActiveDriverLogSubTab] = React.useState<"online" | "closed">("online");
@@ -891,12 +929,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       return;
     }
 
-    // Check if Mark is active in pending orders
+    // Check if Mark is active in pending orders or already completed today
     const isMarkActive = pendingOrders.some(
       (o) => String(o.mark).toUpperCase() === createMark.toUpperCase() && (!editingOrder || o.id !== editingOrder.id) && o.status !== "Delivered"
+    ) || dbOrders.some(
+      (o) => String(o.mark).toUpperCase() === createMark.toUpperCase() && (!editingOrder || o.id !== editingOrder.id) && o.type !== "Return" && isOrderDoneToday(o)
     );
     if (isMarkActive) {
-      showToast(`Mark "${createMark}" is currently active in a pending order.`, "error");
+      showToast(`Mark "${createMark}" is currently active or was already completed today.`, "error");
       return;
     }
 
@@ -1088,48 +1128,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   }, [dbOrders]);
 
   const tasksDoneToday = React.useMemo(() => {
-    let count = 0;
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTodayMs = startOfToday.getTime();
-
-    dbOrders.forEach((o) => {
-      // Check if this order is delivered, collected, or complete
-      const isDelivered = o.type !== "Return" && (o.status === "Delivered" || String(o.completed) === "true" || o.completed !== true);
-      const isCollected = o.type === "Return" && (o.status === "Collected" || o.status === "Return Collected" || String(o.completed) === "true" || o.completed === true);
-
-      if (isDelivered || isCollected) {
-        let completedToday = false;
-        try {
-          const logs = typeof o.logs === "string" ? JSON.parse(o.logs) : o.logs;
-          if (Array.isArray(logs)) {
-            // Find any log entry of delivery (Delivered/Completed) or collection (Collected/Return Collected/Completed) that happened today
-            const compLog = logs.find((l: any) => {
-              const act = String(l.action || "").toLowerCase();
-              return (act.includes("delivered") || act.includes("collected") || act.includes("completed") || act.includes("complete"));
-            });
-            if (compLog && Number(compLog.timestamp) >= startOfTodayMs) {
-              completedToday = true;
-            } else if (!compLog && o.timestamp && Number(o.timestamp) >= startOfTodayMs) {
-              completedToday = true;
-            }
-          } else {
-            if (o.timestamp && Number(o.timestamp) >= startOfTodayMs) {
-              completedToday = true;
-            }
-          }
-        } catch (_) {
-          if (o.timestamp && Number(o.timestamp) >= startOfTodayMs) {
-            completedToday = true;
-          }
-        }
-
-        if (completedToday) {
-          count++;
-        }
-      }
-    });
-    return count;
+    return dbOrders.filter(isOrderDoneToday).length;
   }, [dbOrders]);
 
   // Return Orders filtered lists
@@ -1389,24 +1388,27 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     const finalMark = "R" + returnMark.trim().toUpperCase();
 
-    // Validation: Mark cannot be the same if still pending/collected
+    // Validation: Mark cannot be the same if still pending/collected or completed today
     const isEdit = !!editingReturn;
     const isMarkActive = dbOrders.some(o => 
       o.type === "Return" && 
-      o.status !== "Complete" && 
-      o.status !== "Collected" && 
-      o.status !== "Return Collected" && 
-      String(o.completed) !== "true" &&
-      o.completed !== true &&
+      (!isEdit || o.id !== editingReturn.id) &&
       String(o.mark).toUpperCase() === finalMark.toUpperCase() &&
-      (!isEdit || o.id !== editingReturn.id)
+      (
+        (o.status !== "Complete" && 
+         o.status !== "Collected" && 
+         o.status !== "Return Collected" && 
+         String(o.completed) !== "true" &&
+         o.completed !== true) ||
+        isOrderDoneToday(o)
+      )
     ) || drafts.some(d =>
       d.type === "Return" &&
       String(d.mark).toUpperCase() === finalMark.toUpperCase()
     );
     
     if (isMarkActive) {
-      showToast(`Mark "${finalMark}" is currently active in another pending/collected return order.`, "error");
+      showToast(`Mark "${finalMark}" is currently active or was already completed today.`, "error");
       return;
     }
 
@@ -1619,12 +1621,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     return `${day}/${month}/${year}`;
   };
 
-  // Find the next unused capital letter mark character A-Z, AA-AZ, BA-BZ skipping pending orders & existing drafts
+  // Find the next unused capital letter mark character A-Z, AA-AZ, BA-BZ skipping pending orders, existing drafts, and orders completed today
   const getNextAvailableMark = (currentDrafts: TrackOrderDraft[], currentPending: any[], tempAssigned: string[] = []): string => {
     const usedMarks = new Set<string>();
     
     currentPending.forEach((o) => {
       if (o.mark && o.status !== "Delivered") {
+        usedMarks.add(String(o.mark).trim().toUpperCase());
+      }
+    });
+
+    // Also reserve marks from orders completed today so drivers don't confuse new orders with tasks finished earlier today
+    dbOrders.forEach((o) => {
+      if (o.mark && o.type !== "Return" && isOrderDoneToday(o)) {
         usedMarks.add(String(o.mark).trim().toUpperCase());
       }
     });
@@ -1658,16 +1667,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const usedMarks = new Set<string>();
     
     currentDbOrders.forEach((o) => {
-      if (
-        o.mark && 
-        o.type === "Return" && 
-        o.status !== "Complete" && 
-        o.status !== "Collected" && 
-        o.status !== "Return Collected" && 
-        String(o.completed) !== "true" && 
-        o.completed !== true
-      ) {
-        usedMarks.add(String(o.mark).trim().toUpperCase());
+      if (o.mark && o.type === "Return") {
+        const isPendingReturn = o.status !== "Complete" && 
+          o.status !== "Collected" && 
+          o.status !== "Return Collected" && 
+          String(o.completed) !== "true" && 
+          o.completed !== true;
+        
+        // Reserve if still pending return OR already collected/done today
+        if (isPendingReturn || isOrderDoneToday(o)) {
+          usedMarks.add(String(o.mark).trim().toUpperCase());
+        }
       }
     });
 
@@ -1771,9 +1781,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Singapore Map Pin Construction
   const activePins = React.useMemo(() => {
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const startOfTodayMs = startOfToday.getTime();
+    // Singapore midnight (UTC+8)
+    const now = new Date();
+    const sgTimeString = now.toLocaleString("en-US", { timeZone: "Asia/Singapore" });
+    const sgDate = new Date(sgTimeString);
+    sgDate.setHours(0, 0, 0, 0);
+    const diff = now.getTime() - new Date(sgTimeString).getTime();
+    const startOfTodayMs = sgDate.getTime() + diff;
 
     const isDoneToday = (order: DbOrder) => {
       let completedToday = false;
@@ -2733,24 +2747,32 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     const isReturn = order.type === "Return";
 
-    // Validation: check if the mark is currently active
+    // Validation: check if the mark is currently active or was completed today
     const isMarkActive = isReturn
       ? dbOrders.some(
           (o) =>
             o.type === "Return" &&
-            o.status !== "Complete" &&
-            o.status !== "Collected" &&
-            o.status !== "Return Collected" &&
-            String(o.completed) !== "true" &&
-            o.completed !== true &&
-            String(o.mark).toUpperCase() === order.mark.toUpperCase()
+            String(o.mark).toUpperCase() === order.mark.toUpperCase() &&
+            (
+              (o.status !== "Complete" &&
+               o.status !== "Collected" &&
+               o.status !== "Return Collected" &&
+               String(o.completed) !== "true" &&
+               o.completed !== true) ||
+              isOrderDoneToday(o)
+            )
         )
-      : pendingOrders.some(
-          (o) => String(o.mark).toUpperCase() === order.mark.toUpperCase() && o.status !== "Delivered"
+      : (
+          pendingOrders.some(
+            (o) => String(o.mark).toUpperCase() === order.mark.toUpperCase() && o.status !== "Delivered"
+          ) ||
+          dbOrders.some(
+            (o) => String(o.mark).toUpperCase() === order.mark.toUpperCase() && o.type !== "Return" && isOrderDoneToday(o)
+          )
         );
 
     if (isMarkActive) {
-      showToast(`Cannot send. Mark "${order.mark}" is currently active in another pending order.`, "error");
+      showToast(`Cannot send. Mark "${order.mark}" is currently active or was already completed today.`, "error");
       return;
     }
 
