@@ -6,7 +6,6 @@ import { SnapDealsModule } from "../modules/SnapDealsModule";
 import { StoresVisibilityModule } from "../modules/StoresVisibilityModule";
 import { SponsorshipModule } from "../modules/SponsorshipModule";
 import { DirectOrderModule } from "../modules/DirectOrderModule";
-import { ManagePOSModule } from "../modules/ManagePOSModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canViewModule } from "@/lib/permissions";
 import { UserProfile } from "@/lib/api";
@@ -74,8 +73,6 @@ export function SalesChannelsPage({ profile, breadcrumbPath }: SalesChannelsPage
         return <SponsorshipModule profile={profile} />;
       case "Direct Order":
         return <DirectOrderModule profile={profile} />;
-      case "Manage POS":
-        return <ManagePOSModule profile={profile} />;
       default:
         return null;
     }

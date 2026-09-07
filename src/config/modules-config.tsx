@@ -20,6 +20,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     label: "Frontline",
     modules: [
       {
+        title: "Activation",
+        description: "Manage event activations, POS catalog, retail stock float, brand promos, and transactions.",
+      },
+      {
         title: "Promoter",
         description: "Manage promoter schedules, campaigns, attendance, and activity assignments.",
       },
@@ -82,10 +86,6 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Sponsorship",
         description: "Manage brand sponsorships, output distribution tracking, and receiver limit registries.",
-      },
-      {
-        title: "Manage POS",
-        description: "Configure POS catalog pricing, allocate retail stock, and review cashier transactions.",
       }
     ]
   },

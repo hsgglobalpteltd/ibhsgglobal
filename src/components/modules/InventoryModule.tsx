@@ -2,10 +2,11 @@
 
 import * as React from "react";
 import { DataTable, Column } from "../data-table";
-import { Eye, User, Calendar, ClipboardCheck, X, FileText, CheckCircle2, AlertCircle, Layers, History, Search, Printer, Plus, Check, Camera, Sparkles, Info } from "lucide-react";
+import { Eye, User, Calendar, ClipboardCheck, X, FileText, CheckCircle2, AlertCircle, Layers, History, Search, Printer, Plus, Check, Camera, Sparkles, Info, CalendarDays, ChevronDown, RotateCcw } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "../custom-button";
 import { NavigationTabs } from "../navigation-tabs";
+import { jsPDF } from "jspdf";
 
 interface InventoryModuleProps {
   profile?: {
@@ -40,6 +41,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
   const [fetching, setFetching] = React.useState(false);
   const [syncStatus, setSyncStatus] = React.useState<"idle" | "syncing" | "synced">("idle");
   const [selectedLog, setSelectedLog] = React.useState<ParsedLog | null>(null);
+  const [modalSearchQuery, setModalSearchQuery] = React.useState("");
 
   // Manual stock take submission modal state
   const [showSubmitModal, setShowSubmitModal] = React.useState(false);
@@ -61,9 +63,58 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
   const [endDate, setEndDate] = React.useState("");
   const [selectedBrand, setSelectedBrand] = React.useState("all");
 
+  // As of Date filter for Inventory & Stock Levels tab
+  // Defaults to today's date in YYYY-MM-DD (Singapore time)
+  const getTodaySgString = () => {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Singapore",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit"
+    }).format(new Date());
+  };
+
+  const [asOfDate, setAsOfDate] = React.useState<string>(getTodaySgString);
+  const [asOfPreset, setAsOfPreset] = React.useState<"today" | "yesterday" | "last_week" | "custom">("today");
+
+  const handleSelectAsOfPreset = (preset: "today" | "yesterday" | "last_week") => {
+    setAsOfPreset(preset);
+    const now = new Date();
+    if (preset === "today") {
+      setAsOfDate(getTodaySgString());
+    } else if (preset === "yesterday") {
+      const y = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      setAsOfDate(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit" }).format(y));
+    } else if (preset === "last_week") {
+      const lw = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setAsOfDate(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Singapore", year: "numeric", month: "2-digit", day: "2-digit" }).format(lw));
+    }
+  };
+
+  // Convert asOfDate to end-of-day epoch in Singapore timezone (23:59:59.999)
+  const asOfDateEndEpoch = React.useMemo(() => {
+    if (!asOfDate) return Infinity;
+    const endDay = new Date(`${asOfDate}T23:59:59.999+08:00`);
+    return isNaN(endDay.getTime()) ? Infinity : endDay.getTime();
+  }, [asOfDate]);
+
+  // Formatted display string for asOfDate (dd/mm/yyyy)
+  const asOfDateDisplay = React.useMemo(() => {
+    if (!asOfDate) return "";
+    const parts = asOfDate.split("-");
+    if (parts.length === 3) {
+      return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return asOfDate;
+  }, [asOfDate]);
+
+  const isTodaySelected = React.useMemo(() => {
+    return asOfDate === getTodaySgString();
+  }, [asOfDate]);
+
   const tabsListItems = React.useMemo(() => [
     { id: "stock", label: "Current Stock Levels" },
-    { id: "logs", label: "Audit Logs History" }
+    { id: "logs", label: "Stock Take History" }
   ], []);
 
   // Get latest log date formatted as dd/mm/yyyy
@@ -562,14 +613,17 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
     }
   };
 
-  // Compute Current Stock levels: products grouped by combined brand, with latest stock take quantity & deductions
+  // Compute Current Stock levels: products grouped by combined brand, with latest stock take quantity & deductions as of selected date
   const currentStockLevels = React.useMemo(() => {
-    // 1. Map SKU -> latest count info (newest count overrides older count)
+    // 1. Map SKU -> latest count info on or before asOfDateEndEpoch (newest count overrides older count)
     const latestCounts: Record<string, { qty: number; timestamp: number; dateStr: string; auditorId: string; skipped: boolean }> = {};
 
     // Sort logs oldest to newest so that newer ones overwrite older ones
     const sortedLogsAsc = [...logs].sort((a, b) => a.timestamp - b.timestamp);
     sortedLogsAsc.forEach(log => {
+      // If a historical as-of-date is selected, only consider stock take audits up to that date
+      if (log.timestamp > asOfDateEndEpoch) return;
+
       log.items.forEach(item => {
         if (item.sku) {
           const normSku = String(item.sku).trim().toLowerCase();
@@ -682,7 +736,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
               deliveredTs = Number(order.timestamp) || 0;
             }
 
-            if (deliveredTs > count.timestamp) {
+            if (deliveredTs > count.timestamp && deliveredTs <= asOfDateEndEpoch) {
               try {
                 const items = typeof order.items === "string" ? JSON.parse(order.items) : (order.items || []);
                 if (Array.isArray(items)) {
@@ -704,7 +758,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
           const act = String(m.action_type || m.reference?.action_type || m.reference?.action || "").trim().toLowerCase();
           if (act.includes("out") || act.includes("transfer")) {
             const moveTs = Number(m.timestamp) || 0;
-            if (moveTs > count.timestamp) {
+            if (moveTs > count.timestamp && moveTs <= asOfDateEndEpoch) {
               try {
                 const mItems = Array.isArray(m.items) ? m.items : (typeof m.items === "string" ? JSON.parse(m.items) : []);
                 if (Array.isArray(mItems)) {
@@ -783,7 +837,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
     });
 
     return sortedGroups;
-  }, [logs, products, brands, trackOrders, stockMovements, searchQuery, selectedBrand, lookupUser]);
+  }, [logs, products, brands, trackOrders, stockMovements, searchQuery, selectedBrand, asOfDateEndEpoch, lookupUser]);
 
   // Filter logs based on inputs (for history tab)
   const filteredLogs = React.useMemo(() => {
@@ -820,18 +874,21 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       actions: (
         <button
           type="button"
-          onClick={() => setSelectedLog(log)}
+          onClick={() => {
+            setSelectedLog(log);
+            setModalSearchQuery("");
+          }}
           className="hover:text-blue-800 hover:underline inline-flex items-center gap-1.5 font-bold cursor-pointer text-blue-600 bg-transparent border-0 p-0 focus:outline-none text-[11px]"
         >
           <Eye size={13} className="text-blue-500" />
-          <span>View Details</span>
+          <span>View Stock Take</span>
         </button>
       )
     }));
   }, [filteredLogs, lookupUser]);
 
-  // Print function helper: simple stock count sheet
-  const generatePrintReport = (stockLevels: typeof currentStockLevels) => {
+  // Print function helper: generate A4 Stock Count Sheet PDF blob and open in new tab
+  const generatePrintReport = (stockLevels: typeof currentStockLevels, customTitle?: string, customMetaDate?: string) => {
     // Flatten and sort products by Category, then Brand Name, then Brand ID, then SKU
     const allItems: Array<{
       sku: string;
@@ -868,179 +925,155 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       return a.sku.localeCompare(b.sku, undefined, { numeric: true });
     });
 
-    const rowsHtml = allItems.map((item, idx) => {
-      const systemQtyText = `${item.hasRecord ? item.qty : 0} pcs`;
-      return `
-        <tr>
-          <td class="col-num">${idx + 1}</td>
-          <td class="col-sku font-mono">${item.sku}</td>
-          <td class="col-desc">${item.name}</td>
-          <td class="col-sys-qty text-right font-mono">${systemQtyText}</td>
-          <td class="col-actual-qty"></td>
-        </tr>
-      `;
-    }).join("");
+    const doc = new jsPDF({
+      orientation: "portrait",
+      unit: "mm",
+      format: "a4"
+    });
 
-    const printDate = new Date().toLocaleDateString("en-GB", {
+    const reportTitle = customTitle || "HSG Global - Stock Count Sheet";
+    const dateLabel = customMetaDate || (isTodaySelected ? `Current (${asOfDateDisplay})` : `As of ${asOfDateDisplay}`);
+    const generatedOn = new Date().toLocaleDateString("en-GB", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric"
+    }) + " " + new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 12;
+    const contentWidth = pageWidth - margin * 2;
+
+    // Table Column Coordinates
+    const colNumW = 10;
+    const colSkuW = 34;
+    const colDescW = contentWidth - (colNumW + colSkuW + 28 + 26);
+    const colSysQtyW = 28;
+    const colActualQtyW = 26;
+
+    const colNumX = margin;
+    const colSkuX = colNumX + colNumW;
+    const colDescX = colSkuX + colSkuW;
+    const colSysQtyX = colDescX + colDescW;
+    const colActualQtyX = colSysQtyX + colSysQtyW;
+
+    const renderHeader = (isFirstPage: boolean) => {
+      // Header Branding
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(15, 23, 42);
+      doc.text(reportTitle, margin, 16);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Inventory Date: ${dateLabel}   |   Printed: ${generatedOn}`, margin, 21.5);
+      doc.text(`Total Items: ${allItems.length}`, pageWidth - margin, 21.5, { align: "right" });
+
+      // Divider
+      doc.setDrawColor(15, 23, 42);
+      doc.setLineWidth(0.5);
+      doc.line(margin, 23.5, pageWidth - margin, 23.5);
+
+      // Table Column Headers
+      const thY = 25.5;
+      const thH = 6.5;
+      doc.setFillColor(241, 245, 249);
+      doc.rect(margin, thY, contentWidth, thH, "F");
+
+      doc.setDrawColor(203, 213, 225);
+      doc.setLineWidth(0.2);
+      doc.rect(margin, thY, contentWidth, thH, "S");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+
+      doc.text("#", colNumX + colNumW / 2, thY + 4.5, { align: "center" });
+      doc.text("SKU", colSkuX + 1.5, thY + 4.5);
+      doc.text("DESCRIPTION", colDescX + 1.5, thY + 4.5);
+      doc.text("SYSTEM QTY", colSysQtyX + colSysQtyW - 2, thY + 4.5, { align: "right" });
+      doc.text("ACTUAL QTY", colActualQtyX + colActualQtyW / 2, thY + 4.5, { align: "center" });
+    };
+
+    renderHeader(true);
+
+    let curY = 32;
+    const rowH = 6.2;
+    const bottomLimit = pageHeight - 16;
+
+    allItems.forEach((item, idx) => {
+      if (curY + rowH > bottomLimit) {
+        doc.addPage();
+        renderHeader(false);
+        curY = 32;
+      }
+
+      // Alternating row background
+      if (idx % 2 === 1) {
+        doc.setFillColor(248, 250, 252);
+        doc.rect(margin, curY, contentWidth, rowH, "F");
+      }
+
+      // Cell border grid
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.15);
+      doc.rect(margin, curY, contentWidth, rowH, "S");
+
+      // Vertical separators
+      doc.line(colSkuX, curY, colSkuX, curY + rowH);
+      doc.line(colDescX, curY, colDescX, curY + rowH);
+      doc.line(colSysQtyX, curY, colSysQtyX, curY + rowH);
+      doc.line(colActualQtyX, curY, colActualQtyX, curY + rowH);
+
+      // Row content
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text(String(idx + 1), colNumX + colNumW / 2, curY + 4.3, { align: "center" });
+
+      doc.setFont("courier", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(item.sku, colSkuX + 1.5, curY + 4.3);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(30, 41, 59);
+      const truncatedName = doc.splitTextToSize(item.name || "Unknown Product", colDescW - 3)[0] || "";
+      doc.text(truncatedName, colDescX + 1.5, curY + 4.3);
+
+      const systemQtyText = `${item.hasRecord ? item.qty : 0} pcs`;
+      doc.setFont("courier", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text(systemQtyText, colSysQtyX + colSysQtyW - 2, curY + 4.3, { align: "right" });
+
+      curY += rowH;
     });
 
-    const printHtml = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>HSG Global - Stock Count Sheet</title>
-        <style>
-          @page {
-            size: A4 portrait;
-            margin: 12mm 10mm;
-          }
-          * {
-            box-sizing: border-box;
-          }
-          body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            color: #0f172a;
-            margin: 0;
-            padding: 0;
-            background-color: #ffffff;
-            line-height: 1.4;
-            font-size: 11px;
-          }
-          .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-end;
-            border-bottom: 2px solid #0f172a;
-            padding-bottom: 8px;
-            margin-bottom: 12px;
-          }
-          .header h1 {
-            font-size: 18px;
-            font-weight: 800;
-            margin: 0;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            color: #0f172a;
-          }
-          .header .meta {
-            font-size: 10px;
-            color: #475569;
-            font-weight: 600;
-            text-align: right;
-          }
-          table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 4px;
-          }
-          th, td {
-            border: 1px solid #cbd5e1;
-            padding: 6px 8px;
-            text-align: left;
-            vertical-align: middle;
-          }
-          th {
-            background-color: #f1f5f9;
-            color: #0f172a;
-            font-weight: 700;
-            text-transform: uppercase;
-            font-size: 9.5px;
-            letter-spacing: 0.5px;
-          }
-          .col-num {
-            width: 32px;
-            text-align: center;
-            color: #64748B;
-            font-size: 10px;
-          }
-          .col-sku {
-            width: 140px;
-            font-weight: 600;
-            color: #0f172a;
-          }
-          .col-desc {
-            color: #1e293b;
-          }
-          .col-sys-qty {
-            width: 110px;
-            font-weight: 700;
-            color: #0f172a;
-          }
-          .col-actual-qty {
-            width: 120px;
-            background-color: #ffffff;
-          }
-          .text-right {
-            text-align: right;
-          }
-          .font-mono {
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          }
-          tr:nth-child(even) td:not(.col-actual-qty) {
-            background-color: #f8fafc;
-          }
-          @media print {
-            body {
-              padding: 0;
-            }
-            tr {
-              page-break-inside: avoid;
-            }
-            thead {
-              display: table-header-group;
-            }
-          }
-        </style>
-      </head>
-      <body>
-        <div class="header">
-          <div>
-            <h1>HSG Global - Stock Count Sheet</h1>
-          </div>
-          <div class="meta">
-            <div>Printed Date: ${printDate}</div>
-            <div>Total Items: ${allItems.length}</div>
-          </div>
-        </div>
+    // Page numbering on every page
+    const totalPages = doc.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Page ${p} of ${totalPages}`, pageWidth / 2, pageHeight - 6, { align: "center" });
+    }
 
-        <table>
-          <thead>
-            <tr>
-              <th class="col-num">#</th>
-              <th class="col-sku">SKU</th>
-              <th class="col-desc">Description</th>
-              <th class="col-sys-qty text-right">System Qty</th>
-              <th class="col-actual-qty">Actual Qty</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rowsHtml}
-          </tbody>
-        </table>
-
-        <script>
-          window.onload = function() {
-            window.print();
-            window.onafterprint = function() {
-              window.close();
-            };
-          }
-        </script>
-      </body>
-      </html>
-    `;
-
-    const blob = new Blob([printHtml], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    window.open(url, "_blank");
+    // Output as Blob PDF and open directly in new tab
+    const pdfBlob = doc.output("blob");
+    const blobUrl = URL.createObjectURL(pdfBlob);
+    window.open(blobUrl, "_blank");
   };
 
-  // Handler to print overall current inventory status
+  // Handler to print overall inventory status as of the selected date
   const handlePrintStockReport = () => {
-    generatePrintReport(currentStockLevels);
+    const title = isTodaySelected
+      ? "HSG Global - Current Stock Count Sheet"
+      : `HSG Global - Stock Count Sheet (${asOfDateDisplay})`;
+    generatePrintReport(currentStockLevels, title, asOfDateDisplay);
   };
 
   // Handler to print a specific audit log from history
@@ -1098,7 +1131,8 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
     });
 
     const stockLevels = Object.values(groupsByName);
-    generatePrintReport(stockLevels);
+    const title = `Stock Take Report - ${log.dateStr} (${auditorName})`;
+    generatePrintReport(stockLevels, title, log.dateStr);
   };
 
   return (
@@ -1114,13 +1148,15 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-base font-bold text-zinc-950">
-            {subTab === "stock" ? "Inventory & Current Stock Levels" : "Stock Audit Records Database"}
+            {subTab === "stock" ? "Inventory & Current Stock Levels" : "Stock Take History"}
           </h1>
           <p className="text-xs text-zinc-500 mt-0.5">
             {subTab === "stock"
-              ? (latestLogDateStr 
-                  ? `Current stock is counted from the last physical stock take (${latestLogDateStr}), adjusted (+/-) for all subsequent stock movements.`
-                  : "Current stock is counted from the last physical stock take, adjusted (+/-) for all subsequent stock movements.")
+              ? (isTodaySelected
+                  ? (latestLogDateStr 
+                      ? `Stock as of today (${asOfDateDisplay}) counted from the last physical stock take (${latestLogDateStr}), adjusted (+/-) for subsequent movements.`
+                      : `Stock as of today (${asOfDateDisplay}) counted from physical stock takes, adjusted (+/-) for subsequent movements.`)
+                  : `Historical stock as of ${asOfDateDisplay} counted from physical stock takes up to that date, adjusted (+/-) for movements up to end of that day.`)
               : "Historical ledger of all manual and warehouse physical stock take counts."}
           </p>
         </div>
@@ -1132,10 +1168,10 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
               onClick={handlePrintStockReport}
               variant="secondary"
               className="h-8 px-3 text-xs rounded-lg border-slate-300 hover:bg-slate-50 text-zinc-800"
-              title="Print current stock inventory report"
+              title={`Print inventory report as of ${asOfDateDisplay}`}
             >
               <Printer className="w-3.5 h-3.5 mr-1 text-zinc-600" />
-              Print Report
+              Print Report (PDF)
             </CustomButton>
           )}
 
@@ -1154,14 +1190,78 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
       <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-2">
           {subTab === "stock" ? (
-            <div className="flex items-center gap-1.5 text-xs text-zinc-650">
-              <Info className="w-3.5 h-3.5 text-[#0B57D0] shrink-0" />
-              <span className="text-zinc-600 font-medium text-[11px] sm:text-xs">
-                Counted by <strong className="text-zinc-900 font-bold">last stock take</strong> and <strong className="text-zinc-900 font-bold">(+/-) movements</strong> recorded after stock take.
-              </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 text-xs text-zinc-600">
+                <CalendarDays className="w-3.5 h-3.5 text-[#0B57D0] shrink-0" />
+                <span className="font-semibold text-zinc-700">As of Date:</span>
+              </div>
+
+              {/* Quick Date Presets */}
+              <div className="inline-flex items-center rounded-md border border-slate-200 bg-white p-0.5 shadow-xs text-xs">
+                <button
+                  type="button"
+                  onClick={() => handleSelectAsOfPreset("today")}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors ${
+                    asOfPreset === "today"
+                      ? "bg-[#D3E3FD] text-[#041E49]"
+                      : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+                  }`}
+                >
+                  Today
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectAsOfPreset("yesterday")}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors ${
+                    asOfPreset === "yesterday"
+                      ? "bg-[#D3E3FD] text-[#041E49]"
+                      : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+                  }`}
+                >
+                  Yesterday
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectAsOfPreset("last_week")}
+                  className={`px-2.5 py-1 rounded text-xs font-semibold transition-colors ${
+                    asOfPreset === "last_week"
+                      ? "bg-[#D3E3FD] text-[#041E49]"
+                      : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100"
+                  }`}
+                >
+                  Last Week
+                </button>
+              </div>
+
+              {/* Date Picker Input */}
+              <div className="flex items-center gap-1">
+                <input
+                  type="date"
+                  value={asOfDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val) {
+                      setAsOfDate(val);
+                      setAsOfPreset("custom");
+                    }
+                  }}
+                  className="bg-white border border-zinc-300 rounded p-1.5 font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-8 text-xs shadow-xs"
+                />
+                {!isTodaySelected && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectAsOfPreset("today")}
+                    className="flex items-center gap-1 text-[11px] font-semibold text-[#0B57D0] hover:text-[#0842A0] px-1.5 py-1 rounded hover:bg-blue-50 transition-colors"
+                    title="Reset to today"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    Today
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
-            <span className="text-xs font-semibold text-zinc-700">Filter Logs:</span>
+            <span className="text-xs font-semibold text-zinc-700">Filter History:</span>
           )}
         </div>
 
@@ -1189,7 +1289,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
                 placeholder="Search Product / SKU..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-white border border-zinc-300 rounded p-1.5 pl-7 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-9"
+                className="w-full bg-white border border-zinc-300 rounded p-1.5 pl-7 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-8"
               />
               <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
             </div>
@@ -1198,7 +1298,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
             <select
               value={selectedBrand}
               onChange={(e) => setSelectedBrand(e.target.value)}
-              className="bg-white border border-zinc-300 rounded p-1.5 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-9"
+              className="bg-white border border-zinc-300 rounded p-1.5 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-8"
             >
               <option value="all">All Brands</option>
               {brandsList.map(b => (
@@ -1336,7 +1436,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
             <DataTable
               columns={columns}
               data={logsTableData}
-              title="Stock Audit Records"
+              title="Stock Take History"
               userRole="viewer"
               fetching={fetching}
               syncStatus={syncStatus}
@@ -1354,7 +1454,7 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
             <div className="flex items-center justify-between border-b border-zinc-200 pb-3">
               <div className="flex items-center gap-2 text-zinc-800">
                 <FileText size={18} className="text-blue-500" />
-                <h3 className="text-base font-bold">Audit Report Details</h3>
+                <h3 className="text-base font-bold">Stock Take Report Details</h3>
               </div>
               <button
                 type="button"
@@ -1377,6 +1477,27 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
               </div>
             </div>
 
+            {/* Modal Search Input */}
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search SKU, Product Name, Brand, or Category..."
+                value={modalSearchQuery}
+                onChange={(e) => setModalSearchQuery(e.target.value)}
+                className="w-full bg-white border border-zinc-300 rounded p-1.5 pl-7 pr-7 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 h-9"
+              />
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+              {modalSearchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setModalSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5 rounded cursor-pointer"
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+
             {/* Items Table */}
             <div className="flex-grow overflow-y-auto border border-zinc-200 rounded-lg">
               <table className="w-full text-left border-collapse">
@@ -1390,41 +1511,95 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200 text-xs">
-                  {selectedLog.items.map((item, idx) => {
-                    const prodInfo = lookupProduct(item.sku);
-                    const cartons = Math.floor(item.qty / prodInfo.uom);
-                    const loose = item.qty % prodInfo.uom;
-                    let displayQty = `${item.qty} pcs`;
-                    if (cartons > 0 && loose > 0) {
-                      displayQty = `${cartons} ctn, ${loose} pcs`;
-                    } else if (cartons > 0) {
-                      displayQty = `${cartons} ctn`;
+                  {(() => {
+                    // Enrich items with metadata for sorting and filtering
+                    const enrichedItems = selectedLog.items.map(item => {
+                      const prodInfo = lookupProduct(item.sku);
+                      const prod = products.find(p => String(p.sku || p.SKU || p.Code || "").trim().toLowerCase() === String(item.sku).trim().toLowerCase());
+                      const rawBrandId = prod ? String(prod.brands_id || prod["Brands ID"] || prod.Brands_ID || prod.brandId || "").trim() : "";
+                      const category = prodInfo.category || (prod ? String(
+                        prod.product_meta?.Category ||
+                        prod.product_meta?.category ||
+                        prod.category ||
+                        prod.Category ||
+                        ""
+                      ).trim() : "");
+                      return {
+                        ...item,
+                        prodInfo,
+                        rawBrandId,
+                        category
+                      };
+                    });
+
+                    // Sort items by Category -> Brand Name -> Brand ID -> SKU
+                    enrichedItems.sort((a, b) => {
+                      const catCompare = a.category.localeCompare(b.category, undefined, { sensitivity: "base" });
+                      if (catCompare !== 0) return catCompare;
+                      const brandCompare = (a.prodInfo.brand || "").localeCompare(b.prodInfo.brand || "", undefined, { sensitivity: "base" });
+                      if (brandCompare !== 0) return brandCompare;
+                      const brandIdCompare = (a.rawBrandId || "").localeCompare(b.rawBrandId || "", undefined, { numeric: true });
+                      if (brandIdCompare !== 0) return brandIdCompare;
+                      return a.sku.localeCompare(b.sku, undefined, { numeric: true });
+                    });
+
+                    // Filter by modal search query
+                    const query = modalSearchQuery.trim().toLowerCase();
+                    const filteredItems = query
+                      ? enrichedItems.filter(item => {
+                          const skuMatch = item.sku.toLowerCase().includes(query);
+                          const nameMatch = (item.prodInfo.name || "").toLowerCase().includes(query);
+                          const brandMatch = (item.prodInfo.brand || "").toLowerCase().includes(query);
+                          const catMatch = (item.category || "").toLowerCase().includes(query);
+                          return skuMatch || nameMatch || brandMatch || catMatch;
+                        })
+                      : enrichedItems;
+
+                    if (filteredItems.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={5} className="py-8 text-center text-zinc-400 italic">
+                            No matching items found for &quot;{modalSearchQuery}&quot;
+                          </td>
+                        </tr>
+                      );
                     }
 
-                    return (
-                      <tr key={idx} className="hover:bg-slate-50 text-zinc-800">
-                        <td className="py-2 px-4 text-zinc-600 font-medium">{item.sku}</td>
-                        <td className="py-2 px-4 max-w-[200px] truncate text-zinc-900" title={prodInfo.name}>
-                          {prodInfo.name}
-                        </td>
-                        <td className="py-2 px-4 text-zinc-500">{prodInfo.brand}</td>
-                        <td className={`py-2 px-4 text-right ${item.skipped ? "text-red-600 font-medium" : "text-zinc-800"}`}>{displayQty}</td>
-                        <td className="py-2 px-4 text-center">
-                          {item.skipped ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] text-amber-600 font-bold">
-                              <AlertCircle size={10} />
-                              <span>Skipped</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-600 font-bold">
-                              <CheckCircle2 size={10} />
-                              <span>Counted</span>
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
+                    return filteredItems.map((item, idx) => {
+                      const cartons = Math.floor(item.qty / item.prodInfo.uom);
+                      const loose = item.qty % item.prodInfo.uom;
+                      let displayQty = `${item.qty} pcs`;
+                      if (cartons > 0 && loose > 0) {
+                        displayQty = `${cartons} ctn, ${loose} pcs`;
+                      } else if (cartons > 0) {
+                        displayQty = `${cartons} ctn`;
+                      }
+
+                      return (
+                        <tr key={idx} className="hover:bg-slate-50 text-zinc-800">
+                          <td className="py-2 px-4 text-zinc-600 font-medium">{item.sku}</td>
+                          <td className="py-2 px-4 max-w-[200px] truncate text-zinc-900" title={item.prodInfo.name}>
+                            {item.prodInfo.name}
+                          </td>
+                          <td className="py-2 px-4 text-zinc-500">{item.prodInfo.brand}</td>
+                          <td className={`py-2 px-4 text-right ${item.skipped ? "text-red-600 font-medium" : "text-zinc-800"}`}>{displayQty}</td>
+                          <td className="py-2 px-4 text-center">
+                            {item.skipped ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-[10px] text-amber-600 font-bold">
+                                <AlertCircle size={10} />
+                                <span>Skipped</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-[10px] text-emerald-600 font-bold">
+                                <CheckCircle2 size={10} />
+                                <span>Counted</span>
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>

@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { FeatureCard } from "../feature-card";
+import { ActivationModule } from "../modules/ActivationModule";
 import { PromoterModule } from "../modules/PromoterModule";
 import { MerchandiserModule } from "../modules/MerchandiserModule";
 import { TaskModule } from "../modules/TaskModule";
@@ -107,6 +108,8 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
 
   const renderActiveSubModule = () => {
     switch (activeSubModule) {
+      case "Activation":
+        return <ActivationModule profile={profile} />;
       case "Promoter":
         return <PromoterModule profile={profile} />;
       case "Merchandiser":

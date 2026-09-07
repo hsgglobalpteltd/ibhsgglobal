@@ -38,7 +38,11 @@ import {
   HeartHandshake,
   Calculator,
   Delete,
-  Equal
+  Equal,
+  Calendar,
+  MapPin,
+  ChevronDown,
+  Check
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 
@@ -103,6 +107,11 @@ export default function POSCashierTerminal() {
   const [pinInput, setPinInput] = React.useState<string>("");
   const [pinVerifying, setPinVerifying] = React.useState<boolean>(false);
   const [pinError, setPinError] = React.useState<string>("");
+
+  // Active Activation Session
+  const [activeActivation, setActiveActivation] = React.useState<any | null>(null);
+  const [availableActivations, setAvailableActivations] = React.useState<any[]>([]);
+  const [actSelectModalOpen, setActSelectModalOpen] = React.useState<boolean>(false);
 
   // Catalog & Inventory Data
   const [products, setProducts] = React.useState<POSProduct[]>([]);
@@ -238,13 +247,14 @@ export default function POSCashierTerminal() {
     }
   }, []);
 
-  // Fetch POS Catalog Products & Brand Promos
+  // Fetch POS Catalog Products, Brand Promos & Active Activation
   const loadProducts = React.useCallback(async () => {
     setLoadingProducts(true);
     try {
-      const [prodRes, promoRes] = await Promise.all([
+      const [prodRes, promoRes, actRes] = await Promise.all([
         fetch(`${WORKER_URL}/api/pos/products`),
-        fetch(`${WORKER_URL}/api/pos/brand-promos`)
+        fetch(`${WORKER_URL}/api/pos/brand-promos`),
+        fetch(`${WORKER_URL}/api/pos/activations`)
       ]);
 
       if (prodRes.ok) {
@@ -257,6 +267,42 @@ export default function POSCashierTerminal() {
         const promoList = await promoRes.json();
         const activePromos = Array.isArray(promoList) ? promoList.filter((pr: any) => pr.is_active !== false) : [];
         setBrandPromos(activePromos);
+      }
+
+      if (actRes.ok) {
+        const actList = await actRes.json();
+        
+        // Format today's date in Singapore/Local timezone YYYY-MM-DD
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, "0");
+        const day = String(now.getDate()).padStart(2, "0");
+        const todayStr = `${year}-${month}-${day}`;
+        
+        // Strict filter: only activations with status === "active", use_pos !== false, and today within [start_date, end_date]
+        const validActiveList = Array.isArray(actList) ? actList.filter((a: any) => {
+          if (a.status !== "active") return false;
+          if (a.use_pos === false) return false;
+          const start = a.start_date || "1970-01-01";
+          const end = a.end_date || a.start_date || "2099-12-31";
+          return todayStr >= start && todayStr <= end;
+        }) : [];
+
+        setAvailableActivations(validActiveList);
+
+        // Check if there is a saved selected activation in sessionStorage/localStorage
+        const savedActId = sessionStorage.getItem("pos_selected_act_id");
+        let matched = validActiveList.find((a: any) => a.id === savedActId);
+        
+        // Default to first valid activation if none matched or if only 1 exists
+        if (!matched && validActiveList.length > 0) {
+          matched = validActiveList[0];
+          sessionStorage.setItem("pos_selected_act_id", matched.id);
+        } else if (validActiveList.length === 0) {
+          sessionStorage.removeItem("pos_selected_act_id");
+        }
+
+        setActiveActivation(matched || null);
       }
     } catch (err: any) {
       showToast("Failed to load POS catalog: " + err.message, "error");
@@ -446,6 +492,11 @@ export default function POSCashierTerminal() {
 
   // Add Item to Cart with Stock Limit Enforcement
   const handleAddToCart = (product: POSProduct) => {
+    if (!activeActivation) {
+      showToast("Cannot add items: No active Event Activation found. Please create an activation first in Admin.", "warning");
+      return;
+    }
+
     const availableStock = Number(product.stock_allocated) || 0;
     
     if (availableStock <= 0) {
@@ -785,6 +836,7 @@ export default function POSCashierTerminal() {
 
     const payload = {
       id: orderId,
+      activation_id: activeActivation?.id || "",
       cashier_id: cashier?.id || "admin",
       cashier_name: cashier?.name || "Cashier",
       items: cart,
@@ -965,12 +1017,6 @@ export default function POSCashierTerminal() {
           <p style="margin: 0;">Thank you for shopping with us!</p>
           <p style="margin: 2px 0 0 0;">Please keep this receipt for verification.</p>
         </div>
-        <script>
-          window.onload = function() {
-            window.print();
-            window.onafterprint = function() { window.close(); }
-          }
-        </script>
       </body>
       </html>
     `;
@@ -1215,6 +1261,54 @@ export default function POSCashierTerminal() {
       <div className="flex-1 flex overflow-hidden min-h-0">
         {/* LEFT COLUMN: CATALOG CANVAS */}
         <main className="flex-1 flex flex-col overflow-hidden min-h-0 border-r border-slate-200">
+          {/* Active Event Activation Indicator Banner */}
+          {activeActivation ? (
+            <div className="px-4 py-2 bg-blue-50/80 border-b border-blue-200 flex items-center justify-between gap-3 text-xs shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#0B57D0] animate-pulse shrink-0" />
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-bold text-[#0B57D0] text-sm">{activeActivation.name}</span>
+                  <span className="font-mono text-[10px] bg-blue-100/70 text-[#0B57D0] px-1.5 py-0.2 rounded border border-blue-200">{activeActivation.id}</span>
+                  {activeActivation.location && (
+                    <span className="text-zinc-500 text-xs flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
+                      <span>{activeActivation.location}</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-zinc-600 font-medium">
+                  {activeActivation.start_date === activeActivation.end_date || !activeActivation.end_date
+                    ? activeActivation.start_date
+                    : `${activeActivation.start_date} → ${activeActivation.end_date}`}
+                </span>
+                
+                {availableActivations.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setActSelectModalOpen(true)}
+                    className="px-2 py-1 bg-white hover:bg-slate-100 border border-blue-300 text-[#0B57D0] font-bold text-xs rounded-md shadow-2xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>Switch Event ({availableActivations.length})</span>
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center justify-between gap-3 text-xs shrink-0">
+              <div className="flex items-center gap-2 text-amber-800 font-bold">
+                <Lock className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>No Active Event Activation for Today — POS Sales Locked</span>
+              </div>
+              <span className="text-[11px] text-amber-700 font-medium">
+                POS only functions during scheduled active activation dates. Create or activate an event in Frontline &gt; Activation.
+              </span>
+            </div>
+          )}
+
           {/* Search Bar & Barcode Scanner Integration */}
           <div className="p-3 bg-white border-b border-slate-200 flex items-center gap-3 shrink-0">
             <div className="relative flex-1">
@@ -1225,7 +1319,8 @@ export default function POSCashierTerminal() {
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
-                className="w-full pl-10 pr-4 py-2.5 bg-[#F8F9FA] border border-slate-200 rounded-xl text-xs font-semibold text-zinc-900 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                disabled={!activeActivation}
+                className="w-full pl-10 pr-4 py-2.5 bg-[#F8F9FA] border border-slate-200 rounded-xl text-xs font-semibold text-zinc-900 focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] disabled:opacity-50"
               />
             </div>
           </div>
@@ -1280,14 +1375,15 @@ export default function POSCashierTerminal() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                 {sortedProducts.map((p) => {
                   const hasStock = p.stock_allocated > 0;
+                  const canAdd = hasStock && !!activeActivation;
                   return (
                     <button
                       key={p.sku}
                       type="button"
                       onClick={() => handleAddToCart(p)}
-                      disabled={!hasStock}
+                      disabled={!canAdd}
                       className={`group bg-white rounded-xl border p-3 shadow-2xs transition-all flex flex-col text-left relative overflow-hidden ${
-                        hasStock 
+                        canAdd 
                           ? "border-slate-200 hover:border-[#0B57D0]/60 hover:shadow-md cursor-pointer active:scale-98" 
                           : "border-slate-200 opacity-60 cursor-not-allowed bg-slate-50/70"
                       }`}
@@ -1354,7 +1450,10 @@ export default function POSCashierTerminal() {
                   <button
                     type="button"
                     onClick={() => handleAddAdjustment(1.00, "Tip / Rounding ($1.00)")}
-                    className="group bg-gradient-to-b from-blue-50/60 via-white to-blue-50/40 rounded-xl border-2 border-dashed border-[#0B57D0]/40 hover:border-[#0B57D0] p-3 shadow-2xs hover:shadow-md transition-all flex flex-col text-left cursor-pointer active:scale-98 relative overflow-hidden"
+                    disabled={!activeActivation}
+                    className={`group bg-gradient-to-b from-blue-50/60 via-white to-blue-50/40 rounded-xl border-2 border-dashed border-[#0B57D0]/40 hover:border-[#0B57D0] p-3 shadow-2xs hover:shadow-md transition-all flex flex-col text-left active:scale-98 relative overflow-hidden ${
+                      activeActivation ? "cursor-pointer" : "opacity-50 cursor-not-allowed"
+                    }`}
                   >
                     <div className="w-full aspect-square rounded-lg bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex flex-col items-center justify-center overflow-hidden mb-2 text-[#0B57D0]">
                       <span className="text-3xl font-black font-mono tracking-tight group-hover:scale-110 transition-transform drop-shadow-xs">
@@ -1387,7 +1486,10 @@ export default function POSCashierTerminal() {
                   <button
                     type="button"
                     onClick={() => handleAddAdjustment(0.01, "Tip / Rounding (1¢)")}
-                    className="group bg-gradient-to-b from-blue-50/60 via-white to-blue-50/40 rounded-xl border-2 border-dashed border-[#0B57D0]/40 hover:border-[#0B57D0] p-3 shadow-2xs hover:shadow-md transition-all flex flex-col text-left cursor-pointer active:scale-98 relative overflow-hidden"
+                    disabled={!activeActivation}
+                    className={`group bg-gradient-to-b from-blue-50/60 via-white to-blue-50/40 rounded-xl border-2 border-dashed border-[#0B57D0]/40 hover:border-[#0B57D0] p-3 shadow-2xs hover:shadow-md transition-all flex flex-col text-left active:scale-98 relative overflow-hidden ${
+                      activeActivation ? "cursor-pointer" : "opacity-50 cursor-not-allowed"
+                    }`}
                   >
                     <div className="w-full aspect-square rounded-lg bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex flex-col items-center justify-center overflow-hidden mb-2 text-[#0B57D0]">
                       <span className="text-3xl font-black font-mono tracking-tight group-hover:scale-110 transition-transform drop-shadow-xs">
@@ -2611,6 +2713,88 @@ export default function POSCashierTerminal() {
               >
                 <Maximize className="w-4 h-4" />
                 <span>Go Fullscreen</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 10. SELECT / SWITCH EVENT ACTIVATION MODAL */}
+      {actSelectModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[1.5px] flex items-center justify-center p-4 font-primary animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden flex flex-col p-6 gap-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950 flex items-center gap-1.5">
+                  <Calendar className="w-4 h-4 text-[#0B57D0]" />
+                  Select Event Activation
+                </h3>
+                <p className="text-xs text-zinc-500">Multiple active activations scheduled for today. Choose the event this POS terminal is servicing.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActSelectModalOpen(false)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-zinc-400 hover:text-zinc-600 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2 max-h-72 overflow-y-auto">
+              {availableActivations.map((act) => {
+                const isSelected = activeActivation?.id === act.id;
+                return (
+                  <button
+                    key={act.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveActivation(act);
+                      sessionStorage.setItem("pos_selected_act_id", act.id);
+                      setActSelectModalOpen(false);
+                      showToast(`POS Terminal switched to: ${act.name}`, "success");
+                    }}
+                    className={`p-3 rounded-xl border text-left flex items-start justify-between gap-3 transition-all cursor-pointer ${
+                      isSelected
+                        ? "bg-blue-50/70 border-[#0B57D0] shadow-xs"
+                        : "bg-white border-slate-200 hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-[10px] text-zinc-400 font-semibold">{act.id}</span>
+                        <span className="font-bold text-xs text-zinc-900">{act.name}</span>
+                      </div>
+                      {act.location && (
+                        <span className="text-[11px] text-zinc-500 flex items-center gap-1">
+                          <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
+                          <span>{act.location}</span>
+                        </span>
+                      )}
+                      <span className="text-[10px] text-zinc-400 mt-1">
+                        Dates: {act.start_date} {act.end_date !== act.start_date && `→ ${act.end_date}`}
+                      </span>
+                    </div>
+
+                    {isSelected ? (
+                      <span className="p-1 bg-[#0B57D0] text-white rounded-full shrink-0">
+                        <Check className="w-3 h-3 stroke-[3]" />
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-semibold text-[#0B57D0] shrink-0 self-center">
+                        Select
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setActSelectModalOpen(false)}
+                className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-bold text-xs rounded-xl"
+              >
+                Close
               </button>
             </div>
           </div>
