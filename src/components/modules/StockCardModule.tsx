@@ -18,9 +18,9 @@ import {
   Clock, 
   Filter, 
   X, 
-  ChevronRight,
-  Sparkles,
-  ArrowUpDown
+  ArrowUpDown,
+  Link2,
+  ExternalLink
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "../custom-button";
@@ -115,6 +115,20 @@ interface MovementEventRow {
   outQty: number;
   handledBy: string;
   destinationOrRemark: string;
+  sourceModule: "Manage Stock" | "Track Order" | "Synced (Stock & Track Order)";
+  sourceId: string;
+  traceDetails?: {
+    origin: string;
+    actionType: string;
+    millionDocRef: string;
+    refNo: string;
+    deliverTo?: string;
+    poscode?: string;
+    driverOrCreator: string;
+    status: string;
+    syncedTrackOrder?: boolean;
+    syncedStockMovement?: boolean;
+  };
 }
 
 // Calculate the start (Sunday 00:00:00) and end (Saturday 23:59:59) of the current week
@@ -228,6 +242,9 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
   const [sortField, setSortField] = React.useState<string>("sku");
   const [sortDirection, setSortDirection] = React.useState<"asc" | "desc">("asc");
 
+  // Selected Movement Event for Trace Details Popup Card
+  const [tracingEvent, setTracingEvent] = React.useState<MovementEventRow | null>(null);
+
   // Load live data from endpoints
   const loadData = React.useCallback(async () => {
     setLoading(true);
@@ -248,8 +265,8 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         const pData = await prodRes.json();
         const rawList = Array.isArray(pData) ? pData : [];
         const activeOnly = rawList.filter((p: any) => {
-          const st = String(p.status || p.Status || "Active").trim().toLowerCase();
-          return st === "active";
+          const s = String(p.status || p.Status || "Active").toLowerCase();
+          return s === "active";
         });
         setProducts(activeOnly);
       }
@@ -264,8 +281,8 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         setTrackOrders(Array.isArray(toData) ? toData : []);
       }
     } catch (err: any) {
-      console.error("Failed to load stock card data:", err);
-      showToast("Failed to fetch stock card data: " + err.message, "error");
+      console.error(err);
+      showToast("Error loading stock card data: " + err.message, "error");
     } finally {
       setLoading(false);
     }
@@ -285,41 +302,22 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
     return () => window.removeEventListener("db-refresh", handleDbRefresh);
   }, [loadData]);
 
-  // Brand Metadata Map
-  const brandMap = React.useMemo(() => {
-    const map: Record<string, { id: string; name: string; rank: number }> = {};
-    brands.forEach((b) => {
-      const bId = String(b.id || "").trim();
-      if (!bId) return;
-      const bName = String(b.display_name || b.name || bId).trim();
-      const bRank = Number(b.rank || 999);
-      map[bId.toLowerCase()] = {
-        id: bId,
-        name: bName,
-        rank: isNaN(bRank) ? 999 : bRank
-      };
-    });
-    return map;
-  }, [brands]);
-
-  // Product Lookup Map (SKU lowercase -> Active Product Info)
+  // Map of active products by lowercase SKU
   const productMap = React.useMemo(() => {
     const map: Record<string, { sku: string; name: string; brandName: string; brandRank: number; uom: number }> = {};
-    products.forEach((p) => {
-      const status = String(p.status || p.Status || "Active").trim().toLowerCase();
-      if (status !== "active") return;
+    const brandMap = new Map(brands.map((b) => [b.id, b]));
 
+    products.forEach((p) => {
       const sku = String(p.sku || p.SKU || p.Code || "").trim();
       if (!sku) return;
-      const normSku = sku.toLowerCase();
-      const rawBrandId = String(p.brands_id || p.brandId || "").trim();
-      const bMeta = brandMap[rawBrandId.toLowerCase()];
-      const brandName = bMeta ? bMeta.name : (rawBrandId || "Unbranded");
-      const brandRank = bMeta ? bMeta.rank : 999;
-      const name = p.display_name || p.name || p.productName || sku;
-      const uom = Number(p.carton || p.uom) || 1;
 
-      map[normSku] = {
+      const name = p.display_name || p.name || p.Title || p.Item_Description || sku;
+      const brandObj = brandMap.get(p.brands_id || "");
+      const brandName = brandObj?.display_name || brandObj?.name || "Other";
+      const brandRank = Number(brandObj?.rank || 999);
+      const uom = Number(p.carton || p.uom || 1) || 1;
+
+      map[sku.toLowerCase()] = {
         sku,
         name,
         brandName,
@@ -327,66 +325,56 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         uom
       };
     });
+
     return map;
-  }, [products, brandMap]);
+  }, [products, brands]);
 
-  // Unique Brand Options extracted ONLY from active products, deduplicated by name, sorted alphabetically (A-Z)
+  // Unique list of active brands for filter dropdown
   const activeBrandOptions = React.useMemo(() => {
-    const brandNameSet = new Set<string>();
-    Object.values(productMap).forEach((p) => {
-      const name = p.brandName.trim();
-      if (name && name !== "-" && name.toLowerCase() !== "none") {
-        brandNameSet.add(name);
-      }
-    });
-
-    const list = Array.from(brandNameSet);
-    list.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
-    return list;
+    const set = new Set<string>();
+    Object.values(productMap).forEach((p) => set.add(p.brandName));
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
   }, [productMap]);
 
-  // Preset Date Handlers
+  // Preset Date Selection Handler
   const handleSelectPreset = (preset: "current_week" | "last_week" | "this_month") => {
     setDatePreset(preset);
     if (preset === "current_week") {
-      const r = getCurrentWeekRange();
-      setStartDate(r.start);
-      setEndDate(r.end);
+      const { start, end } = getCurrentWeekRange();
+      setStartDate(start);
+      setEndDate(end);
     } else if (preset === "last_week") {
-      const r = getLastWeekRange();
-      setStartDate(r.start);
-      setEndDate(r.end);
+      const { start, end } = getLastWeekRange();
+      setStartDate(start);
+      setEndDate(end);
     } else if (preset === "this_month") {
-      const r = getThisMonthRange();
-      setStartDate(r.start);
-      setEndDate(r.end);
+      const { start, end } = getThisMonthRange();
+      setStartDate(start);
+      setEndDate(end);
     }
   };
 
-  // Date Range Bounds in Epoch Milliseconds (Singapore GMT+8)
+  // Convert start and end dates to Unix epoch boundaries (UTC+8)
   const { startEpoch, endEpoch } = React.useMemo(() => {
-    let start = 0;
-    let end = Infinity;
-
-    if (startDate) {
-      const s = new Date(`${startDate}T00:00:00+08:00`);
-      if (!isNaN(s.getTime())) start = s.getTime();
+    if (!startDate || !endDate) {
+      return { startEpoch: 0, endEpoch: Infinity };
     }
-    if (endDate) {
-      const e = new Date(`${endDate}T23:59:59.999+08:00`);
-      if (!isNaN(e.getTime())) end = e.getTime();
-    }
-
+    const start = new Date(`${startDate}T00:00:00+08:00`).getTime();
+    const end = new Date(`${endDate}T23:59:59.999+08:00`).getTime();
     return { startEpoch: start, endEpoch: end };
   }, [startDate, endDate]);
 
   // ==========================================================================
-  // PARSE AND CLASSIFY ALL INVENTORY MOVEMENT TRANSACTIONS
+  // PARSE, CLASSIFY & DE-DUPLICATE ALL INVENTORY MOVEMENT TRANSACTIONS
   // ==========================================================================
   const allMovementEvents = React.useMemo<MovementEventRow[]>(() => {
     const events: MovementEventRow[] = [];
 
-    // 1. Ingest stock_movement records (Read all records regardless of status)
+    // Map of normalized document ref / DO number -> Stock Movement record
+    // Used to automatically detect and de-duplicate if a DO exists in both Manage Stock & Track Orders
+    const stockMovementsByDocRef = new Map<string, StockMovementItem>();
+
+    // 1. Ingest stock_movement records
     stockMovements.forEach((m) => {
       const timestamp = Number(m.timestamp) || 0;
       if (timestamp < startEpoch || timestamp > endEpoch) return;
@@ -414,6 +402,11 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       const handledBy = m.create_by || "Warehouse";
       const destOrRemark = refObj.destination || refObj.remark || "-";
 
+      // Register doc ref for deduplication mapping
+      if (millionRef) {
+        stockMovementsByDocRef.set(millionRef.toLowerCase(), m);
+      }
+
       const rawItems = Array.isArray(m.items) ? m.items : (typeof m.items === "string" ? JSON.parse(m.items || "[]") : []);
       if (Array.isArray(rawItems)) {
         rawItems.forEach((it: any) => {
@@ -421,7 +414,6 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
           if (!skuRaw) return;
           const normSku = skuRaw.toLowerCase();
           const prodInfo = productMap[normSku];
-          // Skip items that are not active
           if (!prodInfo) return;
 
           const qty = Number(it.qty || it.quantity || 0) || 0;
@@ -441,16 +433,26 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
             inQty: eventCat === "IN" ? qty : 0,
             outQty: eventCat === "OUT" ? qty : 0,
             handledBy,
-            destinationOrRemark: destOrRemark
+            destinationOrRemark: destOrRemark,
+            sourceModule: "Manage Stock",
+            sourceId: m.id,
+            traceDetails: {
+              origin: "Manage Stock Movements",
+              actionType: m.action_type || "Stock Movement",
+              millionDocRef: millionRef || "-",
+              refNo: refNo,
+              driverOrCreator: handledBy,
+              status: m.status ? "Recorded in Million" : "Pending Record",
+              syncedStockMovement: true
+            }
           });
         });
       }
     });
 
-    // 2. Ingest track_orders records
+    // 2. Ingest track_orders records (with automatic deduplication)
     trackOrders.forEach((order) => {
       const orderType = String(order.type || "").trim().toLowerCase();
-      const status = String(order.status || "").trim().toLowerCase();
 
       // Timestamp resolution
       let orderTs = Number(order.delivered_at) || 0;
@@ -463,16 +465,11 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       const isReturn = orderType === "return" || orderType.includes("return");
       const hasCreditNote = Boolean(order.credit_note_number && String(order.credit_note_number).trim() !== "");
 
-      // RULE: Return orders are Stock In ONLY if credit note is present.
-      // Non-return orders are Stock Out (Delivery Order).
       let eventType: MovementEventRow["type"] = "DO Delivery";
       let eventCat: "IN" | "OUT" = "OUT";
 
       if (isReturn) {
-        if (!hasCreditNote) {
-          // Ignored: pending verification / no credit note
-          return;
-        }
+        if (!hasCreditNote) return; // Ignored: pending credit note
         eventType = "Return (Credit Note)";
         eventCat = "IN";
       } else {
@@ -480,9 +477,6 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         eventCat = "OUT";
       }
 
-      // Million Ref Number:
-      // - For Delivery Orders: Display invoice_number if present, else do_number
-      // - For Return Orders: Display credit_note_number
       const millionRef = isReturn 
         ? cleanRefNumber(order.credit_note_number)
         : (cleanRefNumber(order.invoice_number) || cleanRefNumber(order.do_number || order.id));
@@ -490,6 +484,37 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       const refNo = isReturn ? (cleanRefNumber(order.credit_note_number) || cleanRefNumber(order.ref_number) || "-") : (cleanRefNumber(order.ref_number) || "-");
       const handledBy = order.driver || "Driver Dispatch";
       const destOrRemark = order.deliver_to || order.poscode || "-";
+
+      // --- DEDUPLICATION CHECK ---
+      // Check if this DO Number / Invoice Number was already ingested via Manage Stock (stock_movement)
+      const doKey = cleanRefNumber(order.do_number).toLowerCase();
+      const invKey = cleanRefNumber(order.invoice_number).toLowerCase();
+      const cnKey = cleanRefNumber(order.credit_note_number).toLowerCase();
+
+      const matchingSM = (doKey && stockMovementsByDocRef.get(doKey)) || 
+                         (invKey && stockMovementsByDocRef.get(invKey)) ||
+                         (cnKey && stockMovementsByDocRef.get(cnKey));
+
+      if (matchingSM) {
+        // Already recorded in Manage Stock! Update matching events to display "DO Delivery" and show synced status
+        events.forEach((ev) => {
+          if (ev.sourceId === matchingSM.id) {
+            ev.type = isReturn ? "Return (Credit Note)" : "DO Delivery";
+            ev.sourceModule = "Synced (Stock & Track Order)";
+            if (destOrRemark && destOrRemark !== "-") {
+              ev.destinationOrRemark = destOrRemark;
+            }
+            if (ev.traceDetails) {
+              ev.traceDetails.syncedTrackOrder = true;
+              ev.traceDetails.origin = isReturn ? "Synced Return (Credit Note)" : "Synced Delivery Order (DO Delivery)";
+              ev.traceDetails.deliverTo = order.deliver_to;
+              ev.traceDetails.poscode = order.poscode;
+              if (order.driver) ev.traceDetails.driverOrCreator = `${ev.traceDetails.driverOrCreator} • Driver: ${order.driver}`;
+            }
+          }
+        });
+        return; // SKIP creating duplicate event
+      }
 
       let rawItems: any[] = [];
       try {
@@ -504,7 +529,6 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
           if (!skuRaw) return;
           const normSku = skuRaw.toLowerCase();
           const prodInfo = productMap[normSku];
-          // Skip items that are not active
           if (!prodInfo) return;
 
           const qty = Number(it.qty || it.quantity || 0) || 0;
@@ -524,7 +548,20 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
             inQty: eventCat === "IN" ? qty : 0,
             outQty: eventCat === "OUT" ? qty : 0,
             handledBy,
-            destinationOrRemark: destOrRemark
+            destinationOrRemark: destOrRemark,
+            sourceModule: "Track Order",
+            sourceId: order.id,
+            traceDetails: {
+              origin: "Track Order (Delivery Order)",
+              actionType: order.type || "DO Delivery",
+              millionDocRef: millionRef || "-",
+              refNo: refNo,
+              deliverTo: order.deliver_to,
+              poscode: order.poscode,
+              driverOrCreator: order.driver || "Driver Dispatch",
+              status: order.status || "Delivered",
+              syncedTrackOrder: true
+            }
           });
         });
       }
@@ -903,55 +940,51 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
 
       </div>
 
-      {/* 3. KPI SUMMARY STATS CARDS */}
-      <div className="px-4 py-3 bg-slate-50/60 border-b border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-3 shrink-0">
+      {/* 3. KPI SUMMARY STATS (COMPACT STRIP) */}
+      <div className="px-4 py-2 bg-slate-50/50 border-b border-slate-200 grid grid-cols-1 sm:grid-cols-3 gap-2.5 shrink-0">
         
         {/* Total IN */}
-        <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
+        <div className="bg-white border border-slate-200 rounded-md px-3 py-1.5 shadow-2xs flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">
+            <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block">
               Total Stock In
             </span>
-            <span className="text-lg font-bold text-emerald-700 mt-0.5 block tabular-nums">
-              +{totalInSum.toLocaleString()} <span className="text-xs font-normal text-zinc-400">pcs</span>
+            <span className="text-sm font-bold text-zinc-900 mt-0.5 block tabular-nums">
+              +{totalInSum.toLocaleString()} <span className="text-[10px] font-normal text-zinc-400">pcs</span>
             </span>
           </div>
-          <div className="w-8 h-8 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-            <ArrowDownLeft className="w-4 h-4" />
+          <div className="w-6 h-6 rounded-full bg-slate-100 text-[#0B57D0] flex items-center justify-center">
+            <ArrowDownLeft className="w-3.5 h-3.5" />
           </div>
         </div>
 
         {/* Total OUT */}
-        <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
+        <div className="bg-white border border-slate-200 rounded-md px-3 py-1.5 shadow-2xs flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">
+            <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block">
               Total Stock Out
             </span>
-            <span className="text-lg font-bold text-rose-700 mt-0.5 block tabular-nums">
-              -{totalOutSum.toLocaleString()} <span className="text-xs font-normal text-zinc-400">pcs</span>
+            <span className="text-sm font-bold text-zinc-900 mt-0.5 block tabular-nums">
+              -{totalOutSum.toLocaleString()} <span className="text-[10px] font-normal text-zinc-400">pcs</span>
             </span>
           </div>
-          <div className="w-8 h-8 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
-            <ArrowUpRight className="w-4 h-4" />
+          <div className="w-6 h-6 rounded-full bg-slate-100 text-zinc-600 flex items-center justify-center">
+            <ArrowUpRight className="w-3.5 h-3.5" />
           </div>
         </div>
 
         {/* Net Flow */}
-        <div className="bg-white border border-slate-200 rounded-lg p-3 shadow-2xs flex items-center justify-between">
+        <div className="bg-white border border-slate-200 rounded-md px-3 py-1.5 shadow-2xs flex items-center justify-between">
           <div>
-            <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider block">
+            <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block">
               Net Movement
             </span>
-            <span className={`text-lg font-bold mt-0.5 block tabular-nums ${
-              netFlowSum > 0 ? "text-emerald-700" : netFlowSum < 0 ? "text-rose-700" : "text-zinc-700"
-            }`}>
-              {netFlowSum > 0 ? `+${netFlowSum.toLocaleString()}` : netFlowSum.toLocaleString()} <span className="text-xs font-normal text-zinc-400">pcs</span>
+            <span className="text-sm font-bold text-zinc-900 mt-0.5 block tabular-nums">
+              {netFlowSum > 0 ? `+${netFlowSum.toLocaleString()}` : netFlowSum.toLocaleString()} <span className="text-[10px] font-normal text-zinc-400">pcs</span>
             </span>
           </div>
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
-            netFlowSum > 0 ? "bg-emerald-50 text-emerald-600" : netFlowSum < 0 ? "bg-rose-50 text-rose-600" : "bg-slate-100 text-zinc-500"
-          }`}>
-            <Repeat className="w-4 h-4" />
+          <div className="w-6 h-6 rounded-full bg-slate-100 text-zinc-600 flex items-center justify-center">
+            <Repeat className="w-3 h-3" />
           </div>
         </div>
 
@@ -1105,12 +1138,13 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
                   <th className="p-3 text-[11px] font-semibold text-emerald-700 text-right">IN (Qty)</th>
                   <th className="p-3 text-[11px] font-semibold text-rose-700 text-right">OUT (Qty)</th>
                   <th className="p-3 text-[11px] font-semibold text-zinc-600">Handled By / Destination</th>
+                  <th className="p-3 text-[11px] font-semibold text-zinc-600 text-center w-16">Trace</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-xs">
                 {loading ? (
                   <tr>
-                    <td colSpan={9} className="p-12 text-center text-zinc-500">
+                    <td colSpan={10} className="p-12 text-center text-zinc-500">
                       <div className="flex flex-col items-center justify-center gap-2">
                         <RefreshCw className="w-6 h-6 animate-spin text-[#0B57D0]" />
                         <span className="font-medium text-xs text-zinc-600">Loading transactions...</span>
@@ -1119,7 +1153,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
                   </tr>
                 ) : filteredMovementEvents.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="p-12 text-center text-zinc-400">
+                    <td colSpan={10} className="p-12 text-center text-zinc-400">
                       <div className="flex flex-col items-center justify-center gap-1.5">
                         <FileText className="w-7 h-7 text-zinc-300" />
                         <span className="font-medium text-sm text-zinc-600">No transaction records found.</span>
@@ -1193,6 +1227,18 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
                             <span className="text-zinc-500 text-[11px] ml-1.5">({ev.destinationOrRemark})</span>
                           )}
                         </td>
+
+                        {/* Trace Icon */}
+                        <td className="p-3 text-center">
+                          <button
+                            type="button"
+                            onClick={() => setTracingEvent(ev)}
+                            className="inline-flex items-center justify-center w-7 h-7 rounded-md text-[#0B57D0] hover:bg-[#D3E3FD]/50 hover:text-[#0842A0] transition-colors border border-transparent hover:border-[#0B57D0]/20 cursor-pointer"
+                            title="Trace Movement Origin & Sync Info"
+                          >
+                            <Link2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
                       </tr>
                     );
                   })
@@ -1215,6 +1261,128 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
           <span>Stock Take Cutoff: Saturday 23:59 • Week Starts: Sunday 00:00</span>
         </div>
       </div>
+
+      {/* 6. TRACE DETAILS MODAL CARD */}
+      {tracingEvent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden flex flex-col font-primary animate-in zoom-in-95 duration-150">
+            {/* Header */}
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-slate-50/70">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-[#D3E3FD] text-[#0B57D0] flex items-center justify-center font-bold">
+                  <Link2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-zinc-900">Movement Origin Trace</h2>
+                  <p className="text-[11px] text-zinc-500 font-mono">{tracingEvent.dateStr}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTracingEvent(null)}
+                className="w-7 h-7 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-zinc-200/60 flex items-center justify-center cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Body Info */}
+            <div className="p-4 space-y-3 text-xs">
+              {/* Product Info Strip */}
+              <div className="p-2.5 rounded-lg bg-[#F8F9FA] border border-slate-200 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono font-bold text-zinc-900 text-xs">{tracingEvent.sku}</span>
+                  <span className="text-[10px] font-semibold text-zinc-500 bg-white px-2 py-0.5 rounded border border-slate-200">
+                    {tracingEvent.brandName || "General"}
+                  </span>
+                </div>
+                <div className="text-zinc-700 font-medium line-clamp-2">{tracingEvent.productName}</div>
+                <div className="flex items-center gap-3 pt-1 text-[11px] border-t border-slate-200/60 mt-1.5">
+                  <span className="text-zinc-500">
+                    Quantity: <strong className={tracingEvent.typeCategory === "IN" ? "text-emerald-700 font-bold" : "text-rose-700 font-bold"}>
+                      {tracingEvent.typeCategory === "IN" ? `+${tracingEvent.inQty}` : `-${tracingEvent.outQty}`} pcs
+                    </strong>
+                  </span>
+                  <span>•</span>
+                  <span className="text-zinc-500">
+                    Type: <strong className="text-zinc-800">{tracingEvent.type}</strong>
+                  </span>
+                </div>
+              </div>
+
+              {/* Source Origin & Sync Status */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="p-2.5 rounded-lg border border-slate-200 bg-white">
+                  <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block">Origin Source</span>
+                  <span className="font-semibold text-zinc-900 mt-0.5 block flex items-center gap-1">
+                    {tracingEvent.sourceModule}
+                  </span>
+                </div>
+                <div className="p-2.5 rounded-lg border border-slate-200 bg-white">
+                  <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider block">Sync Status</span>
+                  <span className="font-semibold text-emerald-700 mt-0.5 block flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Synced & Verified
+                  </span>
+                </div>
+              </div>
+
+              {/* References Grid */}
+              <div className="p-3 rounded-lg border border-slate-200 bg-white space-y-2">
+                <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                  <span className="text-zinc-500">Million Ref / Document:</span>
+                  <span className="font-mono font-bold text-zinc-900">
+                    {tracingEvent.millionRefNumber && tracingEvent.millionRefNumber !== "-" 
+                      ? tracingEvent.millionRefNumber 
+                      : <span className="text-rose-600 text-[11px]">Pending Record</span>}
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                  <span className="text-zinc-500">Ref / Source Number:</span>
+                  <span className="font-mono font-medium text-zinc-800">{tracingEvent.refNumber}</span>
+                </div>
+
+                <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                  <span className="text-zinc-500">Handled By:</span>
+                  <span className="font-medium text-zinc-800">{tracingEvent.handledBy}</span>
+                </div>
+
+                {tracingEvent.traceDetails?.deliverTo && (
+                  <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                    <span className="text-zinc-500">Deliver To:</span>
+                    <span className="font-medium text-zinc-800 text-right max-w-[200px] truncate">{tracingEvent.traceDetails.deliverTo}</span>
+                  </div>
+                )}
+
+                {tracingEvent.destinationOrRemark && tracingEvent.destinationOrRemark !== "-" && !tracingEvent.traceDetails?.deliverTo && (
+                  <div className="flex items-center justify-between py-1 border-b border-slate-100">
+                    <span className="text-zinc-500">Destination / Remark:</span>
+                    <span className="font-medium text-zinc-800 text-right max-w-[200px] truncate">{tracingEvent.destinationOrRemark}</span>
+                  </div>
+                )}
+
+                {tracingEvent.traceDetails?.poscode && (
+                  <div className="flex items-center justify-between py-1">
+                    <span className="text-zinc-500">Postal Code:</span>
+                    <span className="font-mono font-medium text-zinc-800">{tracingEvent.traceDetails.poscode}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <CustomButton
+                variant="secondary"
+                onClick={() => setTracingEvent(null)}
+                className="h-8 px-4 text-xs rounded-lg border-slate-300 text-zinc-700 hover:bg-slate-100"
+              >
+                Close
+              </CustomButton>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

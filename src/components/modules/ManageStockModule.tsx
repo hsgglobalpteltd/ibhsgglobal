@@ -27,7 +27,10 @@ import {
   Image as ImageIcon,
   Camera,
   Eye,
-  PackageSearch
+  PackageSearch,
+  Printer,
+  ChevronDown,
+  Package
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "../custom-button";
@@ -175,8 +178,154 @@ function formatCartonCalculation(totalQty: number, cartonSize: number): string {
   const cartons = Math.floor(totalQty / cartonSize);
   const loose = totalQty % cartonSize;
   if (cartons === 0) return `${loose} pcs`;
-  if (loose === 0) return `${cartons} ctn (${cartonSize}/ctn)`;
+  if (loose === 0) return `${cartons} ctn`;
   return `${cartons} ctn + ${loose} pcs`;
+}
+
+// Searchable Product Dropdown Component
+function ProductSearchSelect({
+  value,
+  onChange,
+  productsList,
+  productMap,
+  placeholder = "Search SKU or Product Name..."
+}: {
+  value: string;
+  onChange: (sku: string) => void;
+  productsList: any[];
+  productMap: Record<string, ProductItem>;
+  placeholder?: string;
+}) {
+  const [isOpen, setIsOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
+  const containerRef = React.useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  React.useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const selectedProduct = productMap[value.toLowerCase()];
+
+  // Filter products by SKU or Name or Brand
+  const filteredProducts = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const activeList = productsList.filter((p) => {
+      const status = String(p.status || p.Status || "Active").trim().toLowerCase();
+      return status === "active";
+    });
+
+    if (!q) return activeList.slice(0, 30);
+
+    return activeList
+      .filter((p) => {
+        const sku = String(p.sku || p.SKU || p.Code || "").toLowerCase();
+        const name = String(p.display_name || p.name || p.productName || "").toLowerCase();
+        const info = productMap[sku];
+        const brand = info ? info.brandName.toLowerCase() : "";
+        return sku.includes(q) || name.includes(q) || brand.includes(q);
+      })
+      .slice(0, 40);
+  }, [productsList, search, productMap]);
+
+  return (
+    <div className="relative flex-1" ref={containerRef}>
+      <button
+        type="button"
+        onClick={() => {
+          setIsOpen((prev) => !prev);
+          setSearch("");
+        }}
+        className={`w-full h-8 px-2.5 bg-white border rounded text-xs flex items-center justify-between text-left transition-colors cursor-pointer ${
+          isOpen ? "border-[#0B57D0] ring-1 ring-[#0B57D0]/20" : "border-zinc-300 hover:border-zinc-400"
+        }`}
+      >
+        {selectedProduct ? (
+          <div className="flex items-center gap-1.5 truncate pr-1">
+            <span className="font-mono font-bold text-zinc-900 shrink-0">{selectedProduct.sku}</span>
+            <span className="text-zinc-400">•</span>
+            <span className="text-zinc-600 truncate">{selectedProduct.name}</span>
+          </div>
+        ) : value ? (
+          <span className="font-mono text-zinc-800">{value}</span>
+        ) : (
+          <span className="text-zinc-400">{placeholder}</span>
+        )}
+        <ChevronDown className="w-3.5 h-3.5 text-zinc-400 shrink-0 ml-1" />
+      </button>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-1 w-full sm:min-w-[340px] max-w-[420px] bg-white rounded-lg border border-slate-200 shadow-xl z-50 overflow-hidden flex flex-col font-primary animate-in fade-in zoom-in-95 duration-100">
+          <div className="p-2 border-b border-slate-100 bg-slate-50 flex items-center gap-1.5">
+            <Search className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+            <input
+              type="text"
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Type SKU or product name to filter..."
+              className="w-full bg-transparent text-xs text-zinc-800 focus:outline-none placeholder:text-zinc-400"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch("")}
+                className="text-zinc-400 hover:text-zinc-600 p-0.5"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-56 overflow-y-auto divide-y divide-slate-100 text-xs">
+            {filteredProducts.length === 0 ? (
+              <div className="p-4 text-center text-zinc-400">
+                No matching active products found.
+              </div>
+            ) : (
+              filteredProducts.map((p) => {
+                const sku = String(p.sku || p.SKU || p.Code || "").trim();
+                const info = productMap[sku.toLowerCase()];
+                const isSelected = value.toLowerCase() === sku.toLowerCase();
+
+                return (
+                  <button
+                    key={sku}
+                    type="button"
+                    onClick={() => {
+                      onChange(sku);
+                      setIsOpen(false);
+                    }}
+                    className={`w-full px-3 py-2 text-left flex flex-col hover:bg-[#D3E3FD]/40 transition-colors cursor-pointer ${
+                      isSelected ? "bg-[#D3E3FD]/60 font-semibold" : ""
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-zinc-900">{sku}</span>
+                      {info?.brandName && (
+                        <span className="text-[10px] font-semibold text-zinc-500 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
+                          {info.brandName}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-zinc-600 truncate mt-0.5">
+                      {info?.name || p.display_name || p.name || sku}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function ManageStockModule({ profile }: ManageStockModuleProps) {
@@ -436,8 +585,8 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
 
   // Open Batch Combine Modal
   const handleOpenBatchModal = () => {
-    if (selectedIds.size === 0) {
-      showToast("Please select at least 1 transaction to combine/update", "warning");
+    if (selectedIds.size < 2) {
+      showToast("Please select at least 2 transactions to combine/update", "warning");
       return;
     }
     const { date, time } = getSingaporeDateTimeDefaults();
@@ -657,6 +806,430 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
     }
   };
 
+  // 1. Generate & Open PDF Blob for INDIVIDUAL Stock Movement Record (Exact format as Sales Report Activation)
+  const handlePrintSingleRecord = async (m: StockMovementRecord) => {
+    try {
+      showToast(`Generating PDF for ${m.reference?.document_ref || m.id}...`, "info");
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default;
+
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4"
+      });
+
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 14;
+      const contentWidth = pageWidth - margin * 2;
+
+      // 1. Header (Minimal High-Contrast Corporate Design)
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("HSG GLOBAL PTE LTD", margin, 17);
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(0, 0, 0);
+      doc.text("STOCK MOVEMENT VOUCHER", margin, 23);
+
+      // Top Right Reference & Date
+      const docRefNum = cleanRefNumber(m.reference?.document_ref) || m.id;
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text(`REF: ${docRefNum}`, pageWidth - margin, 17, { align: "right" });
+
+      doc.setFontSize(8.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(0, 0, 0);
+      const printDateStr = new Date().toLocaleDateString("en-SG", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+      doc.text(`Date: ${printDateStr}`, pageWidth - margin, 23, { align: "right" });
+
+      // Clean Solid Divider
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.5);
+      doc.line(margin, 27, pageWidth - margin, 27);
+
+      // 2. Transaction Summary Header
+      let curY = 34;
+      autoTable(doc, {
+        startY: curY,
+        theme: "plain",
+        styles: {
+          cellPadding: { top: 1.2, bottom: 1.2, left: 0, right: 0 },
+          fontSize: 9,
+          textColor: [0, 0, 0]
+        },
+        columnStyles: {
+          0: { cellWidth: 28, fontStyle: "bold" },
+          1: { cellWidth: 68 },
+          2: { cellWidth: 28, fontStyle: "bold" },
+          3: { cellWidth: 58 }
+        },
+        body: [
+          [
+            "Transaction ID:",
+            m.id,
+            "Movement Date:",
+            formatDateTimeDisplay(m.timestamp)
+          ],
+          [
+            "Action Type:",
+            m.action_type || "Stock Out",
+            "Million Ref #:",
+            cleanRefNumber(m.reference?.document_ref) || "Pending"
+          ],
+          [
+            "Created By:",
+            m.create_by || "Operator",
+            "Approved By:",
+            m.reference?.approved_by || "Admin"
+          ],
+          [
+            "Status:",
+            m.status ? "Recorded in Million" : "Pending Record",
+            "Remarks:",
+            m.reference?.description || "-"
+          ]
+        ],
+        margin: { left: margin, right: margin }
+      });
+
+      curY = (doc as any).lastAutoTable?.finalY + 8 || curY + 30;
+
+      // 3. Movement Items Table
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text("ITEMS SUMMARY", margin, curY);
+
+      let totalPieces = 0;
+      const itemRows = m.items.map((it, idx) => {
+        const pInfo = productMap[it.sku.toLowerCase()];
+        const cSize = pInfo?.uom || 0;
+        const cCalc = formatCartonCalculation(it.qty, cSize);
+        totalPieces += Number(it.qty) || 0;
+
+        return [
+          String(idx + 1),
+          it.sku,
+          pInfo?.name || "-",
+          cCalc,
+          Number(it.qty).toLocaleString()
+        ];
+      });
+
+      if (itemRows.length > 0) {
+        itemRows.push([
+          { content: "TOTAL", colSpan: 4, styles: { halign: "right", fontStyle: "bold" } } as any,
+          { content: `${totalPieces.toLocaleString()} pcs`, styles: { halign: "right", fontStyle: "bold" } } as any
+        ]);
+      }
+
+      autoTable(doc, {
+        startY: curY + 3,
+        head: [["#", "SKU", "Description", "Carton Breakdown", "Quantity (Pcs)"]],
+        body: itemRows.length > 0 ? itemRows : [["-", "-", "No items recorded", "-", "-"]],
+        theme: "plain",
+        pageBreak: "auto",
+        showHead: "everyPage",
+        headStyles: {
+          fillColor: [240, 240, 240],
+          textColor: [0, 0, 0],
+          fontStyle: "bold",
+          fontSize: 8.5,
+          halign: "left",
+          valign: "middle",
+          cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
+          lineWidth: 0.3,
+          lineColor: [0, 0, 0]
+        },
+        columnStyles: {
+          0: { halign: "center", cellWidth: 10 },
+          1: { halign: "left", cellWidth: 32, fontStyle: "bold" },
+          2: { halign: "left", cellWidth: 80 },
+          3: { halign: "left", cellWidth: 36 },
+          4: { halign: "right", cellWidth: 24, fontStyle: "bold" }
+        },
+        styles: {
+          fontSize: 8.5,
+          cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
+          textColor: [0, 0, 0],
+          lineWidth: 0.2,
+          lineColor: [0, 0, 0]
+        },
+        margin: { left: margin, right: margin }
+      });
+
+      const lastY = (doc as any).lastAutoTable?.finalY || curY + 40;
+
+      // 4. Page Numbers
+      const totalPages = (doc.internal as any).getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(0, 0, 0);
+        doc.text(
+          `Page ${i} of ${totalPages} — Stock Movement Voucher: ${docRefNum}`,
+          pageWidth / 2,
+          pageHeight - 6,
+          { align: "center" }
+        );
+      }
+
+      // Open Blob PDF URL
+      const pdfBlob = doc.output("blob");
+      const pdfBlobUrl = URL.createObjectURL(pdfBlob);
+      window.open(pdfBlobUrl, "_blank");
+    } catch (err: any) {
+      console.error("Single Movement PDF error:", err);
+      showToast("Failed to generate PDF: " + err.message, "error");
+    }
+  };
+
+  // 2. Generate & Open PDF Blob for SUMMARY ONLY Report
+  const [isGeneratingPdf, setIsGeneratingPdf] = React.useState<boolean>(false);
+
+  const handlePrintSummaryReport = async () => {
+    const listToPrint = selectedIds.size > 0 
+      ? filteredMovements.filter(m => selectedIds.has(m.id))
+      : filteredMovements;
+
+    if (listToPrint.length === 0) {
+      showToast("No stock movements to print", "warning");
+      return;
+    }
+
+    setIsGeneratingPdf(true);
+    try {
+      showToast("Generating Stock Movements Summary PDF...", "info");
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default;
+
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4"
+      });
+
+      const pageWidth = 210;
+      const pageHeight = 297;
+      const margin = 14;
+
+      // 1. Header (Minimal High-Contrast Design matching Sales Report)
+      doc.setTextColor(0, 0, 0);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(16);
+      doc.text("HSG GLOBAL PTE LTD", margin, 17);
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(0, 0, 0);
+      doc.text("STOCK MOVEMENTS SUMMARY REPORT", margin, 23);
+
+      // Top Right Reference & Date
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text(
+        selectedIds.size > 0 ? `BATCH (${selectedIds.size} SELECTED)` : `ALL FILTERED (${listToPrint.length} RECORDS)`,
+        pageWidth - margin,
+        17,
+        { align: "right" }
+      );
+
+      doc.setFontSize(8.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(0, 0, 0);
+      const printDateStr = new Date().toLocaleDateString("en-SG", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      });
+      doc.text(`Generated: ${printDateStr}`, pageWidth - margin, 23, { align: "right" });
+
+      // Clean Solid Divider
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.5);
+      doc.line(margin, 27, pageWidth - margin, 27);
+
+      // 2. Scope & Period Summary
+      let curY = 34;
+      const dateRangeLabel = datePreset === "all" ? "All Time" : `${startDate} to ${endDate}`;
+      const actionFilterLabel = actionFilter === "all" ? "All Actions" : actionFilter.toUpperCase();
+      const statusFilterLabel = statusFilter === "all" ? "All Statuses" : statusFilter === "recorded" ? "Recorded in Million" : "Pending Record";
+
+      autoTable(doc, {
+        startY: curY,
+        theme: "plain",
+        styles: {
+          cellPadding: { top: 1, bottom: 1, left: 0, right: 0 },
+          fontSize: 8.5,
+          textColor: [0, 0, 0]
+        },
+        columnStyles: {
+          0: { cellWidth: 28, fontStyle: "bold" },
+          1: { cellWidth: 68 },
+          2: { cellWidth: 28, fontStyle: "bold" },
+          3: { cellWidth: 58 }
+        },
+        body: [
+          [
+            "Date Range:",
+            dateRangeLabel,
+            "Action Filter:",
+            actionFilterLabel
+          ],
+          [
+            "Status Filter:",
+            statusFilterLabel,
+            "Total Records:",
+            `${listToPrint.length} movements`
+          ],
+          [
+            "Printed By:",
+            profile?.name || "Admin",
+            "Scope:",
+            selectedIds.size > 0 ? `Custom Selection (${selectedIds.size} items)` : "Current Filter Results"
+          ]
+        ],
+        margin: { left: margin, right: margin }
+      });
+
+      curY = (doc as any).lastAutoTable?.finalY + 6 || curY + 20;
+
+      // 3. Aggregate SKU Summary Only
+      const skuSummaryMap: { [sku: string]: { sku: string; name: string; inQty: number; outQty: number; netQty: number } } = {};
+      let grandTotalIn = 0;
+      let grandTotalOut = 0;
+
+      listToPrint.forEach(m => {
+        const isStockIn = m.action_type.toLowerCase().includes("in");
+        m.items.forEach(it => {
+          const skuUpper = (it.sku || "").toUpperCase().trim();
+          if (!skuUpper) return;
+          const pInfo = productMap[it.sku.toLowerCase()];
+          if (!skuSummaryMap[skuUpper]) {
+            skuSummaryMap[skuUpper] = {
+              sku: skuUpper,
+              name: pInfo?.name || "-",
+              inQty: 0,
+              outQty: 0,
+              netQty: 0
+            };
+          }
+          const q = Number(it.qty) || 0;
+          if (isStockIn) {
+            skuSummaryMap[skuUpper].inQty += q;
+            grandTotalIn += q;
+          } else {
+            skuSummaryMap[skuUpper].outQty += q;
+            grandTotalOut += q;
+          }
+          skuSummaryMap[skuUpper].netQty = skuSummaryMap[skuUpper].inQty - skuSummaryMap[skuUpper].outQty;
+        });
+      });
+
+      const skuSummaryRows = Object.values(skuSummaryMap)
+        .sort((a, b) => a.sku.localeCompare(b.sku))
+        .map((it, idx) => [
+          String(idx + 1),
+          it.sku,
+          it.name,
+          it.inQty > 0 ? `+${it.inQty.toLocaleString()}` : "0",
+          it.outQty > 0 ? `-${it.outQty.toLocaleString()}` : "0",
+          `${it.netQty >= 0 ? "+" : ""}${it.netQty.toLocaleString()}`
+        ]);
+
+      if (skuSummaryRows.length > 0) {
+        skuSummaryRows.push([
+          { content: "TOTAL", colSpan: 3, styles: { halign: "right", fontStyle: "bold" } } as any,
+          { content: `+${grandTotalIn.toLocaleString()}`, styles: { halign: "right", fontStyle: "bold" } } as any,
+          { content: `-${grandTotalOut.toLocaleString()}`, styles: { halign: "right", fontStyle: "bold" } } as any,
+          { content: `${(grandTotalIn - grandTotalOut) >= 0 ? "+" : ""}${(grandTotalIn - grandTotalOut).toLocaleString()}`, styles: { halign: "right", fontStyle: "bold" } } as any
+        ]);
+      }
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(0, 0, 0);
+      doc.text("SKU SUMMARY", margin, curY);
+
+      autoTable(doc, {
+        startY: curY + 2.5,
+        head: [["#", "SKU", "Description", "Total In", "Total Out", "Net Qty"]],
+        body: skuSummaryRows.length > 0 ? skuSummaryRows : [["-", "-", "No SKU items found", "-", "-", "-"]],
+        theme: "plain",
+        pageBreak: "auto",
+        showHead: "everyPage",
+        headStyles: {
+          fillColor: [240, 240, 240],
+          textColor: [0, 0, 0],
+          fontStyle: "bold",
+          fontSize: 8.5,
+          halign: "left",
+          valign: "middle",
+          cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
+          lineWidth: 0.3,
+          lineColor: [0, 0, 0]
+        },
+        columnStyles: {
+          0: { halign: "center", cellWidth: 10 },
+          1: { halign: "left", cellWidth: 32, fontStyle: "bold" },
+          2: { halign: "left", cellWidth: 76 },
+          3: { halign: "right", cellWidth: 22 },
+          4: { halign: "right", cellWidth: 22 },
+          5: { halign: "right", cellWidth: 20, fontStyle: "bold" }
+        },
+        styles: {
+          fontSize: 8.5,
+          cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
+          textColor: [0, 0, 0],
+          lineWidth: 0.2,
+          lineColor: [0, 0, 0]
+        },
+        margin: { left: margin, right: margin }
+      });
+
+      // 4. Page Numbers
+      const totalPages = (doc.internal as any).getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(0, 0, 0);
+        doc.text(
+          `Page ${i} of ${totalPages} — Stock Movements Summary Report`,
+          pageWidth / 2,
+          pageHeight - 6,
+          { align: "center" }
+        );
+      }
+
+      // Open PDF in new tab as Blob URL
+      const pdfBlob = doc.output("blob");
+      const pdfBlobUrl = URL.createObjectURL(pdfBlob);
+      window.open(pdfBlobUrl, "_blank");
+    } catch (err: any) {
+      console.error("PDF generation error:", err);
+      showToast("Failed to generate Stock Movement PDF: " + err.message, "error");
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs">
       
@@ -673,19 +1246,30 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
 
         {/* Top Action Buttons */}
         <div className="flex items-center gap-2">
-          {/* Combine & Update Button (Active when records selected) */}
+          {/* Print Summary PDF Report Button (Opens as Blob PDF with SKU aggregate totals only) */}
           <CustomButton
-            variant="dark"
-            onClick={handleOpenBatchModal}
-            disabled={selectedIds.size === 0}
-            className={`h-8 px-3 text-xs rounded-lg ${
-              selectedIds.size > 0 ? "bg-[#0B57D0] hover:bg-[#0842A0]" : "opacity-60 cursor-not-allowed"
-            }`}
-            title="Combine and assign Million Ref to selected transactions"
+            variant="secondary"
+            onClick={handlePrintSummaryReport}
+            disabled={isGeneratingPdf}
+            className="h-8 px-3 text-xs rounded-lg border-slate-300 hover:bg-slate-50 text-zinc-800"
+            title="Generate & open SKU Summary PDF report for current filter / selected rows"
           >
-            <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-            Combine & Update ({selectedIds.size})
+            <FileText className="w-3.5 h-3.5 mr-1 text-[#0B57D0]" />
+            {isGeneratingPdf ? "Printing..." : selectedIds.size > 0 ? `Print Summary (${selectedIds.size})` : "Print Summary"}
           </CustomButton>
+
+          {/* Combine & Update Button (Appears when 2 or more records are selected) */}
+          {selectedIds.size >= 2 && (
+            <CustomButton
+              variant="dark"
+              onClick={handleOpenBatchModal}
+              className="h-8 px-3 text-xs rounded-lg bg-[#0B57D0] hover:bg-[#0842A0]"
+              title="Combine and assign Million Ref to selected transactions"
+            >
+              <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+              Combine & Update ({selectedIds.size})
+            </CustomButton>
+          )}
 
           {/* Create New Movement Button */}
           <CustomButton
@@ -778,8 +1362,8 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
             className="h-8 px-2.5 text-xs bg-white border border-zinc-300 rounded-lg text-zinc-800 focus:outline-none focus:border-[#0B57D0]"
           >
             <option value="all">All Verification Status</option>
-            <option value="pending">🔴 Pending Million Record (False)</option>
-            <option value="recorded">🟢 Recorded in Million (True)</option>
+            <option value="pending">Pending Record in Million</option>
+            <option value="recorded">Recorded in Million</option>
           </select>
 
           {/* Action Filter */}
@@ -789,9 +1373,9 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
             className="h-8 px-2.5 text-xs bg-white border border-zinc-300 rounded-lg text-zinc-800 focus:outline-none focus:border-[#0B57D0]"
           >
             <option value="all">All Actions</option>
-            <option value="in">🟢 Stock In</option>
-            <option value="out">🔴 Stock Out</option>
-            <option value="transfer">🟣 Stock Transfer</option>
+            <option value="in">Stock In</option>
+            <option value="out">Stock Out</option>
+            <option value="transfer">Stock Transfer</option>
           </select>
 
           {/* Search Box */}
@@ -841,7 +1425,7 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
               <th className="p-3 text-[11px] font-semibold text-zinc-600">Date & Time</th>
               <th className="p-3 text-[11px] font-semibold text-zinc-600">Million Ref. Number</th>
               <th className="p-3 text-[11px] font-semibold text-zinc-600">Action Type</th>
-              <th className="p-3 text-[11px] font-semibold text-zinc-600">Items (SKU & Qty)</th>
+              <th className="p-3 text-[11px] font-semibold text-zinc-600 text-center w-16">SKU List</th>
               <th className="p-3 text-[11px] font-semibold text-zinc-600">Total Qty</th>
               <th className="p-3 text-[11px] font-semibold text-zinc-600">Created / Approved By</th>
               <th className="p-3 text-[11px] font-semibold text-zinc-600">Description / Remarks</th>
@@ -898,12 +1482,12 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
                     {/* Status Toggle / Badge */}
                     <td className="p-3">
                       {m.status ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Recorded in Million
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-zinc-800 border border-slate-200">
+                          <CheckCircle2 className="w-3.5 h-3.5 text-[#0B57D0]" /> Recorded
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
-                          <Clock className="w-3 h-3 text-rose-600" /> Pending Record in Million
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-zinc-50 text-zinc-500 border border-zinc-200">
+                          <Clock className="w-3.5 h-3.5 text-zinc-400" /> Pending Record
                         </span>
                       )}
                     </td>
@@ -916,37 +1500,34 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
                     {/* Million Ref Number */}
                     <td className="p-3">
                       {millionRef ? (
-                        <span className="font-mono font-semibold text-zinc-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
+                        <span className="font-mono font-medium text-zinc-900 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
                           {millionRef}
                         </span>
                       ) : (
-                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
-                          Pending record in Million
+                        <span className="text-zinc-400 text-xs">
+                          -
                         </span>
                       )}
                     </td>
 
-                    {/* Action Type Badge */}
+                    {/* Action Type */}
                     <td className="p-3">
-                      {actLower.includes("in") ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                          <ArrowDownLeft className="w-3 h-3" /> Stock In
-                        </span>
-                      ) : actLower.includes("transfer") ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-50 text-purple-800 border border-purple-200">
-                          <Repeat className="w-3 h-3" /> Transfer
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-50 text-rose-800 border border-rose-200">
-                          <ArrowUpRight className="w-3 h-3" /> Stock Out
-                        </span>
-                      )}
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-zinc-800 border border-slate-200">
+                        {actLower.includes("in") ? (
+                          <ArrowDownLeft className="w-3 h-3 text-[#0B57D0]" />
+                        ) : actLower.includes("transfer") ? (
+                          <Repeat className="w-3 h-3 text-[#0B57D0]" />
+                        ) : (
+                          <ArrowUpRight className="w-3 h-3 text-zinc-500" />
+                        )}
+                        <span>{m.action_type || "Stock Movement"}</span>
+                      </span>
                     </td>
 
-                    {/* Items preview */}
-                    <td className="p-3 max-w-[280px]">
+                    {/* Items SKU Icon Button */}
+                    <td className="p-3 text-center">
                       {m.items.length === 0 ? (
-                        <span className="text-zinc-400 italic">No items</span>
+                        <span className="text-zinc-300">-</span>
                       ) : (
                         <button
                           type="button"
@@ -956,20 +1537,11 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
                             doc_ref: m.reference?.document_ref || "None",
                             items: m.items
                           })}
-                          className="flex items-center gap-1.5 flex-wrap text-left group hover:opacity-90 cursor-pointer"
-                          title="Click to view full SKU items details"
+                          className="inline-flex items-center justify-center gap-1 h-7 px-2 rounded-md bg-slate-50 hover:bg-[#D3E3FD]/50 text-zinc-700 hover:text-[#0B57D0] border border-slate-200 hover:border-[#0B57D0]/30 transition-colors cursor-pointer"
+                          title={`View ${m.items.length} SKU item(s)`}
                         >
-                          {m.items.slice(0, 3).map((it, idx) => (
-                            <span key={idx} className="bg-white border border-slate-200 group-hover:border-[#0B57D0]/40 px-1.5 py-0.5 rounded text-[10px] font-mono text-zinc-700">
-                              {it.sku} <span className="font-bold text-[#0B57D0]">x{it.qty}</span>
-                            </span>
-                          ))}
-                          {m.items.length > 3 && (
-                            <span className="text-[10px] font-semibold text-[#0B57D0] bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
-                              +{m.items.length - 3} more
-                            </span>
-                          )}
-                          <Eye className="w-3.5 h-3.5 text-zinc-400 group-hover:text-[#0B57D0] ml-0.5 shrink-0" />
+                          <PackageSearch className="w-3.5 h-3.5 text-[#0B57D0]" />
+                          <span className="text-[11px] font-bold font-mono">{m.items.length}</span>
                         </button>
                       )}
                     </td>
@@ -984,7 +1556,7 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
                       <div>
                         <span className="font-medium text-zinc-900">{m.create_by}</span>
                         {m.reference?.approved_by && (
-                          <div className="text-[10px] text-emerald-700 font-semibold">
+                          <div className="text-[10px] text-zinc-500 font-medium">
                             Appr: {m.reference.approved_by}
                           </div>
                         )}
@@ -1002,10 +1574,10 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
                               title: `${m.action_type} (${m.reference?.document_ref || m.id})`,
                               photos: m.reference.photos || []
                             })}
-                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-[#0B57D0] border border-blue-200 hover:bg-blue-100 transition-colors cursor-pointer shrink-0"
+                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-zinc-700 border border-slate-200 hover:bg-slate-200 transition-colors cursor-pointer shrink-0"
                             title="View attached photos"
                           >
-                            <Camera className="w-3 h-3" />
+                            <Camera className="w-3 h-3 text-zinc-500" />
                             <span>{m.reference.photos.length}</span>
                           </button>
                         )}
@@ -1017,7 +1589,15 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
 
                     {/* Actions */}
                     <td className="p-3 text-center">
-                      <div className="flex items-center justify-center gap-1">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handlePrintSingleRecord(m)}
+                          className="p-1 rounded text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-colors cursor-pointer"
+                          title="Print Stock Movement Voucher (PDF Blob)"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           type="button"
                           onClick={() => handleOpenEditModal(m)}
@@ -1202,34 +1782,43 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
               
               {/* Action Type Selector */}
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">Action Type</label>
-                <div className="grid grid-cols-3 gap-2">
+                <label className="block font-semibold text-zinc-700 mb-1.5">Action Type</label>
+                <div className="grid grid-cols-3 gap-2.5">
                   <button
                     type="button"
                     onClick={() => setEditActionType("Stock Out")}
-                    className={`h-8 rounded-lg font-semibold border text-xs flex items-center justify-center gap-1 transition-colors cursor-pointer ${
-                      editActionType === "Stock Out" ? "bg-rose-50 border-rose-300 text-rose-800" : "bg-white border-zinc-200 text-zinc-600"
+                    className={`h-9 px-3 rounded-lg border text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      editActionType === "Stock Out" 
+                        ? "bg-[#D3E3FD] border-[#0B57D0] text-[#041E49] font-bold shadow-2xs" 
+                        : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:border-zinc-300 font-medium"
                     }`}
                   >
-                    <ArrowUpRight className="w-3 h-3" /> Stock Out
+                    <ArrowUpRight className={`w-4 h-4 ${editActionType === "Stock Out" ? "text-[#0B57D0]" : "text-zinc-500"}`} />
+                    <span>Stock Out</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setEditActionType("Stock In")}
-                    className={`h-8 rounded-lg font-semibold border text-xs flex items-center justify-center gap-1 transition-colors cursor-pointer ${
-                      editActionType === "Stock In" ? "bg-emerald-50 border-emerald-300 text-emerald-800" : "bg-white border-zinc-200 text-zinc-600"
+                    className={`h-9 px-3 rounded-lg border text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      editActionType === "Stock In" 
+                        ? "bg-[#D3E3FD] border-[#0B57D0] text-[#041E49] font-bold shadow-2xs" 
+                        : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:border-zinc-300 font-medium"
                     }`}
                   >
-                    <ArrowDownLeft className="w-3 h-3" /> Stock In
+                    <ArrowDownLeft className={`w-4 h-4 ${editActionType === "Stock In" ? "text-[#0B57D0]" : "text-zinc-500"}`} />
+                    <span>Stock In</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setEditActionType("Stock Transfer")}
-                    className={`h-8 rounded-lg font-semibold border text-xs flex items-center justify-center gap-1 transition-colors cursor-pointer ${
-                      editActionType === "Stock Transfer" ? "bg-purple-50 border-purple-300 text-purple-800" : "bg-white border-zinc-200 text-zinc-600"
+                    className={`h-9 px-3 rounded-lg border text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      editActionType === "Stock Transfer" 
+                        ? "bg-[#D3E3FD] border-[#0B57D0] text-[#041E49] font-bold shadow-2xs" 
+                        : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:border-zinc-300 font-medium"
                     }`}
                   >
-                    <Repeat className="w-3 h-3" /> Transfer
+                    <Repeat className={`w-4 h-4 ${editActionType === "Stock Transfer" ? "text-[#0B57D0]" : "text-zinc-500"}`} />
+                    <span>Transfer</span>
                   </button>
                 </div>
               </div>
@@ -1285,19 +1874,18 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
                 <div className="flex flex-col gap-2">
                   {editItems.map((it, idx) => (
                     <div key={idx} className="flex items-center gap-2">
-                      <input
-                        type="text"
+                      <ProductSearchSelect
                         value={it.sku}
-                        onChange={(e) => {
-                          const val = e.target.value;
+                        onChange={(selectedSku) => {
                           setEditItems((prev) => {
                             const next = [...prev];
-                            next[idx].sku = val;
+                            next[idx].sku = selectedSku;
                             return next;
                           });
                         }}
-                        placeholder="SKU Code..."
-                        className="flex-1 h-8 px-2.5 border border-zinc-300 rounded text-xs font-mono focus:outline-none focus:border-[#0B57D0]"
+                        productsList={products}
+                        productMap={productMap}
+                        placeholder="Search SKU or product name..."
                       />
                       <input
                         type="number"
@@ -1428,34 +2016,43 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
               
               {/* Action Type Selector */}
               <div>
-                <label className="block font-semibold text-zinc-700 mb-1">Action Type</label>
-                <div className="grid grid-cols-3 gap-2">
+                <label className="block font-semibold text-zinc-700 mb-1.5">Action Type</label>
+                <div className="grid grid-cols-3 gap-2.5">
                   <button
                     type="button"
                     onClick={() => setNewActionType("Stock Out")}
-                    className={`h-8 rounded-lg font-semibold border text-xs flex items-center justify-center gap-1 transition-colors cursor-pointer ${
-                      newActionType === "Stock Out" ? "bg-rose-50 border-rose-300 text-rose-800" : "bg-white border-zinc-200 text-zinc-600"
+                    className={`h-9 px-3 rounded-lg border text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      newActionType === "Stock Out" 
+                        ? "bg-[#D3E3FD] border-[#0B57D0] text-[#041E49] font-bold shadow-2xs" 
+                        : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:border-zinc-300 font-medium"
                     }`}
                   >
-                    <ArrowUpRight className="w-3 h-3" /> Stock Out
+                    <ArrowUpRight className={`w-4 h-4 ${newActionType === "Stock Out" ? "text-[#0B57D0]" : "text-zinc-500"}`} />
+                    <span>Stock Out</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setNewActionType("Stock In")}
-                    className={`h-8 rounded-lg font-semibold border text-xs flex items-center justify-center gap-1 transition-colors cursor-pointer ${
-                      newActionType === "Stock In" ? "bg-emerald-50 border-emerald-300 text-emerald-800" : "bg-white border-zinc-200 text-zinc-600"
+                    className={`h-9 px-3 rounded-lg border text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      newActionType === "Stock In" 
+                        ? "bg-[#D3E3FD] border-[#0B57D0] text-[#041E49] font-bold shadow-2xs" 
+                        : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:border-zinc-300 font-medium"
                     }`}
                   >
-                    <ArrowDownLeft className="w-3 h-3" /> Stock In
+                    <ArrowDownLeft className={`w-4 h-4 ${newActionType === "Stock In" ? "text-[#0B57D0]" : "text-zinc-500"}`} />
+                    <span>Stock In</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => setNewActionType("Stock Transfer")}
-                    className={`h-8 rounded-lg font-semibold border text-xs flex items-center justify-center gap-1 transition-colors cursor-pointer ${
-                      newActionType === "Stock Transfer" ? "bg-purple-50 border-purple-300 text-purple-800" : "bg-white border-zinc-200 text-zinc-600"
+                    className={`h-9 px-3 rounded-lg border text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                      newActionType === "Stock Transfer" 
+                        ? "bg-[#D3E3FD] border-[#0B57D0] text-[#041E49] font-bold shadow-2xs" 
+                        : "bg-white border-zinc-200 text-zinc-600 hover:bg-zinc-50 hover:border-zinc-300 font-medium"
                     }`}
                   >
-                    <Repeat className="w-3 h-3" /> Transfer
+                    <Repeat className={`w-4 h-4 ${newActionType === "Stock Transfer" ? "text-[#0B57D0]" : "text-zinc-500"}`} />
+                    <span>Transfer</span>
                   </button>
                 </div>
               </div>
@@ -1511,19 +2108,18 @@ export function ManageStockModule({ profile }: ManageStockModuleProps) {
                 <div className="flex flex-col gap-2">
                   {newItems.map((it, idx) => (
                     <div key={idx} className="flex items-center gap-2">
-                      <input
-                        type="text"
+                      <ProductSearchSelect
                         value={it.sku}
-                        onChange={(e) => {
-                          const val = e.target.value;
+                        onChange={(selectedSku) => {
                           setNewItems((prev) => {
                             const next = [...prev];
-                            next[idx].sku = val;
+                            next[idx].sku = selectedSku;
                             return next;
                           });
                         }}
-                        placeholder="SKU Code..."
-                        className="flex-1 h-8 px-2.5 border border-zinc-300 rounded text-xs font-mono focus:outline-none focus:border-[#0B57D0]"
+                        productsList={products}
+                        productMap={productMap}
+                        placeholder="Search SKU or product name..."
                       />
                       <input
                         type="number"
