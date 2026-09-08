@@ -125,8 +125,23 @@ export async function generateExportCatalogPdf(
     brandGroups[bId].push(prod);
   });
 
-  // Sort brands by Rank or Name, and sort products inside each brand alphabetically
+  // Helper to determine primary category of a brand based on its products
+  const getBrandPrimaryCategory = (brandId: string): string => {
+    const prods = brandGroups[brandId] || [];
+    for (const p of prods) {
+      const cat = p.product_meta?.Category || p.category;
+      if (cat && cat.trim()) return cat.trim();
+    }
+    return "General";
+  };
+
+  // Sort brands primarily by Category, then by Rank or Name
   const sortedBrandIds = Object.keys(brandGroups).sort((a, b) => {
+    const catA = getBrandPrimaryCategory(a).toLowerCase();
+    const catB = getBrandPrimaryCategory(b).toLowerCase();
+    if (catA !== catB) {
+      return catA.localeCompare(catB);
+    }
     const brandA = brandMap.get(a);
     const brandB = brandMap.get(b);
     const rankA = Number(brandA?.rank || 999);
@@ -139,6 +154,11 @@ export async function generateExportCatalogPdf(
 
   for (const bId of sortedBrandIds) {
     brandGroups[bId].sort((a, b) => {
+      const catA = (a.product_meta?.Category || a.category || "General").trim().toLowerCase();
+      const catB = (b.product_meta?.Category || b.category || "General").trim().toLowerCase();
+      if (catA !== catB) {
+        return catA.localeCompare(catB);
+      }
       const nameA = (a.product_meta?.Short_Title || a.product_meta?.Title || a.display_name || a.sku).toLowerCase();
       const nameB = (b.product_meta?.Short_Title || b.product_meta?.Title || b.display_name || b.sku).toLowerCase();
       return nameA.localeCompare(nameB);

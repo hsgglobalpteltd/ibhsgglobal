@@ -6,6 +6,7 @@ import { fetchAllUsers, UserProfile, adminUpdateUser, adminDeleteUser } from "@/
 import { showToast } from "@/lib/toast";
 import { EditUserModal } from "../edit-user-modal";
 import { NavigationTabs } from "../navigation-tabs";
+import { Pencil } from "lucide-react";
 
 interface UsersModuleProps {
   idToken?: string;
@@ -157,19 +158,33 @@ export function UsersModule({ idToken = "simulated-id-token", profile }: UsersMo
   ];
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] min-w-0">
-      {/* Reusable Sub-Navigation NavigationTabs Component */}
-      <div className="content-header">
-        <NavigationTabs 
-          tabs={tabs}
-          activeTabId={activeTab}
-          onTabSelect={(tabId) => setActiveTab(tabId as any)}
-          titleSuffix="Registry"
-        />
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
+      {/* 1. Reusable Sub-Navigation NavigationTabs Component */}
+      <NavigationTabs 
+        tabs={tabs}
+        activeTabId={activeTab}
+        onTabSelect={(tabId) => setActiveTab(tabId as any)}
+        titleSuffix="Registry"
+      />
+
+      {/* 2. Top Header Bar */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            {activeTab === "Users" ? "Active Users Registry" : activeTab === "Pending" ? "Pending Registrations" : "Blocked Accounts"}
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {activeTab === "Users"
+              ? "Manage system credentials, employee PIN bindings, and role permissions."
+              : activeTab === "Pending"
+              ? "Approve or reject new registrations waiting for administrator activation."
+              : "Review and restore suspended or blocked user credentials."}
+          </p>
+        </div>
       </div>
 
-      {/* Data Table */}
-      <div className="content-body flex-1 w-full overflow-hidden">
+      {/* 3. Data Table */}
+      <div className="flex-1 w-full overflow-hidden min-h-0">
         <DataTable
           columns={columns}
           data={filteredUsers}

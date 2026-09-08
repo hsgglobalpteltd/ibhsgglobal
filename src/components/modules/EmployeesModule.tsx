@@ -4,8 +4,7 @@ import * as React from "react";
 import { DataTable, Column } from "../data-table";
 import { showToast } from "@/lib/toast";
 import { NavigationTabs } from "../navigation-tabs";
-import { CustomButton } from "../custom-button";
-import { Wrench, UserPlus, Eye, EyeOff, Camera, Trash2, ShieldAlert, Contact } from "lucide-react";
+import { Wrench, UserPlus, Eye, EyeOff, Camera, Trash2, ShieldAlert, Contact, X, History } from "lucide-react";
 
 interface EmployeesModuleProps {
   profile?: {
@@ -45,7 +44,6 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
   const [timelineEmployee, setTimelineEmployee] = React.useState<Employee | null>(null);
 
   const columns: Column[] = [
-    { id: "actions", header: "", accessor: "actions" },
     { id: "name", header: "Name", accessor: "name_display" },
     { id: "full_name", header: "Full Name", accessor: "full_name" },
     { id: "in", header: "Identity Number (IN)", accessor: "in" },
@@ -53,7 +51,7 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
     { id: "email", header: "Email", accessor: "email" },
     { id: "paynow_number", header: "PayNow Number", accessor: "paynow_number" },
     { id: "roles_list", header: "Application Access Roles", accessor: "roles_display" },
-    { id: "logs", header: "Audit Log", accessor: "logs_display" }
+    { id: "logs", header: "Logs", accessor: "logs_display" }
   ];
 
   const loadEmployees = React.useCallback(async (isBackground = false) => {
@@ -381,14 +379,14 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
         ...e,
         name_display: (
           <div className="flex items-center gap-2 select-text">
-            {e.photo_url ? (
-              <img src={e.photo_url} alt={e.name} className="w-6 h-6 rounded-full object-cover border border-zinc-200" />
-            ) : (
-              <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center border border-zinc-200 text-[10px] font-bold text-zinc-500 uppercase">
-                {e.name.substring(0, 2)}
-              </div>
-            )}
-            <span className="font-bold text-zinc-900">{e.name}</span>
+            <button
+              onClick={() => setViewingEmployee(e)}
+              className="w-6 h-6 rounded-md bg-white hover:bg-slate-100 text-zinc-500 hover:text-[#0B57D0] border border-slate-200 shadow-2xs flex items-center justify-center transition-all cursor-pointer shrink-0"
+              title="View Employee Card"
+            >
+              <Contact size={13} />
+            </button>
+            <span className="font-medium text-zinc-900">{e.name}</span>
           </div>
         ),
         roles_display: (
@@ -404,43 +402,21 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
             )}
           </div>
         ),
-        actions: (
-          <div className="flex items-center gap-1.5 shrink-0 select-none">
-            <button
-              onClick={() => setViewingEmployee(e)}
-              className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-600 hover:text-zinc-900 transition-colors cursor-pointer flex items-center justify-center h-6 w-6"
-              title="View Employee Card"
-            >
-              <Contact size={11} />
-            </button>
-            {isAdminOrManager && (
-              <button
-                onClick={() => {
-                  let rolesArr: string[] = [];
-                  try {
-                    if (e.role) rolesArr = JSON.parse(e.role);
-                  } catch {}
-                  setEditingEmployee({ ...e, role: rolesArr, isNew: false });
-                }}
-                className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-600 hover:text-[#0B57D0] transition-colors cursor-pointer flex items-center justify-center h-6 w-6"
-                title="Edit Profile"
-              >
-                <Wrench size={11} />
-              </button>
-            )}
-          </div>
-        ),
         logs_display: (
-          <button
-            onClick={() => setTimelineEmployee(e)}
-            className="px-2 py-0.5 text-[9.5px] font-bold rounded border border-slate-200 bg-[#F0F4F9] hover:bg-slate-200 text-zinc-700 hover:text-zinc-955 cursor-pointer shadow-xs transition-colors select-none whitespace-nowrap"
-          >
-            Logs ({parsedLogs.length})
-          </button>
+          <div className="flex items-center justify-center">
+            <button
+              type="button"
+              onClick={() => setTimelineEmployee(e)}
+              className="w-7 h-7 rounded-md bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 border border-slate-200 shadow-2xs flex items-center justify-center transition-colors cursor-pointer"
+              title={`View Logs (${parsedLogs.length})`}
+            >
+              <History size={14} />
+            </button>
+          </div>
         )
       };
     });
-  }, [filteredEmployees, isAdminOrManager]);
+  }, [filteredEmployees]);
 
   const tabs = [
     { id: "Fulltime", label: "Fulltimer", desc: "Manage active full-time contract employees." },
@@ -471,19 +447,6 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
               : `Manage ${activeTab.toLowerCase()} employee accounts, contact details, PayNow numbers, PINs, and application roles.`}
           </p>
         </div>
-
-        {/* Top Header Actions */}
-        {isAdminOrManager && (
-          <div className="flex items-center gap-2">
-            <CustomButton
-              onClick={() => setEditingEmployee({ isNew: true, type: activeTab === "Deactive" ? "Fulltime" : activeTab, name: "", full_name: "", in: "", pin: "", phone: "", email: "", paynow_number: "", photo_url: "", address: "", note: "", role: [] })}
-              className="h-8 px-3 text-xs bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs select-none"
-            >
-              <UserPlus size={13} />
-              Add Employee
-            </CustomButton>
-          </div>
-        )}
       </div>
 
       {/* 3. DATA TABLE BODY */}
@@ -495,6 +458,34 @@ export function EmployeesModule({ profile }: EmployeesModuleProps) {
           title={`${activeTab === "Deactive" ? "Deactive" : activeTab + "s"} Registry`}
           fetching={fetching}
           height="h-full"
+          addNewText="Add Employee"
+          onAddNew={isAdminOrManager ? () => {
+            setEditingEmployee({
+              isNew: true,
+              type: activeTab === "Deactive" ? "Fulltime" : activeTab,
+              name: "",
+              full_name: "",
+              in: "",
+              pin: "",
+              phone: "",
+              email: "",
+              paynow_number: "",
+              photo_url: "",
+              address: "",
+              note: "",
+              role: []
+            });
+          } : undefined}
+          onEditRow={isAdminOrManager ? (row) => {
+            let rolesArr: string[] = [];
+            try {
+              if (row.role) rolesArr = JSON.parse(row.role);
+            } catch {}
+            setEditingEmployee({ ...row, role: rolesArr, isNew: false });
+          } : undefined}
+          onDeleteRow={isAdminOrManager ? (rowId) => {
+            handleDeleteEmployee(rowId);
+          } : undefined}
         />
       </div>
 
@@ -583,254 +574,311 @@ function EmployeeEditModal({ record, onSave, onDelete, onClose }: EditModalProps
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4 animate-tableFadeInOnly">
-      <form
-        onSubmit={handleSubmit}
-        className="w-full max-w-2xl bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden flex flex-col font-primary"
-      >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-[#F0F4F9]">
-          <h3 className="text-base font-bold text-zinc-950">
-            {isNew ? "Register Employee Profile" : "Edit Employee Profile"}
-          </h3>
-          <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-blue-100 text-[#001D35] select-none">
-            {formData.type === "Fulltime" ? "Fulltimer" : "Partimer"}
-          </span>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-tableFadeInOnly">
+      <div className="bg-white border border-slate-200 w-full max-w-xl rounded-lg shadow-xl flex flex-col overflow-hidden animate-tableFadeIn font-primary">
+        {/* Dialog Header */}
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+          <div>
+            <h3 className="text-base font-bold text-zinc-950">
+              {isNew ? "Add Employee" : "Edit Employee Profile"}
+            </h3>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Configure contract type, contact details, PayNow, PIN, and role permissions.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X size={18} />
+          </button>
         </div>
 
-        <div className="p-6 flex-1 overflow-y-auto max-h-[70vh] grid grid-cols-2 gap-4 custom-scrollbar select-text">
-          {/* Photo upload container */}
-          <div className="col-span-2 flex items-center gap-4 bg-zinc-50 p-4 border border-zinc-200 rounded-lg">
-            <div className="relative w-16 h-16 rounded-full bg-zinc-150 flex items-center justify-center overflow-hidden border border-zinc-300 shrink-0">
-              {formData.photo_url ? (
-                <img src={formData.photo_url} alt="Profile" className="w-full h-full object-cover" />
+        {/* Dialog Form */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-5 overflow-y-auto max-h-[calc(85vh-130px)] space-y-4">
+            
+            {/* 1:1 Photo Uploader on top */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Employee Photo</label>
+              <div className="flex items-center gap-4 p-3 bg-slate-50/50 rounded-lg border border-slate-200">
+                <div className="w-20 h-20 aspect-square rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
+                  {formData.photo_url ? (
+                    <img src={formData.photo_url} alt="Profile" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="text-center text-zinc-400 p-1">
+                      <Camera size={18} className="mx-auto mb-0.5 opacity-50" />
+                      <span className="text-[10px] block leading-tight font-medium">No Photo</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handlePhotoUpload}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={uploading}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-8 px-3 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shadow-xs"
+                    >
+                      <Camera size={13} />
+                      {uploading ? "Uploading..." : formData.photo_url ? "Change Photo" : "Upload Photo"}
+                    </button>
+                    {formData.photo_url && (
+                      <button
+                        type="button"
+                        onClick={() => setFormData((prev: any) => ({ ...prev, photo_url: "" }))}
+                        className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-red-50 text-red-600 transition-all cursor-pointer shadow-xs"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-[11px] text-zinc-500">Square employee avatar / badge photo</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Contract Type & Status */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Contract Type*</label>
+                <select
+                  value={formData.type}
+                  onChange={(e) => setFormData((prev: any) => ({ ...prev, type: e.target.value }))}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
+                >
+                  <option value="Fulltime">Fulltimer</option>
+                  <option value="Partimer">Partimer</option>
+                </select>
+              </div>
+
+              {!isNew ? (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-zinc-600">Employee Status*</label>
+                  <select
+                    value={formData.archived === true || formData.archived === 1 ? "Deactive" : "Active"}
+                    onChange={(e) => setFormData((prev: any) => ({ ...prev, archived: e.target.value === "Deactive" }))}
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
+                  >
+                    <option value="Active">Active</option>
+                    <option value="Deactive">Deactive</option>
+                  </select>
+                </div>
               ) : (
-                <Camera className="text-zinc-400" size={24} />
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-zinc-600">App Login PIN (4-Digit)*</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={4}
+                    pattern="\d{4}"
+                    value={formData.pin}
+                    onChange={(e) => setFormData((prev: any) => ({ ...prev, pin: e.target.value.replace(/\D/g, "") }))}
+                    placeholder="e.g. 1234"
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-mono tracking-widest font-bold transition-all"
+                  />
+                </div>
               )}
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Employee Photo</label>
-              <div className="flex gap-2">
+
+            {/* Display Name & Full Legal Name */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Display Name*</label>
                 <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept="image/*"
-                  onChange={handlePhotoUpload}
-                  className="hidden"
+                  type="text"
+                  required
+                  value={formData.name}
+                  onChange={(e) => setFormData((prev: any) => ({ ...prev, name: e.target.value }))}
+                  placeholder="e.g. John Doe"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
                 />
-                <button
-                  type="button"
-                  disabled={uploading}
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-3 py-1 bg-white hover:bg-zinc-100 border border-zinc-300 text-xs text-zinc-700 font-bold rounded cursor-pointer transition-colors shadow-xs"
-                >
-                  {uploading ? "Uploading..." : "Choose File"}
-                </button>
-                {formData.photo_url && (
-                  <button
-                    type="button"
-                    onClick={() => setFormData((prev: any) => ({ ...prev, photo_url: "" }))}
-                    className="px-3 py-1 bg-red-50 hover:bg-red-100 border border-red-200 text-xs text-red-700 font-bold rounded cursor-pointer transition-colors"
-                  >
-                    Remove
-                  </button>
-                )}
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Full Legal Name</label>
+                <input
+                  type="text"
+                  value={formData.full_name || ""}
+                  onChange={(e) => setFormData((prev: any) => ({ ...prev, full_name: e.target.value }))}
+                  placeholder="e.g. Johnathan Doe"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Identity Number & PIN Code (if not new) */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Identity Number (IN)*</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.in}
+                  onChange={(e) => setFormData((prev: any) => ({ ...prev, in: e.target.value }))}
+                  placeholder="e.g. S9876543A / F9876543N"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+
+              {!isNew ? (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-zinc-600">App Login PIN (4-Digit)*</label>
+                  <input
+                    type="text"
+                    required
+                    maxLength={4}
+                    pattern="\d{4}"
+                    value={formData.pin}
+                    onChange={(e) => setFormData((prev: any) => ({ ...prev, pin: e.target.value.replace(/\D/g, "") }))}
+                    placeholder="e.g. 1234"
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-mono tracking-widest font-bold transition-all"
+                  />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-zinc-600">PayNow Number</label>
+                  <input
+                    type="text"
+                    value={formData.paynow_number || ""}
+                    onChange={(e) => setFormData((prev: any) => ({ ...prev, paynow_number: e.target.value }))}
+                    placeholder="e.g. 98765432"
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Phone, Email & PayNow */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Phone</label>
+                <input
+                  type="text"
+                  value={formData.phone || ""}
+                  onChange={(e) => setFormData((prev: any) => ({ ...prev, phone: e.target.value }))}
+                  placeholder="e.g. +65 98765432"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Email</label>
+                <input
+                  type="email"
+                  value={formData.email || ""}
+                  onChange={(e) => setFormData((prev: any) => ({ ...prev, email: e.target.value }))}
+                  placeholder="e.g. john.doe@hsg.com"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
+
+            {!isNew && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">PayNow Number</label>
+                <input
+                  type="text"
+                  value={formData.paynow_number || ""}
+                  onChange={(e) => setFormData((prev: any) => ({ ...prev, paynow_number: e.target.value }))}
+                  placeholder="e.g. 98765432"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            )}
+
+            {/* Resident Address */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Resident Address</label>
+              <input
+                type="text"
+                value={formData.address || ""}
+                onChange={(e) => setFormData((prev: any) => ({ ...prev, address: e.target.value }))}
+                placeholder="e.g. Block 123 Bedok North Ave 4 #04-56"
+                className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+              />
+            </div>
+
+            {/* Private Note */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Private Note</label>
+              <textarea
+                value={formData.note || ""}
+                onChange={(e) => setFormData((prev: any) => ({ ...prev, note: e.target.value }))}
+                placeholder="Additional deployment instructions or notes..."
+                rows={2}
+                className="w-full text-xs bg-white border border-slate-200 rounded-lg p-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium resize-none transition-all"
+              />
+            </div>
+
+            {/* Access Roles checkbox selection */}
+            <div className="flex flex-col gap-2 bg-slate-50/70 border border-slate-200 rounded-lg p-3.5 select-none">
+              <span className="text-xs font-semibold text-zinc-600">Application Access Roles</span>
+              <div className="grid grid-cols-4 gap-2.5 pt-1">
+                {AVAILABLE_ROLES.map((r) => {
+                  const isChecked = (formData.role || []).includes(r);
+                  return (
+                    <label key={r} className="flex items-center gap-2 text-xs font-semibold text-zinc-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={(e) => handleRoleToggle(r, e.target.checked)}
+                        className="w-3.5 h-3.5 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
+                      />
+                      <span>{r}</span>
+                    </label>
+                  );
+                })}
               </div>
             </div>
           </div>
 
-          {/* Basic Details */}
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Contract Type*</label>
-            <select
-              value={formData.type}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, type: e.target.value }))}
-              className="h-9 px-2.5 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold cursor-pointer w-full"
-            >
-              <option value="Fulltime">Fulltimer</option>
-              <option value="Partimer">Partimer</option>
-            </select>
-          </div>
-
-          {!isNew ? (
-            <div className="flex flex-col gap-1">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Employee Status*</label>
-              <select
-                value={formData.archived === true || formData.archived === 1 ? "Deactive" : "Active"}
-                onChange={(e) => setFormData((prev: any) => ({ ...prev, archived: e.target.value === "Deactive" }))}
-                className="h-9 px-2.5 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold cursor-pointer w-full"
-              >
-                <option value="Active">Active</option>
-                <option value="Deactive">Deactive</option>
-              </select>
+          {/* Dialog Footer */}
+          <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-between items-center shrink-0">
+            <div>
+              {!isNew && (formData.archived === true || formData.archived === 1) && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    if (confirm(`Are you sure you want to permanently delete employee "${formData.name}"? This action cannot be undone.`)) {
+                      onClose();
+                      await onDelete(formData.id);
+                    }
+                  }}
+                  className="h-9 px-3.5 text-xs font-semibold rounded-lg border border-red-200 bg-white text-red-600 hover:bg-red-50 hover:text-red-700 transition-all cursor-pointer shadow-xs"
+                >
+                  Delete Profile
+                </button>
+              )}
             </div>
-          ) : (
-            <div className="flex flex-col gap-1 select-none pointer-events-none opacity-0">
-              <label className="text-[10px]">Spacer</label>
-              <div className="h-9"></div>
-            </div>
-          )}
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Display Name*</label>
-            <input
-              type="text"
-              required
-              value={formData.name}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, name: e.target.value }))}
-              placeholder="e.g. John Doe"
-              className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Full Legal Name</label>
-            <input
-              type="text"
-              value={formData.full_name || ""}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, full_name: e.target.value }))}
-              placeholder="e.g. Johnathan Doe"
-              className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Identity Number (IN)*</label>
-            <input
-              type="text"
-              required
-              value={formData.in}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, in: e.target.value }))}
-              placeholder="e.g. S9876543A / F9876543N"
-              className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">App Login PIN (4-Digit)*</label>
-            <input
-              type="text"
-              required
-              maxLength={4}
-              pattern="\d{4}"
-              value={formData.pin}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, pin: e.target.value.replace(/\D/g, "") }))}
-              placeholder="e.g. 1234"
-              className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-mono tracking-widest font-bold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Phone</label>
-            <input
-              type="text"
-              value={formData.phone || ""}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, phone: e.target.value }))}
-              placeholder="e.g. +65 98765432"
-              className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Email</label>
-            <input
-              type="email"
-              value={formData.email || ""}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, email: e.target.value }))}
-              placeholder="e.g. john.doe@hsg.com"
-              className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">PayNow Number</label>
-            <input
-              type="text"
-              value={formData.paynow_number || ""}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, paynow_number: e.target.value }))}
-              placeholder="e.g. 98765432"
-              className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1 col-span-2">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Resident Address</label>
-            <input
-              type="text"
-              value={formData.address || ""}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, address: e.target.value }))}
-              placeholder="e.g. Block 123 Bedok North Ave 4 #04-56"
-              className="h-9 px-3 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1 col-span-2">
-            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Private Note</label>
-            <textarea
-              value={formData.note || ""}
-              onChange={(e) => setFormData((prev: any) => ({ ...prev, note: e.target.value }))}
-              placeholder="Additional deployment instructions or notes..."
-              rows={2}
-              className="px-3 py-2 bg-[#F0F4F9] border border-slate-200 rounded text-sm text-zinc-900 focus:outline-none focus:ring-2 focus:ring-blue-400/20 font-semibold"
-            />
-          </div>
-
-          {/* Access Roles checkbox selection */}
-          <div className="col-span-2 flex flex-col gap-2 bg-slate-50 border border-slate-200 rounded-lg p-4 select-none">
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Application Access Roles</span>
-            <div className="grid grid-cols-3 gap-3">
-              {AVAILABLE_ROLES.map((r) => {
-                const isChecked = (formData.role || []).includes(r);
-                return (
-                  <label key={r} className="flex items-center gap-2 text-xs font-bold text-zinc-700 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={(e) => handleRoleToggle(r, e.target.checked)}
-                      className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 focus:ring-2 border-slate-300 cursor-pointer"
-                    />
-                    {r}
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        <div className="flex justify-between items-center px-6 py-4 bg-[#F0F4F9] border-t border-slate-200 select-none">
-          <div>
-            {!isNew && (formData.archived === true || formData.archived === 1) && (
+            <div className="flex items-center gap-2.5">
               <button
                 type="button"
-                onClick={async () => {
-                  if (confirm(`Are you sure you want to permanently delete employee "${formData.name}"? This action cannot be undone.`)) {
-                    onClose();
-                    await onDelete(formData.id);
-                  }
-                }}
-                className="h-9 px-4 text-xs font-bold rounded border border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-800 transition-colors cursor-pointer"
+                onClick={onClose}
+                className="h-9 px-4 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-zinc-700 hover:bg-slate-100 hover:text-zinc-950 transition-all cursor-pointer shadow-xs"
               >
-                Delete Profile
+                Cancel
               </button>
-            )}
+              <button
+                type="submit"
+                disabled={uploading}
+                className="h-9 px-4 text-xs font-semibold rounded-lg border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs disabled:opacity-50 active:scale-98"
+              >
+                Save Employee
+              </button>
+            </div>
           </div>
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="h-9 px-4 text-xs font-bold rounded border border-slate-200 bg-white text-zinc-700 hover:text-zinc-955 hover:bg-slate-100 cursor-pointer"
-            >
-              Cancel
-            </button>
-            <CustomButton
-              type="submit"
-              disabled={uploading}
-              className="h-9 text-xs bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] text-white rounded font-bold"
-            >
-              Save Employee
-            </CustomButton>
-          </div>
-        </div>
-      </form>
+        </form>
+      </div>
     </div>
   );
 }
@@ -867,130 +915,127 @@ function EmployeeCardModal({ employee, onViewPin, onClose }: CardModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4 animate-tableFadeInOnly">
-      <div className="w-full max-w-md bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden flex flex-col font-primary select-text">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-[#F0F4F9] select-none">
-          <h3 className="text-base font-bold text-zinc-950">Employee Profile Card</h3>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-tableFadeInOnly">
+      <div className="w-full max-w-2xl bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden flex flex-col font-primary select-text animate-tableFadeIn">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white select-none">
+          <div>
+            <h3 className="text-base font-bold text-zinc-950">Employee Profile Card</h3>
+            <p className="text-xs text-zinc-500 mt-0.5">Contact credentials, security PIN, and application roles.</p>
+          </div>
           <button
             onClick={onClose}
-            className="text-zinc-400 hover:text-zinc-600 font-bold text-lg focus:outline-none cursor-pointer"
+            className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
           >
-            ×
+            <X size={18} />
           </button>
         </div>
 
-        <div className="p-6 flex-1 overflow-y-auto max-h-[70vh] flex flex-col items-center gap-5 custom-scrollbar">
+        <div className="p-6 flex-1 overflow-y-auto max-h-[75vh] flex flex-col gap-5 custom-scrollbar">
           {/* Profile Header Image and Status */}
-          <div className="flex flex-col items-center gap-2">
-            <div className="w-20 h-20 rounded-full bg-zinc-100 flex items-center justify-center overflow-hidden border border-zinc-300 shadow-xs">
+          <div className="flex items-center gap-4 p-4 bg-slate-50/70 border border-slate-200 rounded-lg">
+            <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center overflow-hidden border border-slate-200 shadow-2xs shrink-0">
               {employee.photo_url ? (
                 <img src={employee.photo_url} alt={employee.name} className="w-full h-full object-cover" />
               ) : (
-                <div className="w-full h-full bg-blue-50 text-blue-500 flex items-center justify-center text-2xl font-bold uppercase">
+                <div className="w-full h-full bg-blue-50 text-[#0B57D0] flex items-center justify-center text-xl font-bold uppercase">
                   {employee.name.substring(0, 2)}
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-1.5 mt-1 select-none">
-              <span className="text-sm font-bold text-zinc-900">{employee.name}</span>
-              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
-                isArchived ? "bg-red-50 text-red-700 border border-red-100" : "bg-green-50 text-green-700 border border-green-100"
-              }`}>
-                {isArchived ? "Deactive" : "Active"}
+            <div className="flex flex-col gap-1 select-none">
+              <div className="flex items-center gap-2">
+                <span className="text-base font-bold text-zinc-950">{employee.name}</span>
+                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase ${
+                  isArchived ? "bg-red-50 text-red-700 border border-red-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                }`}>
+                  {isArchived ? "Deactive" : "Active"}
+                </span>
+              </div>
+              <span className="text-xs text-zinc-500 font-semibold">
+                {employee.type === "Fulltime" ? "Full-Time Staff" : "Part-Time Contractor"} • Registered {formattedDate}
               </span>
             </div>
-            <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest select-none">
-              {employee.type === "Fulltime" ? "Full-Time Staff" : "Part-Time Contractor"}
-            </span>
           </div>
 
-          <div className="w-full border-t border-zinc-100 my-1"></div>
-
-          {/* Details list */}
-          <div className="w-full flex flex-col gap-3.5 text-xs">
+          {/* Details 2-Column Grid */}
+          <div className="grid grid-cols-2 gap-4 text-xs">
             {employee.full_name && (
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">Full Legal Name</span>
-                <span className="font-semibold text-zinc-800">{employee.full_name}</span>
+              <div className="flex flex-col gap-1 col-span-2">
+                <span className="text-[11px] font-semibold text-zinc-500 select-none">Full Legal Name</span>
+                <span className="font-semibold text-zinc-900 bg-slate-50/50 px-3 py-2 rounded-lg border border-slate-200">{employee.full_name}</span>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">Identity Number (IN)</span>
-                <span className="font-mono font-bold text-zinc-800">{employee.in}</span>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">App PIN Code</span>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className={`font-mono text-zinc-800 tracking-widest font-bold ${showPin ? "text-sm" : "text-xs text-zinc-400"}`}>
-                    {showPin ? employee.pin : "••••"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={handleTogglePin}
-                    className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-350 text-zinc-650 hover:text-zinc-955 transition-colors cursor-pointer select-none"
-                    title={showPin ? "Hide PIN" : "Reveal PIN"}
-                  >
-                    {showPin ? <EyeOff size={11} /> : <Eye size={11} />}
-                  </button>
-                </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-zinc-500 select-none">Identity Number (IN)</span>
+              <span className="font-mono font-bold text-zinc-900 bg-slate-50/50 px-3 py-2 rounded-lg border border-slate-200">{employee.in}</span>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-zinc-500 select-none">App PIN Code</span>
+              <div className="flex items-center justify-between bg-slate-50/50 px-3 py-1.5 rounded-lg border border-slate-200">
+                <span className={`font-mono text-zinc-900 tracking-widest font-bold ${showPin ? "text-sm" : "text-xs text-zinc-400"}`}>
+                  {showPin ? employee.pin : "••••"}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleTogglePin}
+                  className="p-1 rounded bg-white hover:bg-slate-100 border border-slate-200 text-zinc-600 hover:text-zinc-950 transition-colors cursor-pointer select-none shadow-2xs"
+                  title={showPin ? "Hide PIN" : "Reveal PIN"}
+                >
+                  {showPin ? <EyeOff size={13} /> : <Eye size={13} />}
+                </button>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">Phone</span>
-                <span className="font-semibold text-zinc-800">{employee.phone || "-"}</span>
-              </div>
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">PayNow Number</span>
-                <span className="font-semibold text-zinc-800">{employee.paynow_number || "-"}</span>
-              </div>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-zinc-500 select-none">Phone</span>
+              <span className="font-medium text-zinc-800 bg-slate-50/50 px-3 py-2 rounded-lg border border-slate-200">{employee.phone || "-"}</span>
             </div>
 
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">Email</span>
-              <span className="font-semibold text-zinc-800 select-all">{employee.email || "-"}</span>
+            <div className="flex flex-col gap-1">
+              <span className="text-[11px] font-semibold text-zinc-500 select-none">PayNow Number</span>
+              <span className="font-medium text-zinc-800 bg-slate-50/50 px-3 py-2 rounded-lg border border-slate-200">{employee.paynow_number || "-"}</span>
             </div>
 
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">Residential Address</span>
-              <span className="font-semibold text-zinc-800">{employee.address || "-"}</span>
+            <div className="flex flex-col gap-1 col-span-2">
+              <span className="text-[11px] font-semibold text-zinc-500 select-none">Email</span>
+              <span className="font-medium text-zinc-800 bg-slate-50/50 px-3 py-2 rounded-lg border border-slate-200 select-all">{employee.email || "-"}</span>
+            </div>
+
+            <div className="flex flex-col gap-1 col-span-2">
+              <span className="text-[11px] font-semibold text-zinc-500 select-none">Residential Address</span>
+              <span className="font-medium text-zinc-800 bg-slate-50/50 px-3 py-2 rounded-lg border border-slate-200">{employee.address || "-"}</span>
             </div>
 
             {employee.note && (
-              <div className="flex flex-col gap-0.5">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider select-none">Private Notes</span>
-                <span className="font-semibold text-zinc-700 bg-zinc-50 p-2 border border-zinc-150 rounded italic whitespace-pre-wrap">{employee.note}</span>
+              <div className="flex flex-col gap-1 col-span-2">
+                <span className="text-[11px] font-semibold text-zinc-500 select-none">Private Notes</span>
+                <span className="font-medium text-zinc-700 bg-slate-50 p-3 border border-slate-200 rounded-lg italic whitespace-pre-wrap">{employee.note}</span>
               </div>
             )}
 
-            <div className="flex flex-col gap-1 select-none">
-              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Application Access Roles</span>
-              <div className="flex flex-wrap gap-1 mt-0.5">
+            <div className="flex flex-col gap-1.5 col-span-2 select-none">
+              <span className="text-[11px] font-semibold text-zinc-500">Application Access Roles</span>
+              <div className="flex flex-wrap gap-1.5 bg-slate-50/50 p-3 rounded-lg border border-slate-200">
                 {parsedRoles.length === 0 ? (
-                  <span className="text-[10px] text-zinc-400 italic">No access roles assigned</span>
+                  <span className="text-xs text-zinc-400 italic">No access roles assigned</span>
                 ) : (
                   parsedRoles.map((r) => (
-                    <span key={r} className="px-2 py-0.5 rounded bg-blue-50 border border-blue-150 text-[#0B57D0] text-[10px] font-bold">
+                    <span key={r} className="px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-[#0B57D0] text-xs font-semibold">
                       {r}
                     </span>
                   ))
                 )}
               </div>
             </div>
-
-            <div className="flex flex-col gap-0.5 select-none">
-              <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Registration Date</span>
-              <span className="font-semibold text-zinc-500">{formattedDate}</span>
-            </div>
           </div>
         </div>
 
-        <div className="flex justify-end px-6 py-4 bg-[#F0F4F9] border-t border-slate-200 select-none">
+        <div className="flex justify-end px-6 py-3.5 bg-slate-50 border-t border-slate-200 select-none shrink-0">
           <button
             onClick={onClose}
-            className="h-9 px-5 text-xs font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded shadow-xs cursor-pointer transition-colors"
+            className="h-9 px-4 text-xs font-semibold rounded-lg border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs active:scale-98"
           >
             Close Card
           </button>

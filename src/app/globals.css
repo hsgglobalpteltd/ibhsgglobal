@@ -201,24 +201,29 @@
   animation: spin-custom 1s linear infinite;
 }
 
-/* Custom sleek scrollbar for data tables and panels */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* Universal sleek thin scrollbars across all components, tables, and dialogs */
+*::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: #E5E5E5;
-  border-radius: 4px;
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #C2C2C2;
-  border-radius: 4px;
+*::-webkit-scrollbar-thumb {
+  background: #CBD5E1;
+  border-radius: 9999px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #A3A3A3;
+*::-webkit-scrollbar-thumb:hover {
+  background: #94A3B8;
+}
+
+/* Firefox standard */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #CBD5E1 transparent;
 }
 
 /* Overrides for Snap Deals tables to support flex badge wrapping and custom column widths */

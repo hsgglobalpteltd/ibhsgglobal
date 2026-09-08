@@ -182,43 +182,13 @@ export function DataTable({
     }
   }, [activeFilterCol]);
 
-  // Check substring word match (word by word partial match at word boundaries/transitions)
+  // Flexible substring match for multi-word search (matches any occurrence within the cell value)
   function cellWordMatch(queryWord: string, cellValue: any): boolean {
     const q = queryWord.toLowerCase().trim();
     if (!q) return true;
 
-    const valStr = String(cellValue ?? "").toLowerCase().trim();
-    if (!valStr) return false;
-
-    // Check if the query exists as a substring first
-    const idx = valStr.indexOf(q);
-    if (idx === -1) return false;
-
-    const originalStr = String(cellValue ?? "").trim();
-    let currentIdx = idx;
-
-    // Check all occurrences of query to see if any start at a word boundary/transition
-    while (currentIdx !== -1) {
-      if (currentIdx === 0) return true; // Starts at beginning of the string
-
-      const prevChar = originalStr[currentIdx - 1];
-      const nextChar = originalStr[currentIdx]; // First char of the match in original casing
-
-      // 1. Preceded by space/punctuation/non-alphanumeric
-      if (/[^a-zA-Z0-9]/.test(prevChar)) return true;
-
-      // 2. Letter/number transition
-      if (/[a-zA-Z]/.test(prevChar) && /[0-9]/.test(nextChar)) return true;
-      if (/[0-9]/.test(prevChar) && /[a-zA-Z]/.test(nextChar)) return true;
-
-      // 3. camelCase transition (e.g. lowercase letter followed by uppercase letter)
-      if (/[a-z]/.test(prevChar) && /[A-Z]/.test(nextChar)) return true;
-
-      // Find next occurrence
-      currentIdx = valStr.indexOf(q, currentIdx + 1);
-    }
-
-    return false;
+    const valStr = String(cellValue ?? "").toLowerCase();
+    return valStr.includes(q);
   }
 
   // Keydown listener on table container to capture direct typing anywhere
@@ -553,23 +523,28 @@ export function DataTable({
 
       {/* Search HUD / Table Header Bar (Fixed height) */}
       <div className="h-12 flex items-center justify-between px-4 bg-[#F0F4F9] border-b border-slate-200 gap-4 flex-shrink-0 relative">
-        <div className="flex items-center gap-3.5 text-zinc-800">
-          <div className="flex items-center gap-2">
-            {!globalSearch ? (
-              <>
-                <Search size={15} className="text-zinc-500 flex-shrink-0" />
-                <span className="font-bold text-xs text-zinc-700 uppercase tracking-wider select-none">
-                  {title}
-                </span>
-              </>
-            ) : (
-              <span className="text-sm font-semibold text-zinc-900 select-none">
-                Search: <span className="underline decoration-zinc-400 decoration-2 underline-offset-4 font-bold">{globalSearch}</span>
-              </span>
+        <div className="flex items-center gap-3 text-zinc-800 flex-1 min-w-0">
+          {/* Dedicated Search Input Box */}
+          <div className="relative flex items-center max-w-sm w-full">
+            <Search size={14} className="absolute left-2.5 text-zinc-400 pointer-events-none" />
+            <input
+              type="text"
+              value={globalSearch}
+              onChange={(e) => setGlobalSearch(e.target.value)}
+              placeholder="Search records..."
+              className="w-full h-8 pl-8 pr-7 text-xs bg-white border border-slate-200 rounded-lg text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all shadow-2xs"
+            />
+            {globalSearch && (
+              <button
+                type="button"
+                onClick={() => setGlobalSearch("")}
+                className="absolute right-2 text-zinc-400 hover:text-zinc-700 cursor-pointer p-0.5"
+                title="Clear search"
+              >
+                <X size={12} />
+              </button>
             )}
           </div>
-
-
         </div>
 
         {/* Loading Progress Bar overlaid at the very bottom edge of header bar */}
@@ -584,16 +559,6 @@ export function DataTable({
         
         <div className="flex items-center gap-2">
           {headerActions}
-          {globalSearch && (
-            <CustomButton 
-              variant="default"
-              onClick={() => setGlobalSearch("")}
-              title="Clear active filter"
-            >
-              <span>Esc</span>
-              <X size={13} className="stroke-[2.5]" />
-            </CustomButton>
-          )}
 
           {isEditMode && onAddNew && (
             <CustomButton
@@ -759,37 +724,37 @@ export function DataTable({
                     className={`transition-colors ${isRowEditing ? "bg-[#D3E3FD]/40 font-medium" : "hover:bg-[#F0F4F9]/70"}`}
                   >
                     {isEditMode && (
-                      <td className="py-2 px-4 text-sm text-zinc-800 border-r border-zinc-200/50">
-                        <div className="flex items-center gap-1.5">
+                      <td className="py-2.5 px-3 text-sm text-zinc-800 border-r border-slate-200/80">
+                        <div className="flex items-center gap-1">
                           {isRowEditing ? (
                             <>
                               <button
                                 onClick={() => handleSaveRow(getRowId(row))}
-                                className="p-1 rounded bg-[#EEEEEE] hover:bg-green-100 text-green-700 hover:text-green-800 border border-zinc-300 shadow-sm transition-colors cursor-pointer"
+                                className="w-7 h-7 rounded-md bg-white hover:bg-emerald-50 text-emerald-600 border border-slate-200 shadow-2xs flex items-center justify-center transition-all cursor-pointer hover:border-emerald-200"
                                 title="Save changes"
                               >
-                                <Check size={13} />
+                                <Check size={14} />
                               </button>
                               <button
                                 onClick={handleCancelEdit}
-                                className="p-1 rounded bg-[#EEEEEE] hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 border border-zinc-300 shadow-sm transition-colors cursor-pointer"
+                                className="w-7 h-7 rounded-md bg-white hover:bg-slate-100 text-zinc-500 hover:text-zinc-900 border border-slate-200 shadow-2xs flex items-center justify-center transition-all cursor-pointer"
                                 title="Cancel editing"
                               >
-                                <X size={13} />
+                                <X size={14} />
                               </button>
                             </>
                           ) : (row as any).isLocked ? (
-                            <div className="flex items-center justify-center gap-1 p-1">
+                            <div className="flex items-center justify-center gap-1">
                               {onPrintRow && (
                                 <button
                                   onClick={() => onPrintRow(row)}
-                                  className="p-1 rounded bg-[#EEEEEE] hover:bg-blue-50 text-blue-600 hover:text-blue-700 border border-zinc-300/80 shadow-sm transition-colors cursor-pointer"
+                                  className="w-7 h-7 rounded-md bg-white hover:bg-[#D3E3FD]/50 text-[#0B57D0] border border-slate-200 shadow-2xs flex items-center justify-center transition-all cursor-pointer"
                                   title="Print Claim Statement"
                                 >
                                   <Printer size={13} />
                                 </button>
                               )}
-                              <div title="This record is locked because a claim has been made for this date range.">
+                              <div title="This record is locked because a claim has been made for this date range." className="p-1">
                                 <Lock size={13} className="text-zinc-400" />
                               </div>
                             </div>
@@ -798,7 +763,7 @@ export function DataTable({
                               {onPrintRow && (
                                 <button
                                   onClick={() => onPrintRow(row)}
-                                  className="p-1 rounded bg-[#EEEEEE] hover:bg-blue-50 text-blue-600 hover:text-blue-700 border border-zinc-300/80 shadow-sm transition-colors cursor-pointer mr-0.5"
+                                  className="w-7 h-7 rounded-md bg-white hover:bg-[#D3E3FD]/50 text-[#0B57D0] border border-slate-200 shadow-2xs flex items-center justify-center transition-all cursor-pointer hover:border-blue-200"
                                   title="Print Claim Statement"
                                 >
                                   <Printer size={13} />
@@ -816,7 +781,11 @@ export function DataTable({
                                     handleStartEdit(row);
                                   }
                                 }}
-                                className={`p-1 rounded bg-[#EEEEEE] border border-zinc-300/80 shadow-sm transition-colors ${!canEdit ? "opacity-50 cursor-not-allowed text-zinc-400" : "hover:bg-[#E5E5E5] text-zinc-600 hover:text-zinc-950 cursor-pointer"}`}
+                                className={`w-7 h-7 rounded-md bg-white border border-slate-200 shadow-2xs flex items-center justify-center transition-all ${
+                                  !canEdit 
+                                    ? "opacity-40 cursor-not-allowed text-zinc-400" 
+                                    : "hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer"
+                                }`}
                                 title={!canEdit ? "Read-only access" : "Edit row"}
                               >
                                 <Pencil size={13} />
@@ -824,7 +793,7 @@ export function DataTable({
                               {userRole === "admin" && onBlockRow && (
                                 <button
                                   onClick={() => onBlockRow(row)}
-                                  className="p-1 rounded bg-[#EEEEEE] hover:bg-amber-50 text-amber-600 hover:text-amber-700 border border-zinc-300/80 shadow-sm transition-colors cursor-pointer"
+                                  className="w-7 h-7 rounded-md bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 border border-slate-200 shadow-2xs flex items-center justify-center transition-all cursor-pointer hover:border-slate-300"
                                   title="Block user"
                                 >
                                   <Ban size={13} />
@@ -839,7 +808,11 @@ export function DataTable({
                                     }
                                     handleDeleteRow(getRowId(row));
                                   }}
-                                  className={`p-1 rounded bg-[#EEEEEE] border border-zinc-300/80 shadow-sm transition-colors ${!canDelete ? "opacity-50 cursor-not-allowed text-zinc-400" : "hover:bg-red-50 text-red-600 hover:text-red-700 cursor-pointer"}`}
+                                  className={`w-7 h-7 rounded-md bg-white border border-slate-200 shadow-2xs flex items-center justify-center transition-all ${
+                                    !canDelete 
+                                      ? "opacity-40 cursor-not-allowed text-zinc-400" 
+                                      : "hover:bg-slate-100 text-zinc-600 hover:text-red-600 hover:border-slate-300 cursor-pointer"
+                                  }`}
                                   title={!canDelete ? "Delete restricted" : "Delete row"}
                                 >
                                   <Trash2 size={13} />

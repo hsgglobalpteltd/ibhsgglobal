@@ -561,10 +561,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [activeLiveTrackingSubTab, setActiveLiveTrackingSubTab] = React.useState<"location" | "driver">("location");
 
   const tabs = [
-    { id: "dashboard", label: "Live Tracking" },
-    { id: "delivery", label: "Delivery Order" },
-    { id: "return", label: "Return Order" },
-    { id: "create", label: "Create Order" }
+    { id: "dashboard", label: "Live Tracking", desc: "Real-time dispatch route visualization and live driver shift monitoring." },
+    { id: "delivery", label: "Delivery Order", desc: "Manage pending deliveries, invoices, and complete fulfilled orders." },
+    { id: "return", label: "Return Order", desc: "Track return collection pickups, due dates, and credit notes." },
+    { id: "create", label: "Create Order", desc: "Import DO orders from PDF/Excel or create manual delivery and return drafts." }
   ];
 
   const [activeTab, setActiveTab] = React.useState<string>("dashboard");
@@ -2140,7 +2140,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       let noMatchCount = 0;
 
       for (const inv of parsedInvoices) {
-        const { invoiceNumber, poRef, invoiceAmount } = inv;
+        const { invoiceNumber, poRef, invoiceAmount, items } = inv;
 
         if (!poRef || !poRef.trim()) {
           ignoredBlankRef++;
@@ -2159,6 +2159,23 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
         matchedCount++;
 
+        // Parse extracted invoice items if present and valid
+        let finalItemsJson: string | undefined = undefined;
+        let itemsRemark = "";
+        if (Array.isArray(items) && items.length > 0) {
+          const cleanItems: SKUItem[] = items
+            .map((it: any) => ({
+              sku: String(it.sku || it.name || it.item || "Unknown SKU").trim(),
+              qty: Number(it.qty || it.quantity || 1) || 1
+            }))
+            .filter((it: SKUItem) => Boolean(it.sku));
+
+          if (cleanItems.length > 0) {
+            finalItemsJson = JSON.stringify(cleanItems);
+            itemsRemark = ` • Updated Items & Qty from Invoice (${cleanItems.length} items)`;
+          }
+        }
+
         let currentLogs: LogEntry[] = [];
         try {
           currentLogs = typeof matchedOrder.logs === "string" ? JSON.parse(matchedOrder.logs) : matchedOrder.logs;
@@ -2170,21 +2187,26 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           {
             action: "Completed by Admin",
             actionBy: profile?.name || "Admin",
-            remark: `Archived & Verified in Bulk (Invoice: ${invoiceNumber}, Amount: ${invoiceAmount})`,
+            remark: `Archived & Verified in Bulk (Invoice: ${invoiceNumber}, Amount: ${invoiceAmount})${itemsRemark}`,
             timestamp: Date.now()
           }
         ];
 
         // 1. Silent Background API request
+        const payloadData: any = {
+          id: matchedOrder.id,
+          completed: "true",
+          invoice_number: invoiceNumber || "",
+          invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+          logs: JSON.stringify(updatedLogs)
+        };
+        if (finalItemsJson !== undefined) {
+          payloadData.items = finalItemsJson;
+        }
+
         const payload = {
           action: "update",
-          data: {
-            id: matchedOrder.id,
-            completed: "true",
-            invoice_number: invoiceNumber || "",
-            invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
-            logs: JSON.stringify(updatedLogs)
-          }
+          data: payloadData
         };
 
         await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
@@ -2202,6 +2224,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   completed: "true",
                   invoice_number: invoiceNumber || "",
                   invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+                  ...(finalItemsJson !== undefined ? { items: finalItemsJson } : {}),
                   logs: JSON.stringify(updatedLogs)
                 }
               : o
@@ -2254,10 +2277,70 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       const invIdx = headers.findIndex(h => h === "invoice" || h === "invoicenumber" || h === "invoiceno");
       const refIdx = headers.findIndex(h => h === "refnumber" || h === "poref" || h === "reference");
       const amtIdx = headers.findIndex(h => h === "amount" || h === "invoiceamount" || h === "totalamount");
+      const itemsIdx = headers.findIndex(h => h === "items" || h === "item" || h === "skus" || h === "sku" || h === "skuitems" || h === "products" || h === "itemsjson");
 
       if (invIdx === -1 || refIdx === -1 || amtIdx === -1) {
         throw new Error("Sheet must contain 'Invoice', 'Ref Number', and 'Amount' column headers.");
       }
+
+      // Helper to parse items string e.g. JSON or "SKUA,1,SKUB,45"
+      const parseInvoiceItemsValue = (raw: any): SKUItem[] => {
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw;
+        const str = String(raw).trim();
+        if (!str) return [];
+
+        if (str.startsWith("[") && str.endsWith("]")) {
+          try {
+            const parsed = JSON.parse(str);
+            if (Array.isArray(parsed)) {
+              return parsed.map((it: any) => ({
+                sku: String(it.sku || it.name || it.item || "Unknown SKU").trim(),
+                qty: Number(it.qty || it.quantity || 1) || 1
+              }));
+            }
+          } catch (_) {}
+        }
+
+        const itemsList: SKUItem[] = [];
+        const entries = str.split(/[\r\n;]+/).map((s: string) => s.trim()).filter(Boolean);
+
+        for (const entry of entries) {
+          if (entry.includes(":") || / [xX*] \d+/.test(entry)) {
+            const parts = entry.split(/[:xX*]/);
+            if (parts.length >= 2) {
+              const sku = parts[0].trim();
+              const qty = parseInt(parts[parts.length - 1].trim(), 10) || 1;
+              if (sku) {
+                itemsList.push({ sku, qty });
+                continue;
+              }
+            }
+          }
+
+          const tokens = entry.split(",").map((t: string) => t.trim()).filter(Boolean);
+          let i = 0;
+          while (i < tokens.length) {
+            const current = tokens[i];
+            const next = tokens[i + 1];
+            if (next !== undefined && /^\d+(\.\d+)?$/.test(next)) {
+              itemsList.push({
+                sku: current,
+                qty: Number(next) || 1
+              });
+              i += 2;
+            } else {
+              itemsList.push({
+                sku: current,
+                qty: 1
+              });
+              i += 1;
+            }
+          }
+        }
+
+        return itemsList;
+      };
 
       const parsedInvoices = [];
       for (let i = 1; i < sheetData.length; i++) {
@@ -2266,8 +2349,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         const invoiceNumber = String(row[invIdx] || "").trim();
         const poRef = String(row[refIdx] || "").trim();
         const invoiceAmount = row[amtIdx] !== undefined && row[amtIdx] !== null ? String(row[amtIdx]).trim() : "";
+        const parsedItems = itemsIdx !== -1 ? parseInvoiceItemsValue(row[itemsIdx]) : [];
         if (!invoiceNumber && !poRef) continue;
-        parsedInvoices.push({ invoiceNumber, poRef, invoiceAmount });
+        parsedInvoices.push({ invoiceNumber, poRef, invoiceAmount, items: parsedItems });
       }
 
       showToast(`Parsed ${parsedInvoices.length} invoices. Matching references...`, "info");
@@ -2277,7 +2361,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       let noMatchCount = 0;
 
       for (const inv of parsedInvoices) {
-        const { invoiceNumber, poRef, invoiceAmount } = inv;
+        const { invoiceNumber, poRef, invoiceAmount, items } = inv;
 
         if (!poRef || !poRef.trim()) {
           ignoredBlankRef++;
@@ -2295,6 +2379,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
         matchedCount++;
 
+        let finalItemsJson: string | undefined = undefined;
+        let itemsRemark = "";
+        if (Array.isArray(items) && items.length > 0) {
+          finalItemsJson = JSON.stringify(items);
+          itemsRemark = ` • Updated Items & Qty from Spreadsheet (${items.length} items)`;
+        }
+
         let currentLogs: LogEntry[] = [];
         try {
           currentLogs = typeof matchedOrder.logs === "string" ? JSON.parse(matchedOrder.logs) : matchedOrder.logs;
@@ -2306,20 +2397,25 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           {
             action: "Completed by Admin",
             actionBy: profile?.name || "Admin",
-            remark: `Archived & Verified in Bulk (Invoice: ${invoiceNumber}, Amount: ${invoiceAmount})`,
+            remark: `Archived & Verified in Bulk (Invoice: ${invoiceNumber}, Amount: ${invoiceAmount})${itemsRemark}`,
             timestamp: Date.now()
           }
         ];
 
+        const payloadData: any = {
+          id: matchedOrder.id,
+          completed: "true",
+          invoice_number: invoiceNumber || "",
+          invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+          logs: JSON.stringify(updatedLogs)
+        };
+        if (finalItemsJson !== undefined) {
+          payloadData.items = finalItemsJson;
+        }
+
         const payload = {
           action: "update",
-          data: {
-            id: matchedOrder.id,
-            completed: "true",
-            invoice_number: invoiceNumber || "",
-            invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
-            logs: JSON.stringify(updatedLogs)
-          }
+          data: payloadData
         };
 
         await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
@@ -2336,6 +2432,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   completed: "true",
                   invoice_number: invoiceNumber || "",
                   invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+                  ...(finalItemsJson !== undefined ? { items: finalItemsJson } : {}),
                   logs: JSON.stringify(updatedLogs)
                 }
               : o
@@ -3770,20 +3867,88 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] relative min-w-0">
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
       
-      {/* Top Banner and Tabs */}
+      {/* 1. Top Navigation Tabs connected to breadcrumb */}
       <NavigationTabs
         tabs={tabs}
         activeTabId={activeTab}
         onTabSelect={setActiveTab}
       />
 
-      <div className="content-body flex-1 w-full overflow-y-auto">
+      {/* 2. Top Header Bar */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            {activeTab === "dashboard"
+              ? "Live Tracking"
+              : activeTab === "delivery"
+              ? "Delivery Order Management"
+              : activeTab === "return"
+              ? "Return Order Tracking"
+              : "Create & Import Orders"}
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {activeTab === "dashboard"
+              ? "Real-time dispatch route visualization and live driver shift monitoring."
+              : activeTab === "delivery"
+              ? "Manage pending deliveries, bulk invoices, and completed order archives."
+              : activeTab === "return"
+              ? "Track customer and store return collections, due dates, and credit notes."
+              : "Import DO orders from PDF / Excel sheets or draft manual order records."}
+          </p>
+        </div>
+
+        {/* Header Action Buttons for Create Tab */}
+        {activeTab === "create" && (
+          <div className="flex items-center gap-2">
+            <CustomButton 
+              variant="default"
+              onClick={() => {
+                if (!pdfLoading) setIsDoUploadChoiceOpen(true);
+              }}
+              disabled={pdfLoading}
+              className="text-xs font-semibold"
+            >
+              <Upload size={14} />
+              <span>Import Order</span>
+            </CustomButton>
+
+            <CustomButton 
+              variant="dark"
+              onClick={() => {
+                setCreateDoNumber(`DO-${Date.now()}`);
+                setCreateRefNumber("");
+                setCreateMark(getNextAvailableMark(drafts, pendingOrders));
+                setCreateType("Normal");
+                setCreateDeliverTo("");
+                setCreatePoscode("");
+                setCreateItems([]);
+                setIsCreatePanelOpen(true);
+              }}
+              className="text-xs font-semibold"
+            >
+              <Plus size={14} />
+              <span>Create Order</span>
+            </CustomButton>
+
+            <CustomButton 
+              variant="default"
+              onClick={openCreateReturnPanel}
+              className="text-xs font-semibold"
+            >
+              <Plus size={14} />
+              <span>Create Return</span>
+            </CustomButton>
+          </div>
+        )}
+      </div>
+
+      <div className="flex-1 w-full flex flex-col p-4 min-h-0 overflow-hidden bg-[#F8F9FA]/40">
         {/* TAB CONTENT: LIVE TRACKING (Formerly Dashboard) */}
         {activeTab === "dashboard" && (
-          <div className="flex flex-col gap-4 animate-tableFadeInOnly">
-            {/* Live Tracking Sub-tabs Switch Header */}
+          <div className="flex-1 flex flex-col gap-4 animate-tableFadeInOnly min-h-0 overflow-hidden">
+            {/* Live Tracking Sub-tabs Switch Header & Compact Quick Stats */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
               <div className="flex items-center gap-2">
                 <button
@@ -3817,55 +3982,36 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   )}
                 </button>
               </div>
+
+              {/* Compact Quick Stats Pills in Sub-header */}
+              {activeLiveTrackingSubTab === "location" && (
+                <div className="flex items-center gap-2 text-xs">
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
+                    <span className="text-zinc-500 font-medium">Pending Delivery:</span>
+                    <span className="font-bold text-zinc-950">{pendingOrders.filter((o) => o.status !== "Delivered").length}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-[#C5221F]" />
+                    <span className="text-zinc-500 font-medium">Pending Return:</span>
+                    <span className="font-bold text-zinc-950">{dbOrders.filter((o) => o.type === "Return" && String(o.completed) !== "true" && o.completed !== true && o.status !== "Collected" && o.status !== "Return Collected").length}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
+                    <span className="w-2 h-2 rounded-full bg-[#137333]" />
+                    <span className="text-zinc-500 font-medium">Task Done:</span>
+                    <span className="font-bold text-zinc-950">{tasksDoneToday}</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* SUB-VIEW 1: TRACK LOCATION */}
             {activeLiveTrackingSubTab === "location" && (
-              <div className="flex flex-col gap-6 animate-tableFadeInOnly">
-                {/* Dashboard Metrics Row */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  {/* Card 1: Pending Delivery */}
-                  <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Delivery</span>
-                      <span className="text-3xl font-bold text-zinc-950 mt-1">
-                        {pendingOrders.filter((o) => o.status !== "Delivered").length}
-                      </span>
-                    </div>
-                    <div className="h-10 w-10 bg-[#E8F0FE] rounded flex items-center justify-center text-[#0B57D0]">
-                      <Calendar size={18} className="stroke-[2.5]" />
-                    </div>
-                  </div>
-
-                  {/* Card 2: Pending Return */}
-                  <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Return</span>
-                      <span className="text-3xl font-bold text-zinc-950 mt-1">
-                        {dbOrders.filter((o) => o.type === "Return" && String(o.completed) !== "true" && o.completed !== true && o.status !== "Collected" && o.status !== "Return Collected").length}
-                      </span>
-                    </div>
-                    <div className="h-10 w-10 bg-[#FCE8E6] rounded flex items-center justify-center text-[#C5221F]">
-                      <ClipboardCheck size={18} className="stroke-[2.5]" />
-                    </div>
-                  </div>
-
-                  {/* Card 3: Task Done */}
-                  <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs">
-                    <div className="flex flex-col">
-                      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Task Done</span>
-                      <span className="text-3xl font-bold text-zinc-950 mt-1">{tasksDoneToday}</span>
-                    </div>
-                    <div className="h-10 w-10 bg-[#E6F4EA] rounded flex items-center justify-center text-[#137333]">
-                      <CheckCircle size={18} className="stroke-[2.5]" />
-                    </div>
-                  </div>
-                </div>
-
+              <div className="flex-1 flex flex-col min-h-0 animate-tableFadeInOnly">
                 {/* Full Width & Height Map Container */}
-                <div className="w-full h-[calc(100vh-280px)] min-h-[450px] rounded border border-slate-200 overflow-hidden relative shadow-sm bg-white">
+                <div className="flex-1 w-full min-h-0 rounded border border-slate-200 overflow-hidden relative shadow-2xs bg-white">
                   {/* Map Filter Toggle Button Overlay */}
-                  <div className="absolute top-3 right-3 z-20 bg-white/90 backdrop-blur-xs border border-slate-200 rounded shadow-md p-1 flex gap-1">
+                  <div className="absolute top-3 right-3 z-20 bg-white/95 backdrop-blur-xs border border-slate-200 rounded shadow-sm p-1 flex gap-1">
                     <button
                       type="button"
                       onClick={() => setMapFilter("pending")}
@@ -3905,7 +4051,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
             {/* SUB-VIEW 2: TRACK DRIVER */}
             {activeLiveTrackingSubTab === "driver" && (
-              <div className="flex flex-col gap-4 animate-tableFadeInOnly">
+              <div className="flex-1 flex flex-col min-h-0 animate-tableFadeInOnly overflow-hidden">
                 {/* Driver Sub-tabs Switch Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
                   <div className="flex items-center gap-2">
@@ -3964,7 +4110,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
                 {/* ONLINE DRIVERS VIEW (3 Column Grid of Cards) */}
                 {activeDriverLogSubTab === "online" && (
-                  <div className="h-[calc(100vh-270px)] min-h-[400px] w-full overflow-y-auto pr-1">
+                  <div className="flex-1 w-full min-h-0 overflow-y-auto pr-1">
                     {onlineDrivers.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                         <Truck size={40} className="text-zinc-400 mb-3" />
@@ -4262,7 +4408,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
                 {/* JOB CLOSED TABLE VIEW */}
                 {activeDriverLogSubTab === "closed" && (
-                  <div className="h-[calc(100vh-270px)] min-h-[400px] w-full relative">
+                  <div className="flex-1 w-full min-h-0 relative overflow-hidden">
                     {closedDriverJobs.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                         <ClipboardCheck size={40} className="text-zinc-400 mb-3" />
@@ -4367,9 +4513,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       {/* TAB CONTENT: DELIVERY ORDER */}
       {activeTab === "delivery" && (
-        <div className="flex flex-col gap-4 animate-tableFadeInOnly">
+        <div className="flex-1 flex flex-col gap-4 animate-tableFadeInOnly min-h-0 overflow-hidden">
           {/* Sub-tabs switch header & Filter / Search Controls */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2 shrink-0">
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -4479,7 +4625,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
 
           {activeDeliveryTab === "pending" ? (
-            <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
+            <div className="flex-1 w-full min-h-0 relative overflow-hidden">
               {sortedPendingOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                   <Boxes size={40} className="text-zinc-400 mb-3" />
@@ -4551,41 +4697,53 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               >
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
                                   <div className="flex items-center gap-1.5">
-                                    <CustomButton
-                                      variant="secondary"
+                                    <button
+                                      type="button"
                                       onClick={() => handleRevokeOrder(order)}
                                       title={order.status === "Delivered" ? "Cannot revoke a delivered order" : "Revoke and send back to drafts"}
-                                      className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
                                       disabled={order.status === "Delivered"}
+                                      className={`w-7 h-7 rounded-md border border-slate-200 shadow-2xs flex items-center justify-center transition-all ${
+                                        order.status === "Delivered"
+                                          ? "opacity-40 cursor-not-allowed bg-slate-50 text-zinc-300"
+                                          : "bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer"
+                                      }`}
                                     >
-                                      <Undo size={12} className="text-zinc-600" />
-                                    </CustomButton>
-                                    <CustomButton
-                                      variant="secondary"
+                                      <Undo size={12} />
+                                    </button>
+                                    <button
+                                      type="button"
                                       onClick={() => openEditOrderPanel(order)}
                                       title={order.status === "Delivered" ? "Cannot edit a delivered order" : "Edit Order"}
-                                      className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
                                       disabled={order.status === "Delivered"}
+                                      className={`w-7 h-7 rounded-md border border-slate-200 shadow-2xs flex items-center justify-center transition-all ${
+                                        order.status === "Delivered"
+                                          ? "opacity-40 cursor-not-allowed bg-slate-50 text-zinc-300"
+                                          : "bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer"
+                                      }`}
                                     >
-                                      <Pencil size={12} className="text-zinc-600" />
-                                    </CustomButton>
-                                    <CustomButton
-                                      variant="secondary"
+                                      <Pencil size={12} />
+                                    </button>
+                                    <button
+                                      type="button"
                                       onClick={() => handleTriggerChangeStatus(order)}
                                       title="Change Status (Overwrite)"
-                                      className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
+                                      className="w-7 h-7 rounded-md bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 border border-slate-200 shadow-2xs flex items-center justify-center transition-all hover:border-slate-300 cursor-pointer"
                                     >
-                                      <History size={12} className="text-zinc-600" />
-                                    </CustomButton>
-                                    <CustomButton
-                                      variant="default"
+                                      <History size={12} />
+                                    </button>
+                                    <button
+                                      type="button"
                                       onClick={() => handleTriggerCompleteOrder(order)}
                                       disabled={order.status !== "Delivered"}
                                       title={order.status !== "Delivered" ? "Cannot complete until status is Delivered" : "Verify and archive"}
-                                      className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
+                                      className={`w-7 h-7 rounded-md border border-slate-200 shadow-2xs flex items-center justify-center transition-all ${
+                                        order.status !== "Delivered"
+                                          ? "opacity-40 cursor-not-allowed bg-slate-50 text-zinc-300"
+                                          : "bg-white hover:bg-emerald-50 text-emerald-600 hover:border-emerald-200 cursor-pointer"
+                                      }`}
                                     >
-                                      <CheckCircle size={12} className="text-emerald-600" />
-                                    </CustomButton>
+                                      <CheckCircle size={12} />
+                                    </button>
                                   </div>
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
@@ -4642,7 +4800,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               )}
             </div>
           ) : (
-            <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
+            <div className="flex-1 w-full min-h-0 relative overflow-hidden">
               {sortedCompletedOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                   <CheckCircle size={40} className="text-zinc-400 mb-3" />
@@ -4716,7 +4874,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                     type="button"
                                     onClick={() => handleTriggerRevokeComplete(order)}
                                     title="Revoke Complete (Send back to Pending)"
-                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer transition-all shadow-2xs outline-none"
                                   >
                                     <Undo size={12} />
                                   </button>
@@ -4724,7 +4882,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                     type="button"
                                     onClick={() => handleOpenEditInvoice(order)}
                                     title="Edit Invoice Details"
-                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer transition-all shadow-2xs outline-none"
                                   >
                                     <Pencil size={12} />
                                   </button>
@@ -4797,8 +4955,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       {/* TAB CONTENT: RETURN ORDER */}
       {activeTab === "return" && (
-        <div className="flex flex-col gap-4 animate-tableFadeInOnly">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
+        <div className="flex-1 flex flex-col gap-4 animate-tableFadeInOnly min-h-0 overflow-hidden">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2 shrink-0">
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -4874,7 +5032,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             </div>
           </div>
 
-          <div className="h-[calc(100vh-220px)] min-h-[400px] w-full relative">
+          <div className="flex-1 w-full min-h-0 relative overflow-hidden">
             {sortedReturnOrders.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                 <Boxes size={40} className="text-zinc-400 mb-3" />
@@ -5082,7 +5240,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   type="button"
                                   onClick={() => handleDeleteReturnOrder(order)}
                                   title="Delete Return"
-                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 cursor-pointer transition-all outline-none"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-red-50 text-zinc-600 hover:text-red-600 hover:border-red-200 cursor-pointer transition-all shadow-2xs outline-none"
                                 >
                                   <Trash2 size={12} />
                                 </button>
@@ -5090,7 +5248,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   type="button"
                                   onClick={() => openEditReturnPanel(order)}
                                   title="Edit Return"
-                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer transition-all shadow-2xs outline-none"
                                 >
                                   <Pencil size={12} />
                                 </button>
@@ -5098,7 +5256,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   type="button"
                                   onClick={() => handleTriggerChangeStatus(order)}
                                   title="Change Status (Overwrite)"
-                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer transition-all shadow-2xs outline-none"
                                 >
                                   <History size={12} />
                                 </button>
@@ -5107,10 +5265,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   onClick={() => handleTriggerCompleteReturnOrder(order)}
                                   disabled={order.status !== "Collected" && order.status !== "Return Collected"}
                                   title={order.status !== "Collected" && order.status !== "Return Collected" ? "Cannot complete until status is Collected" : "Mark as Complete"}
-                                  className={`w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border transition-all outline-none ${
+                                  className={`w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border shadow-2xs transition-all outline-none ${
                                     order.status !== "Collected" && order.status !== "Return Collected" 
-                                      ? "border-zinc-200 bg-zinc-50 text-zinc-400 cursor-not-allowed opacity-50"
-                                      : "border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-600 cursor-pointer"
+                                      ? "border-slate-200 bg-slate-50 text-zinc-300 cursor-not-allowed opacity-40"
+                                      : "border-slate-200 bg-white hover:bg-emerald-50 text-emerald-600 hover:border-emerald-200 cursor-pointer"
                                   }`}
                                 >
                                   <CheckCircle size={12} />
@@ -5170,67 +5328,24 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       {/* TAB CONTENT: CREATE ORDER */}
       {activeTab === "create" && (
-        <div className="flex flex-col gap-4 animate-tableFadeInOnly">
-          {/* Action buttons wrapper */}
-          <div className="flex flex-wrap gap-3 items-center bg-slate-50 border border-slate-200 rounded p-4">
-            <input
-              type="file"
-              ref={fileInputRef}
-              accept=".pdf"
-              className="hidden"
-              onChange={handleFileUpload}
-            />
-            <input
-              type="file"
-              ref={doExcelInputRef}
-              accept="text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
-              className="hidden"
-              onChange={handleDoExcelUpload}
-            />
-            <CustomButton 
-              variant="secondary"
-              onClick={() => {
-                if (!pdfLoading) setIsDoUploadChoiceOpen(true);
-              }}
-              disabled={pdfLoading}
-              className="h-10 text-xs font-bold uppercase tracking-wider relative overflow-hidden"
-            >
-              <Upload size={14} />
-              Import Order
-              {pdfLoading && (
-                <div className="absolute bottom-0 left-0 right-0 h-1 bg-blue-600 animate-[pulse_1s_infinite]" />
-              )}
-            </CustomButton>
+        <div className="flex-1 flex flex-col gap-4 animate-tableFadeInOnly min-h-0 overflow-hidden">
+          {/* Hidden File Input Refs */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            accept=".pdf"
+            className="hidden"
+            onChange={handleFileUpload}
+          />
+          <input
+            type="file"
+            ref={doExcelInputRef}
+            accept="text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+            className="hidden"
+            onChange={handleDoExcelUpload}
+          />
 
-            <CustomButton 
-              variant="dark"
-              onClick={() => {
-                setCreateDoNumber(`DO-${Date.now()}`);
-                setCreateRefNumber("");
-                setCreateMark(getNextAvailableMark(drafts, pendingOrders));
-                setCreateType("Normal");
-                setCreateDeliverTo("");
-                setCreatePoscode("");
-                setCreateItems([]);
-                setIsCreatePanelOpen(true);
-              }}
-              className="h-10 text-xs font-bold uppercase tracking-wider"
-            >
-              <Plus size={14} />
-              Create Order
-            </CustomButton>
-
-            <CustomButton 
-              variant="default"
-              onClick={openCreateReturnPanel}
-              className="h-10 text-xs font-bold uppercase tracking-wider"
-            >
-              <Plus size={14} />
-              Create Return
-            </CustomButton>
-          </div>
-
-          <div className="flex justify-between items-center px-1">
+          <div className="flex justify-between items-center px-1 shrink-0">
             <h3 className="font-primary text-base font-bold text-zinc-800">
               Draft Orders
             </h3>
@@ -5239,7 +5354,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             </span>
           </div>
 
-          <div className="h-[calc(100vh-280px)] min-h-[400px] w-full relative">
+          <div className="flex-1 w-full min-h-0 relative overflow-hidden">
             {drafts.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                 <FileText size={40} className="text-zinc-400 mb-3" />
@@ -5281,24 +5396,24 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           </span>
                         </td>
                         <td className="p-3 w-20 align-middle flex items-center gap-1.5 border-b border-zinc-200">
-                          <CustomButton
-                            variant="secondary"
+                          <button
+                            type="button"
                             onClick={() => handleSendOrder(idx)}
                             disabled={!!sendingDraftIds[draft.id]}
                             title="Send Order"
-                            className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
+                            className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-emerald-50 text-zinc-600 hover:text-emerald-600 hover:border-emerald-200 cursor-pointer transition-all shadow-2xs outline-none disabled:opacity-40 disabled:cursor-not-allowed"
                           >
-                            <Send size={12} className="text-emerald-600" />
-                          </CustomButton>
-                          <CustomButton
-                            variant="danger"
+                            <Send size={12} />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => handleDeleteDraft(idx)}
                             disabled={!!sendingDraftIds[draft.id]}
                             title="Delete Draft"
-                            className="w-8 h-8 !px-0 flex items-center justify-center aspect-square"
+                            className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-red-50 text-zinc-600 hover:text-red-600 hover:border-red-200 cursor-pointer transition-all shadow-2xs outline-none disabled:opacity-40 disabled:cursor-not-allowed"
                           >
                             <Trash2 size={12} />
-                          </CustomButton>
+                          </button>
                         </td>
                         <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
                           <input
@@ -5642,7 +5757,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               placeholder="e.g. DO-20260627-01"
               value={createDoNumber}
               onChange={(e) => setCreateDoNumber(e.target.value)}
-              className="h-8 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+              className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
             />
           </div>
 
@@ -5653,7 +5768,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               placeholder="e.g. REF-987"
               value={createRefNumber}
               onChange={(e) => setCreateRefNumber(e.target.value)}
-              className="h-8 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+              className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
             />
           </div>
 
@@ -5666,7 +5781,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 placeholder="e.g. A"
                 value={createMark}
                 onChange={(e) => setCreateMark(e.target.value.toUpperCase().trim())}
-                className="h-8 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 text-center font-bold"
+                className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] text-center font-bold"
               />
             </div>
 
@@ -5675,7 +5790,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               <select
                 value={createType}
                 onChange={(e) => setCreateType(e.target.value as any)}
-                className="h-8 px-2.5 rounded border border-zinc-300 bg-white text-zinc-850 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+                className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-850 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-semibold text-xs"
               >
                 <option value="Normal">Normal</option>
                 <option value="Urgent">Urgent</option>
@@ -5689,7 +5804,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             <select
               value={createDeliverMethod}
               onChange={(e) => setCreateDeliverMethod(e.target.value)}
-              className="h-8 px-2.5 rounded border border-zinc-300 bg-white text-zinc-850 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+              className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-850 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-semibold text-xs"
             >
               <option value="Company Delivery">Company Delivery</option>
               <option value="External Delivery">External Delivery</option>
@@ -5698,14 +5813,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
 
           {createType === "Appointment" && (
-            <div className="flex gap-3 border-l-2 border-zinc-400 pl-2.5 my-1">
+            <div className="flex gap-3 border-l-2 border-[#0B57D0] pl-2.5 my-1">
               <div className="flex-1 flex flex-col gap-1">
                 <label className="font-bold text-zinc-700">Appointment Date *</label>
                 <input
                   type="date"
                   value={createAppointmentDate}
                   onChange={(e) => setCreateAppointmentDate(e.target.value)}
-                  className="h-8 px-2 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+                  className="h-8 px-2 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-semibold"
                 />
               </div>
               <div className="flex-1 flex flex-col gap-1">
@@ -5714,7 +5829,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   type="time"
                   value={createTimeWindow}
                   onChange={(e) => setCreateTimeWindow(e.target.value)}
-                  className="h-8 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+                  className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-semibold"
                 />
               </div>
             </div>
@@ -5727,7 +5842,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               value={createDeliverTo}
               onChange={(e) => setCreateDeliverTo(e.target.value)}
               rows={2}
-              className="p-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium resize-none"
+              className="p-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium resize-none"
             />
           </div>
 
@@ -5739,10 +5854,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               placeholder="6-digit postal code"
               value={createPoscode}
               onChange={(e) => setCreatePoscode(e.target.value)}
-              className={`h-8 px-2.5 rounded border text-center font-semibold focus:outline-none focus:ring-1 focus:ring-zinc-400 ${
+              className={`h-8 px-2.5 rounded border text-center font-semibold focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] ${
                 createPoscode && !validatePoscode(createPoscode)
                   ? "border-red-400 bg-red-50 text-red-700"
-                  : "border-zinc-300 bg-white text-zinc-900"
+                  : "border-slate-200 bg-white text-zinc-900"
               }`}
             />
           </div>
@@ -5840,7 +5955,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               placeholder="e.g. REF-20260629-01"
               value={returnRefNumber}
               onChange={(e) => setReturnRefNumber(e.target.value)}
-              className="h-8 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+              className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
             />
           </div>
 
@@ -5881,15 +5996,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   }
                 }, 200);
               }}
-              className="h-8 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+              className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
             />
             {showStoreDropdown && filteredStores.length > 0 && (
-              <div className="absolute top-10 left-0 right-0 bg-white border border-zinc-300 rounded shadow-lg z-50 max-h-48 overflow-y-auto">
+              <div className="absolute top-10 left-0 right-0 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-48 overflow-y-auto">
                 {filteredStores.map((store, i) => (
                   <button
                     key={i}
                     type="button"
-                    className="w-full text-left px-3 py-2 hover:bg-zinc-100 text-xs font-semibold text-zinc-700 border-b border-zinc-100 last:border-0 cursor-pointer"
+                    className="w-full text-left px-3 py-2 hover:bg-slate-50 text-xs font-semibold text-zinc-700 border-b border-slate-100 last:border-0 cursor-pointer"
                     onMouseDown={(e) => {
                       e.preventDefault();
                       const retailerId = store["Retailers ID"] !== undefined ? store["Retailers ID"] : store["Retailer ID"];
@@ -5921,10 +6036,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               placeholder="6-digit postal code"
               value={returnPoscode}
               onChange={(e) => setReturnPoscode(e.target.value.replace(/\D/g, ""))}
-              className={`h-8 px-2.5 rounded border text-center font-semibold focus:outline-none focus:ring-1 focus:ring-zinc-400 ${
+              className={`h-8 px-2.5 rounded border text-center font-semibold focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] ${
                 returnPoscode && !validatePoscode(returnPoscode)
                   ? "border-red-400 bg-red-50 text-red-700"
-                  : "border-zinc-300 bg-white text-zinc-900"
+                  : "border-slate-200 bg-white text-zinc-900"
               }`}
             />
             {returnPoscode && validatePoscode(returnPoscode) && (
@@ -5939,7 +6054,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             <select
               value={returnCollectMethod}
               onChange={(e) => setReturnCollectMethod(e.target.value)}
-              className="h-8 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold text-xs"
+              className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-semibold text-xs"
             >
               <option value="Company Vehicle">Company Vehicle</option>
               <option value="3rd Party Vehicle">3rd Party Vehicle</option>
@@ -5954,14 +6069,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 type="date"
                 value={returnCollectBeforeDate}
                 onChange={(e) => setReturnCollectBeforeDate(e.target.value)}
-                className="h-8 px-2 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+                className="h-8 px-2 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-semibold"
               />
             </div>
 
             <div className="flex-1 flex flex-col gap-1">
               <label className="font-bold text-zinc-700">Mark *</label>
               <div className="flex items-center">
-                <span className="bg-zinc-100 border border-r-0 border-zinc-300 rounded-l h-8 px-3 flex items-center font-bold text-zinc-500 text-sm select-none">
+                <span className="bg-slate-100 border border-r-0 border-slate-200 rounded-l h-8 px-3 flex items-center font-bold text-zinc-500 text-xs select-none">
                   R
                 </span>
                 <input
@@ -5970,7 +6085,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   placeholder="e.g. A"
                   value={returnMark}
                   onChange={(e) => setReturnMark(e.target.value.toUpperCase().trim())}
-                  className="w-full h-8 px-2.5 rounded-r border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 text-center font-bold"
+                  className="w-full h-8 px-2.5 rounded-r border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] text-center font-bold"
                 />
               </div>
             </div>
@@ -6060,10 +6175,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       {/* CHANGE STATUS (OVERWRITE) MODAL */}
       {isChangeStatusOpen && statusOrder && (
-        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/50 backdrop-blur-xs font-primary p-4">
-          <div className="bg-white rounded-xl shadow-lg border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <span className="font-bold text-sm text-zinc-800">Change Status : {statusOrder.do_number}</span>
+        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-zoom-in">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+              <span className="font-bold text-sm text-zinc-900">Change Status : {statusOrder.do_number}</span>
               <button 
                 onClick={() => setIsChangeStatusOpen(false)}
                 className="text-zinc-400 hover:text-zinc-600 focus:outline-none cursor-pointer"
@@ -6077,7 +6192,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 <select
                   value={newStatus}
                   onChange={(e) => setNewStatus(e.target.value)}
-                  className="h-9 px-2.5 rounded-lg border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                  className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
                 >
                   <option value="" disabled>Select Status</option>
                   {statusOrder.type === "Return" ? (
@@ -6105,14 +6220,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   value={statusRemark}
                   onChange={(e) => setStatusRemark(e.target.value)}
                   rows={3}
-                  className="p-2.5 rounded-lg border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium resize-none"
+                  className="p-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium resize-none"
                 />
               </div>
 
               <div className="flex flex-col gap-1.5">
                 <label className="font-bold text-zinc-700">Upload Image (Optional)</label>
                 <div className="flex items-center gap-2">
-                  <label className="h-8 px-3 rounded-lg border border-zinc-300 bg-[#E5E5E5] text-zinc-700 hover:text-zinc-950 hover:bg-[#EEEEEE]/50 transition-all select-none cursor-pointer flex items-center justify-center gap-1.5 font-bold text-[10px]">
+                  <label className="h-8 px-3 rounded border border-slate-200 bg-white text-zinc-700 hover:text-zinc-950 hover:bg-slate-50 transition-all select-none cursor-pointer flex items-center justify-center gap-1.5 font-bold text-[10px] shadow-2xs">
                     <Upload size={12} />
                     {statusPhotoFile ? "Change Image" : "Choose File"}
                     <input
@@ -6135,7 +6250,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               </div>
             </div>
             
-            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-2">
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex justify-end gap-2">
               <CustomButton 
                 variant="secondary" 
                 onClick={() => setIsChangeStatusOpen(false)}
@@ -6157,10 +6272,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       {/* CONFIRM ORDER COMPLETE MODAL */}
       {isCompleteConfirmOpen && pendingCompleteOrder && (
-        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/50 backdrop-blur-xs font-primary p-4">
-          <div className="bg-white rounded border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <span className="font-bold text-sm text-zinc-800">
+        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-zoom-in">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+              <span className="font-bold text-sm text-zinc-900">
                 {pendingCompleteOrder.type === "Return" ? "Complete Return Order" : "Complete Delivery Order"}
               </span>
               <button 
@@ -6188,7 +6303,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       placeholder="e.g. CN-98765"
                       value={creditNoteInput}
                       onChange={(e) => setCreditNoteInput(e.target.value)}
-                      className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                      className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
                     />
                   ) : (
                     <input
@@ -6196,7 +6311,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       placeholder="e.g. INV-12345"
                       value={invoiceNumberInput}
                       onChange={(e) => setInvoiceNumberInput(e.target.value)}
-                      className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                      className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
                     />
                   )}
                 </div>
@@ -6210,13 +6325,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     placeholder="e.g. 150.00"
                     value={invoiceAmountInput}
                     onChange={(e) => setInvoiceAmountInput(e.target.value)}
-                    className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                    className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
                   />
                 </div>
               </div>
             </div>
             
-            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex justify-between items-center">
               <CustomButton 
                 variant="secondary" 
                 onClick={() => setIsCompleteConfirmOpen(false)}
@@ -6242,10 +6357,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       {/* EDIT COMPLETED INVOICE MODAL */}
       {isEditInvoiceModalOpen && editInvoiceOrder && (
-        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/50 backdrop-blur-xs font-primary p-4">
-          <div className="bg-white rounded border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <span className="font-bold text-sm text-zinc-800">
+        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-zoom-in">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+              <span className="font-bold text-sm text-zinc-900">
                 Edit Completed Order Details
               </span>
               <button 
@@ -6263,7 +6378,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   placeholder="e.g. INV-12345"
                   value={editInvoiceNum}
                   onChange={(e) => setEditInvoiceNum(e.target.value)}
-                  className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                  className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -6275,11 +6390,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   placeholder="e.g. 150.00"
                   value={editInvoiceAmount}
                   onChange={(e) => setEditInvoiceAmount(e.target.value)}
-                  className="h-9 px-2.5 rounded border border-zinc-300 bg-white text-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-medium"
+                  className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
                 />
               </div>
             </div>
-            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex justify-between items-center">
               <CustomButton 
                 variant="secondary" 
                 onClick={() => setIsEditInvoiceModalOpen(false)}
@@ -6300,10 +6415,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       {/* REVOKE COMPLETE CONFIRMATION MODAL */}
       {isRevokeCompleteConfirmOpen && pendingRevokeCompleteOrder && (
-        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/50 backdrop-blur-xs font-primary p-4">
-          <div className="bg-white rounded border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <span className="font-bold text-sm text-zinc-800">
+        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-zoom-in">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+              <span className="font-bold text-sm text-zinc-900">
                 Confirm Revoke Archive
               </span>
               <button 
@@ -6319,7 +6434,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 This will move the order back to active/pending status.
               </p>
             </div>
-            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 flex justify-between items-center">
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex justify-between items-center">
               <CustomButton 
                 variant="secondary" 
                 onClick={() => setIsRevokeCompleteConfirmOpen(false)}
@@ -6339,19 +6454,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       {/* CUSTOM FORCE CLOSE JOB CONFIRMATION MODAL */}
       {isForceCloseModalOpen && forceCloseDriverJob && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-primary">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md flex flex-col overflow-hidden animate-zoom-in">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-primary">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-md flex flex-col overflow-hidden animate-zoom-in">
             {/* Header */}
-            <div className="px-5 py-4 bg-red-50/70 border-b border-red-100 flex items-center justify-between">
+            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-full bg-red-100 border border-red-200 flex items-center justify-center text-red-600">
+                <div className="w-8 h-8 rounded-full bg-red-50 border border-red-200 flex items-center justify-center text-red-600">
                   <Square size={14} fill="currentColor" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-bold text-red-950">
+                  <h3 className="text-sm font-bold text-zinc-900">
                     Close Driver Shift
                   </h3>
-                  <p className="text-[11px] text-red-700 font-medium">
+                  <p className="text-[11px] text-zinc-500 font-medium">
                     {forceCloseDriverJob.driver} ({forceCloseDriverJob.id})
                   </p>
                 </div>
@@ -6457,13 +6572,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       {/* ROUTE TIMELINE LOG MODAL */}
       {isRouteLogModalOpen && selectedRouteLogRecord && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-primary">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-zoom-in">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-primary">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden animate-zoom-in">
             {/* Modal Header */}
-            <div className="px-5 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
               <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-lg bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex items-center justify-center text-[#0B57D0]">
-                  <Route size={18} />
+                <div className="w-8 h-8 rounded-md bg-[#0B57D0]/10 border border-[#0B57D0]/20 flex items-center justify-center text-[#0B57D0]">
+                  <Route size={16} />
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-zinc-900 leading-tight">
@@ -6481,7 +6596,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   setIsRouteLogModalOpen(false);
                   setSelectedRouteLogRecord(null);
                 }}
-                className="w-8 h-8 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-slate-200/60 transition-colors cursor-pointer"
+                className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-slate-200/60 transition-colors cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -6689,10 +6804,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       </datalist>
 
       {isInvoiceUploadChoiceOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center z-50 font-primary">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 font-primary">
           <div className="bg-white rounded-lg p-5 w-full max-w-sm shadow-xl border border-slate-200 animate-zoom-in">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-              <h3 className="text-sm font-bold text-zinc-850">Upload Invoice</h3>
+            <div className="flex justify-between items-center pb-2.5 border-b border-slate-200">
+              <h3 className="text-sm font-bold text-zinc-900">Upload Invoice</h3>
               <button 
                 onClick={() => setIsInvoiceUploadChoiceOpen(false)} 
                 className="text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
@@ -6700,16 +6815,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 <X size={16} />
               </button>
             </div>
-            <div className="py-4 flex flex-col gap-3">
+            <div className="py-4 flex flex-col gap-2.5">
               <button
                 type="button"
                 onClick={() => {
                   setIsInvoiceUploadChoiceOpen(false);
                   invoicePdfInputRef.current?.click();
                 }}
-                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
               >
-                <FileText size={16} />
+                <FileText size={15} />
                 Upload PDF Invoice
               </button>
               <button
@@ -6718,9 +6833,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   setIsInvoiceUploadChoiceOpen(false);
                   invoiceExcelInputRef.current?.click();
                 }}
-                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-[#0B57D0] text-[#0B57D0] rounded text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
               >
-                <Boxes size={16} />
+                <Boxes size={15} />
                 Upload Excel / CSV Invoice
               </button>
             </div>
@@ -6729,10 +6844,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       )}
 
       {isDoUploadChoiceOpen && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center z-50 font-primary">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 font-primary">
           <div className="bg-white rounded-lg p-5 w-full max-w-sm shadow-xl border border-slate-200 animate-zoom-in">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-              <h3 className="text-sm font-bold text-zinc-850">Upload Delivery Order</h3>
+            <div className="flex justify-between items-center pb-2.5 border-b border-slate-200">
+              <h3 className="text-sm font-bold text-zinc-900">Upload Delivery Order</h3>
               <button 
                 onClick={() => setIsDoUploadChoiceOpen(false)} 
                 className="text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
@@ -6740,16 +6855,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 <X size={16} />
               </button>
             </div>
-            <div className="py-4 flex flex-col gap-3">
+            <div className="py-4 flex flex-col gap-2.5">
               <button
                 type="button"
                 onClick={() => {
                   setIsDoUploadChoiceOpen(false);
                   fileInputRef.current?.click();
                 }}
-                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
               >
-                <FileText size={16} />
+                <FileText size={15} />
                 Upload PDF DO
               </button>
               <button
@@ -6758,9 +6873,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   setIsDoUploadChoiceOpen(false);
                   doExcelInputRef.current?.click();
                 }}
-                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-[#0B57D0] text-[#0B57D0] rounded text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
               >
-                <Boxes size={16} />
+                <Boxes size={15} />
                 Upload Excel / CSV DO
               </button>
             </div>

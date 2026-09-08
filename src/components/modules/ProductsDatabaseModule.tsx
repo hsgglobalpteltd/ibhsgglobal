@@ -354,7 +354,9 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
 
     // 2. Prepare clean data
     const cleanData = { ...updatedItem };
-    delete cleanData.id;
+    if (activeTab !== "brands") {
+      delete cleanData.id;
+    }
     delete cleanData.isNew;
     delete cleanData["Brand Name"];
 
@@ -588,129 +590,165 @@ function BrandEditForm({ brand, onSave, onCancel }: { brand: any; onSave: (data:
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center z-50 font-primary">
-      <div className="bg-white border border-slate-200 w-full max-w-md rounded-lg p-6 shadow-xl flex flex-col gap-4 animate-tableFadeIn animate-duration-200">
-        <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-          <h3 className="text-sm font-bold text-zinc-950 uppercase tracking-wider">{isNew ? "Add Brand" : "Edit Brand"}</h3>
-          <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-800 focus:outline-none cursor-pointer">
-            <X size={16} />
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 font-primary p-4">
+      <div className="bg-white border border-slate-200 w-full max-w-lg rounded-lg shadow-xl flex flex-col overflow-hidden animate-tableFadeIn animate-duration-200">
+        {/* Dialog Header */}
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+          <div>
+            <h3 className="text-base font-bold text-zinc-950">{isNew ? "Add Brand" : "Edit Brand"}</h3>
+            <p className="text-xs text-zinc-500 mt-0.5">Configure brand identity, display name, and catalog logo asset.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X size={18} />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">ID (Primary Key)</label>
-            <input
-              type="text"
-              value={formData.id || ""}
-              disabled={!isNew}
-              onChange={(e) => handleChange('id', e.target.value)}
-              required
-              className={`w-full text-xs rounded px-3 py-2 font-semibold outline-none border ${
-                !isNew 
-                  ? "bg-[#F0F4F9] border-slate-200 text-zinc-500 cursor-not-allowed" 
-                  : "bg-[#F0F4F9] border-slate-200 text-zinc-900 focus:border-blue-400"
-              }`}
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Display Name</label>
-            <input
-              type="text"
-              value={formData["Display Name"] || ""}
-              onChange={(e) => handleChange("Display Name", e.target.value)}
-              required
-              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Brand Description</label>
-            <textarea
-              value={formData["Description"] || ""}
-              onChange={(e) => handleChange("Description", e.target.value)}
-              placeholder="Official brand background, export story, and culinary profile..."
-              rows={3}
-              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold resize-none"
-            />
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Logo Image</label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={formData["Logo Image"] || ""}
-                onChange={(e) => handleChange("Logo Image", e.target.value)}
-                placeholder="Image URL or upload a file"
-                className="flex-1 text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-              />
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="image/*"
-                className="hidden"
-              />
-              <button
-                type="button"
-                disabled={uploading}
-                onClick={() => fileInputRef.current?.click()}
-                className="h-8 px-3 text-xs font-bold rounded border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 hover:text-zinc-950 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shadow-xs"
-              >
-                <Upload size={13} />
-                {uploading ? "Uploading..." : "Upload"}
-              </button>
-            </div>
-            {formData["Logo Image"] && (
-              <div className="mt-1.5 border border-slate-200 rounded overflow-hidden h-20 bg-[#F0F4F9] flex items-center justify-center relative group">
-                <img src={formData["Logo Image"]} alt="Preview" className="max-h-full max-w-full object-contain" />
+
+        {/* Dialog Body */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-5 overflow-y-auto max-h-[calc(85vh-130px)] space-y-4">
+            {/* Brand Logo on top */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Brand Logo</label>
+              <div className="flex items-center gap-4 p-3 bg-slate-50/50 rounded-lg border border-slate-200">
+                <div className="w-20 h-20 aspect-square rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
+                  {formData["Logo Image"] ? (
+                    <img src={formData["Logo Image"]} alt="Brand Logo" className="w-full h-full object-contain p-1.5" />
+                  ) : (
+                    <div className="text-center text-zinc-400 p-1">
+                      <Upload size={16} className="mx-auto mb-0.5 opacity-50" />
+                      <span className="text-[10px] block leading-tight font-medium">No Logo</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={uploading}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-8 px-3 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shadow-xs"
+                    >
+                      <Upload size={13} />
+                      {uploading ? "Uploading..." : formData["Logo Image"] ? "Change Logo" : "Upload Logo"}
+                    </button>
+                    {formData["Logo Image"] && (
+                      <button
+                        type="button"
+                        onClick={() => handleChange("Logo Image", "")}
+                        className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-red-50 text-red-600 transition-all cursor-pointer shadow-xs"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-[11px] text-zinc-500">1:1 square brand logo asset</span>
+                </div>
               </div>
-            )}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Rank</label>
-            <input
-              type="text"
-              value={formData.Rank !== undefined ? formData.Rank : ""}
-              onChange={(e) => handleChange("Rank", e.target.value)}
-              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-            />
-          </div>
-          
-          {/* Generic fields editor for other sheets scale-up */}
-          {Object.keys(formData)
-            .filter((k) => {
-              if (['id', "Display Name", "Description", "Logo Image", "Rank", "id", "isNew"].includes(k)) return false;
-              const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
-                otherKey !== k && 
-                otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
-                otherKey !== otherKey.toLowerCase()
-              );
-              return !hasUpperCaseEquivalent;
-            })
-            .map((key) => (
-              <div key={key} className="flex flex-col gap-1.5">
-                <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">{key}</label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Brand ID</label>
                 <input
                   type="text"
-                  value={formData[key] !== undefined ? formData[key] : ""}
-                  onChange={(e) => handleChange(key, e.target.value)}
-                  className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                  value={formData.id || ""}
+                  disabled={!isNew}
+                  onChange={(e) => handleChange('id', e.target.value)}
+                  placeholder="e.g. BRAND_01"
+                  required
+                  className={`w-full h-9 text-xs px-3 rounded-lg border font-medium outline-none transition-all ${
+                    !isNew 
+                      ? "bg-slate-50 border-slate-200 text-zinc-400 cursor-not-allowed" 
+                      : "bg-white border-slate-200 text-zinc-900 focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  }`}
                 />
               </div>
-            ))}
- 
-          <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-200 mt-2">
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Display Rank</label>
+                <input
+                  type="text"
+                  value={formData.Rank !== undefined ? formData.Rank : ""}
+                  onChange={(e) => handleChange("Rank", e.target.value)}
+                  placeholder="e.g. 1"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Display Name</label>
+              <input
+                type="text"
+                value={formData["Display Name"] || ""}
+                onChange={(e) => handleChange("Display Name", e.target.value)}
+                placeholder="Official brand display name"
+                required
+                className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Brand Description</label>
+              <textarea
+                value={formData["Description"] || ""}
+                onChange={(e) => handleChange("Description", e.target.value)}
+                placeholder="Brand story, background, and culinary profile..."
+                rows={3}
+                className="w-full text-xs bg-white border border-slate-200 rounded-lg p-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium resize-none transition-all"
+              />
+            </div>
+
+            {/* Extra fields if dynamically present */}
+            {Object.keys(formData)
+              .filter((k) => {
+                if (['id', "Display Name", "Description", "Logo Image", "Rank", "isNew"].includes(k)) return false;
+                const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
+                  otherKey !== k && 
+                  otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
+                  otherKey !== otherKey.toLowerCase()
+                );
+                return !hasUpperCaseEquivalent;
+              })
+              .map((key) => (
+                <div key={key} className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-zinc-600">{key}</label>
+                  <input
+                    type="text"
+                    value={formData[key] !== undefined ? formData[key] : ""}
+                    onChange={(e) => handleChange(key, e.target.value)}
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                  />
+                </div>
+              ))}
+          </div>
+
+          {/* Dialog Footer */}
+          <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end items-center gap-2.5 shrink-0">
             <button
               type="button"
               onClick={onCancel}
-              className="h-8 px-4 text-xs font-bold rounded border border-slate-200 bg-white text-zinc-700 hover:text-zinc-950 hover:bg-slate-100 transition-all cursor-pointer shadow-xs"
+              className="h-9 px-4 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-zinc-700 hover:bg-slate-100 hover:text-zinc-950 transition-all cursor-pointer shadow-xs"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="h-8 px-4 text-xs font-bold rounded border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs"
+              className="h-9 px-4 text-xs font-semibold rounded-lg border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs active:scale-98"
             >
-              Save
+              {isNew ? "Create Brand" : "Save Changes"}
             </button>
           </div>
         </form>
@@ -766,242 +804,319 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center z-50 font-primary">
-      <div className="bg-white border border-slate-200 w-full max-w-xl rounded-lg p-6 shadow-xl flex flex-col gap-4 animate-tableFadeIn animate-duration-200 max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-        <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-          <h3 className="text-sm font-bold text-zinc-950 uppercase tracking-wider">{isNew ? "Add Product" : "Edit Product"}</h3>
-          <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-800 focus:outline-none cursor-pointer">
-            <X size={16} />
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 font-primary p-4">
+      <div className="bg-white border border-slate-200 w-full max-w-xl rounded-lg shadow-xl flex flex-col overflow-hidden animate-tableFadeIn animate-duration-200">
+        {/* Dialog Header */}
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+          <div>
+            <h3 className="text-base font-bold text-zinc-950">{isNew ? "Add Product" : "Edit Product"}</h3>
+            <p className="text-xs text-zinc-500 mt-0.5">Configure SKU identifiers, pricing, barcodes, and packaging specifications.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X size={18} />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">SKU (Primary Key)</label>
-            <input
-              type="text"
-              value={formData.sku || ""}
-              disabled={!isNew}
-              onChange={(e) => handleChange('sku', e.target.value)}
-              required
-              className={`w-full text-xs rounded px-3 py-2 font-semibold outline-none border ${
-                !isNew 
-                  ? "bg-[#F0F4F9] border-slate-200 text-zinc-500 cursor-not-allowed" 
-                  : "bg-[#F0F4F9] border-slate-200 text-zinc-900 focus:border-blue-400"
-              }`}
-            />
-          </div>
- 
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Brand (Assign to Brand)</label>
-            <select
-              value={formData["Brands ID"] || ""}
-              onChange={(e) => handleChange("Brands ID", e.target.value)}
-              required
-              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold cursor-pointer"
-            >
-              <option value="">-- Select Brand --</option>
-              {brands.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b["Display Name"] || b.id} ({b.id})
-                </option>
-              ))}
-            </select>
-          </div>
- 
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Display Name</label>
-            <input
-              type="text"
-              value={formData["Display Name"] || ""}
-              onChange={(e) => handleChange("Display Name", e.target.value)}
-              required
-              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-            />
-          </div>
 
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Product Image</label>
-            <div className="flex gap-2">
+        {/* Dialog Body */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-5 overflow-y-auto max-h-[calc(85vh-130px)] space-y-4">
+            {/* 1:1 Product Image on top */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Product Image</label>
+              <div className="flex items-center gap-4 p-3 bg-slate-50/50 rounded-lg border border-slate-200">
+                <div className="w-20 h-20 aspect-square rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
+                  {formData["Image"] ? (
+                    <img src={formData["Image"]} alt="Product Preview" className="w-full h-full object-contain p-1.5" />
+                  ) : (
+                    <div className="text-center text-zinc-400 p-1">
+                      <Upload size={16} className="mx-auto mb-0.5 opacity-50" />
+                      <span className="text-[10px] block leading-tight font-medium">No Image</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={uploading}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-8 px-3 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shadow-xs"
+                    >
+                      <Upload size={13} />
+                      {uploading ? "Uploading..." : formData["Image"] ? "Change Image" : "Upload Image"}
+                    </button>
+                    {formData["Image"] && (
+                      <button
+                        type="button"
+                        onClick={() => handleChange("Image", "")}
+                        className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-red-50 text-red-600 transition-all cursor-pointer shadow-xs"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-[11px] text-zinc-500">1:1 square product packshot image</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Primary Details */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">SKU Code</label>
+                <input
+                  type="text"
+                  value={formData.sku || ""}
+                  disabled={!isNew}
+                  onChange={(e) => handleChange('sku', e.target.value)}
+                  placeholder="e.g. SKU-1001"
+                  required
+                  className={`w-full h-9 text-xs px-3 rounded-lg border font-medium outline-none transition-all ${
+                    !isNew 
+                      ? "bg-slate-50 border-slate-200 text-zinc-400 cursor-not-allowed" 
+                      : "bg-white border-slate-200 text-zinc-900 focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  }`}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Assigned Brand</label>
+                <select
+                  value={formData["Brands ID"] || ""}
+                  onChange={(e) => handleChange("Brands ID", e.target.value)}
+                  required
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
+                >
+                  <option value="">Select Brand</option>
+                  {brands.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b["Display Name"] || b.id} ({b.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Display Name</label>
               <input
                 type="text"
-                value={formData["Image"] || ""}
-                onChange={(e) => handleChange("Image", e.target.value)}
-                placeholder="Image URL or upload a file"
-                className="flex-1 text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                value={formData["Display Name"] || ""}
+                onChange={(e) => handleChange("Display Name", e.target.value)}
+                placeholder="Full product title with size / variant"
+                required
+                className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
               />
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="image/*"
-                className="hidden"
-              />
-              <button
-                type="button"
-                disabled={uploading}
-                onClick={() => fileInputRef.current?.click()}
-                className="h-8 px-3 text-xs font-bold rounded border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 hover:text-zinc-950 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shadow-xs"
-              >
-                <Upload size={13} />
-                {uploading ? "Uploading..." : "Upload"}
-              </button>
             </div>
-            {formData["Image"] && (
-              <div className="mt-1.5 border border-slate-200 rounded overflow-hidden h-24 bg-[#F0F4F9] flex items-center justify-center relative group">
-                <img src={formData["Image"]} alt="Preview" className="max-h-full max-w-full object-contain" />
-              </div>
-            )}
-          </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton</label>
-            <input
-              type="text"
-              value={formData.Carton !== undefined ? formData.Carton : ""}
-              onChange={(e) => handleChange("Carton", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
- 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Cost</label>
-            <input
-              type="text"
-              value={formData.Cost !== undefined ? formData.Cost : ""}
-              onChange={(e) => handleChange("Cost", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
- 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Rank</label>
-            <input
-              type="text"
-              value={formData.Rank !== undefined ? formData.Rank : ""}
-              onChange={(e) => handleChange("Rank", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
- 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Status</label>
-            <select
-              value={formData.Status || "Active"}
-              onChange={(e) => handleChange("Status", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold cursor-pointer"
-            >
-              <option value="Active">Active</option>
-              <option value="Inactive">Inactive</option>
-            </select>
-          </div>
- 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Single Barcode</label>
-            <input
-              type="text"
-              value={formData["Single Barcode"] !== undefined ? formData["Single Barcode"] : ""}
-              onChange={(e) => handleChange("Single Barcode", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
- 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton Barcode</label>
-            <input
-              type="text"
-              value={formData["Carton Barcode"] !== undefined ? formData["Carton Barcode"] : ""}
-              onChange={(e) => handleChange("Carton Barcode", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
- 
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Carton Specifications (Weight & Dimensions)</label>
-            <div className="grid grid-cols-4 gap-2.5">
-              {/* Weight */}
-              <div className="relative flex items-center">
+            {/* Pricing, Packaging & Status */}
+            <div className="grid grid-cols-4 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Carton UOM</label>
                 <input
                   type="text"
-                  placeholder="Weight (g)"
-                  value={formData[" Carton Weight"] !== undefined ? formData[" Carton Weight"] : ""}
-                  onChange={(e) => handleChange(" Carton Weight", e.target.value)}
-                  className="w-full text-xs bg-white border border-slate-300 rounded pl-3 pr-6 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+                  placeholder="e.g. 24"
+                  value={formData.Carton !== undefined ? formData.Carton : ""}
+                  onChange={(e) => handleChange("Carton", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
                 />
-                <span className="absolute right-2.5 text-[10px] font-bold text-zinc-400">g</span>
               </div>
-              {/* Height */}
-              <div className="relative flex items-center">
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Cost ($)</label>
                 <input
                   type="text"
-                  placeholder="H (mm)"
-                  value={formData["Carton H (mm)"] !== undefined ? formData["Carton H (mm)"] : ""}
-                  onChange={(e) => handleChange("Carton H (mm)", e.target.value)}
-                  className="w-full text-xs bg-white border border-slate-300 rounded pl-3 pr-8 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+                  placeholder="0.00"
+                  value={formData.Cost !== undefined ? formData.Cost : ""}
+                  onChange={(e) => handleChange("Cost", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
                 />
-                <span className="absolute right-2.5 text-[10px] font-bold text-zinc-400">mm</span>
               </div>
-              {/* Width */}
-              <div className="relative flex items-center">
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Rank</label>
                 <input
                   type="text"
-                  placeholder="W (mm)"
-                  value={formData["Carton W (mm)"] !== undefined ? formData["Carton W (mm)"] : ""}
-                  onChange={(e) => handleChange("Carton W (mm)", e.target.value)}
-                  className="w-full text-xs bg-white border border-slate-300 rounded pl-3 pr-8 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
+                  placeholder="e.g. 1"
+                  value={formData.Rank !== undefined ? formData.Rank : ""}
+                  onChange={(e) => handleChange("Rank", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
                 />
-                <span className="absolute right-2.5 text-[10px] font-bold text-zinc-400">mm</span>
               </div>
-              {/* Length */}
-              <div className="relative flex items-center">
-                <input
-                  type="text"
-                  placeholder="L (mm)"
-                  value={formData["Carton L (mm)"] !== undefined ? formData["Carton L (mm)"] : ""}
-                  onChange={(e) => handleChange("Carton L (mm)", e.target.value)}
-                  className="w-full text-xs bg-white border border-slate-300 rounded pl-3 pr-8 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-                />
-                <span className="absolute right-2.5 text-[10px] font-bold text-zinc-400">mm</span>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Status</label>
+                <select
+                  value={formData.Status || "Active"}
+                  onChange={(e) => handleChange("Status", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
+                >
+                  <option value="Active">Active</option>
+                  <option value="Inactive">Inactive</option>
+                </select>
               </div>
             </div>
-          </div>
 
-          {Object.keys(formData)
-            .filter((k) => {
-              if (['sku', "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "Carton H (mm)", "Carton W (mm)", "Carton L (mm)", "id", "isNew"].includes(k)) return false;
-              const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
-              if (cleanK === "productmeta" || cleanK === "listincatalog") return false;
-              const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
-                otherKey !== k && 
-                otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
-                otherKey !== otherKey.toLowerCase()
-              );
-              return !hasUpperCaseEquivalent;
-            })
-            .map((key) => (
-              <div key={key} className="flex flex-col gap-1.5 col-span-2">
-                <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">{key}</label>
+            {/* Barcodes */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Single Barcode</label>
                 <input
                   type="text"
-                  value={formData[key] !== undefined ? formData[key] : ""}
-                  onChange={(e) => handleChange(key, e.target.value)}
-                  className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                  placeholder="Single unit barcode"
+                  value={formData["Single Barcode"] !== undefined ? formData["Single Barcode"] : ""}
+                  onChange={(e) => handleChange("Single Barcode", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
                 />
               </div>
-            ))}
 
-          <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-200 mt-2 col-span-2">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Carton Barcode</label>
+                <input
+                  type="text"
+                  placeholder="Carton outer barcode"
+                  value={formData["Carton Barcode"] !== undefined ? formData["Carton Barcode"] : ""}
+                  onChange={(e) => handleChange("Carton Barcode", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Carton Specifications */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Carton Specifications (Weight & Dimensions)</label>
+              <div className="grid grid-cols-4 gap-2.5">
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    placeholder="Weight"
+                    value={formData[" Carton Weight"] !== undefined ? formData[" Carton Weight"] : ""}
+                    onChange={(e) => handleChange(" Carton Weight", e.target.value)}
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg pl-3 pr-6 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                  />
+                  <span className="absolute right-2.5 text-[10px] font-semibold text-zinc-400">g</span>
+                </div>
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    placeholder="Height"
+                    value={formData["Carton H (mm)"] !== undefined ? formData["Carton H (mm)"] : ""}
+                    onChange={(e) => handleChange("Carton H (mm)", e.target.value)}
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg pl-3 pr-8 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                  />
+                  <span className="absolute right-2.5 text-[10px] font-semibold text-zinc-400">mm</span>
+                </div>
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    placeholder="Width"
+                    value={formData["Carton W (mm)"] !== undefined ? formData["Carton W (mm)"] : ""}
+                    onChange={(e) => handleChange("Carton W (mm)", e.target.value)}
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg pl-3 pr-8 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                  />
+                  <span className="absolute right-2.5 text-[10px] font-semibold text-zinc-400">mm</span>
+                </div>
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    placeholder="Length"
+                    value={formData["Carton L (mm)"] !== undefined ? formData["Carton L (mm)"] : ""}
+                    onChange={(e) => handleChange("Carton L (mm)", e.target.value)}
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg pl-3 pr-8 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                  />
+                  <span className="absolute right-2.5 text-[10px] font-semibold text-zinc-400">mm</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Logistics & Storage Specs - 3 Column Input Grid */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Pallet CTN</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 55"
+                  value={formData["Pallet CTN"] !== undefined ? formData["Pallet CTN"] : ""}
+                  onChange={(e) => handleChange("Pallet CTN", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Storage Condition</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 15°-25°C"
+                  value={formData["Storage Condition"] !== undefined ? formData["Storage Condition"] : ""}
+                  onChange={(e) => handleChange("Storage Condition", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Shelf Life</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 12 Months"
+                  value={formData["Shelf Life"] !== undefined ? formData["Shelf Life"] : ""}
+                  onChange={(e) => handleChange("Shelf Life", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Extra Dynamic Fields */}
+            {Object.keys(formData)
+              .filter((k) => {
+                if (['sku', "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "Carton H (mm)", "Carton W (mm)", "Carton L (mm)", "Pallet CTN", "Storage Condition", "Shelf Life", "id", "isNew"].includes(k)) return false;
+                const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (cleanK === "productmeta" || cleanK === "listincatalog") return false;
+                const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 
+                  otherKey !== k && 
+                  otherKey.toLowerCase().replace(/[^a-z0-9]/g, '') === k.toLowerCase().replace(/[^a-z0-9]/g, '') &&
+                  otherKey !== otherKey.toLowerCase()
+                );
+                return !hasUpperCaseEquivalent;
+              })
+              .map((key) => (
+                <div key={key} className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-zinc-600">{key}</label>
+                  <input
+                    type="text"
+                    value={formData[key] !== undefined ? formData[key] : ""}
+                    onChange={(e) => handleChange(key, e.target.value)}
+                    className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                  />
+                </div>
+              ))}
+          </div>
+
+          {/* Dialog Footer */}
+          <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end items-center gap-2.5 shrink-0">
             <button
               type="button"
               onClick={onCancel}
-              className="h-8 px-4 text-xs font-bold rounded border border-slate-200 bg-white text-zinc-700 hover:text-zinc-950 hover:bg-slate-100 transition-all cursor-pointer shadow-xs"
+              className="h-9 px-4 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-zinc-700 hover:bg-slate-100 hover:text-zinc-950 transition-all cursor-pointer shadow-xs"
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="h-8 px-4 text-xs font-bold rounded border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs"
+              className="h-9 px-4 text-xs font-semibold rounded-lg border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs active:scale-98"
             >
-              Save
+              {isNew ? "Create Product" : "Save Changes"}
             </button>
           </div>
         </form>
@@ -1009,3 +1124,4 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
     </div>
   );
 }
+

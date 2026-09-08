@@ -477,131 +477,164 @@ function RetailerEditForm({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center z-50 font-primary">
-      <div className="bg-white border border-slate-200 w-full max-w-md rounded-lg p-6 shadow-xl flex flex-col gap-4 animate-tableFadeIn animate-duration-200">
-        <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-          <h3 className="text-sm font-bold text-zinc-950 uppercase tracking-wider">
-            {isNew ? "Add Retailer" : "Edit Retailer"}
-          </h3>
-          <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-800 focus:outline-none cursor-pointer">
-            <X size={16} />
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 font-primary p-4">
+      <div className="bg-white border border-slate-200 w-full max-w-lg rounded-lg shadow-xl flex flex-col overflow-hidden animate-tableFadeIn animate-duration-200">
+        {/* Dialog Header */}
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+          <div>
+            <h3 className="text-base font-bold text-zinc-950">
+              {isNew ? "Add Retailer" : "Edit Retailer"}
+            </h3>
+            <p className="text-xs text-zinc-500 mt-0.5">Configure retailer entity details, group classification, and logo asset.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X size={18} />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">ID (Primary Key)</label>
-            <input
-              type="text"
-              value={formData.id || ""}
-              disabled={!isNew}
-              onChange={(e) => handleChange("id", e.target.value)}
-              required
-              className={`w-full text-xs rounded px-3 py-2 font-semibold outline-none border ${
-                !isNew 
-                  ? "bg-[#F0F4F9] border-slate-200 text-zinc-500 cursor-not-allowed" 
-                  : "bg-[#F0F4F9] border-slate-200 text-zinc-900 focus:border-blue-400"
-              }`}
-            />
-          </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Display Name</label>
-            <input
-              type="text"
-              value={formData.display_name || ""}
-              onChange={(e) => handleChange("display_name", e.target.value)}
-              required
-              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-            />
-          </div>
+        {/* Dialog Body */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-5 overflow-y-auto max-h-[calc(85vh-130px)] space-y-4">
+            {/* Retailer Logo on top */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Retailer Logo</label>
+              <div className="flex items-center gap-4 p-3 bg-slate-50/50 rounded-lg border border-slate-200">
+                <div className="w-20 h-20 aspect-square rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden shrink-0 shadow-2xs">
+                  {formData.logo_image ? (
+                    <img src={formData.logo_image} alt="Retailer Logo" className="w-full h-full object-contain p-1.5" />
+                  ) : (
+                    <div className="text-center text-zinc-400 p-1">
+                      <Upload size={16} className="mx-auto mb-0.5 opacity-50" />
+                      <span className="text-[10px] block leading-tight font-medium">No Logo</span>
+                    </div>
+                  )}
+                </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Logo Image</label>
-            <div className="flex gap-2">
+                <div className="flex flex-col gap-1.5">
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      disabled={uploading}
+                      onClick={() => fileInputRef.current?.click()}
+                      className="h-8 px-3 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shadow-xs"
+                    >
+                      <Upload size={13} />
+                      {uploading ? "Uploading..." : formData.logo_image ? "Change Logo" : "Upload Logo"}
+                    </button>
+                    {formData.logo_image && (
+                      <button
+                        type="button"
+                        onClick={() => handleChange("logo_image", "")}
+                        className="h-8 px-2.5 text-xs font-semibold rounded-lg border border-slate-200 bg-white hover:bg-red-50 text-red-600 transition-all cursor-pointer shadow-xs"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-[11px] text-zinc-500">1:1 square retailer logo asset</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Retailer ID</label>
+                <input
+                  type="text"
+                  value={formData.id || ""}
+                  disabled={!isNew}
+                  onChange={(e) => handleChange("id", e.target.value)}
+                  placeholder="e.g. RET-001"
+                  required
+                  className={`w-full h-9 text-xs px-3 rounded-lg border font-medium outline-none transition-all ${
+                    !isNew 
+                      ? "bg-slate-50 border-slate-200 text-zinc-400 cursor-not-allowed" 
+                      : "bg-white border-slate-200 text-zinc-900 focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  }`}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Display Rank</label>
+                <input
+                  type="text"
+                  value={formData.rank || ""}
+                  onChange={(e) => handleChange("rank", e.target.value)}
+                  placeholder="e.g. 1"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Display Name</label>
               <input
                 type="text"
-                value={formData.logo_image || ""}
-                onChange={(e) => handleChange("logo_image", e.target.value)}
-                placeholder="Image URL or upload a file"
-                className="flex-1 text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
+                value={formData.display_name || ""}
+                onChange={(e) => handleChange("display_name", e.target.value)}
+                placeholder="Official retailer display name"
+                required
+                className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
               />
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="image/*"
-                className="hidden"
-              />
-              <button
-                type="button"
-                disabled={uploading}
-                onClick={() => fileInputRef.current?.click()}
-                className="h-8 px-3 text-xs font-bold rounded border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 hover:text-zinc-950 flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all shadow-xs"
-              >
-                <Upload size={13} />
-                {uploading ? "Uploading..." : "Upload"}
-              </button>
             </div>
-            {formData.logo_image && (
-              <div className="mt-1.5 border border-slate-200 rounded overflow-hidden h-20 bg-[#F0F4F9] flex items-center justify-center relative group">
-                <img src={formData.logo_image} alt="Preview" className="max-h-full max-w-full object-contain" />
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Retailer Group</label>
+                <select
+                  value={formData.retailer_group || "Individual"}
+                  onChange={(e) => handleChange("retailer_group", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
+                >
+                  <option value="Individual">Individual</option>
+                  <option value="Group A">Group A</option>
+                  <option value="Group B">Group B</option>
+                  <option value="Group C">Group C</option>
+                  <option value="Group D">Group D</option>
+                  <option value="Group E">Group E</option>
+                </select>
               </div>
-            )}
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Contact Email</label>
+                <input
+                  type="email"
+                  value={formData.email || ""}
+                  onChange={(e) => handleChange("email", e.target.value)}
+                  placeholder="e.g. buyer@retailer.com"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Retailer Group</label>
-            <select
-              value={formData.retailer_group || "Individual"}
-              onChange={(e) => handleChange("retailer_group", e.target.value)}
-              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold cursor-pointer"
-            >
-              <option value="Individual">Individual</option>
-              <option value="Group A">Group A</option>
-              <option value="Group B">Group B</option>
-              <option value="Group C">Group C</option>
-              <option value="Group D">Group D</option>
-              <option value="Group E">Group E</option>
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Rank</label>
-            <input
-              type="text"
-              value={formData.rank || ""}
-              onChange={(e) => handleChange("rank", e.target.value)}
-              placeholder="e.g. 1"
-              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Email</label>
-            <input
-              type="email"
-              value={formData.email || ""}
-              onChange={(e) => handleChange("email", e.target.value)}
-              placeholder="e.g. buyer@retailer.com"
-              className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-200 mt-2">
+          {/* Dialog Footer */}
+          <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end items-center gap-2.5 shrink-0">
             <button
               type="button"
               disabled={submitting}
               onClick={onCancel}
-              className="h-8 px-4 text-xs font-bold rounded border border-slate-200 bg-white text-zinc-700 hover:text-zinc-950 hover:bg-slate-100 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+              className="h-9 px-4 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-zinc-700 hover:bg-slate-100 hover:text-zinc-950 transition-all cursor-pointer shadow-xs disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="h-8 px-4 text-xs font-bold rounded border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs disabled:opacity-50"
+              className="h-9 px-4 text-xs font-semibold rounded-lg border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs disabled:opacity-50 active:scale-98"
             >
-              {submitting ? "Saving..." : "Save"}
+              {submitting ? "Saving..." : isNew ? "Create Retailer" : "Save Changes"}
             </button>
           </div>
         </form>
@@ -649,133 +682,155 @@ function StoreEditForm({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center z-50 font-primary">
-      <div className="bg-white border border-slate-200 w-full max-w-xl rounded-lg p-6 shadow-xl flex flex-col gap-4 animate-tableFadeIn animate-duration-200 max-h-[90vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-        <div className="flex justify-between items-center pb-2 border-b border-slate-200">
-          <h3 className="text-sm font-bold text-zinc-950 uppercase tracking-wider">
-            {isNew ? "Add Store" : "Edit Store"}
-          </h3>
-          <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-800 focus:outline-none cursor-pointer">
-            <X size={16} />
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 font-primary p-4">
+      <div className="bg-white border border-slate-200 w-full max-w-xl rounded-lg shadow-xl flex flex-col overflow-hidden animate-tableFadeIn animate-duration-200">
+        {/* Dialog Header */}
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+          <div>
+            <h3 className="text-base font-bold text-zinc-950">
+              {isNew ? "Add Store" : "Edit Store"}
+            </h3>
+            <p className="text-xs text-zinc-500 mt-0.5">Configure store branch information, physical address, and GPS pin coordinates.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
+          >
+            <X size={18} />
           </button>
         </div>
-        <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">ID (Primary Key)</label>
-            <input
-              type="text"
-              value={formData.id || ""}
-              disabled={!isNew}
-              onChange={(e) => handleChange("id", e.target.value)}
-              required
-              className={`w-full text-xs rounded px-3 py-2 font-semibold outline-none border ${
-                !isNew 
-                  ? "bg-slate-50 border-slate-200 text-zinc-500 cursor-not-allowed" 
-                  : "bg-white border-slate-300 text-zinc-900 focus:border-blue-500"
-              }`}
-            />
+
+        {/* Dialog Body */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 overflow-hidden">
+          <div className="p-5 overflow-y-auto max-h-[calc(85vh-130px)] space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Store ID</label>
+                <input
+                  type="text"
+                  value={formData.id || ""}
+                  disabled={!isNew}
+                  onChange={(e) => handleChange("id", e.target.value)}
+                  placeholder="e.g. STR-001"
+                  required
+                  className={`w-full h-9 text-xs px-3 rounded-lg border font-medium outline-none transition-all ${
+                    !isNew 
+                      ? "bg-slate-50 border-slate-200 text-zinc-400 cursor-not-allowed" 
+                      : "bg-white border-slate-200 text-zinc-900 focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  }`}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Assigned Retailer</label>
+                <select
+                  value={formData.retailers_id || formData.retailer_id || ""}
+                  onChange={(e) => handleRetailerChange(e.target.value)}
+                  required
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
+                >
+                  <option value="">Select Retailer</option>
+                  {retailers.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.display_name || r.id} ({r.id})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Display Name</label>
+              <input
+                type="text"
+                value={formData.display_name || ""}
+                onChange={(e) => handleChange("display_name", e.target.value)}
+                placeholder="Store / outlet display name"
+                required
+                className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Physical Address</label>
+              <textarea
+                value={formData.address || ""}
+                onChange={(e) => handleChange("address", e.target.value)}
+                placeholder="Full street address and unit number..."
+                rows={2}
+                className="w-full text-xs bg-white border border-slate-200 rounded-lg p-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium resize-none transition-all"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Zone / Region</label>
+                <input
+                  type="text"
+                  value={formData.zones || ""}
+                  onChange={(e) => handleChange("zones", e.target.value)}
+                  placeholder="e.g. North, Central, West"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Pin Locations (Lat, Lng)</label>
+                <input
+                  type="text"
+                  value={formData.pin_locations || ""}
+                  onChange={(e) => handleChange("pin_locations", e.target.value)}
+                  placeholder="e.g. 1.3521, 103.8198"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Operation Status</label>
+                <select
+                  value={formData.status || ""}
+                  onChange={(e) => handleChange("status", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
+                >
+                  <option value="">Select Status</option>
+                  <option value="Carry">Carry</option>
+                  <option value="Not Carry">Not Carry</option>
+                  <option value="Store Closed">Store Closed</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Store Rank</label>
+                <input
+                  type="text"
+                  value={formData.store_rank || ""}
+                  onChange={(e) => handleChange("store_rank", e.target.value)}
+                  placeholder="e.g. 1"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Retailer (Assign to Retailer)</label>
-            <select
-              value={formData.retailers_id || formData.retailer_id || ""}
-              onChange={(e) => handleRetailerChange(e.target.value)}
-              required
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold cursor-pointer"
-            >
-              <option value="">-- Select Retailer --</option>
-              {retailers.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.display_name || r.id} ({r.id})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Display Name</label>
-            <input
-              type="text"
-              value={formData.display_name || ""}
-              onChange={(e) => handleChange("display_name", e.target.value)}
-              required
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5 col-span-2">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Address</label>
-            <textarea
-              value={formData.address || ""}
-              onChange={(e) => handleChange("address", e.target.value)}
-              rows={2}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold resize-none"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Zones</label>
-            <input
-              type="text"
-              value={formData.zones || ""}
-              onChange={(e) => handleChange("zones", e.target.value)}
-              placeholder="e.g. North, Central"
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Pin Locations (Lat, Lng)</label>
-            <input
-              type="text"
-              value={formData.pin_locations || ""}
-              onChange={(e) => handleChange("pin_locations", e.target.value)}
-              placeholder="e.g. 1.3521, 103.8198"
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Status</label>
-            <select
-              value={formData.status || ""}
-              onChange={(e) => handleChange("status", e.target.value)}
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold cursor-pointer"
-            >
-              <option value="">-- Select Status --</option>
-              <option value="Carry">Carry</option>
-              <option value="Not Carry">Not Carry</option>
-              <option value="Store Closed">Store Closed</option>
-            </select>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-bold text-zinc-700 uppercase tracking-wider">Store Rank</label>
-            <input
-              type="text"
-              value={formData.store_rank || ""}
-              onChange={(e) => handleChange("store_rank", e.target.value)}
-              placeholder="e.g. 1"
-              className="w-full text-xs bg-white border border-slate-300 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-500 font-semibold"
-            />
-          </div>
-
-          <div className="flex justify-end gap-2.5 pt-3 border-t border-slate-200 mt-2 col-span-2">
+          {/* Dialog Footer */}
+          <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end items-center gap-2.5 shrink-0">
             <button
               type="button"
               disabled={submitting}
               onClick={onCancel}
-              className="h-8 px-4 text-xs font-bold rounded border border-slate-200 bg-white text-zinc-700 hover:text-zinc-950 hover:bg-slate-100 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+              className="h-9 px-4 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-zinc-700 hover:bg-slate-100 hover:text-zinc-950 transition-all cursor-pointer shadow-xs disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="h-8 px-4 text-xs font-bold rounded border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs disabled:opacity-50"
+              className="h-9 px-4 text-xs font-semibold rounded-lg border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs disabled:opacity-50 active:scale-98"
             >
-              {submitting ? "Saving..." : "Save"}
+              {submitting ? "Saving..." : isNew ? "Create Store" : "Save Changes"}
             </button>
           </div>
         </form>
@@ -783,3 +838,4 @@ function StoreEditForm({
     </div>
   );
 }
+

@@ -2731,7 +2731,7 @@ export function SponsorshipModule({ profile }: SponsorshipModuleProps) {
                       </div>
                     </div>
                     <div>
-                      <label className="block mb-1 text-zinc-500 font-bold uppercase">Invoice PDF (R2 Secure Storage)</label>
+                      <label className="block mb-1 text-zinc-500 font-bold uppercase">Invoice PDF (Secure Storage)</label>
                       {claimInvoicePdfUrl ? (
                         <div className="flex items-center justify-between p-2 border border-green-250 bg-green-50 rounded text-zinc-800">
                           <div className="flex items-center gap-1.5 overflow-hidden">

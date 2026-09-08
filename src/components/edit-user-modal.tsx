@@ -198,56 +198,51 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4 select-none font-primary animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 select-none font-primary animate-tableFadeInOnly">
       {/* Modal Container */}
       <form 
         onSubmit={handleFormSubmit}
-        className="w-full max-w-5xl bg-[#E5E5E5] border border-zinc-300 rounded-lg shadow-xl overflow-hidden flex flex-col max-h-[92vh]"
+        className="w-full max-w-5xl bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden flex flex-col max-h-[90vh] animate-tableFadeIn"
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-300 bg-[#EEEEEE]">
-          <div className="flex items-center gap-2.5">
-            <div className="p-1.5 bg-zinc-700 rounded-lg text-white">
-              <Shield size={18} />
-            </div>
-            <div className="flex flex-col">
-              <h3 className="text-lg font-bold text-zinc-950">Edit User Permissions</h3>
-              <p className="text-xs text-zinc-500">Configure role access, employee fast login binding, and granular CRUD permissions</p>
-            </div>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white">
+          <div>
+            <h3 className="text-base font-bold text-zinc-950">Edit User Permissions</h3>
+            <p className="text-xs text-zinc-500 mt-0.5">Configure role access, employee PIN binding, and granular module permissions.</p>
           </div>
           <button 
             type="button" 
             onClick={onClose}
-            className="p-1 text-zinc-400 hover:text-zinc-800 rounded-lg hover:bg-zinc-300/40 transition-colors cursor-pointer"
+            className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
           >
             <X size={18} />
           </button>
         </div>
 
         {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5">
+        <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5 custom-scrollbar">
           {/* Top User Meta Row */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 bg-[#EEEEEE]/60 p-4 border border-zinc-300/70 rounded-lg">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 bg-slate-50/60 p-4 border border-slate-200 rounded-lg">
             {/* 1. Account Info */}
             <div className="flex flex-col gap-2.5">
               <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">User Account Info</span>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-zinc-500">Full Name</label>
+                <label className="text-xs font-semibold text-zinc-600">Full Name</label>
                 <input 
                   type="text"
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="h-9 px-3 bg-[#EEEEEE] border border-zinc-300 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400/20 font-semibold"
+                  className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-zinc-500">Email (Read Only)</label>
+                <label className="text-xs font-semibold text-zinc-600">Email (Read Only)</label>
                 <input 
                   type="email"
                   disabled
                   value={user.email}
-                  className="h-9 px-3 bg-[#EEEEEE]/60 border border-zinc-300 rounded-lg text-xs text-zinc-500 cursor-not-allowed font-medium"
+                  className="h-9 px-3 bg-slate-100 border border-slate-200 rounded-lg text-xs text-zinc-500 cursor-not-allowed font-medium"
                 />
               </div>
             </div>
@@ -256,22 +251,22 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
             <div className="flex flex-col gap-2.5">
               <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Access Controls</span>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Security Role</label>
+                <label className="text-xs font-semibold text-zinc-600">Security Role</label>
                 <select 
                   value={role}
                   onChange={(e) => setRole(e.target.value)}
-                  className="h-9 px-3 bg-[#EEEEEE] border border-zinc-300 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400/20 font-semibold cursor-pointer"
+                  className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
                 >
                   <option value="Administrator">Administrator (Full Access)</option>
                   <option value="Operator">Operator (Granular Permissions)</option>
                 </select>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Account Status</label>
+                <label className="text-xs font-semibold text-zinc-600">Account Status</label>
                 <select 
                   value={status}
                   onChange={(e) => setStatus(Number(e.target.value))}
-                  className="h-9 px-3 bg-[#EEEEEE] border border-zinc-300 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400/20 font-semibold cursor-pointer"
+                  className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
                 >
                   <option value={1}>Active (Approved)</option>
                   <option value={0}>Pending (Awaiting Approval)</option>
@@ -287,12 +282,12 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                 <span className="text-[10px] uppercase font-bold text-zinc-400 tracking-wider">Employee PIN Binding</span>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-bold text-zinc-500">Bound Employee</label>
+                <label className="text-xs font-semibold text-zinc-600">Bound Employee</label>
                 <select 
                   value={employeeId}
                   onChange={(e) => setEmployeeId(e.target.value)}
                   disabled={loadingEmployees}
-                  className="h-9 px-3 bg-[#EEEEEE] border border-zinc-300 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400/20 font-semibold cursor-pointer"
+                  className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
                 >
                   <option value="">-- No Employee Bound --</option>
                   {employees.map((emp) => (
@@ -302,7 +297,7 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                   ))}
                 </select>
               </div>
-              <p className="text-[10px] text-zinc-500 leading-tight">
+              <p className="text-[11px] text-zinc-500 leading-tight">
                 Binding allows the user to log in instantly on the login screen with the employee's 4-digit PIN code.
               </p>
             </div>
@@ -310,31 +305,31 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
 
           {/* Granular Permission Matrix Section */}
           {role === "Administrator" ? (
-            <div className="flex-1 min-h-[300px] border border-zinc-300 rounded-lg bg-[#EEEEEE]/50 flex flex-col items-center justify-center p-8 text-center gap-3">
-              <div className="p-3 bg-zinc-700 rounded-full text-white">
-                <Shield size={26} />
+            <div className="flex-1 min-h-[260px] border border-slate-200 rounded-lg bg-slate-50/50 flex flex-col items-center justify-center p-8 text-center gap-3">
+              <div className="w-12 h-12 rounded-full bg-blue-50 text-[#0B57D0] border border-blue-200 flex items-center justify-center">
+                <Shield size={24} />
               </div>
-              <h4 className="text-sm font-bold text-zinc-800">Administrator Full System Access</h4>
+              <h4 className="text-sm font-bold text-zinc-900">Administrator Full System Access</h4>
               <p className="text-xs text-zinc-500 max-w-md leading-relaxed">
                 Users with the Administrator role are automatically granted full unrestricted access to all pages, modules, settings, and CRUD actions (View, Create, Edit, Delete).
               </p>
             </div>
           ) : (
-            <div className="border border-zinc-300 rounded-lg bg-[#EEEEEE]/50 flex flex-col overflow-hidden">
-              <div className="px-4 py-3 bg-[#EEEEEE] border-b border-zinc-300 flex items-center justify-between">
+            <div className="border border-slate-200 rounded-lg bg-white flex flex-col overflow-hidden">
+              <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <UserCheck size={16} className="text-zinc-700" />
-                  <span className="text-xs font-bold text-zinc-800">Operator Module Permissions Matrix</span>
+                  <UserCheck size={16} className="text-[#0B57D0]" />
+                  <span className="text-xs font-bold text-zinc-900">Operator Module Permissions Matrix</span>
                 </div>
-                <span className="text-[10px] text-zinc-500 italic">
+                <span className="text-[11px] text-zinc-500">
                   Configure specific View, Create/Edit, and Delete permissions per module
                 </span>
               </div>
 
               {/* Matrix Table */}
-              <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+              <div className="overflow-x-auto max-h-[380px] overflow-y-auto custom-scrollbar">
                 <table className="w-full text-left text-xs border-collapse font-primary">
-                  <thead className="bg-[#E5E5E5] sticky top-0 z-10 border-b border-zinc-300 text-zinc-700 font-bold uppercase text-[10px] tracking-wider">
+                  <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 text-zinc-600 font-bold uppercase text-[10px] tracking-wider">
                     <tr>
                       <th className="py-2.5 px-4">Workspace / Module</th>
                       <th className="py-2.5 px-3 text-center w-24">View</th>
@@ -343,11 +338,11 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                       <th className="py-2.5 px-4 text-right w-48">Quick Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-300/60 bg-[#EEEEEE]/20">
+                  <tbody className="divide-y divide-slate-100">
                     {APP_PAGES_CONFIG.filter((p) => p.id !== "Administrator" && p.modules.length > 0).map((page) => (
                       <React.Fragment key={page.id}>
                         {/* Page Category Header Row */}
-                        <tr className="bg-[#E5E5E5]/70 border-t border-zinc-300">
+                        <tr className="bg-slate-50/80 border-t border-slate-200">
                           <td colSpan={4} className="py-2 px-4 font-bold text-zinc-900 text-xs">
                             {page.label}
                           </td>
@@ -356,21 +351,21 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                               <button
                                 type="button"
                                 onClick={() => handleQuickPageAction(page.id, "all")}
-                                className="px-2 py-0.5 text-[9px] font-bold rounded bg-zinc-300 hover:bg-zinc-400 text-zinc-800 transition-colors cursor-pointer"
+                                className="px-2 py-0.5 text-[9px] font-bold rounded bg-white border border-slate-200 hover:bg-slate-100 text-zinc-700 transition-colors cursor-pointer shadow-2xs"
                               >
                                 All
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleQuickPageAction(page.id, "view_only")}
-                                className="px-2 py-0.5 text-[9px] font-bold rounded bg-zinc-300 hover:bg-zinc-400 text-zinc-800 transition-colors cursor-pointer"
+                                className="px-2 py-0.5 text-[9px] font-bold rounded bg-white border border-slate-200 hover:bg-slate-100 text-zinc-700 transition-colors cursor-pointer shadow-2xs"
                               >
                                 View Only
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleQuickPageAction(page.id, "none")}
-                                className="px-2 py-0.5 text-[9px] font-bold rounded bg-zinc-300 hover:bg-zinc-400 text-zinc-800 transition-colors cursor-pointer"
+                                className="px-2 py-0.5 text-[9px] font-bold rounded bg-white border border-slate-200 hover:bg-slate-100 text-zinc-700 transition-colors cursor-pointer shadow-2xs"
                               >
                                 Clear
                               </button>
@@ -382,43 +377,43 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                         {page.modules.map((mod) => {
                           const perm = permissions[mod.title] || { view: false, edit: false, delete: false };
                           return (
-                            <tr key={mod.title} className="hover:bg-zinc-200/50 transition-colors">
-                              <td className="py-2 px-6">
+                            <tr key={mod.title} className="hover:bg-slate-50/60 transition-colors">
+                              <td className="py-2.5 px-6">
                                 <div className="flex flex-col">
-                                  <span className="font-semibold text-zinc-800 text-xs">{mod.title}</span>
+                                  <span className="font-semibold text-zinc-900 text-xs">{mod.title}</span>
                                   <span className="text-[10px] text-zinc-500 truncate max-w-md">{mod.description}</span>
                                 </div>
                               </td>
                               {/* View Checkbox */}
-                              <td className="py-2 px-3 text-center">
+                              <td className="py-2.5 px-3 text-center">
                                 <input
                                   type="checkbox"
                                   checked={perm.view}
                                   onChange={(e) => handleTogglePermission(mod.title, "view", e.target.checked)}
-                                  className="w-4 h-4 rounded border-zinc-300 text-zinc-900 focus:ring-0 cursor-pointer accent-zinc-800"
+                                  className="w-3.5 h-3.5 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
                                 />
                               </td>
                               {/* Edit Checkbox */}
-                              <td className="py-2 px-3 text-center">
+                              <td className="py-2.5 px-3 text-center">
                                 <input
                                   type="checkbox"
                                   checked={perm.edit}
                                   onChange={(e) => handleTogglePermission(mod.title, "edit", e.target.checked)}
-                                  className="w-4 h-4 rounded border-zinc-300 text-zinc-900 focus:ring-0 cursor-pointer accent-zinc-800"
+                                  className="w-3.5 h-3.5 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
                                 />
                               </td>
                               {/* Delete Checkbox */}
-                              <td className="py-2 px-3 text-center">
+                              <td className="py-2.5 px-3 text-center">
                                 <input
                                   type="checkbox"
                                   checked={perm.delete}
                                   onChange={(e) => handleTogglePermission(mod.title, "delete", e.target.checked)}
-                                  className="w-4 h-4 rounded border-zinc-300 text-zinc-900 focus:ring-0 cursor-pointer accent-zinc-800"
+                                  className="w-3.5 h-3.5 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
                                 />
                               </td>
                               {/* Module Quick Actions */}
-                              <td className="py-2 px-4 text-right">
-                                <div className="flex items-center justify-end gap-1">
+                              <td className="py-2.5 px-4 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -427,11 +422,11 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                                         [mod.title]: { view: true, edit: true, delete: true },
                                       }))
                                     }
-                                    className="px-1.5 py-0.5 text-[9px] text-zinc-600 hover:text-zinc-950 font-semibold hover:underline cursor-pointer"
+                                    className="px-1.5 py-0.5 text-[9.5px] text-[#0B57D0] hover:text-[#0842A0] font-semibold hover:underline cursor-pointer"
                                   >
                                     Full
                                   </button>
-                                  <span className="text-zinc-300 text-[10px]">|</span>
+                                  <span className="text-slate-300 text-[10px]">|</span>
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -440,11 +435,11 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                                         [mod.title]: { view: true, edit: false, delete: false },
                                       }))
                                     }
-                                    className="px-1.5 py-0.5 text-[9px] text-zinc-600 hover:text-zinc-950 font-semibold hover:underline cursor-pointer"
+                                    className="px-1.5 py-0.5 text-[9.5px] text-zinc-600 hover:text-zinc-950 font-semibold hover:underline cursor-pointer"
                                   >
                                     View
                                   </button>
-                                  <span className="text-zinc-300 text-[10px]">|</span>
+                                  <span className="text-slate-300 text-[10px]">|</span>
                                   <button
                                     type="button"
                                     onClick={() =>
@@ -453,7 +448,7 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                                         [mod.title]: { view: false, edit: false, delete: false },
                                       }))
                                     }
-                                    className="px-1.5 py-0.5 text-[9px] text-zinc-600 hover:text-zinc-950 font-semibold hover:underline cursor-pointer"
+                                    className="px-1.5 py-0.5 text-[9.5px] text-zinc-500 hover:text-red-600 font-semibold hover:underline cursor-pointer"
                                   >
                                     Off
                                   </button>
@@ -472,22 +467,22 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
         </div>
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-zinc-300 bg-[#EEEEEE]">
-          <CustomButton 
+        <div className="flex items-center justify-end gap-2.5 px-6 py-3.5 border-t border-slate-200 bg-slate-50 shrink-0">
+          <button 
             type="button" 
-            variant="default" 
             onClick={onClose}
             disabled={saving}
+            className="h-9 px-4 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-zinc-700 hover:bg-slate-100 hover:text-zinc-950 transition-all cursor-pointer shadow-xs disabled:opacity-50"
           >
             Cancel
-          </CustomButton>
-          <CustomButton 
+          </button>
+          <button 
             type="submit" 
-            variant="dark" 
             disabled={saving}
+            className="h-9 px-4 text-xs font-semibold rounded-lg border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs disabled:opacity-50 active:scale-98"
           >
             {saving ? "Saving..." : "Save Changes"}
-          </CustomButton>
+          </button>
         </div>
       </form>
     </div>

@@ -252,15 +252,14 @@ export default function POSCashierTerminal() {
     setLoadingProducts(true);
     try {
       const [prodRes, promoRes, actRes] = await Promise.all([
-        fetch(`${WORKER_URL}/api/pos/products`),
+        fetch(`${WORKER_URL}/api/pos/products?master=true`),
         fetch(`${WORKER_URL}/api/pos/brand-promos`),
         fetch(`${WORKER_URL}/api/pos/activations`)
       ]);
 
       if (prodRes.ok) {
         const list = await prodRes.json();
-        const activeOnly = Array.isArray(list) ? list.filter((p: any) => p.is_active_pos !== false) : [];
-        setProducts(activeOnly);
+        setProducts(Array.isArray(list) ? list : []);
       }
 
       if (promoRes.ok) {
@@ -444,11 +443,32 @@ export default function POSCashierTerminal() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [cashier, pinInput]);
 
-  // Brands list for navigation tabs (grouped purely by brand name)
+  // Activation-allocated products (Only list goods allocated to active activation that have qty > 0)
+  const activationProducts = React.useMemo(() => {
+    if (!activeActivation) return [];
+
+    const allocList = Array.isArray(activeActivation.stock_allocated) ? activeActivation.stock_allocated : [];
+    const allocMap = new Map<string, number>();
+    allocList.forEach((it: any) => {
+      const q = Number(it.qty || 0);
+      if (q > 0 && it.sku) {
+        allocMap.set(it.sku.toLowerCase(), q);
+      }
+    });
+
+    return products
+      .filter(p => allocMap.has(p.sku.toLowerCase()))
+      .map(p => ({
+        ...p,
+        stock_allocated: allocMap.get(p.sku.toLowerCase()) || 0
+      }));
+  }, [products, activeActivation]);
+
+  // Brands list for navigation tabs (grouped purely by brand name from allocated items)
   const brandsList = React.useMemo(() => {
     const brandMap = new Map<string, { name: string; count: number }>();
 
-    products.forEach(p => {
+    activationProducts.forEach(p => {
       const bName = (p.brand_name || "HSG Global").trim();
       const key = bName.toLowerCase();
 
@@ -459,21 +479,21 @@ export default function POSCashierTerminal() {
     });
 
     return Array.from(brandMap.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [products]);
+  }, [activationProducts]);
 
   // Selected Brand Tab ("All" or specific brand name)
   const [selectedBrandKey, setSelectedBrandKey] = React.useState<string>("All");
 
   // Filtered products
   const filteredProducts = React.useMemo(() => {
-    return products.filter(p => {
+    return activationProducts.filter(p => {
       const q = searchQuery.toLowerCase().trim();
       const matchQuery = !q || p.sku.toLowerCase().includes(q) || p.display_name.toLowerCase().includes(q) || (p.single_barcode && p.single_barcode.includes(q));
       const bName = (p.brand_name || "HSG Global").trim();
       const matchBrand = selectedBrandKey === "All" || bName.toLowerCase() === selectedBrandKey.toLowerCase();
       return matchQuery && matchBrand;
     });
-  }, [products, searchQuery, selectedBrandKey]);
+  }, [activationProducts, searchQuery, selectedBrandKey]);
 
   // Sorted products by Brand Name, then Brand ID, then SKU
   const sortedProducts = React.useMemo(() => {
@@ -500,7 +520,7 @@ export default function POSCashierTerminal() {
     const availableStock = Number(product.stock_allocated) || 0;
     
     if (availableStock <= 0) {
-      showToast(`Out of Stock: ${product.display_name} has 0 units available.`, "warning");
+      showToast(`Out of Stock: ${product.display_name} has 0 units available for this activation.`, "warning");
       return;
     }
 
@@ -509,7 +529,7 @@ export default function POSCashierTerminal() {
       if (idx >= 0) {
         const existing = prev[idx];
         if (existing.qty >= availableStock) {
-          showToast(`Stock Limit Reached: Only ${availableStock} units of ${product.display_name} available in stock.`, "warning");
+          showToast(`Stock Limit Reached: Only ${availableStock} units of ${product.display_name} allocated for this event.`, "warning");
           return prev;
         }
         const next = [...prev];
@@ -577,7 +597,7 @@ export default function POSCashierTerminal() {
       const q = searchQuery.trim();
       if (!q) return;
 
-      const exactMatch = products.find(p => 
+      const exactMatch = activationProducts.find(p => 
         p.single_barcode === q || 
         p.carton_barcode === q || 
         p.sku.toLowerCase() === q.toLowerCase()
@@ -586,6 +606,18 @@ export default function POSCashierTerminal() {
       if (exactMatch) {
         handleAddToCart(exactMatch);
         setSearchQuery("");
+      } else {
+        // Check master catalog to see if product exists but is not allocated to this event
+        const inMaster = products.find(p =>
+          p.single_barcode === q ||
+          p.carton_barcode === q ||
+          p.sku.toLowerCase() === q.toLowerCase()
+        );
+        if (inMaster) {
+          showToast(`"${inMaster.display_name}" has 0 stock allocated to this activation event.`, "warning");
+        } else {
+          showToast(`No matching product found for "${q}".`, "warning");
+        }
       }
     }
   };
@@ -600,11 +632,11 @@ export default function POSCashierTerminal() {
       const isCustomAdjustment = item.sku.startsWith("ADJ-TIP-");
 
       if (delta > 0 && !isCustomAdjustment) {
-        const matchedProduct = products.find(p => p.sku.toLowerCase() === item.sku.toLowerCase());
+        const matchedProduct = activationProducts.find(p => p.sku.toLowerCase() === item.sku.toLowerCase());
         const availableStock = matchedProduct ? (Number(matchedProduct.stock_allocated) || 0) : 0;
         
         if (item.qty >= availableStock) {
-          showToast(`Stock limit reached: Only ${availableStock} units available for ${item.name}`, "warning");
+          showToast(`Stock limit reached: Only ${availableStock} units allocated for ${item.name}`, "warning");
           return prev;
         }
       }
@@ -1336,7 +1368,7 @@ export default function POSCashierTerminal() {
                   : "bg-[#F0F4F9] text-zinc-600 hover:bg-slate-200 hover:text-zinc-900"
               }`}
             >
-              All Brands ({products.length})
+              All Brands ({activationProducts.length})
             </button>
 
             {brandsList.map((b) => {

@@ -775,12 +775,43 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
 
   // 5.8 Generate & Download Official Catalog PDF to R2 & Client
   const [generatingPdf, setGeneratingPdf] = React.useState(false);
+  const [savingPdfConfig, setSavingPdfConfig] = React.useState(false);
+
+  const handleSavePdfConfig = async () => {
+    setSavingPdfConfig(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/exhibitor/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          layout: layoutConfig,
+          settings: emailSettings
+        })
+      });
+      if (!res.ok) throw new Error("Failed to save PDF engine settings");
+      showToast("Catalog PDF Header, Subtext & Footer settings saved successfully!", "success");
+    } catch (err: any) {
+      showToast(err.message || "Failed to save settings", "error");
+    } finally {
+      setSavingPdfConfig(false);
+    }
+  };
 
   const handleDownloadAndGeneratePdf = async () => {
     setGeneratingPdf(true);
     try {
-      showToast("Compiling export catalog & uploading to Cloudflare R2...", "success");
+      showToast("Compiling export catalog & syncing to server...", "success");
       
+      // Auto-persist layout settings to backend before generation
+      fetch(`${WORKER_URL}/api/exhibitor/config`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          layout: layoutConfig,
+          settings: emailSettings
+        })
+      }).catch((e) => console.warn("Background config save failed:", e));
+
       // Fetch fresh active catalog items
       const cRes = await fetch(`${WORKER_URL}/api/exhibitor/catalog-products`);
       if (!cRes.ok) throw new Error("Failed to fetch active catalog dataset");
@@ -790,7 +821,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
       const activeBrands = cData.brands || [];
       const catalogHash = cData.catalog_hash || `manual_${Date.now()}`;
 
-      // Generate PDF & upload to R2
+      // Generate PDF & upload
       await generateExportCatalogPdf(
         activeProds,
         activeBrands,
@@ -804,7 +835,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
         }
       );
 
-      showToast("PDF Catalog generated, stored in R2 cache & downloaded!", "success");
+      showToast("PDF Catalog generated & downloaded successfully!", "success");
     } catch (err: any) {
       console.error("PDF generation failed:", err);
       showToast(err.message || "Failed to generate PDF catalog", "error");
@@ -1558,7 +1589,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       Official Export Catalog PDF Engine &amp; Layout Settings
                     </h4>
                     <p className="text-xs text-zinc-500 mt-0.5 max-w-xl">
-                      Customize catalog headers, contact information, and footer labels. Compiles all active brands &amp; products into a PDF catalog, caches in Cloudflare R2, and triggers local download.
+                      Customize catalog headers, contact information, and footer labels. Compiles all active brands &amp; products into a PDF catalog, updates online showcase, and triggers local download.
                     </p>
                   </div>
                 </div>

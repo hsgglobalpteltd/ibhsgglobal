@@ -3,6 +3,7 @@
 import * as React from "react";
 import * as XLSX from "xlsx";
 import { showToast } from "@/lib/toast";
+import { loadScript, loadStyle } from "@/lib/script-loader";
 import { 
   RefreshCw, 
   Plus, 
@@ -30,6 +31,7 @@ import {
   CreditCard,
   Save,
   Image as ImageIcon,
+  Camera,
   HelpCircle,
   Video,
   Tv,
@@ -341,16 +343,11 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   // Photo Receipt Upload & Crop/Rotate Modal State (For QR / Bank Transfer Orders)
   const [receiptUploadOrder, setReceiptUploadOrder] = React.useState<POSOrder | null>(null);
   const [receiptRawImage, setReceiptRawImage] = React.useState<string | null>(null);
-  const [receiptRotation, setReceiptRotation] = React.useState<number>(0);
-  const [receiptCropBox, setReceiptCropBox] = React.useState<{ x: number; y: number; width: number; height: number }>({ x: 0, y: 0, width: 100, height: 100 });
-  const [cropInteraction, setCropInteraction] = React.useState<{
-    type: "drag" | "resize";
-    handle?: string;
-    startX: number;
-    startY: number;
-    box: { x: number; y: number; width: number; height: number };
-  } | null>(null);
+  const [receiptBaseRotation, setReceiptBaseRotation] = React.useState<number>(0);
+  const [receiptFineRotation, setReceiptFineRotation] = React.useState<number>(0);
   const [isUploadingReceipt, setIsUploadingReceipt] = React.useState<boolean>(false);
+  const receiptCropperRef = React.useRef<any>(null);
+  const receiptImageRef = React.useRef<HTMLImageElement>(null);
   const receiptFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // Cash Deposit Receipts State (For Closing Activation with Cash Sales)
@@ -358,11 +355,98 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   const [isUploadingCashDeposit, setIsUploadingCashDeposit] = React.useState<boolean>(false);
   const [isCashCropModalOpen, setIsCashCropModalOpen] = React.useState<boolean>(false);
   const [cashRawImage, setCashRawImage] = React.useState<string | null>(null);
-  const [cashRotation, setCashRotation] = React.useState<number>(0);
-  const [cashCropBox, setCashCropBox] = React.useState<{ x: number; y: number; width: number; height: number }>({ x: 0, y: 0, width: 100, height: 100 });
+  const [cashBaseRotation, setCashBaseRotation] = React.useState<number>(0);
+  const [cashFineRotation, setCashFineRotation] = React.useState<number>(0);
+  const cashCropperRef = React.useRef<any>(null);
+  const cashImageRef = React.useRef<HTMLImageElement>(null);
   const cashFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [viewingReceiptOrder, setViewingReceiptOrder] = React.useState<POSOrder | null>(null);
   const [viewingPhotoUrl, setViewingPhotoUrl] = React.useState<string | null>(null);
   const [viewingStaffAct, setViewingStaffAct] = React.useState<POSActivation | null>(null);
+
+  // Manual Backdated Sale & Edit Transaction Modal State
+  const [isManualSaleOpen, setIsManualSaleOpen] = React.useState<boolean>(false);
+  const [editingTransactionOrder, setEditingTransactionOrder] = React.useState<POSOrder | null>(null);
+  const [manualActId, setManualActId] = React.useState<string>("");
+  const [manualDate, setManualDate] = React.useState<string>(new Date().toISOString().split("T")[0]);
+  const [manualTime, setManualTime] = React.useState<string>("12:00");
+  const [manualCashierName, setManualCashierName] = React.useState<string>("");
+  const [manualPaymentMethod, setManualPaymentMethod] = React.useState<"Cash" | "QR" | "Transfer Bank" | "FOC">("Cash");
+  const [manualItems, setManualItems] = React.useState<Array<{ sku: string; price: number; qty: number; is_foc: boolean }>>([
+    { sku: "", price: 0, qty: 1, is_foc: false }
+  ]);
+  const [manualDiscountType, setManualDiscountType] = React.useState<"none" | "percent" | "amount" | "foc">("none");
+  const [manualDiscountVal, setManualDiscountVal] = React.useState<number>(0);
+  const [manualNotes, setManualNotes] = React.useState<string>("");
+  const [manualReceiptPhoto, setManualReceiptPhoto] = React.useState<string | null>(null);
+  const [isSavingManualSale, setIsSavingManualSale] = React.useState<boolean>(false);
+
+  // Load Cropper.js scripts on mount
+  React.useEffect(() => {
+    async function initScripts() {
+      try {
+        await loadStyle("https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css");
+        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js");
+      } catch (err: any) {
+        console.error("Cropper load error:", err);
+      }
+    }
+    initScripts();
+  }, []);
+
+  // Setup Cropper.js instance for Cash Deposit Modal
+  React.useEffect(() => {
+    if (isCashCropModalOpen && cashRawImage && cashImageRef.current && (window as any).Cropper) {
+      if (cashCropperRef.current) {
+        cashCropperRef.current.destroy();
+      }
+      cashCropperRef.current = new (window as any).Cropper(cashImageRef.current, {
+        viewMode: 1,
+        dragMode: "move",
+        autoCropArea: 0.9,
+        restore: false,
+        guides: true,
+        center: true,
+        highlight: false,
+        cropBoxMovable: true,
+        cropBoxResizable: true,
+        toggleDragModeOnDblclick: false
+      });
+    }
+    return () => {
+      if (cashCropperRef.current) {
+        cashCropperRef.current.destroy();
+        cashCropperRef.current = null;
+      }
+    };
+  }, [isCashCropModalOpen, cashRawImage]);
+
+  // Setup Cropper.js instance for Order Receipt Modal
+  React.useEffect(() => {
+    if (receiptUploadOrder && receiptRawImage && receiptImageRef.current && (window as any).Cropper) {
+      if (receiptCropperRef.current) {
+        receiptCropperRef.current.destroy();
+      }
+      receiptCropperRef.current = new (window as any).Cropper(receiptImageRef.current, {
+        viewMode: 1,
+        dragMode: "move",
+        autoCropArea: 0.9,
+        restore: false,
+        guides: true,
+        center: true,
+        highlight: false,
+        cropBoxMovable: true,
+        cropBoxResizable: true,
+        toggleDragModeOnDblclick: false
+      });
+    }
+    return () => {
+      if (receiptCropperRef.current) {
+        receiptCropperRef.current.destroy();
+        receiptCropperRef.current = null;
+      }
+    };
+  }, [receiptUploadOrder, receiptRawImage]);
 
   // Load all data
   const loadAllData = React.useCallback(async () => {
@@ -1197,56 +1281,31 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
     const reader = new FileReader();
     reader.onload = (event) => {
       setCashRawImage(event.target?.result as string);
-      setCashRotation(0);
-      setCashCropBox({ x: 0, y: 0, width: 100, height: 100 });
+      setCashBaseRotation(0);
+      setCashFineRotation(0);
       setIsCashCropModalOpen(true);
     };
     reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   // Process & Upload Cropped Cash Deposit Receipt
   const handleSaveCashDepositPhoto = async () => {
-    if (!cashRawImage || !closingAct) {
-      showToast("Please select a photo receipt to upload", "warning");
+    if (!cashCropperRef.current || !closingAct) {
+      showToast("Please select and crop a photo receipt to upload", "warning");
       return;
     }
 
     setIsUploadingCashDeposit(true);
     try {
-      const img = new window.Image();
-      img.src = cashRawImage;
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
+      const canvas = cashCropperRef.current.getCroppedCanvas({
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageSmoothingEnabled: true,
+        imageSmoothingQuality: "high"
       });
 
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Canvas context creation failed");
-
-      const rad = (cashRotation % 360) * (Math.PI / 180);
-      const isSwapped = (cashRotation / 90) % 2 !== 0;
-      
-      const rotatedWidth = isSwapped ? img.naturalHeight : img.naturalWidth;
-      const rotatedHeight = isSwapped ? img.naturalWidth : img.naturalHeight;
-
-      const cropX = (cashCropBox.x / 100) * rotatedWidth;
-      const cropY = (cashCropBox.y / 100) * rotatedHeight;
-      const cropW = Math.max(10, (cashCropBox.width / 100) * rotatedWidth);
-      const cropH = Math.max(10, (cashCropBox.height / 100) * rotatedHeight);
-
-      const rotCanvas = document.createElement("canvas");
-      rotCanvas.width = rotatedWidth;
-      rotCanvas.height = rotatedHeight;
-      const rotCtx = rotCanvas.getContext("2d")!;
-
-      rotCtx.translate(rotatedWidth / 2, rotatedHeight / 2);
-      rotCtx.rotate(rad);
-      rotCtx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
-
-      canvas.width = cropW;
-      canvas.height = cropH;
-      ctx.drawImage(rotCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+      if (!canvas) throw new Error("Canvas crop failed");
 
       const finalDataUrl = canvas.toDataURL("image/jpeg", 0.90);
       const base64Data = finalDataUrl.split(",")[1];
@@ -1278,6 +1337,146 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       showToast("Upload failed: " + err.message, "error");
     } finally {
       setIsUploadingCashDeposit(false);
+    }
+  };
+
+  // Open Edit Transaction Modal
+  const handleOpenEditTransaction = (order: POSOrder) => {
+    setEditingTransactionOrder(order);
+    setManualActId(order.activation_id || "");
+    
+    // Extract local date and time from created_at
+    const dateObj = new Date(Number(order.created_at));
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+    const day = String(dateObj.getDate()).padStart(2, "0");
+    const hours = String(dateObj.getHours()).padStart(2, "0");
+    const minutes = String(dateObj.getMinutes()).padStart(2, "0");
+    
+    setManualDate(`${year}-${month}-${day}`);
+    setManualTime(`${hours}:${minutes}`);
+    setManualCashierName(order.cashier_name || "Admin");
+    setManualPaymentMethod((order.payment_method as any) || "Cash");
+    
+    const itemsList = Array.isArray(order.items) && order.items.length > 0
+      ? order.items.map(it => ({
+          sku: it.sku,
+          price: Number(it.price || 0),
+          qty: Number(it.qty || 1),
+          is_foc: !!it.is_foc
+        }))
+      : [{ sku: "", price: 0, qty: 1, is_foc: false }];
+      
+    setManualItems(itemsList);
+    setManualDiscountType((order.discount_type as any) || (order.is_foc ? "foc" : "none"));
+    setManualDiscountVal(Number(order.discount_val || 0));
+    setManualNotes(order.notes || "");
+    setManualReceiptPhoto(order.proof_photo_url || null);
+    setIsManualSaleOpen(true);
+  };
+
+  // Handle Save Backdated Manual Sale (or Save Edited Transaction)
+  const handleSaveManualSale = async () => {
+    if (!manualActId) {
+      showToast("Please select an activation", "warning");
+      return;
+    }
+
+    const validItems = manualItems.filter(it => it.sku.trim() !== "");
+    if (validItems.length === 0) {
+      showToast("Please add at least one product", "warning");
+      return;
+    }
+
+    // Require receipt upload for QR and Transfer Bank payments
+    if ((manualPaymentMethod === "QR" || manualPaymentMethod === "Transfer Bank") && !manualReceiptPhoto) {
+      showToast("Please attach payment receipt photo for QR / Transfer Bank payment", "warning");
+      return;
+    }
+
+    // Parse date & time to epoch milliseconds
+    const dateTimeStr = `${manualDate}T${manualTime || "12:00"}:00`;
+    const createdAtEpoch = new Date(dateTimeStr).getTime() || Date.now();
+
+    // Calculate subtotal and discounts
+    let subtotal = 0;
+    const formattedItems = validItems.map(it => {
+      const prod = posProducts.find(p => p.sku.toLowerCase() === it.sku.toLowerCase()) || masterProducts.find(p => p.sku.toLowerCase() === it.sku.toLowerCase());
+      const itemSubtotal = it.is_foc ? 0 : (Number(it.price) * Number(it.qty));
+      subtotal += itemSubtotal;
+      return {
+        sku: it.sku,
+        name: prod?.display_name || it.sku,
+        price: Number(it.price) || 0,
+        qty: Number(it.qty) || 1,
+        is_foc: it.is_foc,
+        discount_type: it.is_foc ? "foc" : "none",
+        discount_val: 0,
+        discount_amount: 0,
+        subtotal: itemSubtotal
+      };
+    });
+
+    let discountAmt = 0;
+    if (manualDiscountType === "foc" || manualPaymentMethod === "FOC") {
+      discountAmt = subtotal;
+    } else if (manualDiscountType === "percent") {
+      discountAmt = subtotal * (Math.min(100, Math.max(0, manualDiscountVal)) / 100);
+    } else if (manualDiscountType === "amount") {
+      discountAmt = Math.min(subtotal, Math.max(0, manualDiscountVal));
+    }
+
+    const totalAmount = Math.max(0, subtotal - discountAmt);
+    const isEdit = !!editingTransactionOrder;
+    const orderId = isEdit ? editingTransactionOrder.id : `POS-${createdAtEpoch}-${Math.random().toString(36).substr(2, 4).toUpperCase()}`;
+
+    setIsSavingManualSale(true);
+    try {
+      const payload = {
+        id: orderId,
+        activation_id: manualActId,
+        cashier_id: profile?.id || "admin",
+        cashier_name: manualCashierName.trim() || profile?.name || "Admin",
+        items: formattedItems,
+        subtotal: subtotal,
+        discount_type: manualDiscountType,
+        discount_val: manualDiscountVal,
+        discount_amount: discountAmt,
+        total_amount: totalAmount,
+        payment_method: manualPaymentMethod,
+        cash_received: totalAmount,
+        cash_change: 0,
+        is_foc: totalAmount === 0 || manualPaymentMethod === "FOC" || manualDiscountType === "foc",
+        notes: manualNotes.trim() ? (isEdit ? manualNotes.trim() : `[Manual Backdated Entry] ${manualNotes.trim()}`) : (isEdit ? "" : "[Manual Backdated Entry]"),
+        proof_photo_url: manualReceiptPhoto || undefined,
+        created_at: createdAtEpoch
+      };
+
+      const endpoint = isEdit ? `${WORKER_URL}/api/pos/orders/update` : `${WORKER_URL}/api/pos/checkout`;
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const resJson = await res.json();
+      if (!resJson.success) throw new Error(resJson.error || "Failed to save transaction");
+
+      showToast(isEdit ? `Transaction ${orderId} updated successfully!` : `Backdated sale transaction ${orderId} recorded!`, "success");
+      setIsManualSaleOpen(false);
+      setEditingTransactionOrder(null);
+      setManualItems([{ sku: "", price: 0, qty: 1, is_foc: false }]);
+      setManualNotes("");
+      setManualReceiptPhoto(null);
+      setManualDiscountVal(0);
+      setManualDiscountType("none");
+      loadAllData();
+    } catch (err: any) {
+      console.error("Save manual sale error:", err);
+      showToast("Failed to save transaction: " + err.message, "error");
+    } finally {
+      setIsSavingManualSale(false);
     }
   };
 
@@ -1513,7 +1712,6 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         const prodName = prod?.display_name || "";
         const alloc = (act.stock_allocated || []).find(it => it.sku === sku)?.qty || 0;
         const ret = (act.stock_returned || []).find(it => it.sku === sku)?.qty || 0;
-        const dmg = (act.stock_damaged || []).find(it => it.sku === sku)?.qty || 0;
         const sold = salesMap[sku] || (act.stock_sales || []).find(it => it.sku === sku)?.qty || 0;
         const recordedFoc = focMap[sku] || 0;
         const savedFoc = (act.stock_foc || []).find(it => it.sku === sku)?.qty || 0;
@@ -1523,16 +1721,15 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         const sampleFromDiscrepancy = ret > 0 || isClosed ? Math.max(0, currentStock - ret) : 0;
         const effectiveFoc = Math.max(recordedFoc, sampleFromDiscrepancy, savedFoc);
 
-        // Truncate cleanly so product name fits comfortably within the 62mm column
-        const truncatedName = prodName.length > 38 ? prodName.substring(0, 36) + "..." : prodName;
+        // Truncate cleanly so product name fits comfortably within the 86mm column
+        const truncatedName = prodName.length > 55 ? prodName.substring(0, 52) + "..." : prodName;
 
         return [
           { content: truncatedName ? `${sku}\n${truncatedName}` : sku },
           String(alloc),
           String(sold),
           String(effectiveFoc),
-          String(ret),
-          String(dmg)
+          String(ret)
         ];
       });
 
@@ -1545,8 +1742,8 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
 
       autoTable(doc, {
         startY: curY + 3,
-        head: [["SKU Code & Product Name", "Allocated\nFloat", "Sales\n(Invoice)", "FOC Sampling\n(Issue)", "Returned\n(Unsold)", "Damaged\n/ Lost"]],
-        body: tableRows.length > 0 ? (tableRows as any) : [["No movements recorded", "-", "-", "-", "-", "-"]],
+        head: [["SKU Code & Product Name", "Allocated\nFloat", "Sales", "FOC Sampling", "Returned"]],
+        body: tableRows.length > 0 ? (tableRows as any) : [["No movements recorded", "-", "-", "-", "-"]],
         theme: "plain",
         pageBreak: "auto",
         showHead: "everyPage",
@@ -1554,21 +1751,20 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
           fillColor: [240, 240, 240],
           textColor: [0, 0, 0],
           fontStyle: "bold",
-          fontSize: 7.5,
+          fontSize: 8,
           halign: "center",
           valign: "middle",
-          cellPadding: { top: 2, bottom: 2, left: 1, right: 1 },
+          cellPadding: { top: 2.5, bottom: 2.5, left: 1, right: 1 },
           lineWidth: 0.3,
           lineColor: [0, 0, 0],
           overflow: "linebreak"
         },
         columnStyles: {
-          0: { halign: "left", cellWidth: 62 },
+          0: { halign: "left", cellWidth: 86 },
           1: { halign: "center", cellWidth: 24 },
           2: { halign: "center", cellWidth: 24 },
           3: { halign: "center", cellWidth: 24 },
-          4: { halign: "center", cellWidth: 24 },
-          5: { halign: "center", cellWidth: 24 }
+          4: { halign: "center", cellWidth: 24 }
         },
         styles: {
           fontSize: 9.5,
@@ -1773,32 +1969,44 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       // 3. Aggregate Sold Items for this Activation
       const actOrders = orders.filter(o => o.activation_id === act.id);
       
-      // SKU -> { sku, name, unitPrice, qty, totalAmount }
-      const itemMap: Record<string, { sku: string; name: string; unitPrice: number; qty: number; totalAmount: number }> = {};
+      // SKU -> { sku, name, origUnitPrice, qty, origSubtotal, discountAmt, netTotal }
+      const itemMap: Record<string, { sku: string; name: string; origUnitPrice: number; qty: number; origSubtotal: number; discountAmt: number; netTotal: number }> = {};
       
       actOrders.forEach(ord => {
         const isOrdFoc = ord.is_foc || ord.payment_method === "FOC" || ord.discount_type === "foc";
         if (isOrdFoc) return; // Only billed sales items
 
-        (ord.items || []).forEach(it => {
-          if (it.is_foc || it.discount_type === "foc") return;
+        const ordItems = (ord.items || []).filter(it => !it.is_foc && it.discount_type !== "foc");
+        const ordSubtotal = Number(ord.subtotal) || ordItems.reduce((s, it: any) => s + (Number(it.original_price || it.price || 0) * Number(it.qty || 1)), 0);
+        const ordTotal = Number(ord.total_amount) || 0;
+        const totalOrdDiscount = Math.max(0, ordSubtotal - ordTotal);
+
+        ordItems.forEach((it: any) => {
           const sku = it.sku;
           const qty = Number(it.qty || 1);
-          const price = Number(it.price || 0);
-          const subtotal = Number(it.subtotal || (price * qty));
+          const origPrice = Number(it.original_price || it.price || 0);
+          const rawItemOrigSubtotal = origPrice * qty;
+
+          // Proportion of order discount attributed to this line item
+          const itemDiscountShare = ordSubtotal > 0 ? (rawItemOrigSubtotal / ordSubtotal) * totalOrdDiscount : Number(it.discount_amount || 0);
+          const itemNet = Math.max(0, rawItemOrigSubtotal - itemDiscountShare);
 
           if (!itemMap[sku]) {
             const prod = posProducts.find(p => p.sku.toLowerCase() === sku.toLowerCase());
             itemMap[sku] = {
               sku,
               name: it.name || prod?.display_name || sku,
-              unitPrice: price,
+              origUnitPrice: origPrice,
               qty: 0,
-              totalAmount: 0
+              origSubtotal: 0,
+              discountAmt: 0,
+              netTotal: 0
             };
           }
           itemMap[sku].qty += qty;
-          itemMap[sku].totalAmount += subtotal;
+          itemMap[sku].origSubtotal += rawItemOrigSubtotal;
+          itemMap[sku].discountAmt += itemDiscountShare;
+          itemMap[sku].netTotal += itemNet;
         });
       });
 
@@ -1806,20 +2014,22 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       const sortedItems = Object.values(itemMap).sort((a, b) => a.sku.localeCompare(b.sku));
 
       let grandTotalQty = 0;
+      let grandTotalDiscount = 0;
       let grandTotalAmount = 0;
 
       const invoiceRows = sortedItems.map(item => {
         grandTotalQty += item.qty;
-        grandTotalAmount += item.totalAmount;
-        // Average unit price if varied
-        const unitPrice = item.qty > 0 ? (item.totalAmount / item.qty) : item.unitPrice;
+        grandTotalDiscount += item.discountAmt;
+        grandTotalAmount += item.netTotal;
+        const unitPrice = item.qty > 0 ? (item.origSubtotal / item.qty) : item.origUnitPrice;
 
         return [
           item.sku,
           item.name,
           `$${unitPrice.toFixed(2)}`,
           String(item.qty),
-          `$${item.totalAmount.toFixed(2)}`
+          item.discountAmt > 0 ? `-$${item.discountAmt.toFixed(2)}` : "$0.00",
+          `$${item.netTotal.toFixed(2)}`
         ];
       });
 
@@ -1828,6 +2038,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         invoiceRows.push([
           { content: "TOTAL", colSpan: 3, styles: { halign: "right", fontStyle: "bold" } } as any,
           { content: String(grandTotalQty), styles: { halign: "center", fontStyle: "bold" } } as any,
+          { content: grandTotalDiscount > 0 ? `-$${grandTotalDiscount.toFixed(2)}` : "$0.00", styles: { halign: "right", fontStyle: "bold" } } as any,
           { content: `$${grandTotalAmount.toFixed(2)}`, styles: { halign: "right", fontStyle: "bold" } } as any
         ]);
       }
@@ -1840,8 +2051,8 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
 
       autoTable(doc, {
         startY: curY + 3,
-        head: [["SKU", "Description", "Amount", "Qty", "Total Amount"]],
-        body: invoiceRows.length > 0 ? invoiceRows : [["-", "No sales orders recorded", "-", "-", "-"]],
+        head: [["SKU", "Description", "Price", "Qty", "Discount", "Total Amount"]],
+        body: invoiceRows.length > 0 ? invoiceRows : [["-", "No sales orders recorded", "-", "-", "-", "-"]],
         theme: "plain",
         pageBreak: "auto",
         showHead: "everyPage",
@@ -1857,11 +2068,12 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
           lineColor: [0, 0, 0]
         },
         columnStyles: {
-          0: { halign: "left", cellWidth: 32, fontStyle: "bold" },
-          1: { halign: "left", cellWidth: 80 },
-          2: { halign: "right", cellWidth: 24 },
-          3: { halign: "center", cellWidth: 20 },
-          4: { halign: "right", cellWidth: 26 }
+          0: { halign: "left", cellWidth: 28, fontStyle: "bold" },
+          1: { halign: "left", cellWidth: 68 },
+          2: { halign: "right", cellWidth: 22 },
+          3: { halign: "center", cellWidth: 16 },
+          4: { halign: "right", cellWidth: 24 },
+          5: { halign: "right", cellWidth: 24 }
         },
         styles: {
           fontSize: 9,
@@ -1881,7 +2093,231 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       doc.setTextColor(0, 0, 0);
       doc.text("* This document is an itemized sales report generated from POS event activation transactions.", margin, finalY + 8);
 
-      // Page numbers
+      // 4. Supporting Documents: Verified Payment & Deposit Receipts (4 Receipts per A4 Page)
+      const orderProofs = actOrders.filter(o => !!o.proof_photo_url);
+      const cashSlips = Array.isArray(act.cash_deposit_receipts) ? act.cash_deposit_receipts : [];
+
+      const cashOrdersTotal = actOrders.reduce((sum, o) => {
+        return (o.payment_method === "Cash" && !o.is_foc) ? sum + Number(o.total_amount || 0) : sum;
+      }, 0);
+
+      // Convert amount to words helper
+      const convertAmountToWords = (amount: number): string => {
+        const num = Number(amount) || 0;
+        if (num === 0) return "Zero Dollars Only";
+
+        const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+        const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+        const dollars = Math.floor(num);
+        const cents = Math.round((num - dollars) * 100);
+
+        function convertGroup(n: number): string {
+          if (n === 0) return "";
+          if (n < 20) return ones[n];
+          if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 !== 0 ? "-" + ones[n % 10] : "");
+          return ones[Math.floor(n / 100)] + " Hundred" + (n % 100 !== 0 ? " " + convertGroup(n % 100) : "");
+        }
+
+        function convert(n: number): string {
+          if (n === 0) return "Zero";
+          let res = "";
+          if (n >= 1000000) {
+            res += convertGroup(Math.floor(n / 1000000)) + " Million ";
+            n %= 1000000;
+          }
+          if (n >= 1000) {
+            res += convertGroup(Math.floor(n / 1000)) + " Thousand ";
+            n %= 1000;
+          }
+          if (n > 0) {
+            res += convertGroup(n);
+          }
+          return res.trim();
+        }
+
+        const dollarWord = convert(dollars) + (dollars === 1 ? " Dollar" : " Dollars");
+        if (cents > 0) {
+          const centWord = convert(cents) + (cents === 1 ? " Cent" : " Cents");
+          return `${dollarWord} and ${centWord} Only`;
+        }
+        return `${dollarWord} Only`;
+      };
+
+      const supportingReceipts: Array<{
+        title: string;
+        subtitle: string;
+        amountStr: string;
+        amountWords: string;
+        url: string;
+      }> = [];
+
+      orderProofs.forEach(ord => {
+        const amt = Number(ord.total_amount || 0);
+        supportingReceipts.push({
+          title: `Order: ${ord.id}`,
+          subtitle: `${ord.payment_method}${ord.ref_code ? ` • Ref: ${ord.ref_code}` : ""}`,
+          amountStr: `$${amt.toFixed(2)}`,
+          amountWords: convertAmountToWords(amt),
+          url: ord.proof_photo_url!
+        });
+      });
+
+      cashSlips.forEach((slipUrl, idx) => {
+        supportingReceipts.push({
+          title: `Cash Deposit Slip #${idx + 1}`,
+          subtitle: `Bank Cash Deposit • ${act.id}`,
+          amountStr: `$${cashOrdersTotal.toFixed(2)}`,
+          amountWords: convertAmountToWords(cashOrdersTotal),
+          url: slipUrl
+        });
+      });
+
+      if (supportingReceipts.length > 0) {
+        // Pre-load all receipt images as base64
+        const loadedImages = await Promise.all(
+          supportingReceipts.map(async (receipt) => {
+            return new Promise<{ data: string; width: number; height: number } | null>((resolve) => {
+              const img = new window.Image();
+              img.crossOrigin = "anonymous";
+              img.onload = () => {
+                try {
+                  const canvas = document.createElement("canvas");
+                  canvas.width = img.naturalWidth || 800;
+                  canvas.height = img.naturalHeight || 1000;
+                  const ctx = canvas.getContext("2d");
+                  if (!ctx) {
+                    resolve(null);
+                    return;
+                  }
+                  ctx.drawImage(img, 0, 0);
+                  const data = canvas.toDataURL("image/jpeg", 0.85);
+                  resolve({ data, width: canvas.width, height: canvas.height });
+                } catch (_) {
+                  resolve(null);
+                }
+              };
+              img.onerror = () => resolve(null);
+              img.src = receipt.url;
+            });
+          })
+        );
+
+        // Group into chunks of 4 receipts per A4 page (2x2 Grid)
+        const chunkSize = 4;
+        for (let i = 0; i < supportingReceipts.length; i += chunkSize) {
+          doc.addPage();
+
+          // Header for supporting documents page
+          doc.setTextColor(0, 0, 0);
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(14);
+          doc.text("HSG GLOBAL PTE LTD", margin, 16);
+
+          doc.setFontSize(9.5);
+          doc.setFont("helvetica", "normal");
+          doc.setTextColor(0, 0, 0);
+          doc.text("SUPPORTING DOCUMENTS — VERIFIED PAYMENT RECEIPTS", margin, 21);
+
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "bold");
+          doc.text(`REF: ${act.id}`, pageWidth - margin, 16, { align: "right" });
+
+          doc.setFontSize(8);
+          doc.setFont("helvetica", "normal");
+          doc.text(`Event: ${act.name || act.id}`, pageWidth - margin, 21, { align: "right" });
+
+          doc.setDrawColor(0, 0, 0);
+          doc.setLineWidth(0.4);
+          doc.line(margin, 24, pageWidth - margin, 24);
+
+          // 2x2 Grid Layout
+          const chunk = supportingReceipts.slice(i, i + chunkSize);
+          const colWidth = 88;
+          const rowHeight = 120;
+          const colGap = 6;
+          const rowGap = 8;
+          const startGridX = margin;
+          const startGridY = 28;
+
+          chunk.forEach((receipt, chunkIdx) => {
+            const globalIdx = i + chunkIdx;
+            const col = chunkIdx % 2;
+            const row = Math.floor(chunkIdx / 2);
+
+            const boxX = startGridX + col * (colWidth + colGap);
+            const boxY = startGridY + row * (rowHeight + rowGap);
+
+            // Outer Card Border
+            doc.setDrawColor(200, 200, 200);
+            doc.setLineWidth(0.3);
+            doc.setFillColor(255, 255, 255);
+            doc.roundedRect(boxX, boxY, colWidth, rowHeight, 1.5, 1.5, "FD");
+
+            // Header Banner Background inside Card
+            doc.setFillColor(245, 247, 250);
+            doc.roundedRect(boxX + 0.3, boxY + 0.3, colWidth - 0.6, 23, 1.5, 1.5, "F");
+            doc.setDrawColor(220, 225, 230);
+            doc.line(boxX, boxY + 23.3, boxX + colWidth, boxY + 23.3);
+
+            // Title & Subtitle
+            doc.setTextColor(0, 0, 0);
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(8.5);
+            doc.text(receipt.title, boxX + 3, boxY + 5.5);
+
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(7.5);
+            doc.setTextColor(80, 80, 80);
+            doc.text(receipt.subtitle, boxX + 3, boxY + 10);
+
+            // Amount & Word Amount Banner
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(9);
+            doc.setTextColor(11, 87, 208); // #0B57D0
+            doc.text(`Amount: ${receipt.amountStr}`, boxX + 3, boxY + 15.5);
+
+            doc.setFont("helvetica", "italic");
+            doc.setFontSize(7);
+            doc.setTextColor(60, 60, 60);
+            const truncatedWords = receipt.amountWords.length > 38 
+              ? receipt.amountWords.substring(0, 36) + "..." 
+              : receipt.amountWords;
+            doc.text(`(${truncatedWords})`, boxX + 3, boxY + 20);
+
+            // Receipt Image
+            const imgObj = loadedImages[globalIdx];
+            const maxImgW = colWidth - 6;
+            const maxImgH = rowHeight - 27;
+
+            if (imgObj && imgObj.data) {
+              const aspect = imgObj.width / imgObj.height;
+              let drawW = maxImgW;
+              let drawH = maxImgW / aspect;
+
+              if (drawH > maxImgH) {
+                drawH = maxImgH;
+                drawW = maxImgH * aspect;
+              }
+
+              const drawX = boxX + (colWidth - drawW) / 2;
+              const drawY = boxY + 24.5 + (maxImgH - drawH) / 2;
+
+              doc.addImage(imgObj.data, "JPEG", drawX, drawY, drawW, drawH, undefined, "FAST");
+            } else {
+              // Placeholder if image fails to load
+              doc.setFillColor(245, 245, 245);
+              doc.roundedRect(boxX + 3, boxY + 25, maxImgW, maxImgH, 1, 1, "F");
+              doc.setTextColor(150, 150, 150);
+              doc.setFont("helvetica", "italic");
+              doc.setFontSize(7.5);
+              doc.text("Receipt Image Attached", boxX + colWidth / 2, boxY + 25 + maxImgH / 2, { align: "center" });
+            }
+          });
+        }
+      }
+
+      // Page numbers across all pages
       const totalPages = (doc.internal as any).getNumberOfPages();
       for (let i = 1; i <= totalPages; i++) {
         doc.setPage(i);
@@ -2350,8 +2786,8 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   const handleOpenReceiptUpload = (order: POSOrder) => {
     setReceiptUploadOrder(order);
     setReceiptRawImage(order.proof_photo_url || null);
-    setReceiptRotation(0);
-    setReceiptCropBox({ x: 0, y: 0, width: 100, height: 100 });
+    setReceiptBaseRotation(0);
+    setReceiptFineRotation(0);
   };
 
   // Handle Receipt File Input Selection
@@ -2367,61 +2803,31 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
     const reader = new FileReader();
     reader.onload = (event) => {
       setReceiptRawImage(event.target?.result as string);
-      setReceiptRotation(0);
-      setReceiptCropBox({ x: 0, y: 0, width: 100, height: 100 });
+      setReceiptBaseRotation(0);
+      setReceiptFineRotation(0);
     };
     reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   // Process & Upload Cropped / Rotated Receipt to Storage and Link to Order
   const handleSaveReceiptPhoto = async () => {
-    if (!receiptUploadOrder || !receiptRawImage) {
-      showToast("Please select a photo receipt to upload", "warning");
+    if (!receiptUploadOrder || !receiptCropperRef.current) {
+      showToast("Please select and crop a photo receipt", "warning");
       return;
     }
 
     setIsUploadingReceipt(true);
     try {
-      // Create an image object to draw onto canvas with rotation & cropping
-      const img = new window.Image();
-      img.src = receiptRawImage;
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
+      const canvas = receiptCropperRef.current.getCroppedCanvas({
+        maxWidth: 1600,
+        maxHeight: 1600,
+        imageSmoothingEnabled: true,
+        imageSmoothingQuality: "high"
       });
 
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Canvas context creation failed");
+      if (!canvas) throw new Error("Could not crop canvas");
 
-      const rad = (receiptRotation % 360) * (Math.PI / 180);
-      const isSwapped = (receiptRotation / 90) % 2 !== 0;
-      
-      const rotatedWidth = isSwapped ? img.naturalHeight : img.naturalWidth;
-      const rotatedHeight = isSwapped ? img.naturalWidth : img.naturalHeight;
-
-      // Apply crop percentages to rotated dimensions
-      const cropX = (receiptCropBox.x / 100) * rotatedWidth;
-      const cropY = (receiptCropBox.y / 100) * rotatedHeight;
-      const cropW = Math.max(10, (receiptCropBox.width / 100) * rotatedWidth);
-      const cropH = Math.max(10, (receiptCropBox.height / 100) * rotatedHeight);
-
-      // We render the rotated image to an offscreen full-rotation canvas first
-      const rotCanvas = document.createElement("canvas");
-      rotCanvas.width = rotatedWidth;
-      rotCanvas.height = rotatedHeight;
-      const rotCtx = rotCanvas.getContext("2d")!;
-
-      rotCtx.translate(rotatedWidth / 2, rotatedHeight / 2);
-      rotCtx.rotate(rad);
-      rotCtx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
-
-      // Now crop into destination canvas
-      canvas.width = cropW;
-      canvas.height = cropH;
-      ctx.drawImage(rotCanvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-
-      // Compress to high-quality JPEG
       const finalDataUrl = canvas.toDataURL("image/jpeg", 0.90);
       const base64Data = finalDataUrl.split(",")[1];
 
@@ -3381,9 +3787,35 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
               </button>
             </div>
 
-            <span className="text-xs text-zinc-500">
-              Showing <strong className="text-zinc-900">{transactionSubTab === "sales" ? filteredOrders.length : filteredVoidOrders.length}</strong> {transactionSubTab === "sales" ? "orders" : "voided records"}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500 hidden sm:inline">
+                Showing <strong className="text-zinc-900">{transactionSubTab === "sales" ? filteredOrders.length : filteredVoidOrders.length}</strong> {transactionSubTab === "sales" ? "orders" : "voided records"}
+              </span>
+
+              {transactionSubTab === "sales" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const latestAct = activations.find(a => a.status === "active") || activations[0];
+                    setManualActId(latestAct?.id || "");
+                    setManualDate(new Date().toISOString().split("T")[0]);
+                    setManualTime("12:00");
+                    setManualCashierName(profile?.name || "Admin");
+                    setManualPaymentMethod("Cash");
+                    setManualItems([{ sku: "", price: 0, qty: 1, is_foc: false }]);
+                    setManualDiscountType("none");
+                    setManualDiscountVal(0);
+                    setManualNotes("");
+                    setManualReceiptPhoto(null);
+                    setIsManualSaleOpen(true);
+                  }}
+                  className="px-3 py-1 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-md text-xs font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Record Backdated Sale</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* SUB-TAB 1: SALES ORDERS */}
@@ -3484,7 +3916,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                       <th className="px-3.5 py-2.5 text-right font-semibold text-zinc-600 uppercase tracking-wider text-[11px] w-24">Discount</th>
                       <th className="px-3.5 py-2.5 text-right font-semibold text-zinc-600 uppercase tracking-wider text-[11px] w-28">Total Paid</th>
                       <th className="px-3.5 py-2.5 text-center font-semibold text-zinc-600 uppercase tracking-wider text-[11px] w-32">Payment Mode</th>
-                      <th className="px-3.5 py-2.5 text-center font-semibold text-zinc-600 uppercase tracking-wider text-[11px] w-20">Actions</th>
+                      <th className="px-3.5 py-2.5 text-right font-semibold text-zinc-600 uppercase tracking-wider text-[11px] w-24 pr-4">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-slate-100">
@@ -3532,7 +3964,12 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                                   <div className="inline-flex items-center justify-center gap-1.5">
                                     <button
                                       type="button"
-                                      onClick={() => isQrOrTransfer && handleOpenReceiptUpload(o)}
+                                      onClick={() => {
+                                        if (isQrOrTransfer) {
+                                          if (hasProof) setViewingReceiptOrder(o);
+                                          else handleOpenReceiptUpload(o);
+                                        }
+                                      }}
                                       className={`px-2 py-0.5 rounded text-[10px] font-medium border flex items-center gap-1 transition-all ${
                                         o.is_foc || o.payment_method === "FOC" 
                                           ? "bg-purple-50/70 text-purple-700 border-purple-200"
@@ -3542,7 +3979,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                                                 : "bg-amber-50 text-amber-700 border-amber-300 font-semibold cursor-pointer hover:bg-amber-100")
                                             : "bg-slate-50 text-zinc-700 border-slate-200"
                                       }`}
-                                      title={isQrOrTransfer ? (hasProof ? "Payment receipt verified & uploaded (Click to view/change)" : "Missing photo receipt proof (Click to upload)") : o.payment_method}
+                                      title={isQrOrTransfer ? (hasProof ? "Payment receipt verified & uploaded (Click to view/edit)" : "Missing photo receipt proof (Click to upload)") : o.payment_method}
                                     >
                                       {hasProof && (
                                         <Check className="w-3 h-3 text-emerald-600 stroke-[3]" />
@@ -3558,29 +3995,35 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                                 );
                               })()}
                             </td>
-                            <td className="px-3.5 py-2 text-center whitespace-nowrap">
-                              <div className="flex items-center justify-center gap-1">
+                            <td className="px-3.5 py-2 text-right whitespace-nowrap pr-4">
+                              <div className="flex items-center justify-end gap-1">
                                 {["QR", "Transfer Bank", "PayNow", "Bank Transfer"].includes(o.payment_method) && (
                                   <button
                                     type="button"
-                                    onClick={() => handleOpenReceiptUpload(o)}
+                                    onClick={() => {
+                                      if (o.proof_photo_url) {
+                                        setViewingReceiptOrder(o);
+                                      } else {
+                                        handleOpenReceiptUpload(o);
+                                      }
+                                    }}
                                     className={`p-1 rounded transition-all cursor-pointer ${
                                       o.proof_photo_url 
                                         ? "text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50" 
                                         : "text-amber-600 hover:text-amber-700 hover:bg-amber-50"
                                     }`}
-                                    title={o.proof_photo_url ? "View / Replace Receipt Proof Photo" : "Upload Payment Receipt Photo"}
+                                    title={o.proof_photo_url ? "View Uploaded Receipt (Edit / Change Photo)" : "Upload Payment Receipt Photo"}
                                   >
                                     <ImageIcon className="w-3.5 h-3.5" />
                                   </button>
                                 )}
                                 <button
                                   type="button"
-                                  onClick={() => handlePrintOrderInvoicePDF(o)}
+                                  onClick={() => handleOpenEditTransaction(o)}
                                   className="p-1 text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 rounded transition-all cursor-pointer"
-                                  title="Print Sales Order Report"
+                                  title="Edit Transaction (Items, Date, Payment Mode, Notes)"
                                 >
-                                  <FileText className="w-3.5 h-3.5" />
+                                  <Pencil className="w-3.5 h-3.5" />
                                 </button>
                                 <button
                                   type="button"
@@ -3655,7 +4098,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                       <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px]">Void Reason</th>
                       <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Amount ($)</th>
                       <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-24">Status</th>
-                      <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-20">Actions</th>
+                      <th className="px-3.5 py-2.5 text-right font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-20 pr-4">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="bg-white divide-y divide-slate-100">
@@ -3715,15 +4158,17 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                               VOIDED
                             </span>
                           </td>
-                          <td className="px-3.5 py-2.5 text-center">
-                            <button
-                              type="button"
-                              onClick={() => setViewingOrder(vo)}
-                              className="p-1 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 rounded-md transition-all shadow-xs cursor-pointer"
-                              title="View Void Details"
-                            >
-                              <Receipt className="w-3.5 h-3.5 text-[#0B57D0]" />
-                            </button>
+                          <td className="px-3.5 py-2.5 text-right pr-4">
+                            <div className="flex items-center justify-end">
+                              <button
+                                type="button"
+                                onClick={() => setViewingOrder(vo)}
+                                className="p-1 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 rounded-md transition-all shadow-xs cursor-pointer"
+                                title="View Void Details"
+                              >
+                                <Receipt className="w-3.5 h-3.5 text-[#0B57D0]" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))
@@ -5325,26 +5770,46 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                               <span className="text-[10px] text-red-500">Click to upload photo of bank deposit slip</span>
                             </div>
                           ) : (
-                            <div className="flex items-center justify-between p-2 bg-white border border-slate-200 rounded-lg text-xs">
-                              <div className="flex items-center gap-1.5">
-                                {cashDepositPhotos.map((url, idx) => (
-                                  <img
-                                    key={idx}
-                                    src={url}
-                                    alt="Deposit"
-                                    onClick={() => setViewingPhotoUrl(url)}
-                                    className="w-8 h-8 object-cover rounded border border-slate-300 cursor-pointer hover:opacity-80"
-                                  />
-                                ))}
-                                <span className="text-[11px] text-zinc-600 font-medium ml-1">{cashDepositPhotos.length} slip(s)</span>
+                            <div className="flex flex-col gap-2 p-2.5 bg-white border border-slate-200 rounded-lg text-xs shadow-2xs">
+                              <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                                <span className="text-[11px] font-semibold text-zinc-700">
+                                  {cashDepositPhotos.length} {cashDepositPhotos.length === 1 ? "slip attached" : "slips attached"}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => cashFileInputRef.current?.click()}
+                                  className="text-[11px] text-[#0B57D0] hover:underline font-bold cursor-pointer flex items-center gap-1"
+                                >
+                                  <Plus className="w-3 h-3" />
+                                  <span>Add Another Slip</span>
+                                </button>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => cashFileInputRef.current?.click()}
-                                className="text-[11px] text-[#0B57D0] hover:underline font-semibold cursor-pointer"
-                              >
-                                + Add More
-                              </button>
+                              <div className="grid grid-cols-3 gap-2 pt-1">
+                                {cashDepositPhotos.map((url, idx) => (
+                                  <div key={idx} className="relative group rounded-lg border border-slate-200 overflow-hidden bg-slate-50 flex flex-col items-center">
+                                    <img
+                                      src={url}
+                                      alt={`Deposit Slip ${idx + 1}`}
+                                      onClick={() => setViewingPhotoUrl(url)}
+                                      className="w-full h-20 object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                                    />
+                                    <div className="w-full px-1.5 py-0.5 bg-white border-t border-slate-100 flex items-center justify-between text-[10px] text-zinc-600 font-mono">
+                                      <span>Slip #{idx + 1}</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setCashDepositPhotos(prev => prev.filter((_, i) => i !== idx));
+                                      }}
+                                      className="absolute top-1 right-1 w-5 h-5 bg-black/60 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-colors cursor-pointer shadow-xs"
+                                      title="Remove this slip"
+                                    >
+                                      <X className="w-3 h-3 stroke-[2.5]" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -5550,13 +6015,12 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       {/* 10b. CASH DEPOSIT RECEIPT CROP & ROTATE MODAL */}
       {isCashCropModalOpen && cashRawImage && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[1px] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-150 font-primary">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-150 font-primary">
             {/* Header */}
-            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-zinc-950 flex items-center gap-1.5">
-                  <ImageIcon className="w-4 h-4 text-[#0B57D0]" />
-                  Crop &amp; Upload Cash Deposit Receipt
+                <h3 className="text-sm font-bold text-zinc-900">
+                  Crop &amp; Rotate Cash Deposit Receipt
                 </h3>
                 <p className="text-xs text-zinc-500 font-mono mt-0.5">
                   Activation: {closingAct?.id}
@@ -5568,144 +6032,99 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                   setIsCashCropModalOpen(false);
                   setCashRawImage(null);
                 }}
-                className="p-1 rounded-lg hover:bg-slate-200 text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+                className="p-1 rounded-lg hover:bg-slate-100 text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Body */}
-            <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-4">
-              <div className="flex flex-col gap-3">
-                {/* Image Crop & Rotate Preview Canvas */}
-                <div className="relative w-full h-72 bg-zinc-950 rounded-xl overflow-hidden flex items-center justify-center select-none shadow-inner">
-                  <div
-                    className="relative transition-transform duration-200"
-                    style={{
-                      transform: `rotate(${cashRotation}deg)`
-                    }}
-                  >
-                    <img
-                      src={cashRawImage}
-                      alt="Cash Deposit Preview"
-                      className="max-h-64 max-w-full object-contain pointer-events-none rounded"
-                    />
-                  </div>
-
-                  {/* Subtle Grid */}
-                  <div className="absolute inset-0 border-2 border-white/40 pointer-events-none grid grid-cols-3 grid-rows-3">
-                    <div className="border-r border-b border-white/20"></div>
-                    <div className="border-r border-b border-white/20"></div>
-                    <div className="border-b border-white/20"></div>
-                    <div className="border-r border-b border-white/20"></div>
-                    <div className="border-r border-b border-white/20"></div>
-                    <div className="border-b border-white/20"></div>
-                    <div className="border-r border-b border-white/20"></div>
-                    <div className="border-r border-b border-white/20"></div>
-                    <div></div>
-                  </div>
-                </div>
-
-                {/* Toolbar */}
-                <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs">
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setCashRotation((prev) => (prev + 90) % 360)}
-                      className="px-3 py-1.5 bg-white border border-slate-200 hover:bg-slate-100 text-zinc-800 font-semibold rounded-lg flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer"
-                    >
-                      <RotateCw className="w-3.5 h-3.5 text-[#0B57D0]" />
-                      <span>Rotate ({cashRotation}°)</span>
-                    </button>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCashRotation(0);
-                      setCashCropBox({ x: 0, y: 0, width: 100, height: 100 });
-                    }}
-                    className="text-[11px] text-zinc-400 hover:text-zinc-700 font-semibold transition-colors cursor-pointer"
-                  >
-                    Reset
-                  </button>
-                </div>
-
-                {/* Sliders */}
-                <div className="p-3 bg-white border border-slate-200 rounded-xl flex flex-col gap-2 text-xs">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-zinc-800 flex items-center gap-1">
-                      <Crop className="w-3.5 h-3.5 text-[#0B57D0]" />
-                      Adjust Margin / Framing
-                    </span>
-                    <span className="text-[10px] text-zinc-400">Trim background borders</span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 pt-1">
-                    <div className="flex flex-col gap-1">
-                      <div className="flex justify-between text-[11px] text-zinc-600">
-                        <span>Horizontal:</span>
-                        <span className="font-mono font-bold">{cashCropBox.width}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="40"
-                        max="100"
-                        value={cashCropBox.width}
-                        onChange={(e) => {
-                          const w = parseInt(e.target.value, 10);
-                          const x = (100 - w) / 2;
-                          setCashCropBox((prev) => ({ ...prev, width: w, x }));
-                        }}
-                        className="w-full accent-[#0B57D0]"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1">
-                      <div className="flex justify-between text-[11px] text-zinc-600">
-                        <span>Vertical:</span>
-                        <span className="font-mono font-bold">{cashCropBox.height}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="40"
-                        max="100"
-                        value={cashCropBox.height}
-                        onChange={(e) => {
-                          const h = parseInt(e.target.value, 10);
-                          const y = (100 - h) / 2;
-                          setCashCropBox((prev) => ({ ...prev, height: h, y }));
-                        }}
-                        className="w-full accent-[#0B57D0]"
-                      />
-                    </div>
-                  </div>
-                </div>
+            <div className="flex-grow p-4 bg-slate-100 flex items-center justify-center overflow-hidden min-h-[300px] max-h-[50vh]">
+              <div className="w-full h-full max-h-[350px] flex justify-center items-center">
+                <img
+                  ref={cashImageRef}
+                  src={cashRawImage}
+                  alt="To Crop"
+                  style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }}
+                />
               </div>
             </div>
 
-            {/* Footer */}
-            <div className="flex justify-end gap-2 p-4 bg-slate-50 border-t border-slate-200">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsCashCropModalOpen(false);
-                  setCashRawImage(null);
-                }}
-                disabled={isUploadingCashDeposit}
-                className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveCashDepositPhoto}
-                disabled={isUploadingCashDeposit || !cashRawImage}
-                className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
-              >
-                {isUploadingCashDeposit ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
-                Attach Cash Deposit Receipt
-              </button>
+            {/* Controls & Footer */}
+            <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col gap-3">
+              <div className="flex items-center justify-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rot = (cashBaseRotation - 90) % 360;
+                    setCashBaseRotation(rot);
+                    cashCropperRef.current?.rotateTo(rot + cashFineRotation);
+                  }}
+                  className="p-2 bg-white border border-slate-200 hover:border-slate-400 rounded flex items-center justify-center cursor-pointer"
+                  title="Rotate Left 90°"
+                >
+                  <RotateCcw className="w-4 h-4 text-zinc-700" />
+                </button>
+
+                <div className="flex items-center gap-2 flex-grow max-w-xs">
+                  <span className="text-[11px] font-medium text-zinc-500">Angle</span>
+                  <input
+                    type="range"
+                    min="-45"
+                    max="45"
+                    value={cashFineRotation}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      setCashFineRotation(val);
+                      cashCropperRef.current?.rotateTo(cashBaseRotation + val);
+                    }}
+                    className="w-full accent-[#0B57D0] h-1 rounded bg-zinc-200 cursor-pointer"
+                  />
+                  <span className="text-xs font-mono text-zinc-600 w-8 text-right">{cashFineRotation}°</span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rot = (cashBaseRotation + 90) % 360;
+                    setCashBaseRotation(rot);
+                    cashCropperRef.current?.rotateTo(rot + cashFineRotation);
+                  }}
+                  className="p-2 bg-white border border-slate-200 hover:border-slate-400 rounded flex items-center justify-center cursor-pointer"
+                  title="Rotate Right 90°"
+                >
+                  <RotateCw className="w-4 h-4 text-zinc-700" />
+                </button>
+              </div>
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCashCropModalOpen(false);
+                    setCashRawImage(null);
+                  }}
+                  disabled={isUploadingCashDeposit}
+                  className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveCashDepositPhoto}
+                  disabled={isUploadingCashDeposit || !cashRawImage}
+                  className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
+                >
+                  {isUploadingCashDeposit ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Uploading...</span>
+                    </>
+                  ) : (
+                    <span>Apply &amp; Attach Receipt</span>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -5853,10 +6272,9 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                   <tr>
                     <th className="px-3 py-2 text-left font-bold text-zinc-800 uppercase text-[10px]">Product / SKU</th>
                     <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Allocated Float</th>
-                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">POS Sales (Invoice)</th>
-                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">FOC Samples (Stock Issue)</th>
-                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Returned Unsold</th>
-                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Damaged / Lost</th>
+                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Sales</th>
+                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">FOC Sampling</th>
+                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Returned</th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-zinc-200">
@@ -5881,7 +6299,6 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                     const allSkus = Array.from(new Set([
                       ...(printingAct.stock_allocated || []).map(it => it.sku),
                       ...(printingAct.stock_returned || []).map(it => it.sku),
-                      ...(printingAct.stock_damaged || []).map(it => it.sku),
                       ...Object.keys(salesMap),
                       ...Object.keys(focMap)
                     ]));
@@ -5889,7 +6306,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                     if (allSkus.length === 0) {
                       return (
                         <tr>
-                          <td colSpan={6} className="px-3 py-6 text-center text-zinc-400 italic">
+                          <td colSpan={5} className="px-3 py-6 text-center text-zinc-400 italic">
                             No SKU movement records for this activation.
                           </td>
                         </tr>
@@ -5899,7 +6316,6 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                     return allSkus.map(sku => {
                       const alloc = (printingAct.stock_allocated || []).find(it => it.sku === sku)?.qty || 0;
                       const ret = (printingAct.stock_returned || []).find(it => it.sku === sku)?.qty || 0;
-                      const dmg = (printingAct.stock_damaged || []).find(it => it.sku === sku)?.qty || 0;
                       const sold = salesMap[sku] || (printingAct.stock_sales || []).find(it => it.sku === sku)?.qty || 0;
                       const foc = focMap[sku] || (printingAct.stock_foc || []).find(it => it.sku === sku)?.qty || 0;
 
@@ -5910,7 +6326,6 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                           <td className="px-2.5 py-2 text-center font-mono font-bold text-emerald-800">{sold}</td>
                           <td className="px-2.5 py-2 text-center font-mono font-bold text-purple-800">{foc}</td>
                           <td className="px-2.5 py-2 text-center font-mono font-bold text-zinc-800">{ret}</td>
-                          <td className="px-2.5 py-2 text-center font-mono font-bold text-red-700">{dmg}</td>
                         </tr>
                       );
                     });
@@ -6031,37 +6446,56 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       {receiptUploadOrder && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[1px] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-150 font-primary">
-            {/* Header: Exact img2 styling */}
+            {/* Header */}
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-zinc-900">
-                Crop &amp; Rotate Receipt
-              </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  setReceiptUploadOrder(null);
-                  setReceiptRawImage(null);
-                }}
-                className="p-1 rounded-lg hover:bg-slate-100 text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div>
+                <h3 className="text-sm font-bold text-zinc-900">
+                  {receiptRawImage ? "Crop & Rotate Receipt" : "Upload Payment Receipt"}
+                </h3>
+                <p className="text-xs text-zinc-500 font-mono mt-0.5">
+                  Order: {receiptUploadOrder.id}
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                {receiptRawImage && (
+                  <button
+                    type="button"
+                    onClick={() => receiptFileInputRef.current?.click()}
+                    className="px-2.5 py-1 text-xs font-semibold text-[#0B57D0] hover:bg-blue-50 border border-blue-200 rounded-lg flex items-center gap-1.5 transition-colors cursor-pointer"
+                    title="Choose a different image file"
+                  >
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>Change Photo</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReceiptUploadOrder(null);
+                    setReceiptRawImage(null);
+                  }}
+                  className="p-1 rounded-lg hover:bg-slate-100 text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
-            {/* Body */}
-            <div className="p-6 overflow-y-auto flex-1 flex flex-col gap-5">
-              <input
-                ref={receiptFileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleReceiptFileChange}
-              />
+            {/* Hidden File Input */}
+            <input
+              ref={receiptFileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleReceiptFileChange}
+            />
 
-              {!receiptRawImage ? (
+            {/* Body */}
+            {!receiptRawImage ? (
+              <div className="p-8 overflow-y-auto flex-1 flex flex-col items-center justify-center">
                 <div
                   onClick={() => receiptFileInputRef.current?.click()}
-                  className="border-2 border-dashed border-slate-300 hover:border-[#0B57D0] rounded-xl p-8 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all bg-[#F8F9FA] hover:bg-blue-50/30"
+                  className="w-full border-2 border-dashed border-slate-300 hover:border-[#0B57D0] rounded-xl p-8 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all bg-[#F8F9FA] hover:bg-blue-50/30"
                 >
                   <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center text-[#0B57D0]">
                     <UploadCloud className="w-6 h-6" />
@@ -6071,218 +6505,197 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                     <p className="text-[11px] text-zinc-400 mt-0.5">Supports JPG, PNG, WebP format</p>
                   </div>
                 </div>
-              ) : (
-                <div className="flex flex-col gap-5">
-                  {/* Interactive Crop & Rotate Canvas with Checkerboard Background */}
-                  <div
-                    className="relative w-full h-84 rounded overflow-hidden select-none flex items-center justify-center"
-                    style={{
-                      backgroundColor: "#f0f2f5",
-                      backgroundImage: "linear-gradient(45deg, #71717a 25%, transparent 25%), linear-gradient(-45deg, #71717a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #71717a 75%), linear-gradient(-45deg, transparent 75%, #71717a 75%)",
-                      backgroundSize: "16px 16px",
-                      backgroundPosition: "0 0, 0 8px, 8px -8px, -8px 0px"
-                    }}
-                    onMouseMove={(e) => {
-                      if (!cropInteraction) return;
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      const xPercent = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-                      const yPercent = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
-
-                      if (cropInteraction.type === "drag") {
-                        const newX = Math.max(0, Math.min(100 - cropInteraction.box.width, cropInteraction.box.x + (xPercent - cropInteraction.startX)));
-                        const newY = Math.max(0, Math.min(100 - cropInteraction.box.height, cropInteraction.box.y + (yPercent - cropInteraction.startY)));
-                        setReceiptCropBox((prev) => ({ ...prev, x: newX, y: newY }));
-                      } else if (cropInteraction.type === "resize" && cropInteraction.handle) {
-                        const h = cropInteraction.handle;
-                        const b = cropInteraction.box;
-                        let newX = b.x;
-                        let newY = b.y;
-                        let newW = b.width;
-                        let newH = b.height;
-
-                        if (h.includes("w")) {
-                          const right = b.x + b.width;
-                          newX = Math.max(0, Math.min(right - 10, xPercent));
-                          newW = right - newX;
-                        }
-                        if (h.includes("e")) {
-                          newW = Math.max(10, Math.min(100 - b.x, xPercent - b.x));
-                        }
-                        if (h.includes("n")) {
-                          const bottom = b.y + b.height;
-                          newY = Math.max(0, Math.min(bottom - 10, yPercent));
-                          newH = bottom - newY;
-                        }
-                        if (h.includes("s")) {
-                          newH = Math.max(10, Math.min(100 - b.y, yPercent - b.y));
-                        }
-
-                        setReceiptCropBox({ x: newX, y: newY, width: newW, height: newH });
-                      }
-                    }}
-                    onMouseUp={() => setCropInteraction(null)}
-                    onMouseLeave={() => setCropInteraction(null)}
-                  >
-                    {/* Centered Image with smooth rotation */}
-                    <div
-                      className="absolute inset-0 flex items-center justify-center pointer-events-none transition-transform duration-100"
-                      style={{
-                        transform: `rotate(${receiptRotation}deg)`
-                      }}
-                    >
-                      <img
-                        src={receiptRawImage}
-                        alt="Receipt Preview"
-                        className="max-h-full max-w-full object-contain pointer-events-none select-none"
-                      />
-                    </div>
-
-                    {/* Darkened semi-transparent overlay surrounding the crop box */}
-                    <div
-                      className="absolute inset-0 pointer-events-none"
-                      style={{
-                        boxShadow: `0 0 0 9999px rgba(0, 0, 0, 0.45)`,
-                        left: `${receiptCropBox.x}%`,
-                        top: `${receiptCropBox.y}%`,
-                        width: `${receiptCropBox.width}%`,
-                        height: `${receiptCropBox.height}%`
-                      }}
+              </div>
+            ) : (
+              <>
+                <div className="flex-grow p-4 bg-slate-100 flex items-center justify-center overflow-hidden min-h-[300px] max-h-[50vh]">
+                  <div className="w-full h-full max-h-[350px] flex justify-center items-center">
+                    <img
+                      ref={receiptImageRef}
+                      src={receiptRawImage}
+                      alt="To Crop"
+                      style={{ maxWidth: "100%", maxHeight: "100%", display: "block" }}
                     />
-
-                    {/* Draggable & Resizable Blue Bounding Box (Exact img2 design) */}
-                    <div
-                      className="absolute cursor-move border border-[#1973E8]"
-                      style={{
-                        left: `${receiptCropBox.x}%`,
-                        top: `${receiptCropBox.y}%`,
-                        width: `${receiptCropBox.width}%`,
-                        height: `${receiptCropBox.height}%`
-                      }}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        const rect = e.currentTarget.parentElement?.getBoundingClientRect();
-                        if (!rect) return;
-                        const startX = ((e.clientX - rect.left) / rect.width) * 100;
-                        const startY = ((e.clientY - rect.top) / rect.height) * 100;
-                        setCropInteraction({
-                          type: "drag",
-                          startX,
-                          startY,
-                          box: { ...receiptCropBox }
-                        });
-                      }}
-                    >
-                      {/* Dashed 3x3 Rule-of-Thirds Grid lines */}
-                      <div className="absolute inset-0 pointer-events-none grid grid-cols-3 grid-rows-3">
-                        <div className="border-r border-b border-dashed border-white/60"></div>
-                        <div className="border-r border-b border-dashed border-white/60"></div>
-                        <div className="border-b border-dashed border-white/60"></div>
-                        <div className="border-r border-b border-dashed border-white/60"></div>
-                        <div className="border-r border-b border-dashed border-white/60"></div>
-                        <div className="border-b border-dashed border-white/60"></div>
-                        <div className="border-r border-dashed border-white/60"></div>
-                        <div className="border-r border-dashed border-white/60"></div>
-                        <div></div>
-                      </div>
-
-                      {/* 8 Handles (Corners & Midpoints) - Exact Blue Squares matching img2 */}
-                      {[
-                        { handle: "nw", cursor: "nwse-resize", style: { top: "-4px", left: "-4px" } },
-                        { handle: "n", cursor: "ns-resize", style: { top: "-4px", left: "calc(50% - 4px)" } },
-                        { handle: "ne", cursor: "nesw-resize", style: { top: "-4px", right: "-4px" } },
-                        { handle: "e", cursor: "ew-resize", style: { top: "calc(50% - 4px)", right: "-4px" } },
-                        { handle: "se", cursor: "nwse-resize", style: { bottom: "-4px", right: "-4px" } },
-                        { handle: "s", cursor: "ns-resize", style: { bottom: "-4px", left: "calc(50% - 4px)" } },
-                        { handle: "sw", cursor: "nesw-resize", style: { bottom: "-4px", left: "-4px" } },
-                        { handle: "w", cursor: "ew-resize", style: { top: "calc(50% - 4px)", left: "-4px" } }
-                      ].map((item) => (
-                        <div
-                          key={item.handle}
-                          className="absolute w-2 h-2 bg-[#1973E8] border border-white z-10"
-                          style={{ ...item.style, cursor: item.cursor }}
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            setCropInteraction({
-                              type: "resize",
-                              handle: item.handle,
-                              startX: 0,
-                              startY: 0,
-                              box: { ...receiptCropBox }
-                            });
-                          }}
-                        />
-                      ))}
-                    </div>
                   </div>
+                </div>
 
-                  {/* Angle & Rotate Controls: Exact 100% img2 match */}
-                  <div className="flex items-center justify-between gap-3 px-1 pt-1">
-                    {/* Left Counter-Clockwise Rotate Button */}
+                {/* Controls & Footer */}
+                <div className="p-4 bg-slate-50 border-t border-slate-200 flex flex-col gap-3">
+                  <div className="flex items-center justify-center gap-4">
                     <button
                       type="button"
-                      onClick={() => setReceiptRotation((prev) => (prev - 90 < 0 ? (prev - 90 + 360) : (prev - 90)))}
-                      className="w-10 h-10 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 flex items-center justify-center text-zinc-700 transition-colors cursor-pointer shrink-0 shadow-2xs"
-                      title="Rotate counter-clockwise"
+                      onClick={() => {
+                        const rot = (receiptBaseRotation - 90) % 360;
+                        setReceiptBaseRotation(rot);
+                        receiptCropperRef.current?.rotateTo(rot + receiptFineRotation);
+                      }}
+                      className="p-2 bg-white border border-slate-200 hover:border-slate-400 rounded flex items-center justify-center cursor-pointer"
+                      title="Rotate Left 90°"
                     >
                       <RotateCcw className="w-4 h-4 text-zinc-700" />
                     </button>
 
-                    {/* Angle Slider + Dynamic Indicator */}
-                    <div className="flex-1 flex items-center gap-3">
-                      <span className="text-xs font-semibold text-zinc-600 shrink-0 select-none">
-                        Angle
-                      </span>
+                    <div className="flex items-center gap-2 flex-grow max-w-xs">
+                      <span className="text-[11px] font-medium text-zinc-500">Angle</span>
                       <input
                         type="range"
-                        min="0"
-                        max="360"
-                        step="1"
-                        value={receiptRotation}
-                        onChange={(e) => setReceiptRotation(parseInt(e.target.value, 10))}
-                        className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-[#1973E8]"
+                        min="-45"
+                        max="45"
+                        value={receiptFineRotation}
+                        onChange={(e) => {
+                          const val = parseInt(e.target.value);
+                          setReceiptFineRotation(val);
+                          receiptCropperRef.current?.rotateTo(receiptBaseRotation + val);
+                        }}
+                        className="w-full accent-[#0B57D0] h-1 rounded bg-zinc-200 cursor-pointer"
                       />
-                      <span className="text-xs font-semibold text-zinc-600 w-8 text-right tabular-nums select-none">
-                        {receiptRotation}°
-                      </span>
+                      <span className="text-xs font-mono text-zinc-600 w-8 text-right">{receiptFineRotation}°</span>
                     </div>
 
-                    {/* Right Clockwise Rotate Button */}
                     <button
                       type="button"
-                      onClick={() => setReceiptRotation((prev) => (prev + 90) % 360)}
-                      className="w-10 h-10 rounded-xl border border-slate-200 hover:border-slate-300 hover:bg-slate-50 flex items-center justify-center text-zinc-700 transition-colors cursor-pointer shrink-0 shadow-2xs"
-                      title="Rotate clockwise"
+                      onClick={() => {
+                        const rot = (receiptBaseRotation + 90) % 360;
+                        setReceiptBaseRotation(rot);
+                        receiptCropperRef.current?.rotateTo(rot + receiptFineRotation);
+                      }}
+                      className="p-2 bg-white border border-slate-200 hover:border-slate-400 rounded flex items-center justify-center cursor-pointer"
+                      title="Rotate Right 90°"
                     >
                       <RotateCw className="w-4 h-4 text-zinc-700" />
                     </button>
                   </div>
+
+                  <div className="flex justify-end gap-2 pt-1 border-t border-slate-200/60">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReceiptUploadOrder(null);
+                        setReceiptRawImage(null);
+                      }}
+                      disabled={isUploadingReceipt}
+                      className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveReceiptPhoto}
+                      disabled={isUploadingReceipt || !receiptRawImage}
+                      className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
+                    >
+                      {isUploadingReceipt ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Uploading...</span>
+                        </>
+                      ) : (
+                        <span>Apply &amp; Attach Receipt</span>
+                      )}
+                    </button>
+                  </div>
                 </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 13B. VIEW UPLOADED RECEIPT PROOF MODAL */}
+      {viewingReceiptOrder && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-[1px] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in zoom-in duration-150 font-primary">
+            {/* Header */}
+            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950 flex items-center gap-1.5">
+                  <ImageIcon className="w-4 h-4 text-[#0B57D0]" />
+                  Payment Receipt Proof
+                </h3>
+                <p className="text-xs text-zinc-500 font-mono mt-0.5">
+                  Order: {viewingReceiptOrder.id} • {viewingReceiptOrder.payment_method} {viewingReceiptOrder.ref_code ? `(${viewingReceiptOrder.ref_code})` : ""}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingReceiptOrder(null)}
+                className="p-1 rounded-lg hover:bg-slate-200 text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Image Preview Body */}
+            <div className="p-4 overflow-y-auto flex-1 flex flex-col items-center justify-center bg-slate-100 min-h-[300px] max-h-[60vh]">
+              {viewingReceiptOrder.proof_photo_url ? (
+                <div className="w-full h-full flex items-center justify-center overflow-hidden rounded-lg bg-black/5">
+                  <img
+                    src={viewingReceiptOrder.proof_photo_url}
+                    alt="Receipt Proof"
+                    className="max-h-[55vh] max-w-full object-contain rounded shadow-xs"
+                  />
+                </div>
+              ) : (
+                <p className="text-xs text-zinc-400 italic">No receipt photo available</p>
               )}
             </div>
 
-            {/* Footer: Exact img2 styling (Cancel & Apply Crop) */}
-            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-white border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => {
-                  setReceiptUploadOrder(null);
-                  setReceiptRawImage(null);
-                }}
-                disabled={isUploadingReceipt}
-                className="px-6 py-2 bg-[#EBF2FE] hover:bg-[#DDE9FD] text-[#0B57D0] font-bold text-xs rounded-lg transition-colors cursor-pointer select-none"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveReceiptPhoto}
-                disabled={isUploadingReceipt || !receiptRawImage}
-                className="px-6 py-2 bg-white hover:bg-slate-50 border border-slate-300 text-zinc-900 font-bold text-xs rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-2xs select-none"
-              >
-                {isUploadingReceipt ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" /> : null}
-                Apply Crop
-              </button>
+            {/* Footer with Edit / Re-crop & Change Photo buttons */}
+            <div className="px-5 py-3.5 bg-white border-t border-slate-200 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ord = viewingReceiptOrder;
+                    setViewingReceiptOrder(null);
+                    setReceiptUploadOrder(ord);
+                    setReceiptRawImage(ord.proof_photo_url || null);
+                    setReceiptBaseRotation(0);
+                    setReceiptFineRotation(0);
+                  }}
+                  className="px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-zinc-700 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                  title="Re-crop or rotate existing photo"
+                >
+                  <Crop className="w-3.5 h-3.5 text-[#0B57D0]" />
+                  <span>Crop / Edit</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const ord = viewingReceiptOrder;
+                    setViewingReceiptOrder(null);
+                    setReceiptUploadOrder(ord);
+                    setReceiptRawImage(null);
+                    setTimeout(() => receiptFileInputRef.current?.click(), 100);
+                  }}
+                  className="px-3 py-1.5 bg-[#EBF2FE] hover:bg-[#DDE9FD] text-[#0B57D0] rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                  title="Upload a new receipt photo from your device"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Change Photo</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {viewingReceiptOrder.proof_photo_url && (
+                  <button
+                    type="button"
+                    onClick={() => window.open(viewingReceiptOrder.proof_photo_url, "_blank")}
+                    className="p-2 border border-slate-200 hover:bg-slate-50 text-zinc-600 rounded-lg text-xs transition-all shadow-xs cursor-pointer"
+                    title="Open full size image in new tab"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setViewingReceiptOrder(null)}
+                  className="px-4 py-1.5 bg-slate-100 hover:bg-slate-200 text-zinc-700 font-semibold text-xs rounded-lg transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -6354,6 +6767,524 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 15. RECORD BACKDATED MANUAL SALE MODAL */}
+      {isManualSaleOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[0.5px] flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-150">
+            {/* Header */}
+            <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-lg bg-[#0B57D0]/10 text-[#0B57D0] flex items-center justify-center">
+                  <Receipt className="w-4 h-4 text-[#0B57D0]" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-950">
+                    {editingTransactionOrder ? `Edit Transaction (${editingTransactionOrder.id})` : "Record Backdated Sale Transaction"}
+                  </h3>
+                  <p className="text-xs text-zinc-500">
+                    {editingTransactionOrder ? "Modify items, quantities, payment method, or timestamp with automatic stock reconciliation" : "Insert historical sales order directly into activation ledger & audit reports"}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsManualSaleOpen(false);
+                  setEditingTransactionOrder(null);
+                }}
+                className="p-1 rounded-lg hover:bg-slate-200 text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Form Body */}
+            <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-4">
+              
+              {/* Section 1: Activation & Date/Time */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3.5 bg-[#F8F9FA] rounded-lg border border-slate-200">
+                <div className="flex flex-col gap-1 md:col-span-1">
+                  <label className="text-xs font-semibold text-zinc-700">Target Activation <span className="text-red-500">*</span></label>
+                  <select
+                    value={manualActId}
+                    onChange={(e) => setManualActId(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  >
+                    <option value="">-- Select Activation --</option>
+                    {activations.map(act => (
+                      <option key={act.id} value={act.id}>
+                        {act.name} ({act.status.toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-zinc-700">Transaction Date <span className="text-red-500">*</span></label>
+                  <input
+                    type="date"
+                    value={manualDate}
+                    onChange={(e) => setManualDate(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-zinc-700">Time (Approx)</label>
+                  <input
+                    type="time"
+                    value={manualTime}
+                    onChange={(e) => setManualTime(e.target.value)}
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              {/* Section 2: Cashier & Payment Mode */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-zinc-700">Cashier / Staff Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Jane / Admin"
+                    value={manualCashierName}
+                    onChange={(e) => setManualCashierName(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-semibold text-zinc-700">Payment Mode</label>
+                  <select
+                    value={manualPaymentMethod}
+                    onChange={(e) => setManualPaymentMethod(e.target.value as any)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-bold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  >
+                    <option value="Cash">Cash Collected</option>
+                    <option value="QR">QR / PayNow</option>
+                    <option value="Transfer Bank">Transfer Bank / Card</option>
+                    <option value="FOC">100% FOC Sampling</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Section 3: Purchased Products */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-zinc-900 uppercase tracking-wider">Line Items</span>
+                    {manualActId && (
+                      <span className="text-[11px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full border border-blue-100">
+                        Filtered by Allocated Stock ({(() => {
+                          const act = activations.find(a => a.id === manualActId);
+                          const alloc = (act?.stock_allocated || []).filter(item => Number(item.qty || 0) > 0);
+                          return alloc.length > 0 ? `${alloc.length} allocated items` : "All master products";
+                        })()})
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setManualItems(prev => [...prev, { sku: "", price: 0, qty: 1, is_foc: false }]);
+                    }}
+                    className="text-xs text-[#0B57D0] hover:text-[#0842A0] font-bold flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Another Item</span>
+                  </button>
+                </div>
+
+                {/* Compute allocated product options for this activation */}
+                {(() => {
+                  const selectedAct = activations.find(a => a.id === manualActId);
+                  const allocatedMap = new Map<string, number>();
+                  if (selectedAct && Array.isArray(selectedAct.stock_allocated)) {
+                    selectedAct.stock_allocated.forEach(st => {
+                      if (st.sku && Number(st.qty || 0) > 0) {
+                        allocatedMap.set(st.sku.toLowerCase(), Number(st.qty || 0));
+                      }
+                    });
+                  }
+
+                  // Build candidates list: if activation has allocated stock, show only allocated goods; otherwise fallback to master/POS
+                  let availableOptions: Array<{ sku: string; name: string; price: number; allocatedQty?: number }> = [];
+                  if (allocatedMap.size > 0) {
+                    allocatedMap.forEach((qty, lowerSku) => {
+                      const found = posProducts.find(p => p.sku.toLowerCase() === lowerSku) || masterProducts.find(p => p.sku.toLowerCase() === lowerSku);
+                      availableOptions.push({
+                        sku: found?.sku || lowerSku.toUpperCase(),
+                        name: found?.display_name || lowerSku.toUpperCase(),
+                        price: Number(found?.selling_price || 0),
+                        allocatedQty: qty
+                      });
+                    });
+                  } else {
+                    const seen = new Set<string>();
+                    posProducts.forEach(p => {
+                      seen.add(p.sku.toLowerCase());
+                      availableOptions.push({
+                        sku: p.sku,
+                        name: p.display_name || p.sku,
+                        price: Number(p.selling_price || 0)
+                      });
+                    });
+                    masterProducts.forEach(mp => {
+                      if (!seen.has(mp.sku.toLowerCase())) {
+                        availableOptions.push({
+                          sku: mp.sku,
+                          name: mp.display_name || mp.sku,
+                          price: Number(mp.selling_price || 0)
+                        });
+                      }
+                    });
+                  }
+
+                  return (
+                    <div className="border border-slate-200 rounded-lg overflow-hidden divide-y divide-slate-100 bg-white">
+                      {manualItems.map((item, idx) => {
+                        const lineSubtotal = item.is_foc ? 0 : (Number(item.price || 0) * Number(item.qty || 1));
+
+                        return (
+                          <div key={idx} className="p-3 flex flex-wrap items-center gap-3 bg-slate-50/40">
+                            {/* SKU Selector with Search & Filter */}
+                            <div className="flex-1 min-w-[240px]">
+                              <select
+                                value={item.sku}
+                                onChange={(e) => {
+                                  const newSku = e.target.value;
+                                  const optMatched = availableOptions.find(o => o.sku.toLowerCase() === newSku.toLowerCase());
+                                  const posMatched = posProducts.find(p => p.sku.toLowerCase() === newSku.toLowerCase()) || 
+                                                     masterProducts.find(p => p.sku.toLowerCase() === newSku.toLowerCase());
+                                  const defaultPrice = optMatched ? optMatched.price : (posMatched ? Number(posMatched.selling_price || 0) : 0);
+                                  setManualItems(prev => {
+                                    const next = [...prev];
+                                    next[idx] = { ...next[idx], sku: newSku, price: defaultPrice };
+                                    return next;
+                                  });
+                                }}
+                                className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-[#0B57D0]"
+                              >
+                                <option value="">-- Choose Product ({availableOptions.length} available) --</option>
+                                {availableOptions.map(p => (
+                                  <option key={p.sku} value={p.sku}>
+                                    {p.sku} - {p.name} (${Number(p.price || 0).toFixed(2)}) {p.allocatedQty !== undefined ? `[Allocated: ${p.allocatedQty}]` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Price */}
+                            <div className="w-24">
+                              <div className="relative">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">$</span>
+                                <input
+                                  type="number"
+                                  step="0.10"
+                                  min="0"
+                                  disabled={item.is_foc}
+                                  value={item.price}
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value) || 0;
+                                    setManualItems(prev => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], price: val };
+                                      return next;
+                                    });
+                                  }}
+                                  className="w-full pl-5 pr-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-zinc-900 text-right focus:outline-hidden disabled:bg-slate-100"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Qty */}
+                            <div className="w-16">
+                              <input
+                                type="number"
+                                min="1"
+                                value={item.qty}
+                                onChange={(e) => {
+                                  const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                                  setManualItems(prev => {
+                                    const next = [...prev];
+                                    next[idx] = { ...next[idx], qty: val };
+                                    return next;
+                                  });
+                                }}
+                                className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-zinc-900 text-center focus:outline-hidden"
+                              />
+                            </div>
+
+                            {/* FOC Checkbox */}
+                            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={item.is_foc}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  setManualItems(prev => {
+                                    const next = [...prev];
+                                    next[idx] = { ...next[idx], is_foc: checked };
+                                    return next;
+                                  });
+                                }}
+                                className="w-3.5 h-3.5 text-[#0B57D0] rounded border-slate-300"
+                              />
+                              <span className="text-[11px] font-bold text-zinc-600">FOC</span>
+                            </label>
+
+                            {/* Line Total */}
+                            <div className="w-20 text-right font-mono font-bold text-xs text-zinc-900">
+                              ${lineSubtotal.toFixed(2)}
+                            </div>
+
+                            {/* Remove */}
+                            {manualItems.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setManualItems(prev => prev.filter((_, i) => i !== idx));
+                                }}
+                                className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Section 4: Discounts & Total Summary */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg flex flex-col gap-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-zinc-700">Order Discount:</span>
+                    <select
+                      value={manualDiscountType}
+                      onChange={(e) => setManualDiscountType(e.target.value as any)}
+                      className="px-2 py-1 bg-white border border-slate-200 rounded-md text-xs"
+                    >
+                      <option value="none">No Discount</option>
+                      <option value="amount">Fixed Amount ($)</option>
+                      <option value="percent">Percentage (%)</option>
+                      <option value="foc">100% Free of Charge</option>
+                    </select>
+
+                    {manualDiscountType !== "none" && manualDiscountType !== "foc" && (
+                      <input
+                        type="number"
+                        min="0"
+                        step={manualDiscountType === "percent" ? "1" : "0.50"}
+                        value={manualDiscountVal}
+                        onChange={(e) => setManualDiscountVal(parseFloat(e.target.value) || 0)}
+                        placeholder={manualDiscountType === "percent" ? "%" : "$"}
+                        className="w-20 px-2 py-1 bg-white border border-slate-200 rounded-md text-xs font-bold"
+                      />
+                    )}
+                  </div>
+
+                  {/* Calculated Totals */}
+                  {(() => {
+                    let sub = 0;
+                    manualItems.forEach(it => {
+                      if (!it.is_foc && it.sku) sub += (Number(it.price || 0) * Number(it.qty || 1));
+                    });
+                    let disc = 0;
+                    if (manualDiscountType === "foc" || manualPaymentMethod === "FOC") disc = sub;
+                    else if (manualDiscountType === "percent") disc = sub * (Math.min(100, Math.max(0, manualDiscountVal)) / 100);
+                    else if (manualDiscountType === "amount") disc = Math.min(sub, Math.max(0, manualDiscountVal));
+                    const finalNet = Math.max(0, sub - disc);
+
+                    return (
+                      <div className="flex items-center gap-4 text-xs">
+                        <div>
+                          <span className="text-zinc-500">Subtotal: </span>
+                          <strong className="font-mono text-zinc-900">${sub.toFixed(2)}</strong>
+                        </div>
+                        {disc > 0 && (
+                          <div>
+                            <span className="text-zinc-500">Discount: </span>
+                            <strong className="font-mono text-blue-600">-${disc.toFixed(2)}</strong>
+                          </div>
+                        )}
+                        <div className="pl-3 border-l border-slate-300">
+                          <span className="text-zinc-700 font-bold">Total Paid: </span>
+                          <strong className="font-mono text-sm font-black text-emerald-700">${finalNet.toFixed(2)}</strong>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Section 4B: Payment Receipt Upload (Mandatory for QR / Bank Transfer) */}
+                {(manualPaymentMethod === "QR" || manualPaymentMethod === "Transfer Bank") && (
+                  <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-lg flex flex-col gap-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Camera className="w-4 h-4 text-amber-700" />
+                        <span className="text-xs font-bold text-amber-950">
+                          Payment Receipt Proof <span className="text-red-500">* Required for {manualPaymentMethod}</span>
+                        </span>
+                      </div>
+                      {manualReceiptPhoto && (
+                        <button
+                          type="button"
+                          onClick={() => setManualReceiptPhoto(null)}
+                          className="text-[11px] text-red-600 hover:text-red-700 font-semibold cursor-pointer"
+                        >
+                          Remove Photo
+                        </button>
+                      )}
+                    </div>
+
+                    {manualReceiptPhoto ? (
+                      <div className="flex items-center gap-3 p-2 bg-white rounded-lg border border-amber-200">
+                        <img
+                          src={manualReceiptPhoto}
+                          alt="Receipt Preview"
+                          className="w-14 h-14 object-cover rounded border border-slate-200 shrink-0"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-bold text-zinc-800 truncate">Receipt Photo Attached</p>
+                          <p className="text-[10px] text-emerald-600 font-semibold flex items-center gap-1 mt-0.5">
+                            <CheckCircle2 className="w-3 h-3" /> Ready to save
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const input = document.createElement("input");
+                            input.type = "file";
+                            input.accept = "image/*";
+                            input.onchange = async (e: any) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const reader = new FileReader();
+                              reader.onload = async (ev) => {
+                                const base64 = (ev.target?.result as string).split(",")[1];
+                                const fileName = `manual_receipt_${Date.now()}.jpg`;
+                                const res = await fetch(`${WORKER_URL}/api/pos/upload`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    fileName,
+                                    base64Data: base64,
+                                    contentType: "image/jpeg",
+                                    folder: "pos-receipts"
+                                  })
+                                });
+                                if (res.ok) {
+                                  const json = await res.json();
+                                  if (json.url) setManualReceiptPhoto(json.url);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            };
+                            input.click();
+                          }}
+                          className="px-2.5 py-1 text-xs font-semibold text-[#0B57D0] hover:bg-blue-50 border border-blue-200 rounded-md cursor-pointer"
+                        >
+                          Change
+                        </button>
+                      </div>
+                    ) : (
+                      <label className="border-2 border-dashed border-amber-300 hover:border-amber-400 bg-white/70 hover:bg-white rounded-lg p-3 flex items-center justify-center gap-2 cursor-pointer transition-colors">
+                        <UploadCloud className="w-4 h-4 text-amber-600" />
+                        <span className="text-xs font-semibold text-amber-900">
+                          Click to upload payment receipt screenshot / photo
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            const reader = new FileReader();
+                            reader.onload = async (ev) => {
+                              try {
+                                const base64 = (ev.target?.result as string).split(",")[1];
+                                const fileName = `manual_receipt_${Date.now()}.jpg`;
+                                const res = await fetch(`${WORKER_URL}/api/pos/upload`, {
+                                  method: "POST",
+                                  headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({
+                                    fileName,
+                                    base64Data: base64,
+                                    contentType: "image/jpeg",
+                                    folder: "pos-receipts"
+                                  })
+                                });
+                                if (res.ok) {
+                                  const json = await res.json();
+                                  if (json.url) {
+                                    setManualReceiptPhoto(json.url);
+                                    showToast("Receipt photo uploaded!", "success");
+                                  }
+                                }
+                              } catch (err: any) {
+                                showToast("Upload failed: " + err.message, "error");
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
+
+                {/* Notes & Reason */}
+                <div className="flex flex-col gap-1 pt-2 border-t border-slate-200">
+                  <label className="text-xs font-semibold text-zinc-700">Notes / Audit Reference</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Cash collected on 05/09, POS offline at booth, etc."
+                    value={manualNotes}
+                    onChange={(e) => setManualNotes(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-[#0B57D0]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <span className="text-xs text-zinc-500 italic">
+                * Stamped with your chosen backdate epoch timestamp and included in Section 2/3 reconciliation.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsManualSaleOpen(false);
+                    setEditingTransactionOrder(null);
+                  }}
+                  disabled={isSavingManualSale}
+                  className="px-4 py-2 bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 font-semibold text-xs rounded-lg transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveManualSale}
+                  disabled={isSavingManualSale}
+                  className="px-5 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingManualSale ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                  <span>{editingTransactionOrder ? "Save Changes" : "Record Transaction"}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
