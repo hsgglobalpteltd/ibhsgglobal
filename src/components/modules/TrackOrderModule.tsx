@@ -2137,6 +2137,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       let matchedCount = 0;
       let ignoredBlankRef = 0;
+      let notDeliveredCount = 0;
       let noMatchCount = 0;
 
       for (const inv of parsedInvoices) {
@@ -2154,6 +2155,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
         if (!matchedOrder) {
           noMatchCount++;
+          continue;
+        }
+
+        // Strict Requirement: Only update orders that are already delivered / collected
+        const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
+        const isDelivered = orderStatus === "delivered" || orderStatus === "collected" || orderStatus === "return collected";
+
+        if (!isDelivered) {
+          notDeliveredCount++;
           continue;
         }
 
@@ -2233,7 +2243,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
 
       showToast(
-        `Bulk completion complete! ${matchedCount} matched, ${ignoredBlankRef} ignored (blank ref), ${noMatchCount} not matched.`,
+        `Bulk completion complete! ${matchedCount} delivered orders updated.${notDeliveredCount > 0 ? ` (${notDeliveredCount} skipped - not delivered yet)` : ""}${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
         "success"
       );
 
@@ -2358,6 +2368,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       let matchedCount = 0;
       let ignoredBlankRef = 0;
+      let notDeliveredCount = 0;
       let noMatchCount = 0;
 
       for (const inv of parsedInvoices) {
@@ -2374,6 +2385,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
         if (!matchedOrder) {
           noMatchCount++;
+          continue;
+        }
+
+        // Strict Requirement: Only update orders that are already delivered / collected
+        const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
+        const isDelivered = orderStatus === "delivered" || orderStatus === "collected" || orderStatus === "return collected";
+
+        if (!isDelivered) {
+          notDeliveredCount++;
           continue;
         }
 
@@ -2441,7 +2461,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
 
       showToast(
-        `Bulk completion complete! ${matchedCount} matched, ${ignoredBlankRef} ignored (blank ref), ${noMatchCount} not matched.`,
+        `Bulk completion complete! ${matchedCount} delivered orders updated.${notDeliveredCount > 0 ? ` (${notDeliveredCount} skipped - not delivered yet)` : ""}${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
         "success"
       );
     } catch (err: any) {
