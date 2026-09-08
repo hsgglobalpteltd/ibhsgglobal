@@ -11,6 +11,8 @@ export interface Column {
   id: string;
   header: string;
   accessor: string;
+  width?: string;
+  className?: string;
 }
 
 const getRawVal = (row: any, accessor: string) => {
@@ -634,7 +636,8 @@ export function DataTable({
                     onDrop={(e) => handleDrop(e, colId)}
                     onDragEnd={handleDragEnd}
                     className={`relative py-3.5 px-4 sticky top-0 bg-[#F0F4F9] font-semibold text-sm text-[#474747] cursor-grab active:cursor-grabbing border-b border-slate-200 select-none transition-all z-10 
-                      ${colId === "actions" ? "w-[170px] min-w-[170px] max-w-[170px] text-right" : ""}
+                      ${col?.width ? col.width : colId === "actions" ? "w-[170px] min-w-[170px] max-w-[170px] text-right" : ""}
+                      ${col?.className || ""}
                       ${isDragOver ? "border-r-2 border-[#0B57D0] bg-[#D3E3FD]" : ""} 
                       ${draggingColId === colId ? "opacity-40" : ""}`}
                   >
@@ -832,7 +835,13 @@ export function DataTable({
                       return (
                         <td 
                           key={colId}
-                          className={`py-3 px-4 text-sm text-zinc-800 align-top ${colId === "actions" ? "w-[170px] min-w-[170px] max-w-[170px]" : "truncate max-w-[240px]"}`}
+                          className={`py-3 px-4 text-sm text-zinc-800 align-top ${
+                            col?.width 
+                              ? col.width 
+                              : colId === "actions" 
+                                ? "w-[170px] min-w-[170px] max-w-[170px]" 
+                                : "truncate max-w-[240px]"
+                          } ${col?.className || ""}`}
                           title={colId === "actions" ? undefined : getFormattedTextValue(row, col.accessor)}
                         >
                           {isCellEditable ? (

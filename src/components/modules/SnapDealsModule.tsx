@@ -1286,31 +1286,31 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       return {
         id_raw: deal.id,
         client_info: (
-          <div className="flex flex-col gap-0.5 w-[100px] max-w-[100px] shrink-0 select-text">
-            <div className="font-bold text-zinc-855 truncate" title={deal.dealing_with}>
+          <div className="flex flex-col gap-0.5 whitespace-nowrap select-text pr-4">
+            <span className="font-semibold text-zinc-900 text-xs whitespace-nowrap" title={deal.dealing_with}>
               {deal.dealing_with}
-            </div>
-            <div className="text-[10px] text-zinc-400 font-bold font-mono truncate select-all" title={deal.id}>
+            </span>
+            <span className="text-[10.5px] text-zinc-400 font-mono whitespace-nowrap select-all" title={deal.id}>
               {deal.id}
-            </div>
+            </span>
           </div>
         ),
         client_info_raw: `${deal.dealing_with} ${deal.id}`,
         notes: (
-          <div className="line-clamp-3 w-[160px] max-w-[160px] shrink-0 font-medium text-zinc-500 whitespace-pre-wrap break-words" title={deal.notes || ""}>
+          <div className="line-clamp-3 min-w-[160px] max-w-[220px] font-normal text-zinc-600 whitespace-pre-wrap break-words text-xs leading-relaxed" title={deal.notes || ""}>
             {deal.notes || "—"}
           </div>
         ),
         items: (
-          <div className="flex flex-wrap gap-1 w-full min-w-0">
+          <div className="flex flex-wrap gap-1.5 w-full min-w-0">
             {(() => {
               let list: any[] = [];
               try {
                 list = JSON.parse(deal.deal_data);
               } catch (e) {}
-              if (list.length === 0) return <span className="text-zinc-400 italic text-[10px]">No items</span>;
+              if (list.length === 0) return <span className="text-zinc-400 italic text-[11px]">No items</span>;
               return list.map((item: any, idx: number) => (
-                <span key={idx} className="px-1.5 py-0.5 rounded bg-zinc-100 border border-zinc-200 text-[10px] font-bold text-zinc-700 truncate max-w-[130px]" title={`${item.brand} - ${item.product}`}>
+                <span key={idx} className="px-2 py-0.5 rounded bg-slate-100/80 border border-slate-200 text-[11px] font-normal text-zinc-700 whitespace-nowrap" title={`${item.brand} - ${item.product}`}>
                   {item.brand} - {item.product}
                 </span>
               ));
@@ -1318,18 +1318,18 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
           </div>
         ),
         terms_link: (
-          <div className="w-[60px] shrink-0 font-bold select-none text-left">
+          <div className="w-[90px] shrink-0 select-none text-left">
             {deal.terms_conditions && deal.terms_conditions.trim() ? (
               <button
                 onClick={() => handleOpenTermsModal(deal)}
-                className="text-xs text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer select-none font-bold"
+                className="text-xs text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer select-none font-medium"
               >
                 View T&C
               </button>
             ) : (
               <button
                 onClick={() => handleOpenTermsModal(deal)}
-                className="text-xs text-blue-600 hover:text-blue-800 hover:underline cursor-pointer select-none font-bold"
+                className="text-xs text-[#0B57D0] hover:text-[#0842A0] hover:underline cursor-pointer select-none font-medium"
               >
                 Add T&C
               </button>
@@ -1337,42 +1337,42 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
           </div>
         ),
         actions: (
-          <div className="flex items-center gap-1 w-[130px] shrink-0 select-none">
+          <div className="flex items-center gap-1.5 w-[140px] shrink-0 select-none">
             <button
               onClick={() => handleOpenViewModal(deal)}
-              className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center"
+              className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
               title="View Deal"
             >
-              <Eye size={12} />
+              <Eye size={13} />
             </button>
 
             <button
               onClick={() => generateBlobPDF(deal, "proposal")}
-              className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center"
+              className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
               title="Print Proposal"
             >
-              <Printer size={12} className="text-zinc-600" />
+              <Printer size={13} className="text-zinc-600" />
             </button>
             <button
               onClick={() => generateBlobPDF(deal, "contract")}
-              className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-750 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center"
+              className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
               title="Print Contract"
             >
-              <Printer size={12} className="text-emerald-700" />
+              <Printer size={13} className="text-emerald-600" />
             </button>
 
             {(deal.status === "Draft" || !deal.status) && (
               <>
                 <button
                   onClick={() => handleLoadDealForEdit(deal)}
-                  className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center"
+                  className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
                   title="Edit Deal"
                 >
-                  <Edit size={12} />
+                  <Edit size={13} />
                 </button>
 
-                <label className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer relative flex items-center justify-center" title="Upload Signed Contract">
-                  <Lock size={12} className="text-zinc-600" />
+                <label className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer relative flex items-center justify-center shadow-xs" title="Upload Signed Contract">
+                  <Lock size={13} className="text-zinc-600" />
                   <input
                     type="file"
                     accept="image/*,application/pdf"
@@ -1388,10 +1388,10 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 {canDelete && (
                   <button
                     onClick={() => handleDeleteDeal(deal.id)}
-                    className="p-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-855 transition-colors cursor-pointer flex items-center justify-center"
+                    className="p-1.5 rounded-md bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
                     title="Delete Proposal"
                   >
-                    <Trash2 size={12} />
+                    <Trash2 size={13} />
                   </button>
                 )}
               </>
@@ -1401,18 +1401,18 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
               <>
                 <button
                   onClick={() => handleRevokeDeal(deal.id)}
-                  className="p-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-855 transition-colors cursor-pointer flex items-center justify-center"
+                  className="p-1.5 rounded-md bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
                   title="Revoke Signed Deal"
                 >
-                  <Undo size={12} />
+                  <Undo size={13} />
                 </button>
 
                 <button
                   onClick={() => handleArchiveDeal(deal.id)}
-                  className="p-1 rounded bg-zinc-100 hover:bg-zinc-200 border border-zinc-300 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center"
+                  className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
                   title="Archive Deal"
                 >
-                  <Archive size={12} />
+                  <Archive size={13} />
                 </button>
               </>
             )}
@@ -1421,19 +1421,19 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
               <>
                 <button
                   onClick={() => handleRestoreDeal(deal.id)}
-                  className="p-1 rounded bg-emerald-50 hover:bg-emerald-100 border border-emerald-250 text-emerald-700 hover:text-emerald-900 transition-colors cursor-pointer flex items-center justify-center"
+                  className="p-1.5 rounded-md bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 hover:text-emerald-900 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
                   title="Restore to Active Deals"
                 >
-                  <Undo size={12} />
+                  <Undo size={13} />
                 </button>
 
                 {canDelete && (
                   <button
                     onClick={() => handleDeleteDeal(deal.id)}
-                    className="p-1 rounded bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-855 transition-colors cursor-pointer flex items-center justify-center"
+                    className="p-1.5 rounded-md bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
                     title="Delete Archived Deal"
                   >
-                    <Trash2 size={12} />
+                    <Trash2 size={13} />
                   </button>
                 )}
               </>
@@ -1445,30 +1445,30 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   };
 
   const columns: Column[] = [
-    { id: "actions", header: "", accessor: "actions" },
-    { id: "client_info", header: "Client", accessor: "client_info" },
-    { id: "notes", header: "Note", accessor: "notes" },
-    { id: "items", header: "Deal Items", accessor: "items" },
-    { id: "terms_link", header: "Term & Condition", accessor: "terms_link" }
+    { id: "actions", header: "Actions", accessor: "actions", width: "w-[150px] min-w-[150px]" },
+    { id: "client_info", header: "Client Name", accessor: "client_info", width: "min-w-[200px] whitespace-nowrap" },
+    { id: "notes", header: "Client Note", accessor: "notes", width: "w-[200px] max-w-[220px]" },
+    { id: "items", header: "Deal Items", accessor: "items", width: "min-w-[260px]" },
+    { id: "terms_link", header: "Term & Condition", accessor: "terms_link", width: "w-[120px]" }
   ];
 
   return (
-    <div className="flex flex-col gap-4 font-primary text-zinc-900 h-full overflow-hidden relative">
-      
-
-      {/* UNIVERSAL NAVIGATION TABS */}
-      <NavigationTabs
-        tabs={tabs}
-        activeTabId={activeTab}
-        onTabSelect={(tabId) => setActiveTab(tabId)}
-      />
+    <div className="flex flex-col flex-1 h-full overflow-hidden font-primary">
+      {/* Top Navigation Tabs */}
+      <div className="mb-2 shrink-0">
+        <NavigationTabs
+          tabs={tabs}
+          activeTabId={activeTab}
+          onTabSelect={(tabId) => setActiveTab(tabId)}
+        />
+      </div>
 
       {/* TAB CONTENT BODY */}
       <div className="w-full flex-grow flex-shrink min-h-0 overflow-hidden">
         
-        {/* TAB 1.5: CALCULATOR 2 TAB */}
+        {/* TAB 1: CALCULATOR TAB */}
         {activeTab === "calculator2" && (
-          <div className="w-full h-full flex flex-wrap gap-4 p-2 overflow-y-auto select-none custom-scrollbar">
+          <div className="w-full h-full flex flex-wrap gap-3 overflow-y-auto select-none custom-scrollbar">
             
             {/* LEFT COLUMN: Pricing Inputs & Calculations */}
             <div className="flex-[58] min-w-[560px] bg-white border border-zinc-200 rounded p-5 flex flex-col justify-between overflow-hidden shadow-sm h-full">
@@ -2246,7 +2246,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
         {/* TAB 2: DRAFT TAB */}
         {activeTab === "draft" && (
-          <div className="w-full h-full p-2 overflow-hidden flex flex-col snap-deals-table">
+          <div className="w-full h-full overflow-hidden flex flex-col rounded-lg border border-slate-200 bg-white shadow-xs">
             {loadingDeals ? (
               <div className="w-full h-48 flex items-center justify-center gap-2 text-zinc-500 font-semibold animate-pulse">
                 <Loader2 size={16} className="animate-spin" />
@@ -2266,7 +2266,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
         {/* TAB 3: ACTIVE DEALS TAB */}
         {activeTab === "active" && (
-          <div className="w-full h-full p-2 overflow-hidden flex flex-col snap-deals-table">
+          <div className="w-full h-full overflow-hidden flex flex-col rounded-lg border border-slate-200 bg-white shadow-xs">
             {loadingDeals ? (
               <div className="w-full h-48 flex items-center justify-center gap-2 text-zinc-500 font-semibold animate-pulse">
                 <Loader2 size={16} className="animate-spin" />
@@ -2286,7 +2286,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
         {/* TAB 4: ARCHIVE TAB */}
         {activeTab === "archive" && (
-          <div className="w-full h-full p-2 overflow-hidden flex flex-col snap-deals-table">
+          <div className="w-full h-full overflow-hidden flex flex-col rounded-lg border border-slate-200 bg-white shadow-xs">
             {loadingDeals ? (
               <div className="w-full h-48 flex items-center justify-center gap-2 text-zinc-500 font-semibold animate-pulse">
                 <Loader2 size={16} className="animate-spin" />
