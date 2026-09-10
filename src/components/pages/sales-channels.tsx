@@ -6,6 +6,7 @@ import { SnapDealsModule } from "../modules/SnapDealsModule";
 import { StoresVisibilityModule } from "../modules/StoresVisibilityModule";
 import { SponsorshipModule } from "../modules/SponsorshipModule";
 import { DirectOrderModule } from "../modules/DirectOrderModule";
+import { MarketPricingModule } from "../modules/MarketPricingModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canViewModule } from "@/lib/permissions";
 import { UserProfile } from "@/lib/api";
@@ -65,14 +66,16 @@ export function SalesChannelsPage({ profile, breadcrumbPath }: SalesChannelsPage
 
   const renderActiveSubModule = () => {
     switch (activeSubModule) {
+      case "Direct Order":
+        return <DirectOrderModule profile={profile} />;
+      case "Market Price":
+        return <MarketPricingModule profile={profile} />;
       case "Snap Deals":
         return <SnapDealsModule profile={profile} />;
       case "Stores Visibility":
         return <StoresVisibilityModule profile={profile} />;
       case "Sponsorship":
         return <SponsorshipModule profile={profile} />;
-      case "Direct Order":
-        return <DirectOrderModule profile={profile} />;
       default:
         return null;
     }

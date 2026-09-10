@@ -13,7 +13,6 @@ export interface RetailerItem {
   display_name: string;
   logo_image?: string;
   rank?: string;
-  retailer_group?: string;
   email?: string;
   [key: string]: any;
 }
@@ -35,13 +34,11 @@ const retailerColumns: Column[] = [
   { id: "id", header: "ID", accessor: "id" },
   { id: "display_name", header: "Display Name", accessor: "display_name" },
   { id: "logo_image", header: "Logo Image", accessor: "logo_image" },
-  { id: "retailer_group", header: "Retailer Group", accessor: "retailer_group" },
   { id: "rank", header: "Rank", accessor: "rank" },
   { id: "email", header: "Email", accessor: "email" }
 ];
 
 const storeColumns: Column[] = [
-  { id: "id", header: "ID", accessor: "id" },
   { id: "retailer_name", header: "Retailer Name", accessor: "retailer_name" },
   { id: "display_name", header: "Display Name", accessor: "display_name" },
   { id: "address", header: "Address", accessor: "address" },
@@ -200,7 +197,6 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
         display_name: "",
         logo_image: "",
         rank: "",
-        retailer_group: "Individual",
         email: ""
       });
     } else {
@@ -589,33 +585,15 @@ function RetailerEditForm({
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-zinc-600">Retailer Group</label>
-                <select
-                  value={formData.retailer_group || "Individual"}
-                  onChange={(e) => handleChange("retailer_group", e.target.value)}
-                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
-                >
-                  <option value="Individual">Individual</option>
-                  <option value="Group A">Group A</option>
-                  <option value="Group B">Group B</option>
-                  <option value="Group C">Group C</option>
-                  <option value="Group D">Group D</option>
-                  <option value="Group E">Group E</option>
-                </select>
-              </div>
-
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-semibold text-zinc-600">Contact Email</label>
-                <input
-                  type="email"
-                  value={formData.email || ""}
-                  onChange={(e) => handleChange("email", e.target.value)}
-                  placeholder="e.g. buyer@retailer.com"
-                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
-                />
-              </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Contact Email</label>
+              <input
+                type="email"
+                value={formData.email || ""}
+                onChange={(e) => handleChange("email", e.target.value)}
+                placeholder="e.g. buyer@retailer.com"
+                className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+              />
             </div>
           </div>
 

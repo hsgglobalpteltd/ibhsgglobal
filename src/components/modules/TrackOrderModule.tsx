@@ -1385,9 +1385,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const driverMatch = (order.driver || "").toLowerCase().includes(lowerQ);
     const invoiceMatch = (order.invoice_number || "").toLowerCase().includes(lowerQ);
     const creditNoteMatch = (order.credit_note_number || "").toLowerCase().includes(lowerQ);
+    const linkStoreMatch = (order.link_store || "").toLowerCase().includes(lowerQ);
     const markMatch = (order.mark || "").trim().toLowerCase() === lowerQ;
 
-    return idMatch || doMatch || refMatch || addressMatch || postcodeMatch || driverMatch || invoiceMatch || creditNoteMatch || markMatch;
+    return idMatch || doMatch || refMatch || addressMatch || postcodeMatch || driverMatch || invoiceMatch || creditNoteMatch || linkStoreMatch || markMatch;
   }, []);
 
   // Filter orders for Pending and Complete lists
@@ -2751,6 +2752,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         // 1. Silent Background API request
         const payloadData: any = {
           id: matchedOrder.id,
+          ref_number: matchedOrder.ref_number,
           completed: "true",
           invoice_number: invoiceNumber || "",
           invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
@@ -4538,6 +4540,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       action: "update",
       data: {
         id: order.id,
+        ref_number: order.ref_number,
         completed: "true",
         invoice_number: invoiceNum || "",
         invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
@@ -4793,6 +4796,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         data: isReturn 
           ? {
               id: editInvoiceOrder.id,
+              ref_number: editInvoiceOrder.ref_number,
               credit_note_number: editInvoiceNum.trim(),
               invoice_amount: editInvoiceAmount.trim(),
               photo_invoice: finalPhotoInvoiceUrl,
@@ -4800,6 +4804,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             }
           : {
               id: editInvoiceOrder.id,
+              ref_number: editInvoiceOrder.ref_number,
               invoice_number: editInvoiceNum.trim(),
               invoice_amount: editInvoiceAmount.trim(),
               photo_invoice: finalPhotoInvoiceUrl,
@@ -6640,6 +6645,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                         <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Mark</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Reference Number</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Type</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Store ID</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Address</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Poscode</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Method</th>
@@ -6678,11 +6684,28 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             statusBadge = "bg-emerald-50 text-emerald-700 border-emerald-200";
                           }
 
+                          const currentInputValue = linkStoreInputValues[order.id] !== undefined 
+                            ? linkStoreInputValues[order.id] 
+                            : (order.link_store || "");
+                          const isDropdownOpen = activeLinkStoreDropdown === order.id;
+
+                          const filteredStores = currentInputValue.trim()
+                            ? stores
+                                .filter((s: any) => {
+                                  const q = currentInputValue.trim().toLowerCase();
+                                  const idStr = String(s.id || "").toLowerCase();
+                                  const nameStr = String(s["Display Name"] || s.display_name || "").toLowerCase();
+                                  const addrStr = String(s.Address || s.address || "").toLowerCase();
+                                  return idStr.includes(q) || nameStr.includes(q) || addrStr.includes(q);
+                                })
+                                .slice(0, 5)
+                            : stores.slice(0, 5);
+
                           return (
                             <React.Fragment key={`${order.id}-${idx}`}>
                               {showDivider && (
                                 <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
-                                  <td colSpan={10} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                  <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
                                     📅 {dateStr}
                                   </td>
                                 </tr>
@@ -6762,6 +6785,63 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
                                   {renderTypeCell(order)}
+                                </td>
+                                <td className="p-3 w-28 align-middle border-b border-zinc-200 relative text-center">
+                                  <div className="relative inline-block w-20">
+                                    <input
+                                      type="text"
+                                      value={currentInputValue}
+                                      placeholder="-"
+                                      maxLength={10}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: val }));
+                                        setActiveLinkStoreDropdown(order.id);
+                                      }}
+                                      onFocus={() => setActiveLinkStoreDropdown(order.id)}
+                                      onBlur={() => {
+                                        // Slight delay so clicking dropdown option registers
+                                        setTimeout(() => {
+                                          setActiveLinkStoreDropdown((current) => (current === order.id ? null : current));
+                                          handleUpdateOrderLinkStore(order, currentInputValue);
+                                        }, 200);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          setActiveLinkStoreDropdown(null);
+                                          handleUpdateOrderLinkStore(order, currentInputValue);
+                                          (e.target as HTMLInputElement).blur();
+                                        }
+                                      }}
+                                      className="w-full text-center px-1.5 py-1 text-xs font-semibold uppercase rounded border border-slate-300 bg-white text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] shadow-2xs"
+                                    />
+                                    {isDropdownOpen && filteredStores.length > 0 && (
+                                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 w-56 bg-white border border-slate-200 rounded-md shadow-lg z-50 overflow-hidden text-left divide-y divide-slate-100">
+                                        {filteredStores.map((st: any) => {
+                                          const sId = String(st.id || "");
+                                          const sName = String(st["Display Name"] || st.display_name || "");
+                                          return (
+                                            <button
+                                              key={sId}
+                                              type="button"
+                                              onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: sId }));
+                                                setActiveLinkStoreDropdown(null);
+                                                handleUpdateOrderLinkStore(order, sId);
+                                              }}
+                                              className="w-full px-2.5 py-1.5 text-xs hover:bg-[#F0F4F9] text-left flex flex-col transition-colors cursor-pointer"
+                                            >
+                                              <span className="font-bold text-zinc-900 flex items-center justify-between">
+                                                <span>{sId}</span>
+                                                <span className="text-[10px] text-zinc-400 font-normal truncate max-w-[120px]">{sName}</span>
+                                              </span>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
                                   {order.deliver_to}

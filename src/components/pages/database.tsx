@@ -4,7 +4,6 @@ import * as React from "react";
 import { FeatureCard } from "../feature-card";
 import { ProductsDatabaseModule } from "../modules/ProductsDatabaseModule";
 import { StoresDatabaseModule } from "../modules/StoresDatabaseModule";
-import { RetailerSkusModule } from "../modules/RetailerSkusModule";
 import { PhonebookModule } from "../modules/PhonebookModule";
 import { EmployeesModule } from "../modules/EmployeesModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
@@ -68,8 +67,6 @@ export function DatabasePage({ profile, breadcrumbPath }: DatabasePageProps) {
         return <ProductsDatabaseModule profile={profile} />;
       case "Stores Database":
         return <StoresDatabaseModule profile={profile} />;
-      case "Retailer SKU's":
-        return <RetailerSkusModule profile={profile} />;
       case "Phonebook":
         return <PhonebookModule profile={profile} />;
       case "Employees":

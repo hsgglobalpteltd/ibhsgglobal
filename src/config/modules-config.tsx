@@ -64,10 +64,6 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
         description: "Manage retailers, store registrations, locations, and contact information.",
       },
       {
-        title: "Retailer SKU's",
-        description: "Manage retailer pricing tiers, promotions, product listings, and registrations."
-      },
-      {
         title: "Phonebook",
         description: "Manage contact directories, affiliations, and phone communications registry."
       },
@@ -84,6 +80,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Direct Order",
         description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
+      },
+      {
+        title: "Market Price",
+        description: "Manage listing sheets, retailer clusters, RSP shelf pricing tiers, and promotions."
       },
       {
         title: "Snap Deals",
