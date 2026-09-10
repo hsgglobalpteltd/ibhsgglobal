@@ -16,6 +16,16 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     modules: []
   },
   {
+    id: "Workspace",
+    label: "Workspace",
+    modules: [
+      {
+        title: "Project Management",
+        description: "Master Gantt charts, Milestone boundaries, Action execution board, and team workload.",
+      }
+    ]
+  },
+  {
     id: "Frontline",
     label: "Frontline",
     modules: [

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { MenuButton } from "./menu-button";
-import { ChevronLeft, ChevronRight, LogOut, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut, Search, X, FolderKanban } from "lucide-react";
 import { menuConfig } from "@/config/menu-config";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canAccessPage, canViewModule } from "@/lib/permissions";
@@ -149,6 +149,28 @@ export function SidePanel({
               Connecting Teams. Bridging Operations.
             </p>
           </div>
+        </div>
+
+        {/* Plain, Small Workspace Button (Between Logo and Search/Menu) */}
+        <div className="px-1">
+          {isCollapsed ? (
+            <button
+              type="button"
+              onClick={() => { window.location.href = "/workspace"; }}
+              className="flex w-10 h-8 items-center justify-center rounded-md transition-all text-xs font-semibold text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/70 border border-slate-200 bg-white cursor-pointer shadow-2xs"
+              title="Workspace"
+            >
+              W
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => { window.location.href = "/workspace"; }}
+              className="w-full flex items-center justify-center h-7 px-2.5 rounded-md transition-all text-[11px] font-semibold text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/70 border border-slate-200/80 bg-white cursor-pointer shadow-2xs active:scale-98"
+            >
+              Workspace
+            </button>
+          )}
         </div>
 
         {/* Search Input Bar (Gmail / Google Workspace style) */}

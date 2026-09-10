@@ -33,9 +33,13 @@ import {
   ArrowRight,
   ExternalLink,
   Square,
-  Search
+  Search,
+  Download,
+  FileDown,
+  Image as ImageIcon
 } from "lucide-react";
 import * as XLSX from "xlsx";
+import { PDFDocument } from "pdf-lib";
 
 interface SKUItem {
   sku: string;
@@ -84,6 +88,7 @@ interface TrackOrderDraft {
   latitude?: number | string;
   longitude?: number | string;
   pdfImages?: string[];
+  link_store?: string;
 }
 
 interface LogEntry {
@@ -119,10 +124,12 @@ interface DbOrder {
   photo_picker_proof?: string;
   photo_return_paper?: string;
   photo_return_paper_admin?: string;
+  photo_invoice?: string;
   driver?: string;
   invoice_number?: string;
   credit_note_number?: string;
   invoice_amount?: string;
+  link_store?: string;
 }
 
 interface TrackOrderModuleProps {
@@ -290,6 +297,64 @@ function getLogImagesForAction(action: string, order: DbOrder, logPhotoUrl?: str
   return [];
 }
 
+// Parse Image URL list from JSON array string, comma-separated string, or direct URL
+function parseImageUrlList(val: any): string[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val.filter(Boolean).map(String);
+  if (typeof val === "string") {
+    const trimmed = val.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith("[") || trimmed.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) return parsed.filter(Boolean).map(String);
+        if (parsed && typeof parsed === "object") {
+          return [parsed.url || parsed.uri || ""].filter(Boolean);
+        }
+      } catch (_) {}
+    }
+    if (trimmed.includes(",")) {
+      return trimmed.split(",").map((v) => v.trim()).filter(Boolean);
+    }
+    return [trimmed];
+  }
+  return [];
+}
+
+// Image Base64 Loader Helper for jsPDF (resilient fetch + canvas fallback)
+const loadImageBase64 = async (url: string): Promise<string> => {
+  if (!url) return "";
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Fetch failed");
+    const blob = await res.blob();
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(blob);
+    });
+  } catch (_) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = url;
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.width;
+          canvas.height = img.height;
+          const ctx = canvas.getContext("2d");
+          ctx?.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL("image/jpeg", 0.85));
+        } catch {
+          resolve("");
+        }
+      };
+      img.onerror = () => resolve("");
+    });
+  }
+};
 
 // Format Unix Timestamp to dd/mm/yyyy hh:mm
 function formatTimestamp(ts: any) {
@@ -486,6 +551,49 @@ export const isOrderDoneToday = (order: DbOrder): boolean => {
   return false;
 };
 
+export const parseDriverCompletedLogs = (rawLogs: string): DriverLogCompletedEntry[] => {
+  try {
+    const parsed = typeof rawLogs === "string" ? JSON.parse(rawLogs || "[]") : rawLogs;
+    if (Array.isArray(parsed)) {
+      return parsed.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
+    }
+  } catch (_) {}
+  return [];
+};
+
+export const parseDriverActiveOrderIds = (rawActive: string): string[] => {
+  try {
+    const parsed = typeof rawActive === "string" ? JSON.parse(rawActive || "[]") : rawActive;
+    if (Array.isArray(parsed)) return parsed;
+  } catch (_) {}
+  return [];
+};
+
+export const parseOutsourceDriverDetails = (raw: any): { name?: string; plate?: string; phone?: string; formatted: string } => {
+  if (!raw) return { formatted: "" };
+  if (typeof raw === "object") {
+    const name = raw.name || raw.driver_name || raw.driverName || raw.driver || "";
+    const plate = raw.plate || raw.plate_number || raw.vehicle_number || raw.car_plate || raw.vehicle || "";
+    const phone = raw.phone || raw.contact || raw.phone_number || raw.mobile || "";
+    const parts = [name, plate, phone].filter(Boolean);
+    return { name, plate, phone, formatted: parts.join(" / ") };
+  }
+  const str = String(raw).trim();
+  if (!str) return { formatted: "" };
+  try {
+    const parsed = JSON.parse(str);
+    if (typeof parsed === "object" && parsed !== null) {
+      const name = parsed.name || parsed.driver_name || parsed.driverName || parsed.driver || "";
+      const plate = parsed.plate || parsed.plate_number || parsed.vehicle_number || parsed.car_plate || parsed.vehicle || "";
+      const phone = parsed.phone || parsed.contact || parsed.phone_number || parsed.mobile || "";
+      const parts = [name, plate, phone].filter(Boolean);
+      return { name, plate, phone, formatted: parts.length > 0 ? parts.join(" / ") : str };
+    }
+  } catch (_) {}
+  return { formatted: str };
+};
+
+
 export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [driverLogs, setDriverLogs] = React.useState<DriverLogRecord[]>([]);
   const [activeDriverLogSubTab, setActiveDriverLogSubTab] = React.useState<"online" | "closed">("online");
@@ -496,6 +604,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [forceCloseLoading, setForceCloseLoading] = React.useState<boolean>(false);
 
   const [driverSearchQuery, setDriverSearchQuery] = React.useState<string>("");
+  const [driverLogPeriodFilter, setDriverLogPeriodFilter] = React.useState<"week" | "month" | "all" | "custom">("week");
+  const [driverLogStartDate, setDriverLogStartDate] = React.useState<string>("");
+  const [driverLogEndDate, setDriverLogEndDate] = React.useState<string>("");
 
   const matchesDriverRecord = React.useCallback((record: DriverLogRecord, query: string) => {
     if (!query) return true;
@@ -531,25 +642,77 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   const closedDriverJobs = React.useMemo(() => {
     const q = driverSearchQuery.trim().toLowerCase();
-    const oneWeekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const oneMonthAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+    let customStartMs = 0;
+    let customEndMs = 0;
+    if (driverLogPeriodFilter === "custom") {
+      if (driverLogStartDate) {
+        const s = new Date(driverLogStartDate);
+        s.setHours(0, 0, 0, 0);
+        customStartMs = s.getTime();
+      }
+      if (driverLogEndDate) {
+        const e = new Date(driverLogEndDate);
+        e.setHours(23, 59, 59, 999);
+        customEndMs = e.getTime();
+      }
+    }
 
     return driverLogs
       .filter((d) => (d.status || "").trim().toUpperCase() === "OFF")
       .filter((d) => {
-        // When searching, search across ALL historical records (regardless of date)
-        if (q) {
-          return matchesDriverRecord(d, q);
+        // Query search filter
+        if (q && !matchesDriverRecord(d, q)) {
+          return false;
         }
-        // When query is empty, only show the latest 1 week of records
+        // Period filter (This Week (default) / This Month / All / Custom Range)
+        if (driverLogPeriodFilter === "all") return true;
         const t = Number(d.end_time) || Number(d.start_time) || 0;
-        return t >= oneWeekAgo;
+        if (driverLogPeriodFilter === "week") {
+          return t >= oneWeekAgo;
+        }
+        if (driverLogPeriodFilter === "month") {
+          return t >= oneMonthAgo;
+        }
+        if (driverLogPeriodFilter === "custom") {
+          if (customStartMs > 0 && t < customStartMs) return false;
+          if (customEndMs > 0 && t > customEndMs) return false;
+          return true;
+        }
+        return true;
       })
       .sort((a, b) => {
         const tA = Number(a.start_time) || 0;
         const tB = Number(b.start_time) || 0;
         return tB - tA;
       });
-  }, [driverLogs, driverSearchQuery, matchesDriverRecord]);
+  }, [driverLogs, driverSearchQuery, driverLogPeriodFilter, driverLogStartDate, driverLogEndDate, matchesDriverRecord]);
+
+  // Global map of driver reported discrepancies keyed by Order ID and DO/Ref Number
+  const orderDiscrepanciesMap = React.useMemo(() => {
+    const map: Record<string, DriverLogDiscrepancy[]> = {};
+    for (const record of driverLogs) {
+      const logs = parseDriverCompletedLogs(record.driver_logs);
+      for (const log of logs) {
+        if (log.discrepancies && log.discrepancies.length > 0) {
+          const rawId = String(log.id || "").trim();
+          if (rawId) {
+            map[rawId] = log.discrepancies;
+            // Also map by individual parts if formatted as DO_REF
+            const parts = rawId.split("_");
+            if (parts.length >= 2) {
+              map[parts[0]] = log.discrepancies;
+              map[parts[1]] = log.discrepancies;
+            }
+          }
+        }
+      }
+    }
+    return map;
+  }, [driverLogs]);
 
   // Auto switch subtab to closed if no online drivers
   React.useEffect(() => {
@@ -579,14 +742,21 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [drafts, setDrafts] = React.useState<TrackOrderDraft[]>([]);
   const [dbOrders, setDbOrders] = React.useState<DbOrder[]>([]);
   const [pdfLoading, setPdfLoading] = React.useState<boolean>(false);
+  const [pdfLoadingText, setPdfLoadingText] = React.useState<string>("Parsing DO PDF...");
   const [invoiceLoading, setInvoiceLoading] = React.useState<boolean>(false);
+  const [invoiceLoadingText, setInvoiceLoadingText] = React.useState<string>("Parsing Invoices...");
+  const [creditNoteLoading, setCreditNoteLoading] = React.useState<boolean>(false);
+  const [creditNoteLoadingText, setCreditNoteLoadingText] = React.useState<string>("Parsing Credit Notes...");
   const [sendingDraftIds, setSendingDraftIds] = React.useState<Record<string, boolean>>({});
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const invoicePdfInputRef = React.useRef<HTMLInputElement>(null);
   const invoiceExcelInputRef = React.useRef<HTMLInputElement>(null);
+  const creditNotePdfInputRef = React.useRef<HTMLInputElement>(null);
+  const creditNoteExcelInputRef = React.useRef<HTMLInputElement>(null);
   const doExcelInputRef = React.useRef<HTMLInputElement>(null);
 
   const [isInvoiceUploadChoiceOpen, setIsInvoiceUploadChoiceOpen] = React.useState(false);
+  const [isCreditNoteUploadChoiceOpen, setIsCreditNoteUploadChoiceOpen] = React.useState(false);
   const [isDoUploadChoiceOpen, setIsDoUploadChoiceOpen] = React.useState(false);
 
   // Detail panel / Drawer states
@@ -655,10 +825,119 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [editInvoiceOrder, setEditInvoiceOrder] = React.useState<DbOrder | null>(null);
   const [editInvoiceNum, setEditInvoiceNum] = React.useState<string>("");
   const [editInvoiceAmount, setEditInvoiceAmount] = React.useState<string>("");
+  const [editInvoicePhotoUrl, setEditInvoicePhotoUrl] = React.useState<string>("");
+  const [editInvoicePhotoFile, setEditInvoicePhotoFile] = React.useState<File | null>(null);
+  const [editInvoiceUploading, setEditInvoiceUploading] = React.useState<boolean>(false);
 
   // Revoke Complete Confirmation States
   const [isRevokeCompleteConfirmOpen, setIsRevokeCompleteConfirmOpen] = React.useState<boolean>(false);
   const [pendingRevokeCompleteOrder, setPendingRevokeCompleteOrder] = React.useState<DbOrder | null>(null);
+
+  // Unknown Store ID Confirmation States
+  const [isUnknownStoreModalOpen, setIsUnknownStoreModalOpen] = React.useState<boolean>(false);
+  const [unknownStoreInfo, setUnknownStoreInfo] = React.useState<{ storeId: string; pendingDrafts: TrackOrderDraft[]; doNumber: string } | null>(null);
+
+  // Inline Link Store editing state for Complete tables
+  const [activeLinkStoreDropdown, setActiveLinkStoreDropdown] = React.useState<string | null>(null);
+  const [linkStoreInputValues, setLinkStoreInputValues] = React.useState<Record<string, string>>({});
+
+  // Helper to resolve store info from store_id or store ID lookup
+  const resolveStoreById = React.useCallback((storeId: string) => {
+    if (!storeId || !stores.length) return null;
+    const cleanId = String(storeId).trim().toLowerCase();
+    const matched = stores.find((s: any) => String(s.id || "").trim().toLowerCase() === cleanId);
+    if (!matched) return null;
+
+    const retailerId = matched["Retailers ID"] !== undefined ? matched["Retailers ID"] : (matched["Retailer ID"] || matched.retailers_id || matched.retailer_id);
+    const retailer = retailers.find((r: any) => String(r.id || "").trim().toLowerCase() === String(retailerId || "").trim().toLowerCase());
+    const rawRetailerName = String(retailer ? (retailer["Display Name"] || retailer.display_name || "") : "").trim();
+    const retailerNamePrefix = rawRetailerName ? rawRetailerName.substring(0, 6) : "";
+    const storeDisplayName = String(matched["Display Name"] || matched.display_name || "").trim();
+    const formattedDeliverTo = retailerNamePrefix ? `${retailerNamePrefix} - ${storeDisplayName}` : storeDisplayName;
+
+    let storePoscode = "";
+    const addr = String(matched.Address || matched.address || "");
+    const postcodeMatch = addr.match(/\b\d{6}\b/);
+    if (postcodeMatch && postcodeMatch[0]) {
+      storePoscode = postcodeMatch[0];
+    }
+
+    return {
+      store: matched,
+      storeId: String(matched.id || storeId),
+      deliverTo: formattedDeliverTo,
+      poscode: storePoscode,
+      address: addr,
+      retailerName: rawRetailerName
+    };
+  }, [stores, retailers]);
+
+  // Handler to update Link Store on existing orders in Complete tables
+  const handleUpdateOrderLinkStore = async (order: DbOrder, newStoreId: string) => {
+    const cleanStoreId = String(newStoreId || "").trim();
+    const currentLinkStore = String(order.link_store || "").trim();
+    if (cleanStoreId === currentLinkStore) return;
+
+    let updatedDeliverTo = order.deliver_to;
+    let updatedPoscode = order.poscode;
+
+    if (cleanStoreId) {
+      const resolved = resolveStoreById(cleanStoreId);
+      if (resolved) {
+        updatedDeliverTo = resolved.deliverTo;
+        if (resolved.poscode) {
+          updatedPoscode = resolved.poscode;
+        }
+      }
+    }
+
+    // Optimistically update local state
+    setDbOrders((prev) =>
+      prev.map((o) =>
+        o.id === order.id
+          ? {
+              ...o,
+              link_store: cleanStoreId,
+              deliver_to: updatedDeliverTo,
+              poscode: updatedPoscode
+            }
+          : o
+      )
+    );
+
+    // Sync to backend Supabase via Cloudflare Worker
+    try {
+      const payload = {
+        action: "update",
+        data: {
+          id: order.id,
+          link_store: cleanStoreId,
+          deliver_to: updatedDeliverTo,
+          poscode: updatedPoscode
+        }
+      };
+
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server status ${res.status}`);
+      }
+      const result = await res.json();
+      if (!result.success) {
+        throw new Error(result.error || "Update failed");
+      }
+      showToast(`Store linked: ${cleanStoreId ? cleanStoreId : "Cleared"}`, "success");
+    } catch (err: any) {
+      console.error("Failed to update link_store:", err);
+      showToast("Failed to save Link Store: " + err.message, "error");
+      // Rollback
+      fetchDatabaseOrders();
+    }
+  };
 
   // Lightbox modal state for viewing images in full size
   const [activeLightboxImage, setActiveLightboxImage] = React.useState<string | null>(null);
@@ -685,6 +964,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Map Panel Open state
   const [isMapOpen, setIsMapOpen] = React.useState<boolean>(false);
   const [mapFilter, setMapFilter] = React.useState<"pending" | "complete">("pending");
+  const [mapSearchQuery, setMapSearchQuery] = React.useState<string>("");
 
   // OneMap API settings from Setting_API
   const [oneMapToken, setOneMapToken] = React.useState<string>("");
@@ -1549,6 +1829,64 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   };
 
+  // Render return order due date cell with status indicator for Pending returns
+  const renderReturnDueDateCell = (order: DbOrder) => {
+    if (!order.deadline) return <span className="text-zinc-400 font-normal">—</span>;
+    const deadline = Number(order.deadline);
+    if (isNaN(deadline) || deadline <= 0) return <span className="text-zinc-400 font-normal">—</span>;
+
+    const dateFormatted = formatDateStr(deadline);
+
+    // If order is completed or collected, show standard clean date without urgent badges
+    const isPending = order.status === "Pending" || order.status === "Ready to Collect" || order.status === "Out for Collection";
+    if (!isPending) {
+      return <span className="text-zinc-600 font-normal">{dateFormatted}</span>;
+    }
+
+    // Compare with today (end of the due date at 23:59:59)
+    const dueDate = new Date(deadline);
+    dueDate.setHours(23, 59, 59, 999);
+    const dueTime = dueDate.getTime();
+
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const diff = dueTime - now;
+
+    if (diff < 0) {
+      // Overdue
+      return (
+        <div className="flex items-center gap-1.5" title={`Overdue! Due on ${dateFormatted}`}>
+          <span className="text-red-600 font-semibold">{dateFormatted}</span>
+          <span className="inline-flex items-center px-1.5 py-0.2 rounded border text-[9px] font-bold bg-red-50 text-red-700 border-red-200 shrink-0">
+            Overdue
+          </span>
+        </div>
+      );
+    } else if (diff <= oneDayMs) {
+      // Due Today
+      return (
+        <div className="flex items-center gap-1.5" title={`Due today (${dateFormatted})`}>
+          <span className="text-amber-700 font-semibold">{dateFormatted}</span>
+          <span className="inline-flex items-center px-1.5 py-0.2 rounded border text-[9px] font-bold bg-amber-50 text-amber-800 border-amber-300 shrink-0">
+            Due Today
+          </span>
+        </div>
+      );
+    } else if (diff <= 2 * oneDayMs) {
+      // Due Tomorrow / Near
+      return (
+        <div className="flex items-center gap-1.5" title={`Due soon on ${dateFormatted}`}>
+          <span className="text-zinc-700 font-medium">{dateFormatted}</span>
+          <span className="inline-flex items-center px-1.5 py-0.2 rounded border text-[9px] font-medium bg-amber-50/60 text-amber-700 border-amber-200 shrink-0">
+            Due Soon
+          </span>
+        </div>
+      );
+    }
+
+    return <span className="text-zinc-600 font-normal">{dateFormatted}</span>;
+  };
+
   // Render type cell badge or clock icon
   const renderTypeCell = (order: DbOrder) => {
     const val = order.type || "Normal";
@@ -1598,6 +1936,33 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
     
     return <span className="text-zinc-500">Normal</span>;
+  };
+
+  // Helper to render driver reported issues / discrepancy indicator badge
+  const renderDiscrepancyBadge = (order: DbOrder) => {
+    const combinedKey = `${order.do_number}_${order.ref_number || "NA"}`;
+    const discrepancies =
+      orderDiscrepanciesMap[order.id] ||
+      orderDiscrepanciesMap[combinedKey] ||
+      orderDiscrepanciesMap[order.do_number] ||
+      (order.ref_number ? orderDiscrepanciesMap[order.ref_number] : undefined);
+
+    if (!discrepancies || discrepancies.length === 0) return null;
+
+    const tooltipLines = discrepancies.map(
+      (d) => `• ${d.sku}: Ordered ${d.qty_ordered}, Delivered ${d.qty_delivered}${d.remark ? ` (${d.remark})` : ""}`
+    );
+    const tooltipText = `Driver Reported Issue:\n${tooltipLines.join("\n")}`;
+
+    return (
+      <span
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-300 text-[10px] font-bold cursor-help shrink-0 shadow-2xs hover:bg-amber-100 transition-colors"
+        title={tooltipText}
+      >
+        <AlertTriangle size={11} className="text-amber-600 shrink-0" />
+        <span>{discrepancies.length} Issue{discrepancies.length > 1 ? "s" : ""}</span>
+      </span>
+    );
   };
 
   const getExcelColumnLabel = (index: number): string => {
@@ -1820,6 +2185,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     // 1. Deliveries (Type !== "Return")
     const targetDeliveries = dbOrders.filter((o) => {
       if (o.type === "Return") return false;
+      if (!matchesOrderSearch(o, mapSearchQuery)) return false;
       
       if (mapFilter === "pending") {
         if (String(o.completed) === "true" || o.completed === true) return false;
@@ -1885,6 +2251,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const targetReturns = dbOrders.filter((o) => {
       if (o.type !== "Return") return false;
       if (o.status === "Complete") return false; // Exclude complete status as requested
+      if (!matchesOrderSearch(o, mapSearchQuery)) return false;
 
       if (mapFilter === "pending") {
         if (String(o.completed) === "true" || o.completed === true) return false;
@@ -1948,7 +2315,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       });
 
     return [...deliveryPins, ...returnPins];
-  }, [dbOrders, stores, mapFilter]);
+  }, [dbOrders, stores, mapFilter, mapSearchQuery, matchesOrderSearch]);
 
   // View Logs Dialog
   const handleOpenLogs = React.useCallback((order: DbOrder) => {
@@ -2103,45 +2470,183 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
 
     setInvoiceLoading(true);
-    showToast("Processing bulk invoices...", "info");
+    setInvoiceLoadingText("Reading PDF pages...");
+    showToast("Reading PDF document for batch parsing...", "info");
 
     try {
-      // Convert file to base64
-      const base64String = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = () => resolve((reader.result as string).split(",")[1]);
-        reader.onerror = (err) => reject(err);
-      });
-
-      // Call the Gemini invoice parser backend
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/parse-invoice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pdf: base64String, type: "application/pdf" })
-      });
-
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        throw new Error(errBody.error || `Server error status ${res.status}`);
+      // 1. Render all page thumbnails into invoicePdfImages via pdf.js
+      let invoicePdfImages: string[] = [];
+      try {
+        const pdfjsLib = await loadPdfJs();
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        
+        for (let i = 1; i <= pdfDoc.numPages; i++) {
+          const page = await pdfDoc.getPage(i);
+          const viewport = page.getViewport({ scale: 1.5 });
+          
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const context = canvas.getContext("2d");
+          
+          if (context) {
+            await page.render({ canvasContext: context, viewport }).promise;
+            let quality = 0.8;
+            let dataUrl = canvas.toDataURL("image/jpeg", quality);
+            while (dataUrl.length > 340000 && quality > 0.15) {
+              quality -= 0.1;
+              dataUrl = canvas.toDataURL("image/jpeg", quality);
+            }
+            invoicePdfImages.push(dataUrl);
+          }
+        }
+      } catch (pdfErr) {
+        console.error("Invoice PDF page rendering failed:", pdfErr);
       }
 
-      const parsed = await res.json();
-      const parsedInvoices = parsed.data;
+      const arrayBuffer = await file.arrayBuffer();
+      const srcDoc = await PDFDocument.load(arrayBuffer);
+      const totalPages = srcDoc.getPageCount();
 
-      if (!parsed.success || !Array.isArray(parsedInvoices)) {
-        throw new Error("Invalid response format from invoice parser.");
+      if (totalPages === 0) {
+        throw new Error("The uploaded PDF document contains no pages.");
       }
 
-      showToast(`Parsed ${parsedInvoices.length} invoices. Matching references...`, "info");
+      const CHUNK_SIZE = 7; // Auto-split into 7 pages per batch
+      const totalBatches = Math.ceil(totalPages / CHUNK_SIZE);
+      const allParsedInvoices: any[] = [];
+
+      for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+        const startPage = batchIdx * CHUNK_SIZE;
+        const endPage = Math.min(startPage + CHUNK_SIZE, totalPages);
+
+        const statusMsg = totalBatches > 1
+          ? `Parsing Batch ${batchIdx + 1}/${totalBatches} (Pages ${startPage + 1}-${endPage})...`
+          : `Parsing ${totalPages} pages...`;
+
+        setInvoiceLoadingText(statusMsg);
+        showToast(statusMsg, "info");
+
+        // Create sub-document for this batch
+        const subDoc = await PDFDocument.create();
+        const pageIndices: number[] = [];
+        for (let p = startPage; p < endPage; p++) {
+          pageIndices.push(p);
+        }
+        const copiedPages = await subDoc.copyPages(srcDoc, pageIndices);
+        copiedPages.forEach((p) => subDoc.addPage(p));
+
+        const subPdfBase64 = await subDoc.saveAsBase64();
+
+        // Call Gemini invoice parser
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/parse-invoice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pdf: subPdfBase64, type: "application/pdf" })
+        });
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.error || `Batch ${batchIdx + 1} server error (status ${res.status})`);
+        }
+
+        const parsed = await res.json();
+        let batchInvoices = parsed.data;
+
+        if (parsed.success && batchInvoices) {
+          let list: any[] = [];
+          if (Array.isArray(batchInvoices)) {
+            list = batchInvoices;
+          } else if (typeof batchInvoices === "object") {
+            if (Array.isArray(batchInvoices.invoices)) {
+              list = batchInvoices.invoices;
+            } else if (Array.isArray(batchInvoices.data)) {
+              list = batchInvoices.data;
+            } else {
+              list = [batchInvoices];
+            }
+          }
+
+          // Adjust pageNumbers to global index
+          const adjustedList = list.map((inv: any) => {
+            if (Array.isArray(inv.pageNumbers)) {
+              return {
+                ...inv,
+                pageNumbers: inv.pageNumbers.map((pNum: any) => {
+                  const num = parseInt(pNum, 10);
+                  return isNaN(num) ? pNum : num + startPage;
+                })
+              };
+            }
+            return {
+              ...inv,
+              pageNumbers: [startPage + 1]
+            };
+          });
+
+          allParsedInvoices.push(...adjustedList);
+        }
+
+        // Polite sleep between batches if more batches remain
+        if (batchIdx < totalBatches - 1) {
+          setInvoiceLoadingText(`Batch ${batchIdx + 1} done. Preparing next batch...`);
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+      }
+
+      // Group and Merge multi-page split invoices across batches (e.g. Page 1 in Batch 1, Page 2 in Batch 2)
+      const mergedInvoicesMap = new Map<string, any>();
+      for (const inv of allParsedInvoices) {
+        const invNum = String(inv.invoiceNumber || "").trim();
+        const poRef = String(inv.poRef || "").trim();
+        const key = (invNum || poRef).toLowerCase();
+        if (!key) continue;
+
+        if (!mergedInvoicesMap.has(key)) {
+          mergedInvoicesMap.set(key, {
+            ...inv,
+            items: Array.isArray(inv.items) ? [...inv.items] : [],
+            pageNumbers: Array.isArray(inv.pageNumbers) ? [...inv.pageNumbers] : []
+          });
+        } else {
+          const existing = mergedInvoicesMap.get(key);
+          // 1. Keep invoice number if not set
+          if (invNum && !existing.invoiceNumber) {
+            existing.invoiceNumber = invNum;
+          }
+          // 2. Keep PO ref if not set
+          if (poRef && !existing.poRef) {
+            existing.poRef = poRef;
+          }
+          // 3. Keep total invoice amount from footer page if present
+          if (inv.invoiceAmount && String(inv.invoiceAmount).trim() !== "") {
+            existing.invoiceAmount = inv.invoiceAmount;
+          }
+          // 4. Combine items from Page 1 and Page 2
+          if (Array.isArray(inv.items) && inv.items.length > 0) {
+            existing.items = [...(existing.items || []), ...inv.items];
+          }
+          // 5. Combine page numbers
+          if (Array.isArray(inv.pageNumbers) && inv.pageNumbers.length > 0) {
+            existing.pageNumbers = Array.from(new Set([...(existing.pageNumbers || []), ...inv.pageNumbers]));
+          }
+        }
+      }
+
+      const unifiedInvoices = Array.from(mergedInvoicesMap.values());
+
+      showToast(`Successfully extracted ${unifiedInvoices.length} unique invoices across all batches. Matching orders & uploading invoice photos...`, "info");
+      setInvoiceLoadingText("Uploading invoice photos...");
 
       let matchedCount = 0;
       let ignoredBlankRef = 0;
       let notDeliveredCount = 0;
       let noMatchCount = 0;
 
-      for (const inv of parsedInvoices) {
-        const { invoiceNumber, poRef, invoiceAmount, items } = inv;
+      for (let invIdx = 0; invIdx < unifiedInvoices.length; invIdx++) {
+        const inv = unifiedInvoices[invIdx];
+        const { invoiceNumber, poRef, invoiceAmount, items, pageNumbers } = inv;
 
         if (!poRef || !poRef.trim()) {
           ignoredBlankRef++;
@@ -2158,16 +2663,56 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           continue;
         }
 
-        // Strict Requirement: Only update orders that are already delivered / collected
+        // Allow updating delivered and already completed orders
         const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
         const isDelivered = orderStatus === "delivered" || orderStatus === "collected" || orderStatus === "return collected";
+        const isCompleted = matchedOrder.completed === "true" || matchedOrder.completed === true;
 
-        if (!isDelivered) {
+        if (!isDelivered && !isCompleted) {
           notDeliveredCount++;
           continue;
         }
 
         matchedCount++;
+
+        // Upload matched invoice page photo to Cloudflare R2
+        let uploadedPhotoInvoiceUrl = matchedOrder.photo_invoice || "";
+        const itemPageIndices = Array.isArray(pageNumbers) && pageNumbers.length > 0
+          ? pageNumbers.map((pn: any) => parseInt(pn, 10) - 1).filter((n: number) => !isNaN(n) && n >= 0 && n < invoicePdfImages.length)
+          : [];
+
+        if (itemPageIndices.length > 0 && invoicePdfImages.length > 0) {
+          try {
+            const firstPageDataUrl = invoicePdfImages[itemPageIndices[0]];
+            if (firstPageDataUrl && firstPageDataUrl.startsWith("data:image/")) {
+              setInvoiceLoadingText(`Uploading photo for invoice ${invIdx + 1}/${unifiedInvoices.length}...`);
+              const base64Content = firstPageDataUrl.split(",")[1];
+              const byteCharacters = atob(base64Content);
+              const byteNumbers = new Array(byteCharacters.length);
+              for (let b = 0; b < byteCharacters.length; b++) {
+                byteNumbers[b] = byteCharacters.charCodeAt(b);
+              }
+              const byteArray = new Uint8Array(byteNumbers);
+              const blob = new Blob([byteArray], { type: "image/jpeg" });
+
+              const fileName = `Track_Orders/Invoice_Proof/${matchedOrder.do_number || "INV"}_${Date.now()}.jpg`;
+              const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+                method: "POST",
+                headers: { "Content-Type": "image/jpeg" },
+                body: blob
+              });
+
+              if (uploadRes.ok) {
+                const uploadData = await uploadRes.json() as any;
+                if (uploadData.success && uploadData.url) {
+                  uploadedPhotoInvoiceUrl = uploadData.url;
+                }
+              }
+            }
+          } catch (uploadErr) {
+            console.error("Failed to upload invoice photo to R2:", uploadErr);
+          }
+        }
 
         // Parse extracted invoice items if present and valid
         let finalItemsJson: string | undefined = undefined;
@@ -2198,6 +2743,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             action: "Completed by Admin",
             actionBy: profile?.name || "Admin",
             remark: `Archived & Verified in Bulk (Invoice: ${invoiceNumber}, Amount: ${invoiceAmount})${itemsRemark}`,
+            photoUrl: uploadedPhotoInvoiceUrl || undefined,
             timestamp: Date.now()
           }
         ];
@@ -2208,6 +2754,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           completed: "true",
           invoice_number: invoiceNumber || "",
           invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+          photo_invoice: uploadedPhotoInvoiceUrl || "",
           logs: JSON.stringify(updatedLogs)
         };
         if (finalItemsJson !== undefined) {
@@ -2234,6 +2781,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   completed: "true",
                   invoice_number: invoiceNumber || "",
                   invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+                  photo_invoice: uploadedPhotoInvoiceUrl || "",
                   ...(finalItemsJson !== undefined ? { items: finalItemsJson } : {}),
                   logs: JSON.stringify(updatedLogs)
                 }
@@ -2251,6 +2799,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       showToast(err.message || "Failed to process bulk invoices.", "error");
     } finally {
       setInvoiceLoading(false);
+      setInvoiceLoadingText("Parsing Invoices...");
       e.target.value = "";
     }
   };
@@ -2388,11 +2937,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           continue;
         }
 
-        // Strict Requirement: Only update orders that are already delivered / collected
+        // Allow updating delivered and already completed orders
         const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
         const isDelivered = orderStatus === "delivered" || orderStatus === "collected" || orderStatus === "return collected";
+        const isCompleted = matchedOrder.completed === "true" || matchedOrder.completed === true;
 
-        if (!isDelivered) {
+        if (!isDelivered && !isCompleted) {
           notDeliveredCount++;
           continue;
         }
@@ -2470,6 +3020,637 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       setInvoiceLoading(false);
       e.target.value = "";
     }
+  };
+
+  // Handle Bulk PDF Credit Note Upload (With Automatic Client-Side Batch Splitting: 7-8 pages per chunk)
+  const handleBulkCreditNoteUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== "application/pdf") {
+      showToast("Please upload a valid PDF file", "error");
+      return;
+    }
+
+    setCreditNoteLoading(true);
+    setCreditNoteLoadingText("Reading PDF pages...");
+    showToast("Reading Credit Note document for batch parsing...", "info");
+
+    try {
+      // 1. Render all page thumbnails into creditNotePdfImages via pdf.js
+      let creditNotePdfImages: string[] = [];
+      try {
+        const pdfjsLib = await loadPdfJs();
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        
+        for (let i = 1; i <= pdfDoc.numPages; i++) {
+          const page = await pdfDoc.getPage(i);
+          const viewport = page.getViewport({ scale: 1.5 });
+          
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const context = canvas.getContext("2d");
+          
+          if (context) {
+            await page.render({ canvasContext: context, viewport }).promise;
+            let quality = 0.8;
+            let dataUrl = canvas.toDataURL("image/jpeg", quality);
+            while (dataUrl.length > 340000 && quality > 0.15) {
+              quality -= 0.1;
+              dataUrl = canvas.toDataURL("image/jpeg", quality);
+            }
+            creditNotePdfImages.push(dataUrl);
+          }
+        }
+      } catch (pdfErr) {
+        console.error("Credit note PDF page rendering failed:", pdfErr);
+      }
+
+      const arrayBuffer = await file.arrayBuffer();
+      const srcDoc = await PDFDocument.load(arrayBuffer);
+      const totalPages = srcDoc.getPageCount();
+
+      if (totalPages === 0) {
+        throw new Error("The uploaded PDF document contains no pages.");
+      }
+
+      const CHUNK_SIZE = 7;
+      const totalBatches = Math.ceil(totalPages / CHUNK_SIZE);
+      const allParsedCreditNotes: any[] = [];
+
+      for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+        const startPage = batchIdx * CHUNK_SIZE;
+        const endPage = Math.min(startPage + CHUNK_SIZE, totalPages);
+
+        const statusMsg = totalBatches > 1
+          ? `Parsing Batch ${batchIdx + 1}/${totalBatches} (Pages ${startPage + 1}-${endPage})...`
+          : `Parsing ${totalPages} pages...`;
+
+        setCreditNoteLoadingText(statusMsg);
+        showToast(statusMsg, "info");
+
+        const subDoc = await PDFDocument.create();
+        const pageIndices: number[] = [];
+        for (let p = startPage; p < endPage; p++) {
+          pageIndices.push(p);
+        }
+        const copiedPages = await subDoc.copyPages(srcDoc, pageIndices);
+        copiedPages.forEach((p) => subDoc.addPage(p));
+
+        const subPdfBase64 = await subDoc.saveAsBase64();
+
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/parse-invoice", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pdf: subPdfBase64, type: "application/pdf" })
+        });
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.error || `Batch ${batchIdx + 1} server error (status ${res.status})`);
+        }
+
+        const parsed = await res.json();
+        let batchNotes = parsed.data;
+
+        if (parsed.success && batchNotes) {
+          let list: any[] = [];
+          if (Array.isArray(batchNotes)) {
+            list = batchNotes;
+          } else if (typeof batchNotes === "object") {
+            if (Array.isArray(batchNotes.invoices)) {
+              list = batchNotes.invoices;
+            } else if (Array.isArray(batchNotes.data)) {
+              list = batchNotes.data;
+            } else {
+              list = [batchNotes];
+            }
+          }
+
+          // Adjust pageNumbers to global index
+          const adjustedList = list.map((cn: any) => {
+            if (Array.isArray(cn.pageNumbers)) {
+              return {
+                ...cn,
+                pageNumbers: cn.pageNumbers.map((pNum: any) => {
+                  const num = parseInt(pNum, 10);
+                  return isNaN(num) ? pNum : num + startPage;
+                })
+              };
+            }
+            return {
+              ...cn,
+              pageNumbers: [startPage + 1]
+            };
+          });
+
+          allParsedCreditNotes.push(...adjustedList);
+        }
+
+        if (batchIdx < totalBatches - 1) {
+          setCreditNoteLoadingText(`Batch ${batchIdx + 1} done. Preparing next batch...`);
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+      }
+
+      // Group and Merge multi-page split credit notes across batches (e.g. Page 1 in Batch 1, Page 2 in Batch 2)
+      const mergedCreditNotesMap = new Map<string, any>();
+      for (const cn of allParsedCreditNotes) {
+        const cnNum = String(cn.invoiceNumber || cn.creditNoteNumber || "").trim();
+        const poRef = String(cn.poRef || "").trim();
+        const key = (cnNum || poRef).toLowerCase();
+        if (!key) continue;
+
+        if (!mergedCreditNotesMap.has(key)) {
+          mergedCreditNotesMap.set(key, {
+            ...cn,
+            items: Array.isArray(cn.items) ? [...cn.items] : [],
+            pageNumbers: Array.isArray(cn.pageNumbers) ? [...cn.pageNumbers] : []
+          });
+        } else {
+          const existing = mergedCreditNotesMap.get(key);
+          if (cnNum && !existing.invoiceNumber) {
+            existing.invoiceNumber = cnNum;
+            existing.creditNoteNumber = cnNum;
+          }
+          if (poRef && !existing.poRef) {
+            existing.poRef = poRef;
+          }
+          if (cn.invoiceAmount && String(cn.invoiceAmount).trim() !== "") {
+            existing.invoiceAmount = cn.invoiceAmount;
+          }
+          if (Array.isArray(cn.items) && cn.items.length > 0) {
+            existing.items = [...(existing.items || []), ...cn.items];
+          }
+          if (Array.isArray(cn.pageNumbers) && cn.pageNumbers.length > 0) {
+            existing.pageNumbers = Array.from(new Set([...(existing.pageNumbers || []), ...cn.pageNumbers]));
+          }
+        }
+      }
+
+      const unifiedCreditNotes = Array.from(mergedCreditNotesMap.values());
+
+      showToast(`Successfully extracted ${unifiedCreditNotes.length} unique credit notes across all batches. Matching return references & uploading photos...`, "info");
+      setCreditNoteLoadingText("Uploading credit note photos...");
+
+      let matchedCount = 0;
+      let ignoredBlankRef = 0;
+      let notCollectedCount = 0;
+      let noMatchCount = 0;
+
+      for (let cnIdx = 0; cnIdx < unifiedCreditNotes.length; cnIdx++) {
+        const cn = unifiedCreditNotes[cnIdx];
+        const { invoiceNumber: creditNoteNumber, poRef, invoiceAmount, items, pageNumbers } = cn;
+
+        if (!poRef || !poRef.trim()) {
+          ignoredBlankRef++;
+          continue;
+        }
+
+        // Find matching order in dbOrders (look for return orders by ref_number or do_number)
+        const matchedOrder = dbOrders.find(
+          (o) =>
+            o.type === "Return" &&
+            (String(o.ref_number || "").trim().toLowerCase() === String(poRef).trim().toLowerCase() ||
+             String(o.do_number || "").trim().toLowerCase() === String(poRef).trim().toLowerCase())
+        );
+
+        if (!matchedOrder) {
+          noMatchCount++;
+          continue;
+        }
+
+        const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
+        const isCollected = orderStatus === "collected" || orderStatus === "return collected" || orderStatus === "delivered";
+        const isCompleted = matchedOrder.completed === "true" || matchedOrder.completed === true;
+
+        if (!isCollected && !isCompleted) {
+          notCollectedCount++;
+          continue;
+        }
+
+        matchedCount++;
+
+        // Upload matched credit note page photo to Cloudflare R2
+        let uploadedPhotoInvoiceUrl = matchedOrder.photo_invoice || "";
+        const itemPageIndices = Array.isArray(pageNumbers) && pageNumbers.length > 0
+          ? pageNumbers.map((pn: any) => parseInt(pn, 10) - 1).filter((n: number) => !isNaN(n) && n >= 0 && n < creditNotePdfImages.length)
+          : [];
+
+        if (itemPageIndices.length > 0 && creditNotePdfImages.length > 0) {
+          try {
+            const firstPageDataUrl = creditNotePdfImages[itemPageIndices[0]];
+            if (firstPageDataUrl && firstPageDataUrl.startsWith("data:image/")) {
+              setCreditNoteLoadingText(`Uploading photo for credit note ${cnIdx + 1}/${unifiedCreditNotes.length}...`);
+              const base64Content = firstPageDataUrl.split(",")[1];
+              const byteCharacters = atob(base64Content);
+              const byteNumbers = new Array(byteCharacters.length);
+              for (let b = 0; b < byteCharacters.length; b++) {
+                byteNumbers[b] = byteCharacters.charCodeAt(b);
+              }
+              const byteArray = new Uint8Array(byteNumbers);
+              const blob = new Blob([byteArray], { type: "image/jpeg" });
+
+              const fileName = `Track_Orders/Invoice_Proof/${matchedOrder.do_number || "CN"}_${Date.now()}.jpg`;
+              const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+                method: "POST",
+                headers: { "Content-Type": "image/jpeg" },
+                body: blob
+              });
+
+              if (uploadRes.ok) {
+                const uploadData = await uploadRes.json() as any;
+                if (uploadData.success && uploadData.url) {
+                  uploadedPhotoInvoiceUrl = uploadData.url;
+                }
+              }
+            }
+          } catch (uploadErr) {
+            console.error("Failed to upload credit note photo to R2:", uploadErr);
+          }
+        }
+
+        let finalItemsJson: string | undefined = undefined;
+        let itemsRemark = "";
+        if (Array.isArray(items) && items.length > 0) {
+          const cleanItems: SKUItem[] = items
+            .map((it: any) => ({
+              sku: String(it.sku || it.name || it.item || "Unknown SKU").trim(),
+              qty: Number(it.qty || it.quantity || 1) || 1
+            }))
+            .filter((it: SKUItem) => Boolean(it.sku));
+
+          if (cleanItems.length > 0) {
+            finalItemsJson = JSON.stringify(cleanItems);
+            itemsRemark = ` • Updated Items & Qty from Credit Note (${cleanItems.length} items)`;
+          }
+        }
+
+        let currentLogs: LogEntry[] = [];
+        try {
+          currentLogs = typeof matchedOrder.logs === "string" ? JSON.parse(matchedOrder.logs) : matchedOrder.logs;
+        } catch (_) {}
+        if (!Array.isArray(currentLogs)) currentLogs = [];
+
+        const updatedLogs = [
+          ...currentLogs,
+          {
+            action: "Completed by Admin",
+            actionBy: profile?.name || "Admin",
+            remark: `Archived & Verified in Bulk (Credit Note: ${creditNoteNumber}, Amount: ${invoiceAmount})${itemsRemark}`,
+            photoUrl: uploadedPhotoInvoiceUrl || undefined,
+            timestamp: Date.now()
+          }
+        ];
+
+        const payloadData: any = {
+          id: matchedOrder.id,
+          completed: "true",
+          credit_note_number: creditNoteNumber || "",
+          invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+          photo_invoice: uploadedPhotoInvoiceUrl || "",
+          logs: JSON.stringify(updatedLogs)
+        };
+        if (finalItemsJson !== undefined) {
+          payloadData.items = finalItemsJson;
+        }
+
+        const payload = {
+          action: "update",
+          data: payloadData
+        };
+
+        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }).catch((err) => console.error("Failed to sync bulk completed return order:", matchedOrder.id, err));
+
+        setDbOrders((prev) =>
+          prev.map((o) =>
+            o.id === matchedOrder.id
+              ? {
+                  ...o,
+                  completed: "true",
+                  credit_note_number: creditNoteNumber || "",
+                  invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+                  photo_invoice: uploadedPhotoInvoiceUrl || "",
+                  ...(finalItemsJson !== undefined ? { items: finalItemsJson } : {}),
+                  logs: JSON.stringify(updatedLogs)
+                }
+              : o
+          )
+        );
+      }
+
+      showToast(
+        `Bulk completion complete! ${matchedCount} return orders updated.${notCollectedCount > 0 ? ` (${notCollectedCount} skipped - not collected yet)` : ""}${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
+        "success"
+      );
+
+    } catch (err: any) {
+      showToast(err.message || "Failed to process bulk credit notes.", "error");
+    } finally {
+      setCreditNoteLoading(false);
+      setCreditNoteLoadingText("Parsing Credit Notes...");
+      event.target.value = "";
+    }
+  };
+
+  // Handle Bulk Excel/CSV Credit Note Upload
+  const handleCreditNoteExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setCreditNoteLoading(true);
+    showToast("Processing Credit Note spreadsheet...", "info");
+
+    try {
+      const data = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsArrayBuffer(file);
+        reader.onload = () => resolve(reader.result as ArrayBuffer);
+        reader.onerror = (err) => reject(err);
+      });
+
+      const workbook = XLSX.read(data, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const sheetData = XLSX.utils.sheet_to_json<any>(worksheet, { header: 1 });
+
+      if (sheetData.length < 2) {
+        throw new Error("The uploaded sheet has no data rows.");
+      }
+
+      // Parse headers
+      const rawHeaders = sheetData[0] as any[];
+      const headers = rawHeaders.map((h: any) => String(h || "").trim().toLowerCase().replace(/[\s_]+/g, ""));
+      
+      const cnIdx = headers.findIndex(h => h === "creditnote" || h === "creditnotenumber" || h === "creditnoteno" || h === "cn" || h === "cnnumber" || h === "invoice" || h === "invoicenumber");
+      const refIdx = headers.findIndex(h => h === "refnumber" || h === "poref" || h === "reference" || h === "returnref" || h === "donumber");
+      const amtIdx = headers.findIndex(h => h === "amount" || h === "creditnoteamount" || h === "totalamount" || h === "invoiceamount");
+      const itemsIdx = headers.findIndex(h => h === "items" || h === "item" || h === "skus" || h === "sku" || h === "skuitems" || h === "products" || h === "itemsjson");
+
+      if (cnIdx === -1 || refIdx === -1 || amtIdx === -1) {
+        throw new Error("Sheet must contain 'Credit Note', 'Ref Number', and 'Amount' column headers.");
+      }
+
+      const parseCreditNoteItemsValue = (raw: any): SKUItem[] => {
+        if (!raw) return [];
+        if (Array.isArray(raw)) return raw;
+        const str = String(raw).trim();
+        if (!str) return [];
+
+        if (str.startsWith("[") && str.endsWith("]")) {
+          try {
+            const parsed = JSON.parse(str);
+            if (Array.isArray(parsed)) {
+              return parsed.map((it: any) => ({
+                sku: String(it.sku || it.name || it.item || "Unknown SKU").trim(),
+                qty: Number(it.qty || it.quantity || 1) || 1
+              }));
+            }
+          } catch (_) {}
+        }
+
+        const itemsList: SKUItem[] = [];
+        const entries = str.split(/[\r\n;]+/).map((s: string) => s.trim()).filter(Boolean);
+
+        for (const entry of entries) {
+          if (entry.includes(":") || / [xX*] \d+/.test(entry)) {
+            const parts = entry.split(/[:xX*]/);
+            if (parts.length >= 2) {
+              const sku = parts[0].trim();
+              const qty = parseInt(parts[parts.length - 1].trim(), 10) || 1;
+              if (sku) {
+                itemsList.push({ sku, qty });
+                continue;
+              }
+            }
+          }
+
+          const tokens = entry.split(",").map((t: string) => t.trim()).filter(Boolean);
+          let i = 0;
+          while (i < tokens.length) {
+            const current = tokens[i];
+            const next = tokens[i + 1];
+            if (next !== undefined && /^\d+(\.\d+)?$/.test(next)) {
+              itemsList.push({
+                sku: current,
+                qty: Number(next) || 1
+              });
+              i += 2;
+            } else {
+              itemsList.push({
+                sku: current,
+                qty: 1
+              });
+              i += 1;
+            }
+          }
+        }
+
+        return itemsList;
+      };
+
+      const parsedCreditNotes = [];
+      for (let i = 1; i < sheetData.length; i++) {
+        const row = sheetData[i] as any[];
+        if (!row || row.length === 0) continue;
+        const creditNoteNumber = String(row[cnIdx] || "").trim();
+        const poRef = String(row[refIdx] || "").trim();
+        const invoiceAmount = row[amtIdx] !== undefined && row[amtIdx] !== null ? String(row[amtIdx]).trim() : "";
+        const parsedItems = itemsIdx !== -1 ? parseCreditNoteItemsValue(row[itemsIdx]) : [];
+        if (!creditNoteNumber && !poRef) continue;
+        parsedCreditNotes.push({ creditNoteNumber, poRef, invoiceAmount, items: parsedItems });
+      }
+
+      showToast(`Parsed ${parsedCreditNotes.length} credit notes. Matching references...`, "info");
+
+      let matchedCount = 0;
+      let ignoredBlankRef = 0;
+      let notCollectedCount = 0;
+      let noMatchCount = 0;
+
+      for (const cn of parsedCreditNotes) {
+        const { creditNoteNumber, poRef, invoiceAmount, items } = cn;
+
+        if (!poRef || !poRef.trim()) {
+          ignoredBlankRef++;
+          continue;
+        }
+
+        const matchedOrder = dbOrders.find(
+          (o) =>
+            o.type === "Return" &&
+            (String(o.ref_number || "").trim().toLowerCase() === String(poRef).trim().toLowerCase() ||
+             String(o.do_number || "").trim().toLowerCase() === String(poRef).trim().toLowerCase())
+        );
+
+        if (!matchedOrder) {
+          noMatchCount++;
+          continue;
+        }
+
+        const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
+        const isCollected = orderStatus === "collected" || orderStatus === "return collected" || orderStatus === "delivered";
+
+        if (!isCollected) {
+          notCollectedCount++;
+          continue;
+        }
+
+        matchedCount++;
+
+        let finalItemsJson: string | undefined = undefined;
+        let itemsRemark = "";
+        if (Array.isArray(items) && items.length > 0) {
+          finalItemsJson = JSON.stringify(items);
+          itemsRemark = ` • Updated Items & Qty from Spreadsheet (${items.length} items)`;
+        }
+
+        let currentLogs: LogEntry[] = [];
+        try {
+          currentLogs = typeof matchedOrder.logs === "string" ? JSON.parse(matchedOrder.logs) : matchedOrder.logs;
+        } catch (_) {}
+        if (!Array.isArray(currentLogs)) currentLogs = [];
+
+        const updatedLogs = [
+          ...currentLogs,
+          {
+            action: "Completed by Admin",
+            actionBy: profile?.name || "Admin",
+            remark: `Archived & Verified in Bulk (Credit Note: ${creditNoteNumber}, Amount: ${invoiceAmount})${itemsRemark}`,
+            timestamp: Date.now()
+          }
+        ];
+
+        const payloadData: any = {
+          id: matchedOrder.id,
+          completed: "true",
+          credit_note_number: creditNoteNumber || "",
+          invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+          logs: JSON.stringify(updatedLogs)
+        };
+        if (finalItemsJson !== undefined) {
+          payloadData.items = finalItemsJson;
+        }
+
+        const payload = {
+          action: "update",
+          data: payloadData
+        };
+
+        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        }).catch((err) => console.error("Failed to sync bulk completed return order:", matchedOrder.id, err));
+
+        setDbOrders((prev) =>
+          prev.map((o) =>
+            o.id === matchedOrder.id
+              ? {
+                  ...o,
+                  completed: "true",
+                  credit_note_number: creditNoteNumber || "",
+                  invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+                  ...(finalItemsJson !== undefined ? { items: finalItemsJson } : {}),
+                  logs: JSON.stringify(updatedLogs)
+                }
+              : o
+          )
+        );
+      }
+
+      showToast(
+        `Bulk completion complete! ${matchedCount} collected return orders updated.${notCollectedCount > 0 ? ` (${notCollectedCount} skipped - not collected yet)` : ""}${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
+        "success"
+      );
+    } catch (err: any) {
+      showToast(err.message || "Failed to process bulk credit notes.", "error");
+    } finally {
+      setCreditNoteLoading(false);
+      e.target.value = "";
+    }
+  };
+
+  // Download Excel Template for Credit Notes
+  const handleDownloadCreditNoteTemplate = () => {
+    const templateData = [
+      {
+        "Credit Note": "CN-2026-001",
+        "Ref Number": "RET-1001",
+        "Amount": 85.00,
+        "Items": "SKU-ABC:2, SKU-XYZ:1"
+      },
+      {
+        "Credit Note": "CN-2026-002",
+        "Ref Number": "RET-1002",
+        "Amount": 120.00,
+        "Items": "SKU-DEF:3"
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Credit_Note_Template");
+    XLSX.writeFile(workbook, "Credit_Note_Upload_Template.xlsx");
+    showToast("Downloaded Credit Note Upload Template.", "success");
+  };
+
+  // Download Excel Template for Invoices
+  const handleDownloadInvoiceTemplate = () => {
+    const templateData = [
+      {
+        "Invoice Number": "INV-2026-001",
+        "Ref Number": "PO-12345",
+        "Amount": 150.00,
+        "Items": "SKU-ABC:2, SKU-XYZ:1"
+      },
+      {
+        "Invoice Number": "INV-2026-002",
+        "Ref Number": "PO-67890",
+        "Amount": 320.50,
+        "Items": "SKU-DEF:5"
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Invoice_Template");
+    XLSX.writeFile(workbook, "Invoice_Upload_Template.xlsx");
+    showToast("Downloaded Invoice Upload Template.", "success");
+  };
+
+  // Download Excel Template for Delivery Orders (DO)
+  const handleDownloadDoTemplate = () => {
+    const templateData = [
+      {
+        "DO Number": "DO2026-001",
+        "Ref Number": "PO-1001",
+        "Address": "[S10001] FairPrice Finest Bukit Timah",
+        "Poscode": "588179",
+        "Method": "Company Delivery",
+        "Items": "SKU-A:10, SKU-B:5"
+      },
+      {
+        "DO Number": "DO2026-002",
+        "Ref Number": "PO-1002",
+        "Address": "Cold Storage Paragon #B1-01",
+        "Poscode": "238859",
+        "Method": "Company Delivery",
+        "Items": "SKU-C:20"
+      }
+    ];
+
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "DO_Template");
+    XLSX.writeFile(workbook, "DO_Upload_Template.xlsx");
+    showToast("Downloaded Delivery Order Upload Template.", "success");
   };
 
   // Handle DO Excel/CSV Upload (skips items)
@@ -2591,10 +3772,32 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           duplicates.push(doNum);
         } else {
           const refNum = refIdx !== -1 ? String(row[refIdx] || "").trim() : "";
-          const deliverTo = deliverToIdx !== -1 && String(row[deliverToIdx] || "").trim() ? String(row[deliverToIdx] || "").trim() : "Singapore Address";
-          const poscode = poscodeIdx !== -1 ? String(row[poscodeIdx] || "").trim() : "";
+          const rawDeliverTo = deliverToIdx !== -1 && String(row[deliverToIdx] || "").trim() ? String(row[deliverToIdx] || "").trim() : "Singapore Address";
+          const rawPoscode = poscodeIdx !== -1 ? String(row[poscodeIdx] || "").trim() : "";
           const deliverMethod = methodIdx !== -1 && String(row[methodIdx] || "").trim() ? String(row[methodIdx] || "").trim() : "Company Delivery";
           const parsedItems = itemsIdx !== -1 ? parseItemsValue(row[itemsIdx]) : [];
+
+          // Extract store_id if in format [{store_id}] or [store_id]
+          let extractedStoreId = "";
+          const bracketMatch = rawDeliverTo.match(/\[\{?(.*?)\}?\]/);
+          if (bracketMatch && bracketMatch[1]) {
+            extractedStoreId = bracketMatch[1].trim();
+          }
+
+          let finalDeliverTo = rawDeliverTo;
+          let finalPoscode = rawPoscode;
+          let linkStoreVal = "";
+
+          if (extractedStoreId) {
+            const matchedStoreInfo = resolveStoreById(extractedStoreId);
+            if (matchedStoreInfo) {
+              linkStoreVal = matchedStoreInfo.storeId;
+              finalDeliverTo = matchedStoreInfo.deliverTo;
+              if (!finalPoscode && matchedStoreInfo.poscode) {
+                finalPoscode = matchedStoreInfo.poscode;
+              }
+            }
+          }
 
           const assignedMark = getNextAvailableMark(drafts, pendingOrders, tempAssignedMarks);
           if (assignedMark) {
@@ -2607,13 +3810,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             refNumber: refNum,
             mark: assignedMark,
             type: "Normal",
-            deliverTo: deliverTo,
-            poscode: poscode,
+            deliverTo: finalDeliverTo,
+            poscode: finalPoscode,
             items: parsedItems,
             appointmentDate: undefined,
             appointmentTimeWindow: undefined,
             deliverMethod: deliverMethod,
-            pdfImages: []
+            pdfImages: [],
+            link_store: linkStoreVal
           });
         }
       }
@@ -2635,7 +3839,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   };
 
-  // Handle DO PDF Upload & Parsing
+  // Handle DO PDF Upload & Parsing (With Automatic Client-Side Batch Splitting: 7-8 pages per chunk)
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -2647,145 +3851,293 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
 
     setPdfLoading(true);
+    setPdfLoadingText("Reading PDF pages...");
+    showToast("Reading DO document for batch parsing...", "info");
 
     try {
-      // Convert file to base64
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = async () => {
-        const base64String = (reader.result as string).split(",")[1];
+      // 1. Render all page thumbnails into pdfImages via pdf.js
+      let pdfImages: string[] = [];
+      try {
+        const pdfjsLib = await loadPdfJs();
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
         
-        let pdfImages: string[] = [];
-        try {
-          const pdfjsLib = await loadPdfJs();
-          const arrayBuffer = await file.arrayBuffer();
-          const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        for (let i = 1; i <= pdfDoc.numPages; i++) {
+          const page = await pdfDoc.getPage(i);
+          const viewport = page.getViewport({ scale: 1.5 });
           
-          for (let i = 1; i <= pdfDoc.numPages; i++) {
-            const page = await pdfDoc.getPage(i);
-            const viewport = page.getViewport({ scale: 1.5 });
-            
-            const canvas = document.createElement("canvas");
-            canvas.width = viewport.width;
-            canvas.height = viewport.height;
-            const context = canvas.getContext("2d");
-            
-            if (context) {
-              await page.render({ canvasContext: context, viewport }).promise;
-              let quality = 0.8;
-              let dataUrl = canvas.toDataURL("image/jpeg", quality);
-              while (dataUrl.length > 340000 && quality > 0.15) {
-                quality -= 0.1;
-                dataUrl = canvas.toDataURL("image/jpeg", quality);
-              }
-              pdfImages.push(dataUrl);
+          const canvas = document.createElement("canvas");
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const context = canvas.getContext("2d");
+          
+          if (context) {
+            await page.render({ canvasContext: context, viewport }).promise;
+            let quality = 0.8;
+            let dataUrl = canvas.toDataURL("image/jpeg", quality);
+            while (dataUrl.length > 340000 && quality > 0.15) {
+              quality -= 0.1;
+              dataUrl = canvas.toDataURL("image/jpeg", quality);
             }
+            pdfImages.push(dataUrl);
           }
-        } catch (pdfErr) {
-          console.error("PDF page rendering failed:", pdfErr);
+        }
+      } catch (pdfErr) {
+        console.error("PDF page rendering failed:", pdfErr);
+      }
+
+      // 2. Load PDF with pdf-lib for chunk splitting (7 pages per batch)
+      const arrayBuffer = await file.arrayBuffer();
+      const srcDoc = await PDFDocument.load(arrayBuffer);
+      const totalPages = srcDoc.getPageCount();
+
+      if (totalPages === 0) {
+        throw new Error("The uploaded PDF document contains no pages.");
+      }
+
+      const CHUNK_SIZE = 7;
+      const totalBatches = Math.ceil(totalPages / CHUNK_SIZE);
+      const allParsedOrders: any[] = [];
+
+      for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+        const startPage = batchIdx * CHUNK_SIZE;
+        const endPage = Math.min(startPage + CHUNK_SIZE, totalPages);
+
+        const statusMsg = totalBatches > 1
+          ? `Parsing Batch ${batchIdx + 1}/${totalBatches} (Pages ${startPage + 1}-${endPage})...`
+          : `Parsing ${totalPages} pages...`;
+
+        setPdfLoadingText(statusMsg);
+        showToast(statusMsg, "info");
+
+        // Create sub-document for this batch
+        const subDoc = await PDFDocument.create();
+        const pageIndices: number[] = [];
+        for (let p = startPage; p < endPage; p++) {
+          pageIndices.push(p);
+        }
+        const copiedPages = await subDoc.copyPages(srcDoc, pageIndices);
+        copiedPages.forEach((p) => subDoc.addPage(p));
+
+        const subPdfBase64 = await subDoc.saveAsBase64();
+
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/parse-do", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ pdf: subPdfBase64, type: "application/pdf" })
+        });
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody.error || `Batch ${batchIdx + 1} server error status ${res.status}`);
         }
 
-        try {
-          const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/parse-do", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ pdf: base64String, type: "application/pdf" })
-          });
-
-          if (!res.ok) {
-            const errBody = await res.json().catch(() => ({}));
-            throw new Error(errBody.error || `Server error status ${res.status}`);
-          }
-
-          const parsed = await res.json();
-          let parsedList = parsed.data;
-          if (parsed.success && parsedList && typeof parsedList === "object" && !Array.isArray(parsedList)) {
-            if (Array.isArray(parsedList.orders)) {
-              parsedList = parsedList.orders;
-            } else if (Array.isArray(parsedList.data)) {
-              parsedList = parsedList.data;
-            } else {
-              parsedList = [parsedList];
-            }
-          }
-
-          console.log("[DO UPLOAD] Raw parsed list from Gemini parser:", parsedList);
-
-          if (parsed.success && Array.isArray(parsedList)) {
-            const duplicates: string[] = [];
-            const uniqueNewDrafts: TrackOrderDraft[] = [];
-            const tempAssignedMarks: string[] = [];
-            parsedList.forEach((item: any, idx: number) => {
-              const doNum = item.doNumber || `DO-${Date.now()}-${idx}`;
-              
-              // Validation: check if DO Number is already registered in Drafts, Pending, or Completed lists
-              const inDrafts = drafts.some((d) => d.doNumber === doNum);
-              const inPending = pendingOrders.some((p) => p.do_number === doNum);
-              const inCompleted = completedOrders.some((c) => c.do_number === doNum);
-
-              if (inDrafts || inPending || inCompleted) {
-                duplicates.push(doNum);
-              } else {
-                const refNum = item.refNumber || "";
-                const assignedMark = getNextAvailableMark(drafts, pendingOrders, tempAssignedMarks);
-                if (assignedMark) {
-                  tempAssignedMarks.push(assignedMark);
-                }
-
-                console.log(`[DO UPLOAD] Processing order ${doNum}. pageNumbers:`, item.pageNumbers);
-
-                const itemPageNumbers = Array.isArray(item.pageNumbers) ? item.pageNumbers : [];
-                const orderPdfImages = itemPageNumbers.length > 0
-                  ? itemPageNumbers.map((pNum: any) => pdfImages[parseInt(pNum, 10) - 1]).filter(Boolean)
-                  : pdfImages;
-
-                console.log(`[DO UPLOAD] Order ${doNum} mapped images count: ${orderPdfImages.length}`);
-
-                uniqueNewDrafts.push({
-                  id: `${doNum}_${refNum || "NA"}`,
-                  doNumber: doNum,
-                  refNumber: refNum,
-                  mark: assignedMark,
-                  type: "Normal",
-                  deliverTo: item.deliverTo || "Singapore Address",
-                  poscode: item.poscode || "",
-                  items: Array.isArray(item.items) ? item.items.map((i: any) => ({
-                    sku: i.sku || "Unknown SKU",
-                    qty: Number(i.qty) || 1
-                  })) : [],
-                  appointmentDate: undefined,
-                  appointmentTimeWindow: undefined,
-                  deliverMethod: "Company Delivery",
-                  pdfImages: orderPdfImages
-                });
-              }
-            });
-
-            if (duplicates.length > 0) {
-              showToast(`Warning: Order(s) ${duplicates.join(", ")} already registered in system. Please check order.`, "warning");
-            }
-
-            if (uniqueNewDrafts.length > 0) {
-              const mergedDrafts = [...drafts, ...uniqueNewDrafts];
-              saveDraftsToStorage(mergedDrafts);
-              showToast(`Successfully read DO. Added ${uniqueNewDrafts.length} orders to drafts.`, "success");
-            }
+        const parsed = await res.json();
+        let parsedList = parsed.data;
+        if (parsed.success && parsedList && typeof parsedList === "object" && !Array.isArray(parsedList)) {
+          if (Array.isArray(parsedList.orders)) {
+            parsedList = parsedList.orders;
+          } else if (Array.isArray(parsedList.data)) {
+            parsedList = parsedList.data;
           } else {
-            throw new Error("Invalid output format received");
+            parsedList = [parsedList];
           }
-        } catch (e: any) {
-          showToast("Failed to read DO: " + e.message, "error");
-        } finally {
-          setPdfLoading(false);
-          if (fileInputRef.current) fileInputRef.current.value = "";
         }
-      };
-      reader.onerror = () => {
-        throw new Error("Failed to read file buffer");
-      };
+
+        if (parsed.success && Array.isArray(parsedList)) {
+          // Adjust pageNumbers in parsed items to match global page index
+          const adjustedItems = parsedList.map((item: any) => {
+            if (Array.isArray(item.pageNumbers)) {
+              return {
+                ...item,
+                pageNumbers: item.pageNumbers.map((pNum: any) => {
+                  const num = parseInt(pNum, 10);
+                  return isNaN(num) ? pNum : num + startPage;
+                })
+              };
+            }
+            return item;
+          });
+          allParsedOrders.push(...adjustedItems);
+        }
+
+        // Polite sleep between batches if more batches remain
+        if (batchIdx < totalBatches - 1) {
+          setPdfLoadingText(`Batch ${batchIdx + 1} done. Preparing next batch...`);
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+      }
+
+      // Group and Merge multi-page split DO orders across batches (e.g. DO item list spanning from Batch 1 into Batch 2)
+      const mergedDoOrdersMap = new Map<string, any>();
+      for (const item of allParsedOrders) {
+        const doNum = String(item.doNumber || "").trim();
+        const refNum = String(item.refNumber || "").trim();
+        const key = (doNum || refNum || `temp_${Math.random()}`).toLowerCase();
+
+        if (!mergedDoOrdersMap.has(key)) {
+          mergedDoOrdersMap.set(key, {
+            ...item,
+            items: Array.isArray(item.items) ? [...item.items] : [],
+            pageNumbers: Array.isArray(item.pageNumbers) ? [...item.pageNumbers] : []
+          });
+        } else {
+          const existing = mergedDoOrdersMap.get(key);
+          if (doNum && !existing.doNumber) existing.doNumber = doNum;
+          if (refNum && !existing.refNumber) existing.refNumber = refNum;
+          if (item.deliverTo && (!existing.deliverTo || existing.deliverTo === "Singapore Address")) {
+            existing.deliverTo = item.deliverTo;
+          }
+          if (item.poscode && !existing.poscode) existing.poscode = item.poscode;
+          if (item.store_id && !existing.store_id) existing.store_id = item.store_id;
+
+          // Combine items
+          if (Array.isArray(item.items) && item.items.length > 0) {
+            existing.items = [...(existing.items || []), ...item.items];
+          }
+          // Combine page numbers
+          if (Array.isArray(item.pageNumbers) && item.pageNumbers.length > 0) {
+            existing.pageNumbers = Array.from(new Set([...(existing.pageNumbers || []), ...item.pageNumbers]));
+          }
+        }
+      }
+
+      const unifiedOrders = Array.from(mergedDoOrdersMap.values());
+      console.log("[DO UPLOAD] Unified merged parsed orders:", unifiedOrders);
+
+      if (unifiedOrders.length > 0) {
+        const duplicates: string[] = [];
+        const uniqueNewDrafts: TrackOrderDraft[] = [];
+        const tempAssignedMarks: string[] = [];
+        let unconfirmedStoreDraft: { storeId: string; draft: TrackOrderDraft; doNumber: string } | null = null;
+
+        unifiedOrders.forEach((item: any, idx: number) => {
+          const doNum = item.doNumber || `DO-${Date.now()}-${idx}`;
+          
+          // Validation: check if DO Number is already registered in Drafts, Pending, or Completed lists
+          const inDrafts = drafts.some((d) => d.doNumber === doNum);
+          const inPending = pendingOrders.some((p) => p.do_number === doNum);
+          const inCompleted = completedOrders.some((c) => c.do_number === doNum);
+
+          if (inDrafts || inPending || inCompleted) {
+            duplicates.push(doNum);
+          } else {
+            const refNum = item.refNumber || "";
+            const assignedMark = getNextAvailableMark(drafts, pendingOrders, tempAssignedMarks);
+            if (assignedMark) {
+              tempAssignedMarks.push(assignedMark);
+            }
+
+            console.log(`[DO UPLOAD] Processing order ${doNum}. pageNumbers:`, item.pageNumbers);
+
+            const itemPageNumbers = Array.isArray(item.pageNumbers) ? item.pageNumbers : [];
+            const orderPdfImages = itemPageNumbers.length > 0
+              ? itemPageNumbers.map((pNum: any) => pdfImages[parseInt(pNum, 10) - 1]).filter(Boolean)
+              : pdfImages;
+
+            console.log(`[DO UPLOAD] Order ${doNum} mapped images count: ${orderPdfImages.length}`);
+
+            // Extract store_id from parsed field or regex fallback from deliverTo/poscode
+            let extractedStoreId = String(item.store_id || "").trim();
+            let rawDeliverTo = String(item.deliverTo || "Singapore Address").trim();
+            let rawPoscode = String(item.poscode || "").trim();
+
+            if (!extractedStoreId) {
+              const bracketMatch = rawDeliverTo.match(/\[\{?(.*?)\}?\]/);
+              if (bracketMatch && bracketMatch[1]) {
+                extractedStoreId = bracketMatch[1].trim();
+              }
+            }
+
+            let finalDeliverTo = rawDeliverTo;
+            let finalPoscode = rawPoscode;
+            let linkStoreVal = "";
+
+            if (extractedStoreId) {
+              const matchedStoreInfo = resolveStoreById(extractedStoreId);
+              if (matchedStoreInfo) {
+                linkStoreVal = matchedStoreInfo.storeId;
+                finalDeliverTo = matchedStoreInfo.deliverTo;
+                if (!finalPoscode && matchedStoreInfo.poscode) {
+                  finalPoscode = matchedStoreInfo.poscode;
+                }
+              } else {
+                // Store ID exists in DO but NOT in store database
+                if (!unconfirmedStoreDraft) {
+                  unconfirmedStoreDraft = {
+                    storeId: extractedStoreId,
+                    doNumber: doNum,
+                    draft: {
+                      id: `${doNum}_${refNum || "NA"}`,
+                      doNumber: doNum,
+                      refNumber: refNum,
+                      mark: assignedMark,
+                      type: "Normal",
+                      deliverTo: rawDeliverTo,
+                      poscode: rawPoscode,
+                      items: Array.isArray(item.items) ? item.items.map((i: any) => ({
+                        sku: i.sku || "Unknown SKU",
+                        qty: Number(i.qty) || 1
+                      })) : [],
+                      appointmentDate: undefined,
+                      appointmentTimeWindow: undefined,
+                      deliverMethod: "Company Delivery",
+                      pdfImages: orderPdfImages,
+                      link_store: ""
+                    }
+                  };
+                }
+              }
+            }
+
+            uniqueNewDrafts.push({
+              id: `${doNum}_${refNum || "NA"}`,
+              doNumber: doNum,
+              refNumber: refNum,
+              mark: assignedMark,
+              type: "Normal",
+              deliverTo: finalDeliverTo,
+              poscode: finalPoscode,
+              items: Array.isArray(item.items) ? item.items.map((i: any) => ({
+                sku: i.sku || "Unknown SKU",
+                qty: Number(i.qty) || 1
+              })) : [],
+              appointmentDate: undefined,
+              appointmentTimeWindow: undefined,
+              deliverMethod: "Company Delivery",
+              pdfImages: orderPdfImages,
+              link_store: linkStoreVal
+            });
+          }
+        });
+
+        if (duplicates.length > 0) {
+          showToast(`Warning: Order(s) ${duplicates.join(", ")} already registered in system. Please check order.`, "warning");
+        }
+
+        if (unconfirmedStoreDraft) {
+          // Store ID not found in database -> popup confirmation
+          const targetUnconfirmed = unconfirmedStoreDraft as { storeId: string; draft: TrackOrderDraft; doNumber: string };
+          setUnknownStoreInfo({
+            storeId: targetUnconfirmed.storeId,
+            doNumber: targetUnconfirmed.doNumber,
+            pendingDrafts: uniqueNewDrafts
+          });
+          setIsUnknownStoreModalOpen(true);
+        } else if (uniqueNewDrafts.length > 0) {
+          const mergedDrafts = [...drafts, ...uniqueNewDrafts];
+          saveDraftsToStorage(mergedDrafts);
+          showToast(`Successfully read DO. Added ${uniqueNewDrafts.length} orders to drafts.`, "success");
+        }
+      } else {
+        throw new Error("No orders could be parsed from the uploaded document.");
+      }
     } catch (e: any) {
-      showToast("File reading error: " + e.message, "error");
+      showToast("Failed to read DO: " + e.message, "error");
+    } finally {
       setPdfLoading(false);
+      setPdfLoadingText("Parsing DO PDF...");
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -2947,7 +4299,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       photo_do_paper_signed: "",
       photo_delivered_proof: "",
       photo_handover_proof: "",
-      photo_picker_proof: ""
+      photo_picker_proof: "",
+      link_store: order.link_store || ""
     };
 
     // Update state instantly
@@ -3043,7 +4396,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           photo_do_paper_signed: "",
           photo_delivered_proof: "",
           photo_handover_proof: "",
-          photo_picker_proof: ""
+          photo_picker_proof: "",
+          link_store: order.link_store || ""
         }
       };
 
@@ -3354,79 +4708,105 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const num = isReturn ? order.credit_note_number : order.invoice_number;
     setEditInvoiceNum(num !== undefined && num !== null ? String(num) : "");
     setEditInvoiceAmount(order.invoice_amount !== undefined && order.invoice_amount !== null ? String(order.invoice_amount) : "");
+    setEditInvoicePhotoUrl(order.photo_invoice || "");
+    setEditInvoicePhotoFile(null);
     setIsEditInvoiceModalOpen(true);
   };
 
   const handleSaveEditInvoice = async () => {
     if (!editInvoiceOrder) return;
-    setIsEditInvoiceModalOpen(false);
+    setEditInvoiceUploading(true);
+    let finalPhotoInvoiceUrl = editInvoicePhotoUrl;
 
-    let currentLogs: LogEntry[] = [];
     try {
-      currentLogs = typeof editInvoiceOrder.logs === "string" ? JSON.parse(editInvoiceOrder.logs) : editInvoiceOrder.logs;
-    } catch (_) {}
-
-    const isReturn = editInvoiceOrder.type === "Return";
-
-    const updatedLogs = [
-      ...currentLogs,
-      {
-        action: isReturn ? "Credit Note Edited by Admin" : "Invoice Edited by Admin",
-        actionBy: currentUser,
-        remark: isReturn 
-          ? `Credit Note updated: ${editInvoiceNum} (Amount: ${editInvoiceAmount})`
-          : `Invoice updated: ${editInvoiceNum} (Amount: ${editInvoiceAmount})`,
-        timestamp: Date.now()
+      if (editInvoicePhotoFile) {
+        showToast("Uploading invoice document...", "info");
+        const ext = editInvoicePhotoFile.name.split('.').pop() || "jpg";
+        const fileName = `Track_Orders/Invoice_Proof/${editInvoiceOrder.do_number}_${Date.now()}.${ext}`;
+        const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+          method: "POST",
+          headers: { "Content-Type": editInvoicePhotoFile.type || "image/jpeg" },
+          body: editInvoicePhotoFile
+        });
+        if (!uploadRes.ok) throw new Error("Invoice photo upload failed");
+        const uploadData = await uploadRes.json() as any;
+        if (uploadData.success && uploadData.url) {
+          finalPhotoInvoiceUrl = uploadData.url;
+        }
       }
-    ];
 
-    const previousDbOrders = [...dbOrders];
+      setIsEditInvoiceModalOpen(false);
 
-    // Optimistic UI update
-    setDbOrders((prev) =>
-      prev.map((o) => {
-        if (o.id === editInvoiceOrder.id) {
-          if (isReturn) {
-            return { 
-              ...o, 
+      let currentLogs: LogEntry[] = [];
+      try {
+        currentLogs = typeof editInvoiceOrder.logs === "string" ? JSON.parse(editInvoiceOrder.logs) : editInvoiceOrder.logs;
+      } catch (_) {}
+
+      const isReturn = editInvoiceOrder.type === "Return";
+
+      const updatedLogs = [
+        ...currentLogs,
+        {
+          action: isReturn ? "Credit Note Edited by Admin" : "Invoice Edited by Admin",
+          actionBy: currentUser,
+          remark: isReturn 
+            ? `Credit Note updated: ${editInvoiceNum} (Amount: ${editInvoiceAmount})`
+            : `Invoice updated: ${editInvoiceNum} (Amount: ${editInvoiceAmount})`,
+          photoUrl: finalPhotoInvoiceUrl || undefined,
+          timestamp: Date.now()
+        }
+      ];
+
+      const previousDbOrders = [...dbOrders];
+
+      // Optimistic UI update
+      setDbOrders((prev) =>
+        prev.map((o) => {
+          if (o.id === editInvoiceOrder.id) {
+            if (isReturn) {
+              return { 
+                ...o, 
+                credit_note_number: editInvoiceNum.trim(),
+                invoice_amount: editInvoiceAmount.trim(),
+                photo_invoice: finalPhotoInvoiceUrl,
+                logs: JSON.stringify(updatedLogs) 
+              };
+            } else {
+              return { 
+                ...o, 
+                invoice_number: editInvoiceNum.trim(),
+                invoice_amount: editInvoiceAmount.trim(),
+                photo_invoice: finalPhotoInvoiceUrl,
+                logs: JSON.stringify(updatedLogs) 
+              };
+            }
+          }
+          return o;
+        })
+      );
+
+      showToast(isReturn ? `Credit Note updated for ${editInvoiceOrder.do_number}` : `Invoice updated for ${editInvoiceOrder.do_number}`, "success");
+
+      const payload = {
+        table: "Track_Orders",
+        action: "update",
+        data: isReturn 
+          ? {
+              id: editInvoiceOrder.id,
               credit_note_number: editInvoiceNum.trim(),
               invoice_amount: editInvoiceAmount.trim(),
-              logs: JSON.stringify(updatedLogs) 
-            };
-          } else {
-            return { 
-              ...o, 
+              photo_invoice: finalPhotoInvoiceUrl,
+              logs: JSON.stringify(updatedLogs)
+            }
+          : {
+              id: editInvoiceOrder.id,
               invoice_number: editInvoiceNum.trim(),
               invoice_amount: editInvoiceAmount.trim(),
-              logs: JSON.stringify(updatedLogs) 
-            };
-          }
-        }
-        return o;
-      })
-    );
+              photo_invoice: finalPhotoInvoiceUrl,
+              logs: JSON.stringify(updatedLogs)
+            }
+      };
 
-    showToast(isReturn ? `Credit Note updated for ${editInvoiceOrder.do_number}` : `Invoice updated for ${editInvoiceOrder.do_number}`, "success");
-
-    const payload = {
-      table: "Track_Orders",
-      action: "update",
-      data: isReturn 
-        ? {
-            id: editInvoiceOrder.id,
-            credit_note_number: editInvoiceNum.trim(),
-            invoice_amount: editInvoiceAmount.trim(),
-            logs: JSON.stringify(updatedLogs)
-          }
-        : {
-            id: editInvoiceOrder.id,
-            invoice_number: editInvoiceNum.trim(),
-            invoice_amount: editInvoiceAmount.trim(),
-            logs: JSON.stringify(updatedLogs)
-          }
-    };
-
-    try {
       const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3436,8 +4816,450 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         fetchDatabaseOrders(true);
       }
     } catch (err: any) {
-      setDbOrders(previousDbOrders);
       showToast("Update failed: " + err.message, "error");
+    } finally {
+      setEditInvoiceUploading(false);
+    }
+  };
+
+  const handleDownloadCompiledPdf = async (order: DbOrder) => {
+    try {
+      showToast(`Generating compiled PDF for ${order.do_number}...`, "info");
+
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default;
+
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4"
+      });
+
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+      const margin = 14;
+      const contentWidth = pageWidth - margin * 2;
+
+      const isReturn = order.type === "Return";
+
+      // -------------------------------------------------------------
+      // PAGE 1: GDN (Goods Delivery Note) / GRN (Goods Return Note)
+      // -------------------------------------------------------------
+
+      // Top Company Header
+      doc.setFillColor(11, 87, 208); // Google Blue #0B57D0
+      doc.rect(margin, 12, 3.5, 16, "F");
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(14);
+      doc.setTextColor(15, 23, 42); // slate-900
+      doc.text("HSG GLOBAL PTE. LTD.", margin + 6, 18);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(11, 87, 208);
+      doc.text(isReturn ? "GOODS RETURN NOTE (GRN)" : "GOODS DELIVERY NOTE (GDN)", margin + 6, 25);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Generated: ${formatTimestamp(Date.now())}`, pageWidth - margin, 18, { align: "right" });
+      doc.text(`Status: Completed`, pageWidth - margin, 24, { align: "right" });
+
+      // Hairline divider
+      doc.setDrawColor(226, 232, 240);
+      doc.setLineWidth(0.5);
+      doc.line(margin, 31, pageWidth - margin, 31);
+
+      // Metadata 2-column Card
+      doc.setFillColor(248, 250, 252); // slate-50
+      doc.roundedRect(margin, 34, contentWidth, 34, 2, 2, "F");
+      doc.setDrawColor(226, 232, 240);
+      doc.roundedRect(margin, 34, contentWidth, 34, 2, 2, "S");
+
+      // Left Column Metadata
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(isReturn ? "Return / DO No:" : "DO Number:", margin + 4, 40);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      doc.text(order.do_number || "-", margin + 32, 40);
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(71, 85, 105);
+      doc.text("Ref / PO No:", margin + 4, 46);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.text(order.ref_number || "-", margin + 32, 46);
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(71, 85, 105);
+      doc.text("Store ID / Mark:", margin + 4, 52);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.text(`${order.link_store || "-"} ${order.mark ? `(${order.mark})` : ""}`, margin + 32, 52);
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(71, 85, 105);
+      doc.text(isReturn ? "Collect From:" : "Deliver To:", margin + 4, 58);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      const addressText = doc.splitTextToSize(`${order.deliver_to || "-"} (S${order.poscode || ""})`, 65);
+      doc.text(addressText, margin + 32, 58);
+
+      // Right Column Metadata
+      const rightColX = margin + contentWidth / 2 + 4;
+      let deliveredTs = order.delivered_at;
+      if (!deliveredTs) {
+        try {
+          const logsArr = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
+          const match = logsArr?.find((l: any) => (l.action || "").toLowerCase().includes("delivered") || (l.action || "").toLowerCase().includes("completed"));
+          if (match) deliveredTs = match.timestamp;
+        } catch (_) {}
+      }
+      if (!deliveredTs) deliveredTs = order.timestamp;
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(71, 85, 105);
+      doc.text(isReturn ? "Collected Date:" : "Delivered Date:", rightColX, 40);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.text(formatTimestamp(deliveredTs) || "-", rightColX + 28, 40);
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(71, 85, 105);
+      doc.text(isReturn ? "Collected By:" : "Driver:", rightColX, 46);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.text(order.driver || "-", rightColX + 28, 46);
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(71, 85, 105);
+      doc.text("Method:", rightColX, 52);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(15, 23, 42);
+      doc.text(order.deliver_method || "Company Delivery", rightColX + 28, 52);
+
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(71, 85, 105);
+      doc.text(isReturn ? "Credit Note:" : "Invoice No:", rightColX, 58);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(11, 87, 208);
+      const invDisplay = isReturn 
+        ? (order.credit_note_number || "-") 
+        : (order.invoice_number || "-");
+      const amtDisplay = order.invoice_amount ? ` ($${Number(order.invoice_amount).toFixed(2)})` : "";
+      doc.text(`${invDisplay}${amtDisplay}`, rightColX + 28, 58);
+
+      // Parse Items
+      let parsedItems: SKUItem[] = [];
+      try {
+        parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
+        if (!Array.isArray(parsedItems)) parsedItems = [];
+      } catch (_) {}
+
+      const tableRows = parsedItems.map((item, i) => [
+        String(i + 1),
+        item.sku || "Unknown SKU",
+        order.mark || "-",
+        String(item.qty || 1),
+        "CTN / PCS"
+      ]);
+
+      const totalQty = parsedItems.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
+
+      if (tableRows.length > 0) {
+        tableRows.push([
+          "",
+          "TOTAL QUANTITY",
+          "",
+          String(totalQty),
+          "UNITS"
+        ]);
+      }
+
+      autoTable(doc, {
+        startY: 72,
+        margin: { left: margin, right: margin },
+        head: [["#", "SKU / ITEM CODE", "MARK / BRAND", "QTY", "UNIT"]],
+        body: tableRows.length > 0 ? tableRows : [["-", "No SKU items recorded", "-", "-", "-"]],
+        theme: "plain",
+        headStyles: {
+          fillColor: [241, 245, 249],
+          textColor: [30, 41, 59],
+          fontSize: 8,
+          fontStyle: "bold",
+          cellPadding: 2.5
+        },
+        bodyStyles: {
+          fontSize: 8,
+          textColor: [51, 65, 85],
+          cellPadding: 2.5
+        },
+        alternateRowStyles: {
+          fillColor: [250, 250, 250]
+        },
+        columnStyles: {
+          0: { cellWidth: 12, halign: "center" },
+          1: { cellWidth: "auto", fontStyle: "bold" },
+          2: { cellWidth: 40 },
+          3: { cellWidth: 20, halign: "center", fontStyle: "bold" },
+          4: { cellWidth: 25, halign: "center" }
+        },
+        didParseCell: (data) => {
+          if (data.row.index === tableRows.length - 1 && tableRows.length > 1) {
+            data.cell.styles.fontStyle = "bold";
+            data.cell.styles.fillColor = [241, 245, 249];
+            data.cell.styles.textColor = [15, 23, 42];
+          }
+        }
+      });
+
+      let currentY = (doc as any).lastAutoTable.finalY + 6;
+
+      // Check Proof Photos to Embed on GDN Page
+      const proofUrls: { label: string; url: string }[] = [];
+      const delProofs = parseImageUrlList(order.photo_delivered_proof);
+      delProofs.forEach((u, i) => proofUrls.push({ label: `Delivery Proof ${delProofs.length > 1 ? `#${i+1}` : ""}`, url: u }));
+
+      const handProofs = parseImageUrlList(order.photo_handover_proof);
+      handProofs.forEach((u, i) => proofUrls.push({ label: `Handover Proof ${handProofs.length > 1 ? `#${i+1}` : ""}`, url: u }));
+
+      const pickProofs = parseImageUrlList(order.photo_picker_proof);
+      pickProofs.forEach((u, i) => proofUrls.push({ label: `Picker Proof ${pickProofs.length > 1 ? `#${i+1}` : ""}`, url: u }));
+
+      const retProofs = parseImageUrlList(order.photo_return_paper);
+      retProofs.forEach((u, i) => proofUrls.push({ label: `Return Paper Proof ${retProofs.length > 1 ? `#${i+1}` : ""}`, url: u }));
+
+      // If space is not enough on current page for proof photos header + boxes (~55mm), add page
+      if (currentY + 55 > pageHeight - margin) {
+        doc.addPage();
+        currentY = margin;
+      }
+
+      // Proof Photos Section Header
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(9);
+      doc.setTextColor(30, 41, 59);
+      doc.text("DELIVERY & HANDOVER PROOF ATTACHMENTS", margin, currentY + 3);
+      currentY += 6;
+
+      if (proofUrls.length === 0) {
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text("No on-site delivery proof photos recorded for this order.", margin, currentY + 4);
+        currentY += 10;
+      } else {
+        const photoWidth = 55;
+        const photoHeight = 42;
+        const gap = 6;
+        let startX = margin;
+
+        for (let i = 0; i < Math.min(proofUrls.length, 6); i++) {
+          const item = proofUrls[i];
+          if (startX + photoWidth > pageWidth - margin) {
+            startX = margin;
+            currentY += photoHeight + 10;
+            if (currentY + photoHeight + 10 > pageHeight - margin) {
+              doc.addPage();
+              currentY = margin;
+            }
+          }
+
+          // Container Box
+          doc.setFillColor(248, 250, 252);
+          doc.roundedRect(startX, currentY, photoWidth, photoHeight + 6, 1.5, 1.5, "F");
+          doc.setDrawColor(226, 232, 240);
+          doc.roundedRect(startX, currentY, photoWidth, photoHeight + 6, 1.5, 1.5, "S");
+
+          // Label
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(6.5);
+          doc.setTextColor(71, 85, 105);
+          doc.text(item.label, startX + 2, currentY + 4);
+
+          // Try loading Base64 image
+          const base64 = await loadImageBase64(item.url);
+          if (base64) {
+            try {
+              doc.addImage(base64, "JPEG", startX + 2, currentY + 5.5, photoWidth - 4, photoHeight - 2, undefined, "FAST");
+            } catch (_) {}
+          }
+
+          startX += photoWidth + gap;
+        }
+        currentY += photoHeight + 10;
+      }
+
+      // -------------------------------------------------------------
+      // PAGE 2+: DO (Delivery Order) Signed / Original Paper
+      // -------------------------------------------------------------
+      const doPaperList = [
+        ...parseImageUrlList(order.photo_do_paper_signed),
+        ...parseImageUrlList(order.photo_do_paper)
+      ];
+
+      const uniqueDoPapers = Array.from(new Set(doPaperList));
+
+      if (uniqueDoPapers.length > 0) {
+        for (let idx = 0; idx < uniqueDoPapers.length; idx++) {
+          const doImgUrl = uniqueDoPapers[idx];
+          doc.addPage();
+
+          // Header on DO page
+          doc.setFillColor(11, 87, 208);
+          doc.rect(margin, 12, 3, 10, "F");
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(11);
+          doc.setTextColor(15, 23, 42);
+          doc.text(`DELIVERY ORDER (DO) - ATTACHMENT ${uniqueDoPapers.length > 1 ? `(${idx + 1}/${uniqueDoPapers.length})` : ""}`, margin + 5, 18);
+
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(8);
+          doc.setTextColor(100, 116, 139);
+          doc.text(`DO No: ${order.do_number} | Ref: ${order.ref_number || "-"}`, pageWidth - margin, 18, { align: "right" });
+
+          doc.setDrawColor(226, 232, 240);
+          doc.line(margin, 24, pageWidth - margin, 24);
+
+          const doBase64 = await loadImageBase64(doImgUrl);
+          if (doBase64) {
+            try {
+              const imgAreaWidth = contentWidth;
+              const imgAreaHeight = pageHeight - 34 - margin;
+              doc.addImage(doBase64, "JPEG", margin, 28, imgAreaWidth, imgAreaHeight, undefined, "FAST");
+            } catch (_) {}
+          }
+        }
+      }
+
+      // -------------------------------------------------------------
+      // PAGE 3+: INVOICE / CREDIT NOTE Attachment
+      // -------------------------------------------------------------
+      const invoiceImgList = [
+        ...parseImageUrlList(order.photo_invoice),
+        ...(isReturn ? parseImageUrlList(order.photo_return_paper_admin) : [])
+      ];
+      const uniqueInvoicePapers = Array.from(new Set(invoiceImgList));
+
+      if (uniqueInvoicePapers.length > 0) {
+        for (let idx = 0; idx < uniqueInvoicePapers.length; idx++) {
+          const invImgUrl = uniqueInvoicePapers[idx];
+          doc.addPage();
+
+          // Header on Invoice page
+          doc.setFillColor(11, 87, 208);
+          doc.rect(margin, 12, 3, 10, "F");
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(11);
+          doc.setTextColor(15, 23, 42);
+          doc.text(isReturn ? `CREDIT NOTE (CN) - ATTACHMENT` : `BILLING INVOICE - ATTACHMENT`, margin + 5, 18);
+
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(8);
+          doc.setTextColor(100, 116, 139);
+          const invNo = isReturn ? (order.credit_note_number || "-") : (order.invoice_number || "-");
+          doc.text(`Invoice No: ${invNo} | Amount: $${order.invoice_amount || "0.00"}`, pageWidth - margin, 18, { align: "right" });
+
+          doc.setDrawColor(226, 232, 240);
+          doc.line(margin, 24, pageWidth - margin, 24);
+
+          const invBase64 = await loadImageBase64(invImgUrl);
+          if (invBase64) {
+            try {
+              const imgAreaWidth = contentWidth;
+              const imgAreaHeight = pageHeight - 34 - margin;
+              doc.addImage(invBase64, "JPEG", margin, 28, imgAreaWidth, imgAreaHeight, undefined, "FAST");
+            } catch (_) {}
+          }
+        }
+      } else {
+        // Render Clean Invoice Summary page if no invoice photo uploaded
+        doc.addPage();
+        doc.setFillColor(11, 87, 208);
+        doc.rect(margin, 12, 3, 10, "F");
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(11);
+        doc.setTextColor(15, 23, 42);
+        doc.text(isReturn ? `CREDIT NOTE (CN) - SUMMARY` : `BILLING INVOICE - SUMMARY`, margin + 5, 18);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(100, 116, 139);
+        const invNo = isReturn ? (order.credit_note_number || "-") : (order.invoice_number || "-");
+        doc.text(`Invoice No: ${invNo}`, pageWidth - margin, 18, { align: "right" });
+
+        doc.setDrawColor(226, 232, 240);
+        doc.line(margin, 24, pageWidth - margin, 24);
+
+        // Invoice Card
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(margin, 30, contentWidth, 50, 2, 2, "F");
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(margin, 30, contentWidth, 50, 2, 2, "S");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Invoice Breakdown Details", margin + 6, 38);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(71, 85, 105);
+        doc.text(isReturn ? "Credit Note No:" : "Invoice Number:", margin + 6, 46);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(11, 87, 208);
+        doc.text(invNo, margin + 40, 46);
+
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(71, 85, 105);
+        doc.text("Total Invoice Amount:", margin + 6, 54);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(15, 23, 42);
+        doc.text(order.invoice_amount ? `$${Number(order.invoice_amount).toFixed(2)}` : "$0.00", margin + 40, 54);
+
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(71, 85, 105);
+        doc.text("Associated Order:", margin + 6, 62);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(15, 23, 42);
+        doc.text(`${order.do_number} (${order.ref_number || "No Ref"})`, margin + 40, 62);
+
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(71, 85, 105);
+        doc.text("Billed To Store / Address:", margin + 6, 70);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(15, 23, 42);
+        doc.text(`${order.deliver_to} (S${order.poscode})`, margin + 40, 70);
+
+        // Footer note
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(8);
+        doc.setTextColor(148, 163, 184);
+        doc.text("* Note: Official digital record verified and completed by HSG Logistics Administrator.", margin, 92);
+      }
+
+      // Add Page Numbers on all pages
+      const totalPages = (doc as any).internal.getNumberOfPages();
+      for (let p = 1; p <= totalPages; p++) {
+        doc.setPage(p);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(148, 163, 184);
+        doc.text(`Page ${p} of ${totalPages}`, pageWidth - margin, pageHeight - 8, { align: "right" });
+        doc.text(`iB Logistics Management System • ${order.do_number}`, margin, pageHeight - 8);
+      }
+
+      // Download PDF blob
+      const safeDo = (order.do_number || "ORDER").replace(/[^a-zA-Z0-9_-]/g, "_");
+      const safeRef = (order.ref_number || "NA").replace(/[^a-zA-Z0-9_-]/g, "_");
+      doc.save(`GDN_${safeDo}_${safeRef}.pdf`);
+      showToast(`Downloaded GDN_${safeDo}_${safeRef}.pdf`, "success");
+    } catch (err: any) {
+      console.error("Failed to generate compiled PDF:", err);
+      showToast("Failed to generate PDF: " + (err.message || "Unknown error"), "error");
     }
   };
 
@@ -3758,24 +5580,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     return `${mins}m`;
   };
 
-  const parseDriverCompletedLogs = (rawLogs: string): DriverLogCompletedEntry[] => {
-    try {
-      const parsed = typeof rawLogs === "string" ? JSON.parse(rawLogs || "[]") : rawLogs;
-      if (Array.isArray(parsed)) {
-        return parsed.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0));
-      }
-    } catch (_) {}
-    return [];
-  };
-
-  const parseDriverActiveOrderIds = (rawActive: string): string[] => {
-    try {
-      const parsed = typeof rawActive === "string" ? JSON.parse(rawActive || "[]") : rawActive;
-      if (Array.isArray(parsed)) return parsed;
-    } catch (_) {}
-    return [];
-  };
-
   const resolveOrder = (orderIdOrDo: string): DbOrder | undefined => {
     const clean = String(orderIdOrDo || "").trim().toLowerCase();
     return dbOrders.find(
@@ -3825,9 +5629,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         const updatedLogs = [
           ...currentLogs,
           {
-            action: "Shift Closed: Reverted to Ready to Deliver",
+            action: "Job Closed: Reverted to Ready to Deliver",
             actionBy: currentUser,
-            remark: `Admin closed shift ${forceCloseDriverJob.id}. Reverted status from Out for Delivery to Ready to Deliver.`,
+            remark: `Admin closed job ${forceCloseDriverJob.id}. Reverted status from Out for Delivery to Ready to Deliver.`,
             timestamp: Date.now()
           }
         ];
@@ -3871,7 +5675,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       if (!res.ok) throw new Error("Failed to close driver job in database");
 
-      showToast(`Shift closed for ${forceCloseDriverJob.driver}`, "success");
+      showToast(`Job closed for ${forceCloseDriverJob.driver}`, "success");
       setIsForceCloseModalOpen(false);
       setForceCloseDriverJob(null);
 
@@ -3880,7 +5684,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       fetchDatabaseOrders(true);
     } catch (err: any) {
       console.error("Force close job error:", err);
-      showToast("Error closing shift: " + err.message, "error");
+      showToast("Error closing job: " + err.message, "error");
     } finally {
       setForceCloseLoading(false);
     }
@@ -3903,21 +5707,58 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             {activeTab === "dashboard"
               ? "Live Tracking"
               : activeTab === "delivery"
-              ? "Delivery Order Management"
+              ? "Deliver Order"
               : activeTab === "return"
-              ? "Return Order Tracking"
+              ? "Return Order"
               : "Create & Import Orders"}
           </h1>
           <p className="text-xs text-zinc-500 mt-0.5">
             {activeTab === "dashboard"
-              ? "Real-time dispatch route visualization and live driver shift monitoring."
+              ? "Real-time dispatch route visualization and live driver job monitoring."
               : activeTab === "delivery"
-              ? "Manage pending deliveries, bulk invoices, and completed order archives."
+              ? "Manage delivery orders, invoices, and completed deliveries."
               : activeTab === "return"
-              ? "Track customer and store return collections, due dates, and credit notes."
+              ? "Manage return orders, credit notes, and collection status."
               : "Import DO orders from PDF / Excel sheets or draft manual order records."}
           </p>
         </div>
+
+        {/* Top Right Badges for Live Tracking / Delivery / Return tabs */}
+        {activeTab === "dashboard" && (
+          <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
+              <span className="text-zinc-500 font-medium">Pending Delivery:</span>
+              <span className="font-bold text-zinc-950">{pendingOrders.filter((o) => o.status !== "Delivered").length}</span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-[#C5221F]" />
+              <span className="text-zinc-500 font-medium">Pending Return:</span>
+              <span className="font-bold text-zinc-950">{dbOrders.filter((o) => o.type === "Return" && String(o.completed) !== "true" && o.completed !== true && o.status !== "Collected" && o.status !== "Return Collected").length}</span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-[#137333]" />
+              <span className="text-zinc-500 font-medium">Task Done:</span>
+              <span className="font-bold text-zinc-950">{tasksDoneToday}</span>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "delivery" && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-zinc-700">
+              {activeDeliveryTab === "pending" ? sortedPendingOrders.length : sortedCompletedOrders.length} {activeDeliveryTab === "pending" ? "Pending" : "Completed"} Orders
+            </span>
+          </div>
+        )}
+
+        {activeTab === "return" && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-zinc-700">
+              {sortedReturnOrders.length} {activeReturnTab === "pending" ? "Pending" : "Completed"} Returns
+            </span>
+          </div>
+        )}
 
         {/* Header Action Buttons for Create Tab */}
         {activeTab === "create" && (
@@ -3930,8 +5771,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               disabled={pdfLoading}
               className="text-xs font-semibold"
             >
-              <Upload size={14} />
-              <span>Import Order</span>
+              {pdfLoading ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>{pdfLoadingText}</span>
+                </>
+              ) : (
+                <>
+                  <Upload size={14} />
+                  <span>Import Order</span>
+                </>
+              )}
             </CustomButton>
 
             <CustomButton 
@@ -3968,7 +5818,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         {/* TAB CONTENT: LIVE TRACKING (Formerly Dashboard) */}
         {activeTab === "dashboard" && (
           <div className="flex-1 flex flex-col gap-4 animate-tableFadeInOnly min-h-0 overflow-hidden">
-            {/* Live Tracking Sub-tabs Switch Header & Compact Quick Stats */}
+            {/* Live Tracking Sub-tabs Switch Header & Search Bar */}
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2">
               <div className="flex items-center gap-2">
                 <button
@@ -4003,23 +5853,28 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 </button>
               </div>
 
-              {/* Compact Quick Stats Pills in Sub-header */}
+              {/* Search Bar for Track Location */}
               {activeLiveTrackingSubTab === "location" && (
-                <div className="flex items-center gap-2 text-xs">
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
-                    <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
-                    <span className="text-zinc-500 font-medium">Pending Delivery:</span>
-                    <span className="font-bold text-zinc-950">{pendingOrders.filter((o) => o.status !== "Delivered").length}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
-                    <span className="w-2 h-2 rounded-full bg-[#C5221F]" />
-                    <span className="text-zinc-500 font-medium">Pending Return:</span>
-                    <span className="font-bold text-zinc-950">{dbOrders.filter((o) => o.type === "Return" && String(o.completed) !== "true" && o.completed !== true && o.status !== "Collected" && o.status !== "Return Collected").length}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
-                    <span className="w-2 h-2 rounded-full bg-[#137333]" />
-                    <span className="text-zinc-500 font-medium">Task Done:</span>
-                    <span className="font-bold text-zinc-950">{tasksDoneToday}</span>
+                <div className="flex items-center gap-2">
+                  <div className="relative w-72">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+                    <input
+                      type="text"
+                      placeholder="Search mark, ID, ref, address, driver, poscode..."
+                      value={mapSearchQuery}
+                      onChange={(e) => setMapSearchQuery(e.target.value)}
+                      className="w-full pl-8 pr-7 py-1.5 bg-white border border-slate-200 rounded text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-hidden focus:border-[#0B57D0] shadow-2xs transition-all"
+                    />
+                    {mapSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setMapSearchQuery("")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-700 text-xs cursor-pointer"
+                        title="Clear search"
+                      >
+                        ✕
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -4031,7 +5886,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 {/* Full Width & Height Map Container */}
                 <div className="flex-1 w-full min-h-0 rounded border border-slate-200 overflow-hidden relative shadow-2xs bg-white">
                   {/* Map Filter Toggle Button Overlay */}
-                  <div className="absolute top-3 right-3 z-20 bg-white/95 backdrop-blur-xs border border-slate-200 rounded shadow-sm p-1 flex gap-1">
+                  <div className="absolute top-3 right-3 z-20 bg-white/95 backdrop-blur-xs border border-slate-200 rounded shadow-sm p-1 flex gap-1 items-center">
                     <button
                       type="button"
                       onClick={() => setMapFilter("pending")}
@@ -4105,26 +5960,112 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     </button>
                   </div>
 
-                  {/* Search Bar for Order ID, Job ID, or Driver */}
-                  <div className="relative w-full sm:w-72">
-                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
-                    <input
-                      type="text"
-                      value={driverSearchQuery}
-                      onChange={(e) => setDriverSearchQuery(e.target.value)}
-                      placeholder="Search Order ID, Job ID, Driver..."
-                      className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-200 rounded focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-colors"
-                    />
-                    {driverSearchQuery && (
-                      <button
-                        type="button"
-                        onClick={() => setDriverSearchQuery("")}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
-                        title="Clear Search"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
+                  {/* Period Filter Buttons & Search Bar for Track Driver */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {activeDriverLogSubTab === "closed" && (
+                      <div className="flex items-center gap-1 bg-[#F1F3F4] p-0.5 rounded-lg border border-slate-200">
+                        <button
+                          type="button"
+                          onClick={() => setDriverLogPeriodFilter("week")}
+                          className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                            driverLogPeriodFilter === "week"
+                              ? "bg-white text-[#0B57D0] shadow-xs"
+                              : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50"
+                          }`}
+                        >
+                          This Week
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDriverLogPeriodFilter("month")}
+                          className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                            driverLogPeriodFilter === "month"
+                              ? "bg-white text-[#0B57D0] shadow-xs"
+                              : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50"
+                          }`}
+                        >
+                          This Month
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDriverLogPeriodFilter("all")}
+                          className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                            driverLogPeriodFilter === "all"
+                              ? "bg-white text-[#0B57D0] shadow-xs"
+                              : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50"
+                          }`}
+                        >
+                          All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDriverLogPeriodFilter("custom")}
+                          className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                            driverLogPeriodFilter === "custom"
+                              ? "bg-white text-[#0B57D0] shadow-xs"
+                              : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50"
+                          }`}
+                        >
+                          Custom
+                        </button>
+                      </div>
                     )}
+
+                    {/* Custom Date Range inputs when Custom is active */}
+                    {activeDriverLogSubTab === "closed" && driverLogPeriodFilter === "custom" && (
+                      <div className="flex items-center gap-1.5 bg-white border border-slate-200 px-2 py-1 rounded-lg shadow-2xs">
+                        <Calendar size={13} className="text-zinc-400 shrink-0" />
+                        <input
+                          type="date"
+                          value={driverLogStartDate}
+                          onChange={(e) => setDriverLogStartDate(e.target.value)}
+                          className="text-xs text-zinc-700 font-medium focus:outline-none bg-transparent"
+                          title="Start Date"
+                        />
+                        <span className="text-xs text-zinc-400 font-bold">to</span>
+                        <input
+                          type="date"
+                          value={driverLogEndDate}
+                          onChange={(e) => setDriverLogEndDate(e.target.value)}
+                          className="text-xs text-zinc-700 font-medium focus:outline-none bg-transparent"
+                          title="End Date"
+                        />
+                        {(driverLogStartDate || driverLogEndDate) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDriverLogStartDate("");
+                              setDriverLogEndDate("");
+                            }}
+                            className="text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer ml-0.5"
+                            title="Clear Range"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="relative w-full sm:w-64">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={driverSearchQuery}
+                        onChange={(e) => setDriverSearchQuery(e.target.value)}
+                        placeholder="Search Order ID, Job ID, Driver..."
+                        className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-200 rounded focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-colors"
+                      />
+                      {driverSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setDriverSearchQuery("")}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
+                          title="Clear Search"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -4183,7 +6124,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                         {driverJob.driver}
                                       </h4>
                                       <span className="text-[10px] text-zinc-500 font-medium">
-                                        Shift ID: {driverJob.id}
+                                        Job ID: {driverJob.id}
                                       </span>
                                     </div>
                                   </div>
@@ -4194,7 +6135,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                       setForceCloseDriverJob(driverJob);
                                       setIsForceCloseModalOpen(true);
                                     }}
-                                    title="End Driver Shift"
+                                    title="End Driver Job"
                                     className="p-1.5 rounded hover:bg-red-50 text-red-600 hover:text-red-700 transition-colors cursor-pointer flex items-center justify-center"
                                   >
                                     <Square size={14} fill="currentColor" />
@@ -4222,7 +6163,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
                                 {driverJob.outsource_driver_details && (
                                   <div className="text-[10px] bg-blue-50 text-blue-700 px-2 py-0.5 rounded border border-blue-200 font-semibold truncate">
-                                    ℹ️ Outsource: {driverJob.outsource_driver_details}
+                                    ℹ️ Outsource: {parseOutsourceDriverDetails(driverJob.outsource_driver_details).formatted || driverJob.outsource_driver_details}
                                   </div>
                                 )}
                               </div>
@@ -4301,41 +6242,70 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                             </div>
                                           )}
 
-                                          {/* Signed DO Proof Thumbnail */}
-                                          {logEntry.signed_paper_img && (
-                                            <div className="mt-2 flex items-center gap-2">
-                                              <div
-                                                onClick={() => setActiveLightboxImage(logEntry.signed_paper_img || null)}
-                                                className="relative w-12 h-12 rounded border border-emerald-300 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity bg-white flex-shrink-0 shadow-2xs"
-                                                title="Click to view signed DO full screen"
-                                              >
-                                                <img
-                                                  src={logEntry.signed_paper_img}
-                                                  alt="Signed DO Proof"
-                                                  className="w-full h-full object-cover"
-                                                />
+                                          {/* Proof Photos (Signed DO, Supporting Images, Order Proofs) */}
+                                          {(() => {
+                                            const allPhotos: { url: string; label: string }[] = [];
+                                            if (logEntry.signed_paper_img) {
+                                              allPhotos.push({ url: logEntry.signed_paper_img, label: "Signed DO" });
+                                            }
+                                            if (Array.isArray(logEntry.supporting_images)) {
+                                              logEntry.supporting_images.forEach((img, sIdx) => {
+                                                if (img && typeof img === "string") {
+                                                  allPhotos.push({ url: img, label: `Photo #${sIdx + 1}` });
+                                                }
+                                              });
+                                            }
+                                            if (matchedOrder) {
+                                              const orderProofs = [
+                                                ...getLogImagesForAction("delivered", matchedOrder),
+                                                ...getLogImagesForAction("handover", matchedOrder),
+                                                ...getLogImagesForAction("signed", matchedOrder)
+                                              ];
+                                              for (const p of orderProofs) {
+                                                if (p && !allPhotos.some((ap) => ap.url === p)) {
+                                                  allPhotos.push({ url: p, label: "Delivery Proof" });
+                                                }
+                                              }
+                                            }
+
+                                            if (allPhotos.length === 0) return null;
+
+                                            return (
+                                              <div className="mt-2 flex flex-col gap-1.5">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                  {allPhotos.map((photo, pIdx) => (
+                                                    <div
+                                                      key={`online-photo-${pIdx}`}
+                                                      onClick={() => setActiveLightboxImage(photo.url)}
+                                                      className="group relative w-12 h-12 rounded border border-emerald-300 overflow-hidden cursor-pointer hover:border-emerald-500 hover:shadow-xs transition-all bg-white flex-shrink-0"
+                                                      title={`Click to view ${photo.label} full screen`}
+                                                    >
+                                                      <img
+                                                        src={photo.url}
+                                                        alt={photo.label}
+                                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                                      />
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                                <span className="text-[10px] text-emerald-700 font-semibold">
+                                                  📸 {allPhotos.length} Delivery Photo{allPhotos.length > 1 ? "s" : ""} Attached
+                                                </span>
                                               </div>
-                                              <span className="text-[10px] text-emerald-700 font-semibold">
-                                                Signed DO Attached
-                                              </span>
-                                            </div>
-                                          )}
+                                            );
+                                          })()}
 
                                           {/* Discrepancy / Issues Callout */}
                                           {hasDiscrepancies && (
-                                            <div className="mt-2 bg-amber-50 border border-amber-300 rounded p-2 text-[10px] flex flex-col gap-1">
+                                            <div className="mt-1.5 bg-amber-50 border border-amber-300 rounded p-1.5 text-[10px] flex flex-col gap-0.5">
                                               <div className="flex items-center gap-1 font-bold text-amber-900">
                                                 <AlertTriangle size={11} className="text-amber-600 flex-shrink-0" />
-                                                <span>Discrepancy / Issue:</span>
+                                                <span>Reported Issues / Remarks:</span>
                                               </div>
-                                              {logEntry.discrepancies?.map((disc, dIdx) => (
-                                                <div key={dIdx} className="text-amber-800 pl-3">
-                                                  • <span className="font-semibold">{disc.sku}</span>: Ordered {disc.qty_ordered}, Delivered {disc.qty_delivered}
-                                                  {disc.remark && (
-                                                    <div className="text-zinc-600 italic">
-                                                      Remark: "{disc.remark}"
-                                                    </div>
-                                                  )}
+                                              {logEntry.discrepancies?.map((d, dIdx) => (
+                                                <div key={dIdx} className="text-amber-800 pl-2">
+                                                  • {d.sku}: Ordered {d.qty_ordered}, Delivered {d.qty_delivered}
+                                                  {d.remark && ` (Note: ${d.remark})`}
                                                 </div>
                                               ))}
                                             </div>
@@ -4433,22 +6403,21 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                         <ClipboardCheck size={40} className="text-zinc-400 mb-3" />
                         <span className="font-primary text-sm text-zinc-500 font-medium">
-                          No closed driver shifts recorded yet.
+                          No closed driver jobs recorded yet.
                         </span>
                       </div>
                     ) : (
                       <div className="h-full overflow-auto border border-slate-200 rounded bg-white">
                         <table className="w-full text-left font-primary text-xs border-collapse">
                           <thead>
-                            <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
-                              <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Route Log</th>
-                              <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Job ID</th>
-                              <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Driver Name</th>
-                              <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Shift Started</th>
-                              <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Shift Ended</th>
-                              <th className="sticky top-0 bg-slate-50 p-3 w-28 align-middle z-10">Duration</th>
-                              <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Completed Stops</th>
-                              <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Discrepancies</th>
+                            <tr className="bg-slate-50 text-zinc-600 font-semibold border-b border-slate-200 h-10 text-[11px]">
+                              <th className="sticky top-0 bg-slate-50 p-2.5 w-14 text-center align-middle z-10">Route Log</th>
+                              <th className="sticky top-0 bg-slate-50 p-2.5 min-w-[200px] align-middle z-10">Driver Details</th>
+                              <th className="sticky top-0 bg-slate-50 p-2.5 w-36 align-middle z-10">Job Started</th>
+                              <th className="sticky top-0 bg-slate-50 p-2.5 w-36 align-middle z-10">Job Ended</th>
+                              <th className="sticky top-0 bg-slate-50 p-2.5 w-24 align-middle z-10">Duration</th>
+                              <th className="sticky top-0 bg-slate-50 p-2.5 w-24 text-center align-middle z-10">Stops</th>
+                              <th className="sticky top-0 bg-slate-50 p-2.5 w-28 align-middle z-10">Discrepancies</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-zinc-200">
@@ -4458,15 +6427,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 (acc, curr) => acc + (curr.discrepancies ? curr.discrepancies.length : 0),
                                 0
                               );
+                              const outsourceParsed = parseOutsourceDriverDetails(record.outsource_driver_details);
 
                               return (
                                 <tr
                                   key={record.id}
-                                  className={`transition-all h-14 ${
+                                  className={`transition-all h-12 ${
                                     idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
                                   } hover:bg-slate-50`}
                                 >
-                                  <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
+                                  <td className="p-2.5 w-14 text-center align-middle border-b border-zinc-200">
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -4474,45 +6444,44 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                         setIsRouteLogModalOpen(true);
                                       }}
                                       title="View Complete Route Timeline Log"
-                                      className="w-8 h-8 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-[#0B57D0]/30 bg-[#0B57D0]/5 hover:bg-[#0B57D0] text-[#0B57D0] hover:text-white cursor-pointer transition-all outline-none mx-auto shadow-2xs"
+                                      className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-[#0B57D0]/30 bg-[#0B57D0]/5 hover:bg-[#0B57D0] text-[#0B57D0] hover:text-white cursor-pointer transition-all outline-none mx-auto shadow-2xs"
                                     >
-                                      <Route size={14} />
+                                      <Route size={13} />
                                     </button>
                                   </td>
-                                  <td className="p-3 w-40 font-mono font-bold text-zinc-900 align-middle border-b border-zinc-200">
-                                    {record.id}
+                                  <td className="p-2.5 min-w-[200px] align-middle border-b border-zinc-200">
+                                    <div className="text-zinc-900 font-medium text-xs flex items-center gap-1.5 flex-wrap">
+                                      <span>
+                                        {outsourceParsed.formatted || record.driver || "—"}
+                                      </span>
+                                    </div>
+                                    <div className="text-[10px] text-zinc-400 font-mono mt-0.5">
+                                      {record.id}
+                                    </div>
                                   </td>
-                                  <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                                    {record.driver}
-                                    {record.outsource_driver_details && (
-                                      <div className="text-[10px] text-zinc-400 font-normal truncate">
-                                        {record.outsource_driver_details}
-                                      </div>
-                                    )}
-                                  </td>
-                                  <td className="p-3 w-40 text-zinc-600 align-middle border-b border-zinc-200">
+                                  <td className="p-2.5 w-36 text-zinc-600 align-middle border-b border-zinc-200 text-xs">
                                     {formatTimestamp(record.start_time)}
                                   </td>
-                                  <td className="p-3 w-40 text-zinc-600 align-middle border-b border-zinc-200">
+                                  <td className="p-2.5 w-36 text-zinc-600 align-middle border-b border-zinc-200 text-xs">
                                     {formatTimestamp(record.end_time)}
                                   </td>
-                                  <td className="p-3 w-28 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
+                                  <td className="p-2.5 w-24 text-zinc-600 align-middle border-b border-zinc-200 text-xs">
                                     {formatShiftDuration(record.start_time, record.end_time)}
                                   </td>
-                                  <td className="p-3 w-28 text-center align-middle border-b border-zinc-200">
-                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold text-xs">
-                                      <Check size={11} strokeWidth={3} />
+                                  <td className="p-2.5 w-24 text-center align-middle border-b border-zinc-200">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 font-medium text-xs">
+                                      <Check size={10} strokeWidth={2.5} />
                                       {logs.length}
                                     </span>
                                   </td>
-                                  <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                                  <td className="p-2.5 w-28 align-middle border-b border-zinc-200">
                                     {totalIssues > 0 ? (
-                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold text-[10px]">
-                                        <AlertTriangle size={11} className="text-amber-600" />
+                                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-medium text-[10px]">
+                                        <AlertTriangle size={10} className="text-amber-600" />
                                         {totalIssues} Issue{totalIssues > 1 ? "s" : ""}
                                       </span>
                                     ) : (
-                                      <span className="text-zinc-400 font-normal text-[11px]">
+                                      <span className="text-zinc-400 font-normal text-[10px]">
                                         Clean (0)
                                       </span>
                                     )}
@@ -4565,10 +6534,22 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 onClick={() => {
                   if (!invoiceLoading) setIsInvoiceUploadChoiceOpen(true);
                 }}
-                className={`ml-2 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${invoiceLoading ? "opacity-50 cursor-not-allowed" : ""}`}
+                disabled={invoiceLoading}
+                className={`ml-2 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${
+                  invoiceLoading ? "opacity-80 cursor-not-allowed" : ""
+                }`}
               >
-                <Upload size={14} />
-                Bulk Invoices Upload
+                {invoiceLoading ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>{invoiceLoadingText}</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload size={14} />
+                    <span>Bulk Invoices Upload</span>
+                  </>
+                )}
               </button>
               <input
                 type="file"
@@ -4617,7 +6598,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 )}
               </select>
 
-              <div className="relative w-full sm:w-64">
+              <div className="relative w-full sm:w-72">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
                 <input
                   type="text"
@@ -4637,10 +6618,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   </button>
                 )}
               </div>
-
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-zinc-600">
-                {activeDeliveryTab === "pending" ? sortedPendingOrders.length : sortedCompletedOrders.length} Orders
-              </span>
             </div>
           </div>
 
@@ -4775,8 +6752,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   {order.mark}
                                 </td>
                                 <td className="p-3 w-56 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
-                                  {order.do_number}
-                                  {order.ref_number ? `_${order.ref_number}` : ""}
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span>
+                                      {order.do_number}
+                                      {order.ref_number ? `_${order.ref_number}` : ""}
+                                    </span>
+                                    {renderDiscrepancyBadge(order)}
+                                  </div>
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
                                   {renderTypeCell(order)}
@@ -4833,11 +6815,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   <table className="w-full text-left font-primary text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
-                        <th className="sticky top-0 bg-slate-50 p-3 w-24 align-middle z-10"></th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-32 align-middle z-10"></th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Delivered</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Deliver by</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-44 align-middle z-10">Reference Number</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Store ID</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Address</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Method</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Invoice</th>
@@ -4875,11 +6858,28 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             deliveredTs = order.timestamp; 
                           }
 
+                          const currentInputValue = linkStoreInputValues[order.id] !== undefined 
+                            ? linkStoreInputValues[order.id] 
+                            : (order.link_store || "");
+                          const isDropdownOpen = activeLinkStoreDropdown === order.id;
+
+                          const filteredStores = currentInputValue.trim()
+                            ? stores
+                                .filter((s: any) => {
+                                  const q = currentInputValue.trim().toLowerCase();
+                                  const idStr = String(s.id || "").toLowerCase();
+                                  const nameStr = String(s["Display Name"] || s.display_name || "").toLowerCase();
+                                  const addrStr = String(s.Address || s.address || "").toLowerCase();
+                                  return idStr.includes(q) || nameStr.includes(q) || addrStr.includes(q);
+                                })
+                                .slice(0, 5)
+                            : stores.slice(0, 5);
+
                           return (
                             <React.Fragment key={order.id}>
                               {showDivider && (
                                 <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
-                                  <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                  <td colSpan={12} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
                                     📅 {dateStr}
                                   </td>
                                 </tr>
@@ -4889,7 +6889,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
                                 } hover:bg-slate-50`}
                               >
-                                <td className="p-3 w-24 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                                <td className="p-3 w-32 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
                                   <button
                                     type="button"
                                     onClick={() => handleTriggerRevokeComplete(order)}
@@ -4905,6 +6905,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                     className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer transition-all shadow-2xs outline-none"
                                   >
                                     <Pencil size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDownloadCompiledPdf(order)}
+                                    title="Download Compiled PDF (GDN + DO + Invoice)"
+                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-blue-50 text-zinc-600 hover:text-blue-600 hover:border-blue-300 cursor-pointer transition-all shadow-2xs outline-none"
+                                  >
+                                    <FileDown size={12} />
                                   </button>
                                 </td>
                                 <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
@@ -4925,8 +6933,70 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   )}
                                 </td>
                                 <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
-                                  {order.do_number}
-                                  {order.ref_number ? `_${order.ref_number}` : ""}
+                                  <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span>
+                                      {order.do_number}
+                                      {order.ref_number ? `_${order.ref_number}` : ""}
+                                    </span>
+                                    {renderDiscrepancyBadge(order)}
+                                  </div>
+                                </td>
+                                <td className="p-3 w-28 align-middle border-b border-zinc-200 relative text-center">
+                                  <div className="relative inline-block w-20">
+                                    <input
+                                      type="text"
+                                      value={currentInputValue}
+                                      placeholder="-"
+                                      maxLength={10}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: val }));
+                                        setActiveLinkStoreDropdown(order.id);
+                                      }}
+                                      onFocus={() => setActiveLinkStoreDropdown(order.id)}
+                                      onBlur={() => {
+                                        // Slight delay so clicking dropdown option registers
+                                        setTimeout(() => {
+                                          setActiveLinkStoreDropdown((current) => (current === order.id ? null : current));
+                                          handleUpdateOrderLinkStore(order, currentInputValue);
+                                        }, 200);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                          setActiveLinkStoreDropdown(null);
+                                          handleUpdateOrderLinkStore(order, currentInputValue);
+                                          (e.target as HTMLInputElement).blur();
+                                        }
+                                      }}
+                                      className="w-full text-center px-1.5 py-1 text-xs font-semibold uppercase rounded border border-slate-300 bg-white text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] shadow-2xs"
+                                    />
+                                    {isDropdownOpen && filteredStores.length > 0 && (
+                                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 w-56 bg-white border border-slate-200 rounded-md shadow-lg z-50 overflow-hidden text-left divide-y divide-slate-100">
+                                        {filteredStores.map((st: any) => {
+                                          const sId = String(st.id || "");
+                                          const sName = String(st["Display Name"] || st.display_name || "");
+                                          return (
+                                            <button
+                                              key={sId}
+                                              type="button"
+                                              onMouseDown={(e) => {
+                                                e.preventDefault();
+                                                setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: sId }));
+                                                setActiveLinkStoreDropdown(null);
+                                                handleUpdateOrderLinkStore(order, sId);
+                                              }}
+                                              className="w-full px-2.5 py-1.5 text-xs hover:bg-[#F0F4F9] text-left flex flex-col transition-colors cursor-pointer"
+                                            >
+                                              <span className="font-bold text-zinc-900 flex items-center justify-between">
+                                                <span>{sId}</span>
+                                                <span className="text-[10px] text-zinc-400 font-normal truncate max-w-[120px]">{sName}</span>
+                                              </span>
+                                            </button>
+                                          );
+                                        })}
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
                                   {order.deliver_to}
@@ -5000,6 +7070,45 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               >
                 Complete
               </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  if (!creditNoteLoading) setIsCreditNoteUploadChoiceOpen(true);
+                }}
+                disabled={creditNoteLoading}
+                className={`ml-2 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${
+                  creditNoteLoading ? "opacity-80 cursor-not-allowed" : ""
+                }`}
+              >
+                {creditNoteLoading ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>{creditNoteLoadingText}</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload size={14} />
+                    <span>Bulk Credit Notes Upload</span>
+                  </>
+                )}
+              </button>
+              <input
+                type="file"
+                ref={creditNotePdfInputRef}
+                accept="application/pdf"
+                onChange={handleBulkCreditNoteUpload}
+                className="hidden"
+                disabled={creditNoteLoading}
+              />
+              <input
+                type="file"
+                ref={creditNoteExcelInputRef}
+                accept="text/csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+                onChange={handleCreditNoteExcelUpload}
+                className="hidden"
+                disabled={creditNoteLoading}
+              />
             </div>
 
             {/* Filter Status & Search Bar */}
@@ -5025,7 +7134,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 )}
               </select>
 
-              <div className="relative w-full sm:w-64">
+              <div className="relative w-full sm:w-72">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
                 <input
                   type="text"
@@ -5045,10 +7154,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   </button>
                 )}
               </div>
-
-              <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-100 text-zinc-600">
-                {sortedReturnOrders.length} Returns
-              </span>
             </div>
           </div>
 
@@ -5067,11 +7172,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 <table className="w-full text-left font-primary text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
-                      <th className="sticky top-0 bg-slate-50 p-3 w-24 align-middle z-10"></th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-32 align-middle z-10"></th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Collected</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Collected by</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-44 align-middle z-10">Reference</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Store ID</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Return Collect from</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Method</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Credit Note</th>
@@ -5109,11 +7215,28 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           deliveredTs = order.timestamp; 
                         }
 
+                        const currentInputValue = linkStoreInputValues[order.id] !== undefined 
+                          ? linkStoreInputValues[order.id] 
+                          : (order.link_store || "");
+                        const isDropdownOpen = activeLinkStoreDropdown === order.id;
+
+                        const filteredStores = currentInputValue.trim()
+                          ? stores
+                              .filter((s: any) => {
+                                const q = currentInputValue.trim().toLowerCase();
+                                const idStr = String(s.id || "").toLowerCase();
+                                const nameStr = String(s["Display Name"] || s.display_name || "").toLowerCase();
+                                const addrStr = String(s.Address || s.address || "").toLowerCase();
+                                return idStr.includes(q) || nameStr.includes(q) || addrStr.includes(q);
+                              })
+                              .slice(0, 5)
+                          : stores.slice(0, 5);
+
                         return (
                           <React.Fragment key={order.id}>
                             {showDivider && (
                               <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
-                                <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                <td colSpan={12} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
                                   📅 {dateStr}
                                 </td>
                               </tr>
@@ -5123,7 +7246,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
                               } hover:bg-slate-50`}
                             >
-                              <td className="p-3 w-24 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                              <td className="p-3 w-32 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
                                 <button
                                   type="button"
                                   onClick={() => handleTriggerRevokeComplete(order)}
@@ -5139,6 +7262,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
                                 >
                                   <Pencil size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadCompiledPdf(order)}
+                                  title="Download Compiled PDF (GRN + CN)"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-blue-50 text-zinc-700 hover:text-blue-600 hover:border-blue-300 cursor-pointer transition-all outline-none"
+                                >
+                                  <FileDown size={12} />
                                 </button>
                               </td>
                               <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
@@ -5160,6 +7291,63 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               </td>
                               <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
                                 {order.ref_number || order.do_number}
+                              </td>
+                              <td className="p-3 w-28 align-middle border-b border-zinc-200 relative text-center">
+                                <div className="relative inline-block w-20">
+                                  <input
+                                    type="text"
+                                    value={currentInputValue}
+                                    placeholder="-"
+                                    maxLength={10}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: val }));
+                                      setActiveLinkStoreDropdown(order.id);
+                                    }}
+                                    onFocus={() => setActiveLinkStoreDropdown(order.id)}
+                                    onBlur={() => {
+                                      // Slight delay so clicking dropdown option registers
+                                      setTimeout(() => {
+                                        setActiveLinkStoreDropdown((current) => (current === order.id ? null : current));
+                                        handleUpdateOrderLinkStore(order, currentInputValue);
+                                      }, 200);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        setActiveLinkStoreDropdown(null);
+                                        handleUpdateOrderLinkStore(order, currentInputValue);
+                                        (e.target as HTMLInputElement).blur();
+                                      }
+                                    }}
+                                    className="w-full text-center px-1.5 py-1 text-xs font-semibold uppercase rounded border border-slate-300 bg-white text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] shadow-2xs"
+                                  />
+                                  {isDropdownOpen && filteredStores.length > 0 && (
+                                    <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 w-56 bg-white border border-slate-200 rounded-md shadow-lg z-50 overflow-hidden text-left divide-y divide-slate-100">
+                                      {filteredStores.map((st: any) => {
+                                        const sId = String(st.id || "");
+                                        const sName = String(st["Display Name"] || st.display_name || "");
+                                        return (
+                                          <button
+                                            key={sId}
+                                            type="button"
+                                            onMouseDown={(e) => {
+                                              e.preventDefault();
+                                              setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: sId }));
+                                              setActiveLinkStoreDropdown(null);
+                                              handleUpdateOrderLinkStore(order, sId);
+                                            }}
+                                            className="w-full px-2.5 py-1.5 text-xs hover:bg-[#F0F4F9] text-left flex flex-col transition-colors cursor-pointer"
+                                          >
+                                            <span className="font-bold text-zinc-900 flex items-center justify-between">
+                                              <span>{sId}</span>
+                                              <span className="text-[10px] text-zinc-400 font-normal truncate max-w-[120px]">{sName}</span>
+                                            </span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
                               </td>
                               <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
                                 {order.deliver_to}
@@ -5211,7 +7399,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       <th className="sticky top-0 bg-slate-50 p-3 w-44 align-middle z-10">Ref Number</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Return Collect from</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Collect Method</th>
-                      <th className="sticky top-0 bg-slate-50 p-3 w-32 align-middle z-10">Due Date</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Due Date</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Items</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Logs</th>
                     </tr>
@@ -5302,17 +7490,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   {order.status || "Pending"}
                                 </span>
                               </td>
-                              <td className="p-3 w-44 font-semibold text-zinc-850 align-middle border-b border-zinc-200">
+                              <td className="p-3 w-44 font-semibold text-zinc-950 align-middle border-b border-zinc-200">
                                 {order.ref_number || order.do_number}
                               </td>
-                              <td className="p-3 w-56 text-zinc-700 font-semibold align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
+                              <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
                                 {order.deliver_to}
                               </td>
-                              <td className="p-3 w-36 text-zinc-700 font-semibold align-middle border-b border-zinc-200" title={order.deliver_method}>
-                                {order.deliver_method || "—"}
+                              <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200" title={order.deliver_method}>
+                                {order.deliver_method || "Company Vehicle"}
                               </td>
-                              <td className="p-3 w-32 text-zinc-700 font-semibold align-middle border-b border-zinc-200">
-                                {formatDateStr(order.deadline)}
+                              <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                                {renderReturnDueDateCell(order)}
                               </td>
                               <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                 <button
@@ -5321,7 +7509,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-200 hover:bg-slate-50 transition-all font-semibold text-zinc-700 cursor-pointer"
                                 >
                                   <Boxes size={12} className="text-zinc-500" />
-                                  <span>{itemsCount}</span>
+                                  <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
                                 </button>
                               </td>
                               <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
@@ -6413,20 +8601,74 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
                 />
               </div>
+
+              {/* Invoice Photo Attachment */}
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-zinc-700">Invoice Photo / Attachment</label>
+                  {editInvoicePhotoUrl && (
+                    <a
+                      href={editInvoicePhotoUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-[10px] text-[#0B57D0] hover:underline font-semibold flex items-center gap-1"
+                    >
+                      <Eye size={10} /> View Current
+                    </a>
+                  )}
+                </div>
+
+                {editInvoicePhotoUrl && !editInvoicePhotoFile ? (
+                  <div className="flex items-center justify-between p-2 rounded border border-slate-200 bg-slate-50">
+                    <span className="text-[11px] text-zinc-600 truncate max-w-[200px]">
+                      Attached Invoice Document
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEditInvoicePhotoUrl("")}
+                      className="text-red-500 hover:text-red-700 text-[10px] font-bold cursor-pointer"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setEditInvoicePhotoFile(f);
+                    }}
+                    className="text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer border border-slate-200 rounded p-1"
+                  />
+                )}
+                {editInvoicePhotoFile && (
+                  <span className="text-[10px] text-zinc-500 truncate">
+                    Selected: {editInvoicePhotoFile.name}
+                  </span>
+                )}
+              </div>
             </div>
             <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex justify-between items-center">
               <CustomButton 
                 variant="secondary" 
                 onClick={() => setIsEditInvoiceModalOpen(false)}
+                disabled={editInvoiceUploading}
               >
                 Cancel
               </CustomButton>
               <CustomButton 
                 variant="dark" 
                 onClick={handleSaveEditInvoice}
-                disabled={!String(editInvoiceNum || "").trim() || !String(editInvoiceAmount || "").trim()}
+                disabled={editInvoiceUploading || !String(editInvoiceNum || "").trim() || !String(editInvoiceAmount || "").trim()}
               >
-                Save
+                {editInvoiceUploading ? (
+                  <span className="flex items-center gap-1">
+                    <Loader2 size={12} className="animate-spin" /> Saving...
+                  </span>
+                ) : (
+                  "Save"
+                )}
               </CustomButton>
             </div>
           </div>
@@ -6472,6 +8714,70 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         </div>
       )}
 
+      {/* UNKNOWN STORE ID CONFIRMATION MODAL */}
+      {isUnknownStoreModalOpen && unknownStoreInfo && (
+        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 max-w-md w-full overflow-hidden flex flex-col animate-zoom-in">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 text-xs font-bold">
+                  !
+                </div>
+                <span className="font-bold text-sm text-zinc-900">
+                  Unregistered Store ID Detected
+                </span>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsUnknownStoreModalOpen(false);
+                  setUnknownStoreInfo(null);
+                  showToast("DO import cancelled.", "info");
+                }}
+                className="text-zinc-400 hover:text-zinc-600 focus:outline-none cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-5 flex flex-col gap-3 text-xs">
+              <p className="text-zinc-700 font-medium leading-relaxed">
+                The Delivery Order <strong>{unknownStoreInfo.doNumber}</strong> contains store ID <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-900 font-bold">[{unknownStoreInfo.storeId}]</span>, but this store ID was not found in your Stores Database.
+              </p>
+              <p className="text-zinc-500 leading-normal">
+                Do you want to continue importing as normal with the original address, or cancel to register the store first?
+              </p>
+            </div>
+            <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex justify-between items-center gap-2">
+              <CustomButton 
+                variant="secondary" 
+                onClick={() => {
+                  setIsUnknownStoreModalOpen(false);
+                  setUnknownStoreInfo(null);
+                  showToast("DO import cancelled. Please register store in Stores Database.", "info");
+                }}
+              >
+                Cancel
+              </CustomButton>
+              <div className="flex items-center gap-2">
+                <CustomButton 
+                  variant="dark" 
+                  onClick={() => {
+                    if (unknownStoreInfo && unknownStoreInfo.pendingDrafts.length > 0) {
+                      const mergedDrafts = [...drafts, ...unknownStoreInfo.pendingDrafts];
+                      saveDraftsToStorage(mergedDrafts);
+                      showToast(`Successfully read DO. Added ${unknownStoreInfo.pendingDrafts.length} orders to drafts.`, "success");
+                    }
+                    setIsUnknownStoreModalOpen(false);
+                    setUnknownStoreInfo(null);
+                  }}
+                >
+                  Continue
+                </CustomButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CUSTOM FORCE CLOSE JOB CONFIRMATION MODAL */}
       {isForceCloseModalOpen && forceCloseDriverJob && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-primary">
@@ -6484,7 +8790,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-zinc-900">
-                    Close Driver Shift
+                    Close Driver Job
                   </h3>
                   <p className="text-[11px] text-zinc-500 font-medium">
                     {forceCloseDriverJob.driver} ({forceCloseDriverJob.id})
@@ -6521,12 +8827,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               return (
                 <div className="p-5 flex flex-col gap-3.5 text-xs text-zinc-700">
                   <p className="leading-relaxed text-zinc-600">
-                    Are you sure you want to end this driver's active shift?
+                    Are you sure you want to end this driver's active job?
                   </p>
 
                   <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 flex flex-col gap-2">
                     <div className="flex justify-between items-center text-[11px]">
-                      <span className="text-zinc-500 font-medium">Shift Start Time:</span>
+                      <span className="text-zinc-500 font-medium">Job Start Time:</span>
                       <span className="font-semibold text-zinc-800">{formatTimestamp(forceCloseDriverJob.start_time)}</span>
                     </div>
                     <div className="flex justify-between items-center text-[11px]">
@@ -6576,12 +8882,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 {forceCloseLoading ? (
                   <>
                     <Loader2 size={12} className="animate-spin" />
-                    Closing Shift...
+                    Closing Job...
                   </>
                 ) : (
                   <>
                     <Square size={10} fill="currentColor" />
-                    Confirm End Shift
+                    Confirm End Job
                   </>
                 )}
               </CustomButton>
@@ -6602,10 +8908,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 </div>
                 <div>
                   <h3 className="text-sm font-bold text-zinc-900 leading-tight">
-                    Route Timeline Log — {selectedRouteLogRecord.driver}
+                    Route Timeline Log — {parseOutsourceDriverDetails(selectedRouteLogRecord.outsource_driver_details).formatted || selectedRouteLogRecord.driver}
                   </h3>
                   <div className="text-[11px] text-zinc-500 font-mono">
-                    Shift ID: {selectedRouteLogRecord.id} • Duration: {formatShiftDuration(selectedRouteLogRecord.start_time, selectedRouteLogRecord.end_time)}
+                    Job ID: {selectedRouteLogRecord.id} • Duration: {formatShiftDuration(selectedRouteLogRecord.start_time, selectedRouteLogRecord.end_time)}
                   </div>
                 </div>
               </div>
@@ -6634,7 +8940,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     Start: Office / Warehouse (409461)
                   </div>
                   <div className="text-[11px] text-zinc-500">
-                    Shift Started: {formatTimestamp(selectedRouteLogRecord.start_time)}
+                    Job Started: {formatTimestamp(selectedRouteLogRecord.start_time)}
                   </div>
                 </div>
               </div>
@@ -6696,25 +9002,58 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             </div>
                           )}
 
-                          {/* Proof Thumbnail */}
-                          {log.signed_paper_img && (
-                            <div className="mt-2.5 flex items-center gap-2.5">
-                              <div
-                                onClick={() => setActiveLightboxImage(log.signed_paper_img || null)}
-                                className="relative w-14 h-14 rounded border border-emerald-300 overflow-hidden cursor-pointer hover:opacity-90 transition-opacity bg-white shadow-2xs flex-shrink-0"
-                                title="Click to view signed DO full size"
-                              >
-                                <img
-                                  src={log.signed_paper_img}
-                                  alt="Signed DO Paper"
-                                  className="w-full h-full object-cover"
-                                />
+                          {/* Proof Photos (Signed DO, Supporting Images, Order Proofs) */}
+                          {(() => {
+                            const allPhotos: { url: string; label: string }[] = [];
+                            if (log.signed_paper_img) {
+                              allPhotos.push({ url: log.signed_paper_img, label: "Signed DO" });
+                            }
+                            if (Array.isArray(log.supporting_images)) {
+                              log.supporting_images.forEach((img, sIdx) => {
+                                if (img && typeof img === "string") {
+                                  allPhotos.push({ url: img, label: `Photo #${sIdx + 1}` });
+                                }
+                              });
+                            }
+                            if (matched) {
+                              const orderProofs = [
+                                ...getLogImagesForAction("delivered", matched),
+                                ...getLogImagesForAction("handover", matched),
+                                ...getLogImagesForAction("signed", matched)
+                              ];
+                              for (const p of orderProofs) {
+                                if (p && !allPhotos.some((ap) => ap.url === p)) {
+                                  allPhotos.push({ url: p, label: "Delivery Proof" });
+                                }
+                              }
+                            }
+
+                            if (allPhotos.length === 0) return null;
+
+                            return (
+                              <div className="mt-2.5 flex flex-col gap-1.5">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {allPhotos.map((photo, pIdx) => (
+                                    <div
+                                      key={`modal-photo-${pIdx}`}
+                                      onClick={() => setActiveLightboxImage(photo.url)}
+                                      className="group relative w-14 h-14 rounded border border-emerald-300 overflow-hidden cursor-pointer hover:border-emerald-500 hover:shadow-xs transition-all bg-white flex-shrink-0"
+                                      title={`Click to view ${photo.label} full size`}
+                                    >
+                                      <img
+                                        src={photo.url}
+                                        alt={photo.label}
+                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                                <span className="text-[11px] text-emerald-800 font-semibold">
+                                  📸 {allPhotos.length} Delivery Photo{allPhotos.length > 1 ? "s" : ""} Attached
+                                </span>
                               </div>
-                              <span className="text-[11px] text-emerald-800 font-semibold">
-                                Signed Delivery Order Attached
-                              </span>
-                            </div>
-                          )}
+                            );
+                          })()}
 
                           {/* Discrepancies */}
                           {hasDisc && (
@@ -6842,22 +9181,80 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   setIsInvoiceUploadChoiceOpen(false);
                   invoicePdfInputRef.current?.click();
                 }}
-                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all flex items-center justify-center cursor-pointer shadow-xs"
               >
-                <FileText size={15} />
                 Upload PDF Invoice
               </button>
+              
+              <div className="flex items-center gap-2 w-full">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsInvoiceUploadChoiceOpen(false);
+                    invoiceExcelInputRef.current?.click();
+                  }}
+                  className="w-3/4 py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center cursor-pointer shadow-2xs truncate"
+                >
+                  <span className="truncate">Upload Excel / CSV</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadInvoiceTemplate}
+                  title="Download Excel Invoice Template"
+                  className="w-1/4 py-2.5 px-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-zinc-600 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+                >
+                  <Download size={15} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isCreditNoteUploadChoiceOpen && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 font-primary">
+          <div className="bg-white rounded-lg p-5 w-full max-w-sm shadow-xl border border-slate-200 animate-zoom-in">
+            <div className="flex justify-between items-center pb-2.5 border-b border-slate-200">
+              <h3 className="text-sm font-bold text-zinc-900">Upload Credit Note</h3>
+              <button 
+                onClick={() => setIsCreditNoteUploadChoiceOpen(false)} 
+                className="text-zinc-400 hover:text-zinc-600 transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="py-4 flex flex-col gap-2.5">
               <button
                 type="button"
                 onClick={() => {
-                  setIsInvoiceUploadChoiceOpen(false);
-                  invoiceExcelInputRef.current?.click();
+                  setIsCreditNoteUploadChoiceOpen(false);
+                  creditNotePdfInputRef.current?.click();
                 }}
-                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
+                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all flex items-center justify-center cursor-pointer shadow-xs"
               >
-                <Boxes size={15} />
-                Upload Excel / CSV Invoice
+                Upload PDF Credit Note
               </button>
+              
+              <div className="flex items-center gap-2 w-full">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsCreditNoteUploadChoiceOpen(false);
+                    creditNoteExcelInputRef.current?.click();
+                  }}
+                  className="w-3/4 py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center cursor-pointer shadow-2xs truncate"
+                >
+                  <span className="truncate">Upload Excel / CSV</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadCreditNoteTemplate}
+                  title="Download Excel Credit Note Template"
+                  className="w-1/4 py-2.5 px-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-zinc-600 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+                >
+                  <Download size={15} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -6882,22 +9279,31 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   setIsDoUploadChoiceOpen(false);
                   fileInputRef.current?.click();
                 }}
-                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xs"
+                className="w-full py-2.5 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all flex items-center justify-center cursor-pointer shadow-xs"
               >
-                <FileText size={15} />
                 Upload PDF DO
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsDoUploadChoiceOpen(false);
-                  doExcelInputRef.current?.click();
-                }}
-                className="w-full py-2.5 px-4 bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center gap-2 cursor-pointer shadow-2xs"
-              >
-                <Boxes size={15} />
-                Upload Excel / CSV DO
-              </button>
+              
+              <div className="flex items-center gap-2 w-full">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsDoUploadChoiceOpen(false);
+                    doExcelInputRef.current?.click();
+                  }}
+                  className="w-3/4 py-2.5 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center cursor-pointer shadow-2xs truncate"
+                >
+                  <span className="truncate">Upload Excel / CSV</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadDoTemplate}
+                  title="Download Excel DO Template"
+                  className="w-1/4 py-2.5 px-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 text-zinc-600 hover:text-zinc-950 rounded text-xs font-semibold transition-all flex items-center justify-center cursor-pointer shadow-2xs"
+                >
+                  <Download size={15} />
+                </button>
+              </div>
             </div>
           </div>
         </div>

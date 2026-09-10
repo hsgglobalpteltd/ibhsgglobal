@@ -207,6 +207,10 @@ export default function Home() {
               sid
             );
             setProfile(dbProfile);
+            if (typeof window !== "undefined") {
+              localStorage.setItem("ib_user_profile", JSON.stringify(dbProfile));
+              localStorage.setItem("ib_auth_token", token);
+            }
           } catch (err: any) {
             if (err.code === "session_conflict") {
               setPendingLogin({
@@ -290,6 +294,10 @@ export default function Home() {
       setFirebaseUser({ email: res.user.email, displayName: res.user.name });
       setIdToken(res.token);
       setProfile(res.user);
+      if (typeof window !== "undefined") {
+        localStorage.setItem("ib_user_profile", JSON.stringify(res.user));
+        localStorage.setItem("ib_auth_token", res.token);
+      }
       showToast(`Welcome back, ${res.user.name}!`, "success");
       setPinDigits(["", "", "", ""]);
       setFailedAttempts(0);
@@ -644,18 +652,7 @@ export default function Home() {
       );
     }
 
-    // Bypass placeholder check for categories
     const categoryPages = ["Frontline", "Database", "Sales & Channels", "Stock", "Office Tools", "Website", "Tiktok", "Administrator"];
-    if (breadcrumbPath.length > 1 && !categoryPages.includes(activeItem)) {
-      return (
-        <div className="flex flex-col gap-4 font-primary">
-          <h2 className="text-2xl font-bold text-zinc-950">{breadcrumbPath[breadcrumbPath.length - 1]}</h2>
-          <p className="text-sm text-zinc-500">
-            This is the detailed workspace view for: {breadcrumbPath.join(" / ")}. Click the back arrow in the header to return.
-          </p>
-        </div>
-      );
-    }
 
     const activeRoute = menuConfig.find((route) => route.id === activeItem);
     if (activeRoute) {
