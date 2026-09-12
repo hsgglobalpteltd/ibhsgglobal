@@ -486,6 +486,41 @@ export default function Home() {
     };
   }, []);
 
+  // Handle session superseded (forced logout when logged in on another device)
+  const handleSessionSuperseded = React.useCallback(async (message?: string) => {
+    showToast(message || "You have been signed out because this account is now active on another device.", "error");
+    try {
+      if (auth.currentUser) {
+        await signOut(auth);
+      }
+    } catch (e) {
+      console.warn("Sign out error:", e);
+    }
+    setFirebaseUser(null);
+    setIdToken("");
+    setProfile(null);
+    setPinDigits(["", "", "", ""]);
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("ib_user_profile");
+      localStorage.removeItem("ib_auth_token");
+      localStorage.removeItem("ib_promoter_schedules_draft");
+      localStorage.removeItem("ib_promoter_schedules_backup");
+    }
+    setActiveItem("Dashboard");
+    setBreadcrumbPath(["Dashboard"]);
+  }, []);
+
+  // Listen to ib-session-superseded event from API interceptors
+  React.useEffect(() => {
+    const onSessionSuperseded = (e: any) => {
+      handleSessionSuperseded(e?.detail?.message);
+    };
+    window.addEventListener("ib-session-superseded", onSessionSuperseded);
+    return () => {
+      window.removeEventListener("ib-session-superseded", onSessionSuperseded);
+    };
+  }, [handleSessionSuperseded]);
+
   // Real-time listener: Poll D1 database profile every 4 seconds to detect access updates/revocation/approval immediately
   React.useEffect(() => {
     if (!idToken || !firebaseUser || !profile) return;
@@ -526,8 +561,7 @@ export default function Home() {
         }
       } catch (err: any) {
         if (err.code === "session_superseded") {
-          showToast("You have been signed out because this account is now active on another device.", "error");
-          await signOut(auth);
+          handleSessionSuperseded(err.message);
         } else {
           console.warn("Background auth check failed:", err);
         }
@@ -535,7 +569,7 @@ export default function Home() {
     }, 4000); // 4-second poll
 
     return () => clearInterval(interval);
-  }, [idToken, firebaseUser, activeItem, profile]);
+  }, [idToken, firebaseUser, activeItem, profile, handleSessionSuperseded]);
 
   const handlePendingNavConfirm = () => {
     localStorage.removeItem("ib_promoter_schedules_draft");

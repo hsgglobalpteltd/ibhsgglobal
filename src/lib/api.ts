@@ -52,6 +52,9 @@ async function handleResponse(res: Response, errorPrefix: string): Promise<any> 
       errBody = JSON.parse(errText);
     } catch {}
     if (errBody && errBody.error) {
+      if (errBody.error === "session_superseded" && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("ib-session-superseded", { detail: errBody }));
+      }
       const err = new Error(errBody.message || errBody.error || `${errorPrefix} failed: ${res.statusText}`);
       (err as any).code = errBody.error;
       throw err;

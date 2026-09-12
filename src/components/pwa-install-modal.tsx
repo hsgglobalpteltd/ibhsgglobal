@@ -1,9 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Download, Monitor, Maximize, RefreshCw, X, Lightbulb } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { usePWA } from "@/lib/usePWA";
-import { CustomButton } from "./custom-button";
 
 const STORAGE_KEY = "pwa_install_dismissed_until";
 const DISMISS_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -11,6 +10,7 @@ const DISMISS_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 export function PwaInstallModal() {
   const { isInstallable, isStandalone, installApp } = usePWA();
   const [isOpen, setIsOpen] = React.useState(false);
+  const [isInstalling, setIsInstalling] = React.useState(false);
 
   React.useEffect(() => {
     if (typeof window === "undefined") return;
@@ -32,7 +32,7 @@ export function PwaInstallModal() {
     if (isInstallable) {
       const timer = setTimeout(() => {
         setIsOpen(true);
-      }, 1200);
+      }, 1500);
       return () => clearTimeout(timer);
     }
   }, [isInstallable, isStandalone]);
@@ -43,9 +43,11 @@ export function PwaInstallModal() {
   };
 
   const handleInstall = async () => {
+    setIsInstalling(true);
     try {
       await installApp();
     } finally {
+      setIsInstalling(false);
       setIsOpen(false);
     }
   };
@@ -53,84 +55,39 @@ export function PwaInstallModal() {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/55 backdrop-blur-xs select-none font-primary animate-fade-in">
-      <div className="w-full max-w-md bg-[#E5E5E5] border border-zinc-300 rounded-lg shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
-        
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-300 bg-[#EEEEEE]">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 bg-zinc-900 rounded-lg text-white">
-              <Monitor size={18} />
-            </div>
-            <div className="flex flex-col">
-              <h3 className="text-base font-bold text-zinc-950">Install Desktop Application</h3>
-              <p className="text-[11px] text-zinc-500 font-medium">Your PC can install this directly</p>
-            </div>
+    <div className="fixed bottom-6 right-6 z-[99998] max-w-sm w-full animate-in slide-in-from-bottom-5 duration-300 select-none">
+      <div className="bg-white border border-slate-200 rounded-xl shadow-2xl p-4 flex items-center justify-between gap-3 text-zinc-900 font-primary">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-[#D3E3FD] text-[#0B57D0] flex items-center justify-center shrink-0">
+            <Download size={18} />
           </div>
+          <div className="flex flex-col">
+            <span className="text-xs font-bold text-zinc-950">Install Desktop App</span>
+            <span className="text-[11px] text-zinc-500 font-medium leading-tight">
+              One-click access &amp; native window.
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleInstall}
+            disabled={isInstalling}
+            className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] active:scale-95 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-50"
+          >
+            <Download size={12} />
+            <span>{isInstalling ? "Installing..." : "Install"}</span>
+          </button>
           <button
             type="button"
             onClick={handleSkip}
-            className="p-1 text-zinc-400 hover:text-zinc-800 rounded-lg hover:bg-zinc-300/40 transition-colors cursor-pointer"
+            className="p-1 text-zinc-400 hover:text-zinc-600 rounded-md hover:bg-zinc-100 transition-colors cursor-pointer"
+            title="Dismiss"
           >
-            <X size={16} />
+            <X size={14} />
           </button>
         </div>
-
-        {/* Content Body */}
-        <div className="p-6 flex flex-col gap-4">
-          <p className="text-xs text-zinc-650 leading-relaxed font-medium">
-            Install the <strong>iB HSG Global</strong> application to your PC for faster loading, native desktop window experience, and one-click access.
-          </p>
-
-          {/* Quick Tips Container */}
-          <div className="flex flex-col gap-2.5 bg-[#EEEEEE] border border-zinc-300/80 rounded-lg p-3.5">
-            <div className="flex items-center gap-1.5 text-zinc-800 font-bold text-xs">
-              <Lightbulb size={14} className="text-amber-500 stroke-[2.5]" />
-              <span>Workspace Tips</span>
-            </div>
-            
-            <div className="flex flex-col gap-2 text-[11px] text-zinc-600">
-              <div className="flex items-start gap-2">
-                <span className="p-1 bg-zinc-200 rounded text-zinc-700 mt-0.5">
-                  <Maximize size={11} />
-                </span>
-                <span className="leading-tight">
-                  Click the <strong>Fullscreen</strong> icon on the top right header to expand to full screen.
-                </span>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="p-1 bg-zinc-200 rounded text-zinc-700 mt-0.5">
-                  <RefreshCw size={11} />
-                </span>
-                <span className="leading-tight">
-                  Click the <strong>Refresh</strong> icon on the top right header to sync live database records anytime.
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer Actions */}
-        <div className="flex items-center justify-end gap-2.5 px-6 py-3.5 border-t border-zinc-300 bg-[#EEEEEE]">
-          <CustomButton
-            type="button"
-            variant="default"
-            onClick={handleSkip}
-            className="h-8 px-4 text-xs font-semibold"
-          >
-            Skip
-          </CustomButton>
-          <CustomButton
-            type="button"
-            variant="dark"
-            onClick={handleInstall}
-            className="h-8 px-4 text-xs font-bold flex items-center gap-1.5"
-          >
-            <Download size={13} />
-            <span>Install</span>
-          </CustomButton>
-        </div>
-
       </div>
     </div>
   );

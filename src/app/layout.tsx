@@ -31,6 +31,7 @@ import { ZoomBlocker } from "@/components/zoom-blocker";
 import { PwaRegister } from "@/components/pwa-register";
 import { PwaUpdateManager } from "@/components/pwa-update-manager";
 import { DeviceGuard } from "@/components/device-guard";
+import { NetworkGuard } from "@/components/network-guard";
 
 export const metadata: Metadata = {
   title: "iB - HSG Global Internal Bridge",
@@ -60,12 +61,14 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
-        <PwaRegister />
-        <PwaUpdateManager />
-        <ZoomBlocker />
-        <DeviceGuard>
-          {children}
-        </DeviceGuard>
+        <NetworkGuard>
+          <PwaRegister />
+          <PwaUpdateManager />
+          <ZoomBlocker />
+          <DeviceGuard>
+            {children}
+          </DeviceGuard>
+        </NetworkGuard>
       </body>
     </html>
   );
