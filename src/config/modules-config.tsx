@@ -78,6 +78,14 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     label: "Sales & Channels",
     modules: [
       {
+        title: "Sale In & Sale Out",
+        description: "Reconcile Million sell-in invoices, retailer POS sell-out, payment terms, and cash flow timing.",
+      },
+      {
+        title: "Sale Projection",
+        description: "Configure commercial campaigns, 5-stage milestone SKU orders, and multi-entity cost sharing.",
+      },
+      {
         title: "Direct Order",
         description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
       },

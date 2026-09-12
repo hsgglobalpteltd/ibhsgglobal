@@ -29,10 +29,6 @@ import {
 import { UserProfile } from "@/lib/api";
 import { canEditModule } from "@/lib/permissions";
 
-// Suggestions presets for Settings
-const statusSuggestions = ["Carry", "Not Carry"];
-const rankSuggestions = ["Top 10", "Bottom 10", "Rank A", "Rank B", "Rank C"];
-
 // Merchandiser vibrant distinct color palette
 const MERCH_COLOR_PALETTE = [
   "#0B57D0", // Royal Blue
@@ -173,7 +169,7 @@ export function TagInput({ tags, onChange, placeholder, suggestions, id, disable
       {!disabled && unusedSuggestions.length > 0 && (
         <div className="flex flex-wrap gap-1 items-center mt-0.5">
           <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider mr-1">Suggestions:</span>
-          {unusedSuggestions.slice(0, 5).map((s, idx) => (
+          {unusedSuggestions.slice(0, 10).map((s, idx) => (
             <button
               key={idx}
               type="button"
@@ -918,6 +914,24 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
   const retailerSuggestions = React.useMemo(() => {
     return Array.from(new Set(retailers.map(r => r.display_name).filter(Boolean))) as string[];
   }, [retailers]);
+
+  const statusSuggestions = React.useMemo(() => {
+    const set = new Set<string>();
+    stores.forEach((s) => {
+      const val = String(s.status ?? s.store_status ?? "").trim();
+      if (val) set.add(val);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [stores]);
+
+  const rankSuggestions = React.useMemo(() => {
+    const set = new Set<string>();
+    stores.forEach((s) => {
+      const val = String(s.store_rank ?? s.rank ?? "").trim();
+      if (val) set.add(val);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [stores]);
 
   // Deploy settings
   const handleDeploySettings = async () => {
@@ -1678,11 +1692,11 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         if (settingAvoidRet.includes(rName)) return false;
       }
       if (settingFocusStatus.length > 0) {
-        const storeStatus = store.status || "";
+        const storeStatus = String(store.status ?? store.store_status ?? "").trim();
         if (!settingFocusStatus.includes(storeStatus)) return false;
       }
       if (settingFocusRank.length > 0) {
-        const storeRank = store.store_rank || "";
+        const storeRank = String(store.store_rank ?? store.rank ?? "").trim();
         if (!settingFocusRank.includes(storeRank)) return false;
       }
       return true;

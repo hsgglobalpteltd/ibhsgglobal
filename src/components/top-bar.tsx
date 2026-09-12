@@ -156,28 +156,85 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
     window.dispatchEvent(new CustomEvent("topbar-select-tab", { detail: tabId }));
   };
 
+  const isDashboard = breadcrumbPath.length === 1 && breadcrumbPath[0]?.toLowerCase() === "dashboard";
+  const [dashboardTab, setDashboardTab] = React.useState<"workspace" | "analysis" | "forecast">("workspace");
+
+  const handleDashboardTabClick = (tab: "workspace" | "analysis" | "forecast") => {
+    setDashboardTab(tab);
+    window.dispatchEvent(new CustomEvent("dashboard-tab-change", { detail: tab }));
+  };
+
   return (
-    <header className="top-bar flex h-14 w-full items-center bg-[#F0F4F9] px-6 border-b border-slate-200 select-none relative z-40">
+    <header className={cn(
+      "top-bar flex w-full items-center px-6 select-none relative z-40 transition-all",
+      isDashboard ? "bg-transparent border-b-0 h-16 pt-2" : "bg-[#F0F4F9] border-b border-slate-200 h-14"
+    )}>
       {/* Left: Breadcrumbs only (vertically centered in h-14) */}
-      <div className="flex items-center gap-2">
-        {breadcrumbPath.map((segment, idx) => (
-          <React.Fragment key={idx}>
-            {idx > 0 && <span className="text-zinc-400 font-medium text-xs font-primary">/</span>}
-            {idx === breadcrumbPath.length - 1 ? (
-              <span className="text-sm font-semibold font-primary tracking-wide text-zinc-950">
-                {segment}
-              </span>
-            ) : (
-              <button
-                onClick={() => onNavigateBreadcrumb && onNavigateBreadcrumb(idx)}
-                className="text-sm font-medium font-primary tracking-wide text-zinc-500 hover:text-zinc-800 cursor-pointer focus:outline-none transition-all"
-              >
-                {segment}
-              </button>
-            )}
-          </React.Fragment>
-        ))}
-      </div>
+      {!isDashboard && (
+        <div className="flex items-center gap-2">
+          {breadcrumbPath.map((segment, idx) => (
+            <React.Fragment key={idx}>
+              {idx > 0 && <span className="text-zinc-400 font-medium text-xs font-primary">/</span>}
+              {idx === breadcrumbPath.length - 1 ? (
+                <span className="text-sm font-semibold font-primary tracking-wide text-zinc-950">
+                  {segment}
+                </span>
+              ) : (
+                <button
+                  onClick={() => onNavigateBreadcrumb && onNavigateBreadcrumb(idx)}
+                  className="text-sm font-medium font-primary tracking-wide text-zinc-500 hover:text-zinc-800 cursor-pointer focus:outline-none transition-all"
+                >
+                  {segment}
+                </button>
+              )}
+            </React.Fragment>
+          ))}
+        </div>
+      )}
+
+      {/* Center: Dashboard Rounded Pill Tabs (Positioned at top with comfortable spacing) */}
+      {isDashboard && (
+        <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 mt-1 z-20">
+          <div className="inline-flex items-center p-1 bg-[#F0F4F9] border border-slate-200/80 rounded-full shadow-2xs gap-1">
+            <button
+              type="button"
+              onClick={() => handleDashboardTabClick("workspace")}
+              className={cn(
+                "px-5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer",
+                dashboardTab === "workspace"
+                  ? "bg-white text-[#0B57D0] shadow-xs border border-slate-200/70 font-bold"
+                  : "text-zinc-600 hover:text-zinc-950 hover:bg-white/60"
+              )}
+            >
+              Workspace
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDashboardTabClick("analysis")}
+              className={cn(
+                "px-5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer",
+                dashboardTab === "analysis"
+                  ? "bg-white text-[#0B57D0] shadow-xs border border-slate-200/70 font-bold"
+                  : "text-zinc-600 hover:text-zinc-950 hover:bg-white/60"
+              )}
+            >
+              Analysis
+            </button>
+            <button
+              type="button"
+              onClick={() => handleDashboardTabClick("forecast")}
+              className={cn(
+                "px-5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer",
+                dashboardTab === "forecast"
+                  ? "bg-white text-[#0B57D0] shadow-xs border border-slate-200/70 font-bold"
+                  : "text-zinc-600 hover:text-zinc-950 hover:bg-white/60"
+              )}
+            >
+              Forecast
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Right: Buttons inside TopBar (Refresh, Fullscreen & Tabs) */}
       <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-1.5 z-20">

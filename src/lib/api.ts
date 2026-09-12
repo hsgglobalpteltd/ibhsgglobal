@@ -631,3 +631,142 @@ export async function deleteSnapDeal(
   return handleResponse(res, "Delete snap deal");
 }
 
+// ---------------------------------------------------------------------------
+// PROJECT WORKSPACE PM API
+// ---------------------------------------------------------------------------
+
+let cachedWorkspaceData: any = null;
+let workspaceDashboardPromise: Promise<any> | null = null;
+
+export function getCachedWorkspaceData() {
+  if (cachedWorkspaceData) return cachedWorkspaceData;
+  if (typeof window !== "undefined") {
+    try {
+      const cached = localStorage.getItem("ib_workspace_cache");
+      if (cached) {
+        cachedWorkspaceData = JSON.parse(cached);
+        return cachedWorkspaceData;
+      }
+    } catch {}
+  }
+  return null;
+}
+
+export function prefetchWorkspaceDashboard(): Promise<any> {
+  if (workspaceDashboardPromise) return workspaceDashboardPromise;
+  workspaceDashboardPromise = fetchWorkspaceDashboard()
+    .then((res) => {
+      workspaceDashboardPromise = null;
+      return res;
+    })
+    .catch((err) => {
+      workspaceDashboardPromise = null;
+      throw err;
+    });
+  return workspaceDashboardPromise;
+}
+
+export async function fetchWorkspaceDashboard(forceFresh = false): Promise<{
+  success: boolean;
+  projects: any[];
+  milestones: any[];
+  actions: any[];
+  pendingDelays: any[];
+  pipelines: any[];
+  systemUsers: any[];
+}> {
+  const url = forceFresh
+    ? `${WORKER_URL}/api/projects/dashboard?_t=${Date.now()}`
+    : `${WORKER_URL}/api/projects/dashboard`;
+  const res = await fetch(url);
+  const data = await handleResponse(res, "Fetch workspace dashboard");
+  if (data && data.success) {
+    cachedWorkspaceData = data;
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("ib_workspace_cache", JSON.stringify(data));
+      } catch {}
+    }
+  }
+  return data;
+}
+
+export async function savePMProject(data: any): Promise<{ success: boolean; project: any }> {
+  const res = await fetch(`${WORKER_URL}/api/projects/project/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res, "Save project");
+}
+
+export async function savePMMilestone(data: any): Promise<{ success: boolean; milestone: any }> {
+  const res = await fetch(`${WORKER_URL}/api/projects/milestone/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res, "Save milestone");
+}
+
+export async function savePMAction(data: any): Promise<{ success: boolean; action: any }> {
+  const res = await fetch(`${WORKER_URL}/api/projects/action/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res, "Save action");
+}
+
+export async function addPMActionLog(actionId: string, log: any): Promise<{ success: boolean; logs: any[] }> {
+  const res = await fetch(`${WORKER_URL}/api/projects/action/log`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action_id: actionId, log }),
+  });
+  return handleResponse(res, "Add action progress log");
+}
+
+export async function deletePMEntity(type: "project" | "milestone" | "action", id: string): Promise<{ success: boolean }> {
+  const res = await fetch(`${WORKER_URL}/api/projects/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, id }),
+  });
+  return handleResponse(res, "Delete PM entity");
+}
+
+export async function submitPMDelayRequest(data: {
+  action_id?: string;
+  milestone_id: string;
+  project_id: string;
+  requested_by?: string;
+  requested_by_name?: string;
+  current_end_date: number;
+  requested_end_date: number;
+  reason: string;
+}): Promise<{ success: boolean; request: any }> {
+  const res = await fetch(`${WORKER_URL}/api/projects/delay-request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res, "Submit delay request");
+}
+
+export async function approvePMDelayRequest(data: {
+  request_id: string;
+  approved: boolean;
+  reviewer_notes?: string;
+  reviewer_name?: string;
+}): Promise<{ success: boolean; approved: boolean }> {
+  const res = await fetch(`${WORKER_URL}/api/projects/delay-approve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  return handleResponse(res, "Process delay request");
+}
+
+
+

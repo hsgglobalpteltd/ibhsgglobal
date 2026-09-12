@@ -258,6 +258,8 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                   className="h-9 px-3 bg-white border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium cursor-pointer transition-all"
                 >
                   <option value="Administrator">Administrator (Full Access)</option>
+                  <option value="Management">Management (Commercial & Operations)</option>
+                  <option value="Investor">Investor (Executive Overview)</option>
                   <option value="Operator">Operator (Granular Permissions)</option>
                 </select>
               </div>

@@ -7,7 +7,7 @@ import { menuConfig } from "@/config/menu-config";
 import { ToastContainer } from "@/components/toast-container";
 import { auth, googleProvider, signInWithPopup, signOut } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
-import { syncUserProfile, fetchMyProfile, fetchLatestContract, loginWithPin, logoutUser, UserProfile } from "@/lib/api";
+import { syncUserProfile, fetchMyProfile, fetchLatestContract, loginWithPin, logoutUser, UserProfile, fetchWorkspaceDashboard, prefetchWorkspaceDashboard } from "@/lib/api";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "@/components/custom-button";
 import { ShieldAlert, KeyRound, Sparkles } from "lucide-react";
@@ -39,7 +39,31 @@ export default function Home() {
   const [firebaseUser, setFirebaseUser] = React.useState<any>(null);
   const [idToken, setIdToken] = React.useState<string>("");
   const [profile, setProfile] = React.useState<UserProfile | null>(null);
-  const [loading, setLoading] = React.useState(true);
+  const [loading, setLoading] = React.useState<boolean>(true);
+
+  // Restore cached session immediately upon client mount before network checks
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cachedProfile = localStorage.getItem("ib_user_profile");
+        const cachedToken = localStorage.getItem("ib_auth_token");
+        if (cachedProfile && cachedToken) {
+          const parsed = JSON.parse(cachedProfile);
+          if (parsed && parsed.email) {
+            setProfile(parsed);
+            setIdToken(cachedToken);
+            setFirebaseUser({ email: parsed.email, displayName: parsed.name });
+            setLoading(false);
+          }
+        }
+      } catch {}
+    }
+  }, []);
+
+  // Background prefetch all workspace data (projects, milestones, actions) to local memory & browser cache
+  React.useEffect(() => {
+    prefetchWorkspaceDashboard().catch(() => {});
+  }, []);
 
   // PIN Fast Login State
   const [pinDigits, setPinDigits] = React.useState<string[]>(["", "", "", ""]);
@@ -228,6 +252,36 @@ export default function Home() {
           showToast(err.message || "Failed to load user profile", "error");
         }
       } else {
+        // If not logged in via Firebase Auth, check for stored PIN session
+        const storedToken = typeof window !== "undefined" ? localStorage.getItem("ib_auth_token") : null;
+        const storedProfileStr = typeof window !== "undefined" ? localStorage.getItem("ib_user_profile") : null;
+
+        if (storedToken && storedProfileStr) {
+          try {
+            const parsedProfile = JSON.parse(storedProfileStr);
+            if (parsedProfile && parsedProfile.email) {
+              const freshProfile = await fetchMyProfile(storedToken, parsedProfile.email);
+              if (freshProfile && freshProfile.email) {
+                setFirebaseUser({ email: freshProfile.email, displayName: freshProfile.name });
+                setIdToken(storedToken);
+                setProfile(freshProfile);
+                localStorage.setItem("ib_user_profile", JSON.stringify(freshProfile));
+                setLoading(false);
+                return;
+              }
+            }
+          } catch (err: any) {
+            console.warn("Failed to restore PIN session:", err);
+            if (err.code === "session_superseded" || err.message?.includes("session")) {
+              showToast(err.message || "Your session is now active on another device.", "error");
+            }
+            if (typeof window !== "undefined") {
+              localStorage.removeItem("ib_auth_token");
+              localStorage.removeItem("ib_user_profile");
+            }
+          }
+        }
+
         setFirebaseUser(null);
         setIdToken("");
         setProfile(null);
@@ -622,8 +676,12 @@ export default function Home() {
     setIdToken("");
     setProfile(null);
     setPinDigits(["", "", "", ""]);
-    localStorage.removeItem("ib_promoter_schedules_draft");
-    localStorage.removeItem("ib_promoter_schedules_backup");
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("ib_user_profile");
+      localStorage.removeItem("ib_auth_token");
+      localStorage.removeItem("ib_promoter_schedules_draft");
+      localStorage.removeItem("ib_promoter_schedules_backup");
+    }
     setActiveItem("Dashboard");
     setBreadcrumbPath(["Dashboard"]);
     showToast("Signed out successfully", "info");
