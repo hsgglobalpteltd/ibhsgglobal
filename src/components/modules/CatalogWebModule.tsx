@@ -658,7 +658,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
     }
   };
 
-  // 3. Toggle Product List in Catalog
+  // 3. Toggle Product List in Catalog (Project 6 Public Discover)
   const handleToggleProduct = async (sku: string, currentVal: boolean) => {
     const newVal = !currentVal;
     setProducts((prev) =>
@@ -676,6 +676,29 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
     } catch (err: any) {
       setProducts((prev) =>
         prev.map((p) => (p.sku === sku ? { ...p, list_in_catalog: currentVal } : p))
+      );
+      showToast(err.message || "Update failed", "error");
+    }
+  };
+
+  // 3.5 Toggle Product Accept Order (Project 5 Direct Order)
+  const handleToggleAcceptOrder = async (sku: string, currentVal: boolean) => {
+    const newVal = !currentVal;
+    setProducts((prev) =>
+      prev.map((p) => (p.sku === sku ? { ...p, accept_order: newVal } : p))
+    );
+
+    try {
+      const res = await fetch(`${WORKER_URL}/api/exhibitor/update-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sku, accept_order: newVal })
+      });
+      if (!res.ok) throw new Error("Failed to update product order status");
+      showToast(`${sku} ${newVal ? "accepting orders" : "orders disabled"} (Project 5)`, "success");
+    } catch (err: any) {
+      setProducts((prev) =>
+        prev.map((p) => (p.sku === sku ? { ...p, accept_order: currentVal } : p))
       );
       showToast(err.message || "Update failed", "error");
     }
@@ -743,9 +766,13 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
       return;
     }
 
-    // Optimistic UI update for all products of this brand
+    // Optimistic UI update for all products of this brand (both list_in_catalog and accept_order)
     setProducts((prev) =>
-      prev.map((p) => (p.brands_id === brandId ? { ...p, list_in_catalog: newVal } : p))
+      prev.map((p) =>
+        p.brands_id === brandId
+          ? { ...p, list_in_catalog: newVal, accept_order: newVal }
+          : p
+      )
     );
 
     try {
@@ -755,19 +782,23 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
           fetch(`${WORKER_URL}/api/exhibitor/update-product`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sku, list_in_catalog: newVal })
+            body: JSON.stringify({ sku, list_in_catalog: newVal, accept_order: newVal })
           })
         )
       );
 
       showToast(
-        `Brand ${brandId} & all ${targetSkus.length} product(s) ${newVal ? "enabled" : "hidden"} in catalog`,
+        `Brand ${brandId} & all ${targetSkus.length} product(s) ${newVal ? "enabled" : "hidden & disabled"} (Catalog & Orders)`,
         "success"
       );
     } catch (err: any) {
       // Rollback on error
       setProducts((prev) =>
-        prev.map((p) => (p.brands_id === brandId ? { ...p, list_in_catalog: currentVisible } : p))
+        prev.map((p) =>
+          p.brands_id === brandId
+            ? { ...p, list_in_catalog: currentVisible, accept_order: currentVisible }
+            : p
+        )
       );
       showToast(err.message || "Failed to update brand products", "error");
     }
@@ -918,6 +949,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
         "Brand ID": p.brands_id || "",
         "Product Name": p.display_name || "",
         "List in Catalog (YES/NO)": p.list_in_catalog === true || p.list_in_catalog === 1 ? "YES" : "NO",
+        "Accept Order (YES/NO)": p.accept_order === true || p.accept_order === 1 || p.accept_order === undefined ? "YES" : "NO",
         "Carton Quantity (EA)": p.carton || 12,
         "Pallet Carton Count": p.pallet_ctn || 80,
         "Storage Condition": p.storage_condition || "Ambient 15°–25°C",
@@ -934,6 +966,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
           "Brand ID": "BRAND_NAME",
           "Product Name": "Sample Product Name",
           "List in Catalog (YES/NO)": "YES",
+          "Accept Order (YES/NO)": "YES",
           "Carton Quantity (EA)": 12,
           "Pallet Carton Count": 80,
           "Storage Condition": "Ambient 15°–25°C",
@@ -952,6 +985,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
         { wch: 20 },
         { wch: 15 },
         { wch: 35 },
+        { wch: 25 },
         { wch: 25 },
         { wch: 20 },
         { wch: 20 },
@@ -1016,11 +1050,23 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
             }
           }
 
+          const rawAcceptOrder = row["Accept Order (YES/NO)"] ?? row["Accept Order"] ?? row["accept_order"];
+          let acceptOrderVal: boolean = existing ? (existing.accept_order !== undefined ? Boolean(existing.accept_order) : true) : true;
+          if (rawAcceptOrder !== undefined && rawAcceptOrder !== null) {
+            const strVal = String(rawAcceptOrder).trim().toUpperCase();
+            if (strVal === "YES" || strVal === "Y" || strVal === "TRUE" || strVal === "1") {
+              acceptOrderVal = true;
+            } else if (strVal === "NO" || strVal === "N" || strVal === "FALSE" || strVal === "0") {
+              acceptOrderVal = false;
+            }
+          }
+
           parsedItems.push({
             sku,
             brands_id: String(row["Brand ID"] || row["Brand"] || existing?.brands_id || "").trim(),
             display_name: String(row["Product Name"] || row["display_name"] || existing?.display_name || sku).trim(),
             list_in_catalog: listInCatalogVal,
+            accept_order: acceptOrderVal,
             carton: Number(row["Carton Quantity (EA)"] || row["carton"] || existing?.carton || 12),
             pallet_ctn: Number(row["Pallet Carton Count"] || row["pallet_ctn"] || existing?.pallet_ctn || 80),
             storage_condition: String(row["Storage Condition"] || row["storage_condition"] || existing?.storage_condition || "Ambient 15°–25°C").trim(),
@@ -1066,6 +1112,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
               sku: item.sku,
               display_name: item.display_name,
               list_in_catalog: item.list_in_catalog,
+              accept_order: item.accept_order,
               carton: item.carton,
               pallet_ctn: item.pallet_ctn,
               storage_condition: item.storage_condition,
@@ -1464,7 +1511,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       Retailers Network Logos ({logos.retailers.length})
                     </h4>
                     <p className="text-[11px] text-zinc-500">
-                      Showcase of authorized supermarket chains &amp; retail partner brands.
+                      Showcase of authorized supermarket chains &amp; retail partner brands. Assign Country/Group name to cluster logos together.
                     </p>
                   </div>
                   <label className="h-8 px-3 rounded-lg bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs flex items-center gap-1.5 cursor-pointer border border-slate-200 shadow-xs transition-colors">
@@ -1480,28 +1527,56 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                   </label>
                 </div>
 
-                <div className="grid grid-cols-3 sm:grid-cols-6 md:grid-cols-8 gap-3">
-                  {logos.retailers.map((item) => (
-                    <div
-                      key={item.key}
-                      className="group relative rounded-lg overflow-hidden border border-slate-200 bg-white p-2 h-20 flex items-center justify-center shadow-xs"
-                    >
-                      <img
-                        src={item.url}
-                        alt={item.filename}
-                        className="max-h-full max-w-full object-contain group-hover:scale-105 transition-transform"
-                      />
-                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                        <button
-                          onClick={() => handleDeleteLogo(item.key, "retailers")}
-                          className="w-7 h-7 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center cursor-pointer shadow-md"
-                          title="Delete logo"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-3">
+                  {logos.retailers.map((item) => {
+                    const retailerId = item.filename.replace(/\.[^/.]+$/, "");
+                    const currentGroup = (layoutConfig.retailer_groups && layoutConfig.retailer_groups[retailerId]) || (layoutConfig.retailer_groups && layoutConfig.retailer_groups[item.key]) || "";
+
+                    return (
+                      <div
+                        key={item.key}
+                        className="group flex flex-col rounded-lg overflow-hidden border border-slate-200 bg-white shadow-xs p-2 gap-1.5"
+                      >
+                        <div className="relative rounded bg-slate-50 p-1.5 h-16 flex items-center justify-center overflow-hidden">
+                          <img
+                            src={item.url}
+                            alt={item.filename}
+                            className="max-h-full max-w-full object-contain group-hover:scale-105 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                            <button
+                              onClick={() => handleDeleteLogo(item.key, "retailers")}
+                              className="w-7 h-7 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center cursor-pointer shadow-md"
+                              title="Delete logo"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Country / Group Name Input */}
+                        <div className="flex flex-col">
+                          <input
+                            type="text"
+                            placeholder="Group / Country (e.g. Singapore)"
+                            value={currentGroup}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setLayoutConfig((prev: any) => ({
+                                ...prev,
+                                retailer_groups: {
+                                  ...(prev.retailer_groups || {}),
+                                  [retailerId]: val,
+                                  [item.key]: val
+                                }
+                              }));
+                            }}
+                            className="w-full text-[10px] px-1.5 py-1 bg-slate-50 border border-slate-200 rounded focus:bg-white focus:border-[#0B57D0] focus:outline-none transition-colors"
+                          />
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   {logos.retailers.length === 0 && (
                     <div className="col-span-full py-6 text-center text-xs text-slate-400 border border-dashed border-slate-200 rounded-lg">
                       No retailer logos uploaded yet. Click &ldquo;Upload Retailer Logo(s)&rdquo; above.
@@ -1715,13 +1790,13 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
               {/* Grouped Brand Accordion & Tables */}
               <div className="space-y-4">
                 {(() => {
-                  // Sort brands: Active (visible in catalog) first, Hidden brands placed below
+                  // Sort brands: Active first, Hidden brands placed below
                   const sortedBrands = [...brands].sort((a, b) => {
                     const aActive = products.some(
-                      (p) => p.brands_id === a.id && (p.list_in_catalog === true || p.list_in_catalog === 1)
+                      (p) => p.brands_id === a.id && ((p.list_in_catalog === true || p.list_in_catalog === 1) || (p.accept_order === true || p.accept_order === 1))
                     );
                     const bActive = products.some(
-                      (p) => p.brands_id === b.id && (p.list_in_catalog === true || p.list_in_catalog === 1)
+                      (p) => p.brands_id === b.id && ((p.list_in_catalog === true || p.list_in_catalog === 1) || (p.accept_order === true || p.accept_order === 1))
                     );
                     if (aActive && !bActive) return -1;
                     if (!aActive && bActive) return 1;
@@ -1731,10 +1806,13 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                   return sortedBrands.map((b) => {
                     const allBrandProds = products.filter((p) => p.brands_id === b.id);
                     const isBrandVisible = allBrandProds.some(
-                      (p) => p.list_in_catalog === true || p.list_in_catalog === 1
+                      (p) => (p.list_in_catalog === true || p.list_in_catalog === 1) || (p.accept_order === true || p.accept_order === 1)
                     );
                     const activeListedCount = allBrandProds.filter(
                       (p) => p.list_in_catalog === true || p.list_in_catalog === 1
+                    ).length;
+                    const activeOrderCount = allBrandProds.filter(
+                      (p) => p.accept_order === true || p.accept_order === 1 || p.accept_order === undefined
                     ).length;
 
                     const brandProds = allBrandProds.filter((p) => {
@@ -1788,7 +1866,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                                 {b.id}
                               </span>
                               <span className="text-[11px] text-zinc-500 font-medium">
-                                ({activeListedCount}/{allBrandProds.length} active in catalog)
+                                ({activeListedCount}/{allBrandProds.length} in catalog • {activeOrderCount}/{allBrandProds.length} accepting orders)
                               </span>
                             </div>
                             <p className="text-xs text-zinc-500 max-w-xl truncate mt-0.5">
@@ -1814,7 +1892,8 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                           <table className="w-full text-left text-xs border-collapse">
                             <thead>
                               <tr className="bg-slate-50/50 border-b border-slate-200 text-zinc-500 font-bold uppercase tracking-wider text-[10px]">
-                                <th className="py-2 px-3 text-center w-24">In Catalog?</th>
+                                <th className="py-2 px-3 text-center w-24">In Catalog</th>
+                                <th className="py-2 px-3 text-center w-28">Accept Order</th>
                                 <th className="py-2 px-3 w-32">SKU</th>
                                 <th className="py-2 px-3">Product Name</th>
                                 <th className="py-2 px-3 w-40">Carton Spec</th>
@@ -1825,19 +1904,37 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                             <tbody className="divide-y divide-slate-100 bg-white">
                               {brandProds.map((p) => {
                                 const isProductListed = p.list_in_catalog === true || p.list_in_catalog === 1;
+                                const isAcceptOrder = p.accept_order === true || p.accept_order === 1 || p.accept_order === undefined;
                                 return (
                                   <tr key={p.sku} className="hover:bg-slate-50/70 transition-colors">
                                     <td className="py-2 px-3 text-center">
                                       <button
+                                        type="button"
                                         onClick={() => handleToggleProduct(p.sku, isProductListed)}
                                         className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer inline-flex items-center ${
                                           isProductListed ? "bg-emerald-500" : "bg-slate-300"
                                         }`}
-                                        title={isProductListed ? "Product Visible" : "Product Hidden"}
+                                        title={isProductListed ? "In Public Catalog (Project 6 Active)" : "Hidden from Public Catalog (Project 6)"}
                                       >
                                         <span
                                           className={`w-3.5 h-3.5 rounded-full bg-white transition-transform transform ${
                                             isProductListed ? "translate-x-4.5" : "translate-x-1"
+                                          }`}
+                                        />
+                                      </button>
+                                    </td>
+                                    <td className="py-2 px-3 text-center">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleToggleAcceptOrder(p.sku, isAcceptOrder)}
+                                        className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer inline-flex items-center ${
+                                          isAcceptOrder ? "bg-[#0B57D0]" : "bg-slate-300"
+                                        }`}
+                                        title={isAcceptOrder ? "Accepting Orders (Project 5 Active)" : "Orders Disabled (Project 5)"}
+                                      >
+                                        <span
+                                          className={`w-3.5 h-3.5 rounded-full bg-white transition-transform transform ${
+                                            isAcceptOrder ? "translate-x-4.5" : "translate-x-1"
                                           }`}
                                         />
                                       </button>
@@ -1868,7 +1965,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                               })}
                               {brandProds.length === 0 && (
                                 <tr>
-                                  <td colSpan={6} className="py-4 text-center text-xs text-slate-400">
+                                  <td colSpan={7} className="py-4 text-center text-xs text-slate-400">
                                     No products assigned to this brand.
                                   </td>
                                 </tr>
@@ -2741,6 +2838,39 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                 </div>
               </div>
 
+              {/* Channel Availability & Toggles */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editingProduct.list_in_catalog !== false && editingProduct.list_in_catalog !== 0}
+                    onChange={(e) =>
+                      setEditingProduct({ ...editingProduct, list_in_catalog: e.target.checked })
+                    }
+                    className="w-4 h-4 rounded text-[#0B57D0] focus:ring-[#0B57D0]"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-zinc-900 block">List in Catalog (Project 6)</span>
+                    <span className="text-[10px] text-zinc-500">Show product in public discovery catalog</span>
+                  </div>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editingProduct.accept_order !== false && editingProduct.accept_order !== 0}
+                    onChange={(e) =>
+                      setEditingProduct({ ...editingProduct, accept_order: e.target.checked })
+                    }
+                    className="w-4 h-4 rounded text-[#0B57D0] focus:ring-[#0B57D0]"
+                  />
+                  <div>
+                    <span className="text-xs font-bold text-zinc-900 block">Accept Orders (Project 5)</span>
+                    <span className="text-[10px] text-zinc-500">Enable direct order submission for this SKU</span>
+                  </div>
+                </label>
+              </div>
+
               {/* Descriptions */}
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">Catalog Description (Long Description)</label>
@@ -3264,6 +3394,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                     <th className="py-2.5 px-3">SKU</th>
                     <th className="py-2.5 px-3">Product Name</th>
                     <th className="py-2.5 px-3 text-center">In Catalog?</th>
+                    <th className="py-2.5 px-3 text-center">Accept Order?</th>
                     <th className="py-2.5 px-3">Carton (EA)</th>
                     <th className="py-2.5 px-3">Pallet (CTN)</th>
                     <th className="py-2.5 px-3">Storage</th>
@@ -3285,6 +3416,13 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                           item.list_in_catalog ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-100 text-slate-500"
                         }`}>
                           {item.list_in_catalog ? "YES" : "NO"}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                          item.accept_order !== false ? "bg-blue-50 text-blue-700 border border-blue-200" : "bg-slate-100 text-slate-500"
+                        }`}>
+                          {item.accept_order !== false ? "YES" : "NO"}
                         </span>
                       </td>
                       <td className="py-2.5 px-3 text-zinc-700 font-mono">
