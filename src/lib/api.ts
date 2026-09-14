@@ -849,6 +849,26 @@ export async function deleteQuickDropFile(id: string, email: string): Promise<{ 
   return handleResponse(res, "Delete Quick Drop file");
 }
 
+export async function fetchQuickDropText(email: string): Promise<{ content: string; updated_at: number; expires_at: number }> {
+  const buster = `t=${Date.now()}`;
+  const res = await fetch(`${WORKER_URL}/api/quick-drop/text?email=${encodeURIComponent(email)}&${buster}`, {
+    method: "GET",
+  });
+  return handleResponse(res, "Fetch Quick Drop text");
+}
+
+export async function saveQuickDropText(email: string, content: string): Promise<{ success: boolean; content: string; updated_at: number; expires_at: number }> {
+  const res = await fetch(`${WORKER_URL}/api/quick-drop/text`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ email, content }),
+  });
+  return handleResponse(res, "Save Quick Drop text");
+}
+
+
 
 
 
