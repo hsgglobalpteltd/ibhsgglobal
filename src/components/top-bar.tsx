@@ -221,38 +221,19 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
       {isDashboard && (
         <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 mt-1 z-30">
           <div className="inline-flex items-center p-1 bg-[#F0F4F9] border border-slate-200/80 rounded-full shadow-2xs gap-1">
-            {/* Workspace Button with floating bubble directly underneath */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => handleDashboardTabClick("workspace")}
-                className={cn(
-                  "px-5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer",
-                  dashboardTab === "workspace"
-                    ? "bg-white text-[#0B57D0] shadow-xs border border-slate-200/70 font-bold"
-                    : "text-zinc-600 hover:text-zinc-950 hover:bg-white/60"
-                )}
-              >
-                Workspace
-              </button>
-
-              {/* Floating Bubble: See what need to do today (Pointer centered directly under Workspace text) */}
-              {dashboardTab === "workspace" && workspaceView === "today" && (
-                <button
-                  type="button"
-                  onClick={handleReturnToCards}
-                  onMouseDown={handleReturnToCards}
-                  className="absolute right-6 top-full mt-4 z-[100] group flex items-center px-3.5 py-1.5 rounded-full bg-white border border-blue-200/90 shadow-md hover:shadow-lg hover:border-[#0B57D0] text-[#0B57D0] hover:text-[#0842A0] text-xs font-semibold transition-all duration-200 cursor-pointer animate-in fade-in zoom-in-95 hover:scale-105 whitespace-nowrap select-none pointer-events-auto"
-                  title="Return to cards view"
-                >
-                  <span className="relative z-10">
-                    See what need to do today
-                  </span>
-                  {/* Bubble pointer pointing directly up to the center of Workspace pill */}
-                  <span className="absolute right-6 -top-1 w-2.5 h-2.5 bg-white border-l border-t border-blue-200/90 group-hover:border-[#0B57D0] rotate-45 transform transition-colors z-0" />
-                </button>
+            {/* Workspace Button */}
+            <button
+              type="button"
+              onClick={() => handleDashboardTabClick("workspace")}
+              className={cn(
+                "px-5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer",
+                dashboardTab === "workspace"
+                  ? "bg-white text-[#0B57D0] shadow-xs border border-slate-200/70 font-bold"
+                  : "text-zinc-600 hover:text-zinc-950 hover:bg-white/60"
               )}
-            </div>
+            >
+              Workspace
+            </button>
 
             <button
               type="button"

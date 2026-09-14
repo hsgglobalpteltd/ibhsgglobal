@@ -771,9 +771,64 @@ export async function approvePMDelayRequest(data: {
   return handleResponse(res, "Process delay request");
 }
 
+export interface ConsoleContextItem {
+  id: string;
+  title: string;
+  keywords: string[];
+  detail_context: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export async function fetchConsoleContexts(): Promise<{ success: boolean; contexts: ConsoleContextItem[] }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/contexts`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+  });
+  return handleResponse(res, "Fetch console contexts");
+}
+
+export async function saveConsoleContext(context: Partial<ConsoleContextItem>): Promise<{ success: boolean; context: ConsoleContextItem }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/contexts`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+    body: JSON.stringify(context),
+  });
+  return handleResponse(res, "Save console context");
+}
+
+export async function deleteConsoleContext(id: string): Promise<{ success: boolean; deletedId: string }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/contexts?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+  });
+  return handleResponse(res, "Delete console context");
+}
+
 export async function fetchDashboardAiBriefing(
   userName: string,
-  profile?: any
+  profile?: any,
+  skipGreeting = false,
+  message?: string,
+  history?: any[]
 ): Promise<{ success: boolean; text: string; data?: any; error?: string }> {
   const token = await getFreshToken();
   const sessionHeaders = getSessionIdHeader();
@@ -789,6 +844,9 @@ export async function fetchDashboardAiBriefing(
       role: profile?.role || "Operator",
       email: profile?.email || "",
       modules_access: profile?.modules_access || {},
+      skip_greeting: skipGreeting,
+      message: message || undefined,
+      history: history || undefined,
     }),
   });
   return handleResponse(res, "Fetch dashboard briefing");
@@ -798,6 +856,7 @@ export interface AdminConsolePreferences {
   track_orders: boolean;
   tiktok_orders: boolean;
   direct_orders: boolean;
+  merch_visits: boolean;
   personal_tasks: boolean;
 }
 

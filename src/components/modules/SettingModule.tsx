@@ -6,10 +6,17 @@ import { showToast } from "@/lib/toast";
 import { NavigationTabs } from "../navigation-tabs";
 import { CustomButton } from "../custom-button";
 
-import { fetchLatestContract, adminUpdateContract } from "@/lib/api";
+import { 
+  fetchLatestContract, 
+  adminUpdateContract,
+  fetchConsoleContexts,
+  saveConsoleContext,
+  deleteConsoleContext,
+  ConsoleContextItem
+} from "@/lib/api";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { fetchMaintenanceSettings, saveModuleUnderConstruction, saveAllUnderConstructionModules } from "@/lib/maintenance";
-import { Search, Construction, CheckCircle2, SlidersHorizontal } from "lucide-react";
+import { Search, Construction, CheckCircle2, SlidersHorizontal, BookOpen, Plus, Trash2, Edit3, Tag } from "lucide-react";
 
 interface SettingModuleProps {
   profile?: {
@@ -27,15 +34,23 @@ const apiColumns: Column[] = [
 export function SettingModule({ profile, idToken }: SettingModuleProps) {
   const tabs = [
     { id: "configuration", label: "Configuration", desc: "System parameters and configurations." },
+    { id: "console_context", label: "Console Context", desc: "Manage AI context knowledge, operational rules, and keywords for the briefing console." },
     { id: "under_construction", label: "Under Construction", desc: "Control module availability and toggle under construction status." },
     { id: "api", label: "API", desc: "Manage API integrations and secure credentials." }
   ];
 
-  const [activeTab, setActiveTab] = React.useState<"configuration" | "under_construction" | "api">("configuration");
+  const [activeTab, setActiveTab] = React.useState<"configuration" | "console_context" | "under_construction" | "api">("configuration");
   const [data, setData] = React.useState<any[]>([]);
   const [fetching, setFetching] = React.useState(false);
   const [isEditMode, setIsEditMode] = React.useState(false);
   const [editingApi, setEditingApi] = React.useState<any | null>(null);
+
+  // Console Contexts state
+  const [contexts, setContexts] = React.useState<ConsoleContextItem[]>([]);
+  const [contextsLoading, setContextsLoading] = React.useState(false);
+  const [contextSearch, setContextSearch] = React.useState("");
+  const [editingContext, setEditingContext] = React.useState<Partial<ConsoleContextItem> | null>(null);
+  const [isSavingContext, setIsSavingContext] = React.useState(false);
 
   // Under construction state
   const [moduleMaintenance, setModuleMaintenance] = React.useState<Record<string, boolean>>({});
@@ -51,6 +66,20 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
   const [uploadingContract, setUploadingContract] = React.useState<boolean>(false);
   const [showPreview, setShowPreview] = React.useState<boolean>(false);
   const [showUpload, setShowUpload] = React.useState<boolean>(false);
+
+  const loadContexts = React.useCallback(async () => {
+    setContextsLoading(true);
+    try {
+      const res = await fetchConsoleContexts();
+      if (res.success && Array.isArray(res.contexts)) {
+        setContexts(res.contexts);
+      }
+    } catch (err: any) {
+      console.error("Failed to load console contexts:", err);
+    } finally {
+      setContextsLoading(false);
+    }
+  }, []);
 
   const loadContract = React.useCallback(async () => {
     try {
@@ -77,10 +106,56 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
   React.useEffect(() => {
     if (activeTab === "configuration") {
       loadContract();
+    } else if (activeTab === "console_context") {
+      loadContexts();
     } else if (activeTab === "under_construction") {
       loadMaintenance();
     }
-  }, [activeTab, loadContract, loadMaintenance]);
+  }, [activeTab, loadContract, loadContexts, loadMaintenance]);
+
+  const handleSaveContext = async (contextData: Partial<ConsoleContextItem>) => {
+    setIsSavingContext(true);
+    try {
+      const res = await saveConsoleContext(contextData);
+      if (res.success) {
+        showToast("Console context saved successfully!", "success");
+        setEditingContext(null);
+        loadContexts();
+      } else {
+        showToast("Failed to save context", "error");
+      }
+    } catch (err: any) {
+      showToast(err.message || "Failed to save context", "error");
+    } finally {
+      setIsSavingContext(false);
+    }
+  };
+
+  const handleDeleteContext = async (id: string, title: string) => {
+    if (!window.confirm(`Are you sure you want to delete context "${title}"?`)) return;
+    try {
+      const res = await deleteConsoleContext(id);
+      if (res.success) {
+        showToast("Context deleted successfully", "success");
+        setContexts((prev) => prev.filter((c) => c.id !== id));
+      } else {
+        showToast("Failed to delete context", "error");
+      }
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete context", "error");
+    }
+  };
+
+  const filteredContexts = React.useMemo(() => {
+    if (!contextSearch.trim()) return contexts;
+    const q = contextSearch.toLowerCase();
+    return contexts.filter((c) => {
+      const titleMatch = c.title?.toLowerCase().includes(q);
+      const kwMatch = Array.isArray(c.keywords) && c.keywords.some((kw) => kw.toLowerCase().includes(q));
+      const detailMatch = c.detail_context?.toLowerCase().includes(q);
+      return titleMatch || kwMatch || detailMatch;
+    });
+  }, [contexts, contextSearch]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -516,6 +591,138 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
               </div>
             )}
           </div>
+        ) : activeTab === "console_context" ? (
+          <div className="flex flex-col gap-4">
+            {/* Header Controls: Search & Add Context */}
+            <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-xs flex flex-col gap-3">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-zinc-900">AI Console Context Knowledge Base</h3>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-[#0B57D0] border border-blue-200">
+                      {contexts.length} Active Context{contexts.length !== 1 ? "s" : ""}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500 leading-relaxed">
+                    Add reference knowledge, operational rules, tutorials, and keywords that Gemini 2.5 Flash will use when chatting with users.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setEditingContext({ title: "", keywords: [], detail_context: "" })}
+                    className="px-3.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-bold rounded-md transition duration-150 cursor-pointer flex items-center gap-1.5 shadow-2xs active:scale-98"
+                  >
+                    <Plus size={14} />
+                    <span>Add New Context</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Search Bar */}
+              <div className="relative max-w-sm pt-1">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input
+                  type="text"
+                  value={contextSearch}
+                  onChange={(e) => setContextSearch(e.target.value)}
+                  placeholder="Search context title, keywords, or content..."
+                  className="w-full h-8.5 pl-8 pr-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:bg-white transition"
+                />
+                {contextSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setContextSearch("")}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 text-xs font-bold"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Context Cards Grid */}
+            {contextsLoading ? (
+              <div className="flex items-center justify-center h-48 bg-white border border-slate-200 rounded-lg">
+                <span className="text-xs font-semibold text-zinc-400 animate-pulse">Loading console contexts...</span>
+              </div>
+            ) : filteredContexts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 bg-white border border-dashed border-slate-200 rounded-lg p-6 text-center">
+                <BookOpen size={28} className="text-slate-300 mb-2" />
+                <span className="text-xs font-bold text-zinc-700">No context entries found</span>
+                <span className="text-[11px] text-zinc-400 mt-1 max-w-xs">
+                  Create a context card with titles, keywords, and up to 10,000 words of operational text to train the chat assistant.
+                </span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-8">
+                {filteredContexts.map((ctx) => (
+                  <div
+                    key={ctx.id}
+                    className="bg-white border border-slate-200 hover:border-slate-300 rounded-xl p-4 flex flex-col justify-between transition-all duration-200 shadow-xs hover:shadow-md"
+                  >
+                    <div>
+                      {/* Top Header: Title & Actions */}
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <h4 className="text-sm font-bold text-zinc-950 tracking-tight leading-snug">
+                          {ctx.title}
+                        </h4>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setEditingContext(ctx)}
+                            className="p-1.5 rounded-md hover:bg-slate-100 text-zinc-500 hover:text-[#0B57D0] transition cursor-pointer"
+                            title="Edit Context"
+                          >
+                            <Edit3 size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteContext(ctx.id, ctx.title)}
+                            className="p-1.5 rounded-md hover:bg-red-50 text-zinc-400 hover:text-red-600 transition cursor-pointer"
+                            title="Delete Context"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Keywords Badges */}
+                      {Array.isArray(ctx.keywords) && ctx.keywords.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1 mb-2.5">
+                          {ctx.keywords.map((kw, i) => (
+                            <span
+                              key={i}
+                              className="inline-flex items-center gap-1 text-[10px] font-bold text-[#0B57D0] bg-[#D3E3FD]/50 px-2 py-0.5 rounded-md border border-blue-200/60"
+                            >
+                              <Tag size={9} />
+                              {kw}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Detail Text Preview */}
+                      <p className="text-xs text-zinc-600 leading-relaxed line-clamp-4 whitespace-pre-wrap bg-slate-50 p-2.5 rounded-lg border border-slate-100">
+                        {ctx.detail_context}
+                      </p>
+                    </div>
+
+                    {/* Footer Meta: Word Count & Date */}
+                    <div className="border-t border-slate-100 pt-2.5 mt-3 flex items-center justify-between text-[10px] text-zinc-400">
+                      <span>
+                        {ctx.detail_context?.split(/\s+/).filter(Boolean).length || 0} words
+                      </span>
+                      <span>
+                        Updated {new Date(ctx.updated_at).toLocaleDateString("en-GB")}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         ) : activeTab === "under_construction" ? (
           <div className="flex flex-col gap-4">
             {/* Header Controls: Search, Category Filter, and Bulk Actions */}
@@ -742,6 +949,202 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
           </div>
         </div>
       )}
+
+      {/* Context Edit Modal Popup */}
+      {editingContext && (
+        <ContextEditModal
+          record={editingContext}
+          isSaving={isSavingContext}
+          onSave={handleSaveContext}
+          onCancel={() => setEditingContext(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Context Edit Modal Component (Title, Keywords Tag Input, 10,000-word max textarea)
+function ContextEditModal({
+  record,
+  isSaving,
+  onSave,
+  onCancel,
+}: {
+  record: Partial<ConsoleContextItem>;
+  isSaving: boolean;
+  onSave: (data: Partial<ConsoleContextItem>) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [title, setTitle] = React.useState(record.title || "");
+  const [keywords, setKeywords] = React.useState<string[]>(Array.isArray(record.keywords) ? [...record.keywords] : []);
+  const [keywordInput, setKeywordInput] = React.useState("");
+  const [detailContext, setDetailContext] = React.useState(record.detail_context || "");
+
+  const wordCount = React.useMemo(() => {
+    return detailContext.trim().split(/\s+/).filter(Boolean).length;
+  }, [detailContext]);
+
+  const handleAddKeyword = () => {
+    const trimmed = keywordInput.trim().toLowerCase();
+    if (trimmed && !keywords.includes(trimmed)) {
+      setKeywords([...keywords, trimmed]);
+      setKeywordInput("");
+    }
+  };
+
+  const handleKeyDownKeyword = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      handleAddKeyword();
+    }
+  };
+
+  const handleRemoveKeyword = (kwToRemove: string) => {
+    setKeywords(keywords.filter((k) => k !== kwToRemove));
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim()) {
+      showToast("Please provide a title for this context", "warning");
+      return;
+    }
+    if (!detailContext.trim()) {
+      showToast("Please provide context text", "warning");
+      return;
+    }
+    if (wordCount > 10000) {
+      showToast("Detail context exceeds maximum 10,000 words limit", "error");
+      return;
+    }
+
+    onSave({
+      ...record,
+      title: title.trim(),
+      keywords,
+      detail_context: detailContext.trim(),
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-2xl bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200 font-primary"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shrink-0">
+          <div>
+            <h3 className="text-base font-bold text-zinc-950">
+              {record.id ? "Edit Console Knowledge Context" : "Create Console Knowledge Context"}
+            </h3>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Provide context data, instructions, or rules for Gemini 2.5 Flash to reference.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Scrollable Form Body */}
+        <div className="p-6 flex flex-col gap-4 overflow-y-auto flex-1">
+          {/* Title */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-bold text-zinc-700">
+              Context Title <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              required
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Merchandiser Store Visit Target Rules & Pace Analysis"
+              className="h-9.5 px-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:bg-white transition font-medium placeholder:text-zinc-400"
+            />
+          </div>
+
+          {/* Multiple Keywords / Tags Input */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-zinc-700">
+                Trigger Keywords & Tags
+              </label>
+              <span className="text-[10px] text-zinc-400">
+                Type keyword and press Enter or comma (,) to add
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-lg min-h-[42px]">
+              {keywords.map((kw) => (
+                <span
+                  key={kw}
+                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#0B57D0] bg-[#D3E3FD] px-2.5 py-0.5 rounded-md border border-blue-200 shadow-2xs"
+                >
+                  <span>{kw}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveKeyword(kw)}
+                    className="text-blue-700 hover:text-red-600 font-bold ml-0.5 cursor-pointer"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+              <input
+                type="text"
+                value={keywordInput}
+                onChange={(e) => setKeywordInput(e.target.value)}
+                onKeyDown={handleKeyDownKeyword}
+                placeholder={keywords.length === 0 ? "e.g. visit, schedule, merchandiser, pace" : "+ add tag..."}
+                className="flex-1 min-w-[120px] bg-transparent text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none border-none py-1 px-1"
+              />
+            </div>
+          </div>
+
+          {/* Detail Context (up to 10,000 words) */}
+          <div className="flex flex-col gap-1.5">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-bold text-zinc-700">
+                Detail Context (Full Text / Instructions) <span className="text-red-500">*</span>
+              </label>
+              <span className={`text-[10px] font-semibold ${wordCount > 10000 ? "text-red-600" : "text-zinc-500"}`}>
+                {wordCount.toLocaleString()} / 10,000 words max
+              </span>
+            </div>
+            <textarea
+              required
+              rows={12}
+              value={detailContext}
+              onChange={(e) => setDetailContext(e.target.value)}
+              placeholder="Paste complete guidelines, operational definitions, SOPs, pricing tables, or domain knowledge here (up to 10,000 words)..."
+              className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:bg-white transition leading-relaxed resize-y font-sans min-h-[220px]"
+            />
+          </div>
+        </div>
+
+        {/* Modal Footer */}
+        <div className="flex items-center justify-end gap-2.5 px-6 py-4 bg-slate-50 border-t border-slate-200 shrink-0">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="h-9 px-4 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-zinc-700 hover:text-zinc-950 hover:bg-slate-100 cursor-pointer shadow-2xs transition"
+          >
+            Cancel
+          </button>
+          <CustomButton
+            type="submit"
+            disabled={isSaving || wordCount > 10000}
+            className="h-9 px-5 text-xs font-semibold bg-[#0B57D0] border-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg shadow-2xs transition disabled:opacity-50"
+          >
+            {isSaving ? "Saving Context..." : "Save Context"}
+          </CustomButton>
+        </div>
+      </form>
     </div>
   );
 }
