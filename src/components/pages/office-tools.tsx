@@ -6,6 +6,7 @@ import { InvoiceBarcodeGeneratorModule } from "../modules/InvoiceBarcodeGenerato
 import { StaffClaimsModule } from "../modules/StaffClaimsModule";
 import { FinanceClaimsModule } from "../modules/FinanceClaimsModule";
 import { DeliveryLabelGeneratorModule } from "../modules/DeliveryLabelGeneratorModule";
+import { QuickDropModule } from "../modules/QuickDropModule";
 import { AssetLibraryModule } from "../modules/AssetLibraryModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canViewModule } from "@/lib/permissions";
@@ -75,6 +76,8 @@ export function OfficeToolsPage({ profile, breadcrumbPath }: OfficeToolsPageProp
         return <InvoiceBarcodeGeneratorModule />;
       case "Delivery Label Generator":
         return <DeliveryLabelGeneratorModule />;
+      case "Quick Drop":
+        return <QuickDropModule profile={profile} />;
       case "Asset Library":
         return <AssetLibraryModule profile={profile} />;
       default:

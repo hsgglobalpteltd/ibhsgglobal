@@ -6,6 +6,7 @@ import { FolderKanban, Target, ListTodo, Lock } from "lucide-react";
 import { showToast } from "@/lib/toast";
 
 import { fetchWorkspaceDashboard, prefetchWorkspaceDashboard, getCachedWorkspaceData } from "@/lib/api";
+import { DashboardAiSummary } from "@/components/dashboard-ai-summary";
 
 interface DashboardPageProps {
   profile?: any;
@@ -15,16 +16,32 @@ interface DashboardPageProps {
 
 export function DashboardPage({ profile }: DashboardPageProps) {
   const [activeTab, setActiveTab] = React.useState<"workspace" | "analysis" | "forecast">("workspace");
+  const [workspaceView, setWorkspaceView] = React.useState<"cards" | "today">("cards");
 
   React.useEffect(() => {
     const handleTabChange = (e: Event) => {
       const customEvent = e as CustomEvent<"workspace" | "analysis" | "forecast">;
       if (customEvent.detail) {
         setActiveTab(customEvent.detail);
+        if (customEvent.detail === "workspace") {
+          setWorkspaceView("cards");
+        }
       }
     };
+
+    const handleViewChange = (e: Event) => {
+      const customEvent = e as CustomEvent<"cards" | "today">;
+      if (customEvent.detail) {
+        setWorkspaceView(customEvent.detail);
+      }
+    };
+
     window.addEventListener("dashboard-tab-change", handleTabChange);
-    return () => window.removeEventListener("dashboard-tab-change", handleTabChange);
+    window.addEventListener("dashboard-view-change", handleViewChange);
+    return () => {
+      window.removeEventListener("dashboard-tab-change", handleTabChange);
+      window.removeEventListener("dashboard-view-change", handleViewChange);
+    };
   }, []);
 
   // Read user profile from props or local storage fallback
@@ -184,107 +201,145 @@ export function DashboardPage({ profile }: DashboardPageProps) {
     <div className="content-body flex flex-col flex-1 h-full select-none font-primary overflow-y-auto p-4 md:p-8 items-center justify-center">
       {/* Tab Content: Workspace */}
       {activeTab === "workspace" && (
-        <div className="w-full max-w-6xl flex flex-col items-center gap-8 animate-in fade-in duration-300">
-          {/* Personalized Header Title */}
-          <div className="text-center flex flex-col items-center gap-1.5">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-50/80 border border-blue-100 text-[#0B57D0] text-xs font-semibold mb-1 shadow-2xs">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#0B57D0] animate-pulse" />
-              <span>iB HSG Global</span>
-            </div>
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-zinc-950">
-              {greeting}, <span className="text-[#0B57D0]">{userName}</span>
-            </h1>
-            <p className="text-xs md:text-sm text-zinc-500 font-normal">
-              Bridging Strategy, Governance &amp; Operational Excellence
-            </p>
-          </div>
+        <>
+          {/* Workspace SubView A: Default 3 Cards View */}
+          {workspaceView === "cards" && (
+            <div className="w-full max-w-6xl flex flex-col items-center gap-8 animate-in fade-in duration-300">
+              {/* Personalized Header Title with Floating Speech Bubble on top-right of iB HSG Global */}
+              <div className="text-center flex flex-col items-center gap-1.5 w-full max-w-2xl relative">
+                {/* Top Badge Group: iB HSG Global centered + Speech Bubble floating to right */}
+                <div className="relative inline-flex items-center justify-center mb-1">
+                  {/* iB HSG Global Badge (Solid button blue with white text) */}
+                  <div className="inline-flex items-center px-3 py-1 rounded-full bg-[#0B57D0] text-white text-xs font-semibold shadow-xs select-none">
+                    <span>iB HSG Global</span>
+                  </div>
 
-          {/* Access Cards Container - Always 3 cards in one row on desktop */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
-            {allCards.map((card) => {
-              if (card.enabled) {
-                return (
-                  <Link
-                    key={card.id}
-                    href={card.url}
-                    prefetch={true}
-                    onMouseEnter={() => prefetchWorkspaceDashboard().catch(() => {})}
-                    onTouchStart={() => prefetchWorkspaceDashboard().catch(() => {})}
-                    className="bg-white rounded-2xl border border-slate-200/90 p-6 md:p-7 flex flex-col h-full shadow-xs hover:shadow-md hover:border-[#0B57D0]/50 transition-all duration-200 cursor-pointer group w-full"
+                  {/* Floating Speech Bubble: What's happening today? lifted higher with space, no pulse dot */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setWorkspaceView("today");
+                      window.dispatchEvent(new CustomEvent("dashboard-view-change", { detail: "today" }));
+                    }}
+                    className="absolute left-[65%] -top-9 sm:-top-10 z-30 group flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-blue-200/90 shadow-xs hover:shadow-md hover:border-[#0B57D0] text-[#0B57D0] hover:text-[#0842A0] text-[11px] font-semibold transition-all duration-200 cursor-pointer animate-in fade-in zoom-in-95 hover:scale-105 whitespace-nowrap select-none"
+                    title="View what's happening today"
                   >
-                    {/* Top Row: Icon & Badge */}
-                    <div className="flex items-center justify-between shrink-0">
-                      <div className="w-12 h-12 rounded-xl bg-[#F0F4F9] flex items-center justify-center group-hover:bg-[#D3E3FD] transition-colors">
-                        {card.icon}
-                      </div>
-                      <span className="text-[10px] font-medium px-2.5 py-1 rounded-full bg-slate-100 text-zinc-600 border border-slate-200 group-hover:bg-[#D3E3FD]/60 group-hover:text-[#0B57D0] transition-colors">
-                        {card.badge}
-                      </span>
-                    </div>
-
-                    {/* Card Body (Strict top-aligned across all cards) */}
-                    <div className="flex flex-col mt-6 flex-1">
-                      <h2 className="text-base font-semibold text-zinc-900 group-hover:text-[#0B57D0] transition-colors leading-tight">
-                        {card.title}
-                      </h2>
-                      <span className="text-[11px] font-medium text-[#0B57D0] mt-1">
-                        {card.subtitle}
-                      </span>
-                      <p className="text-xs text-zinc-500 font-normal leading-relaxed mt-2.5">
-                        {card.description}
-                      </p>
-                    </div>
-
-                    {/* Bottom Line */}
-                    <div className="mt-6 pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-medium text-zinc-400 group-hover:text-[#0B57D0] transition-colors shrink-0">
-                      <span>Open View</span>
-                      <span className="group-hover:translate-x-1 transition-transform">➔</span>
-                    </div>
-                  </Link>
-                );
-              }
-
-              // Disabled card (no layout shift, informative warning toast)
-              return (
-                <div
-                  key={card.id}
-                  onClick={() => showToast(card.disabledReason, "warning")}
-                  className="bg-slate-50/70 rounded-2xl border border-slate-200/80 p-6 md:p-7 flex flex-col h-full opacity-60 cursor-not-allowed w-full shadow-none transition-all select-none group/dis"
-                  title={card.disabledReason}
-                >
-                  {/* Top Row: Muted Icon & Disabled Badge */}
-                  <div className="flex items-center justify-between shrink-0">
-                    <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center">
-                      {card.icon}
-                    </div>
-                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-200/70 text-zinc-500 border border-slate-200 flex items-center gap-1">
-                      <span>No Role</span>
+                    <span className="relative z-10">
+                      What&apos;s happening today?
                     </span>
-                  </div>
-
-                  {/* Card Body (Strict top-aligned across all cards) */}
-                  <div className="flex flex-col mt-6 flex-1">
-                    <h2 className="text-base font-semibold text-zinc-600 leading-tight">
-                      {card.title}
-                    </h2>
-                    <span className="text-[11px] font-medium text-zinc-400 mt-1">
-                      {card.subtitle}
-                    </span>
-                    <p className="text-xs text-zinc-400 font-normal leading-relaxed mt-2.5">
-                      {card.description}
-                    </p>
-                  </div>
-
-                  {/* Bottom Line */}
-                  <div className="mt-6 pt-3 border-t border-slate-200/70 flex items-center justify-between text-xs font-medium text-zinc-400 shrink-0">
-                    <span>Restricted Access</span>
-                    <span>➔</span>
-                  </div>
+                    {/* Downward pointing tail at bottom-left with synchronized hover border */}
+                    <span className="absolute left-3.5 -bottom-1 w-2.5 h-2.5 bg-white border-r border-b border-blue-200/90 group-hover:border-[#0B57D0] rotate-45 transform transition-colors z-0" />
+                  </button>
                 </div>
-              );
-            })}
-          </div>
-        </div>
+
+                <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-zinc-950">
+                  {greeting}, <span className="text-[#0B57D0]">{userName}</span>
+                </h1>
+
+                <p className="text-xs md:text-sm text-zinc-500 font-normal">
+                  Bridging Strategy, Governance &amp; Operational Excellence
+                </p>
+              </div>
+
+              {/* Access Cards Container - Always 3 cards in one row on desktop */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
+                {allCards.map((card) => {
+                  if (card.enabled) {
+                    return (
+                      <Link
+                        key={card.id}
+                        href={card.url}
+                        prefetch={true}
+                        onMouseEnter={() => prefetchWorkspaceDashboard().catch(() => {})}
+                        onTouchStart={() => prefetchWorkspaceDashboard().catch(() => {})}
+                        className="bg-white rounded-2xl border border-slate-200/90 p-6 md:p-7 flex flex-col h-full shadow-xs hover:shadow-md hover:border-[#0B57D0]/50 transition-all duration-200 cursor-pointer group w-full"
+                      >
+                        {/* Top Row: Icon & Badge */}
+                        <div className="flex items-center justify-between shrink-0">
+                          <div className="w-12 h-12 rounded-xl bg-[#F0F4F9] flex items-center justify-center group-hover:bg-[#D3E3FD] transition-colors">
+                            {card.icon}
+                          </div>
+                          <span className="text-[10px] font-medium px-2.5 py-1 rounded-full bg-slate-100 text-zinc-600 border border-slate-200 group-hover:bg-[#D3E3FD]/60 group-hover:text-[#0B57D0] transition-colors">
+                            {card.badge}
+                          </span>
+                        </div>
+
+                        {/* Card Body (Strict top-aligned across all cards) */}
+                        <div className="flex flex-col mt-6 flex-1">
+                          <h2 className="text-base font-semibold text-zinc-900 group-hover:text-[#0B57D0] transition-colors leading-tight">
+                            {card.title}
+                          </h2>
+                          <span className="text-[11px] font-medium text-[#0B57D0] mt-1">
+                            {card.subtitle}
+                          </span>
+                          <p className="text-xs text-zinc-500 font-normal leading-relaxed mt-2.5">
+                            {card.description}
+                          </p>
+                        </div>
+
+                        {/* Bottom Line */}
+                        <div className="mt-6 pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-medium text-zinc-400 group-hover:text-[#0B57D0] transition-colors shrink-0">
+                          <span>Open View</span>
+                          <span className="group-hover:translate-x-1 transition-transform">➔</span>
+                        </div>
+                      </Link>
+                    );
+                  }
+
+                  // Disabled card (no layout shift, informative warning toast)
+                  return (
+                    <div
+                      key={card.id}
+                      onClick={() => showToast(card.disabledReason, "warning")}
+                      className="bg-slate-50/70 rounded-2xl border border-slate-200/80 p-6 md:p-7 flex flex-col h-full opacity-60 cursor-not-allowed w-full shadow-none transition-all select-none group/dis"
+                      title={card.disabledReason}
+                    >
+                      {/* Top Row: Muted Icon & Disabled Badge */}
+                      <div className="flex items-center justify-between shrink-0">
+                        <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center">
+                          {card.icon}
+                        </div>
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-200/70 text-zinc-500 border border-slate-200 flex items-center gap-1">
+                          <span>No Role</span>
+                        </span>
+                      </div>
+
+                      {/* Card Body (Strict top-aligned across all cards) */}
+                      <div className="flex flex-col mt-6 flex-1">
+                        <h2 className="text-base font-semibold text-zinc-600 leading-tight">
+                          {card.title}
+                        </h2>
+                        <span className="text-[11px] font-medium text-zinc-400 mt-1">
+                          {card.subtitle}
+                        </span>
+                        <p className="text-xs text-zinc-400 font-normal leading-relaxed mt-2.5">
+                          {card.description}
+                        </p>
+                      </div>
+
+                      {/* Bottom Line */}
+                      <div className="mt-6 pt-3 border-t border-slate-200/70 flex items-center justify-between text-xs font-medium text-zinc-400 shrink-0">
+                        <span>Restricted Access</span>
+                        <span>➔</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Workspace SubView B: What's happening today (WPD2) */}
+          {workspaceView === "today" && (
+            <div className="flex flex-1 w-full h-full gap-6 animate-in fade-in duration-300 min-h-0 overflow-hidden">
+              {/* Left / Main Workspace Content Area */}
+              <div className="flex-1 min-w-0 flex flex-col h-full" />
+
+              {/* Right Side AI Summary Container (420px min-width, full height, rounded-2xl) */}
+              <DashboardAiSummary userName={userName} />
+            </div>
+          )}
+        </>
       )}
 
       {/* Tab Content: Analysis / Forecast (Blank / Empty container) */}

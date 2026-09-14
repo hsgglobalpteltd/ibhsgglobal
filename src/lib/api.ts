@@ -771,5 +771,84 @@ export async function approvePMDelayRequest(data: {
   return handleResponse(res, "Process delay request");
 }
 
+export async function fetchDashboardAiBriefing(userName: string): Promise<{ success: boolean; text: string; data?: any; error?: string }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/ai-briefing`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+    body: JSON.stringify({ user_name: userName }),
+  });
+  return handleResponse(res, "Fetch dashboard briefing");
+}
+
+// 18. QUICK DROP (24-HOUR TEMPORARY FILE SHARING) APIs
+export interface QuickDropFile {
+  id: string;
+  file_name: string;
+  file_size: number;
+  mime_type: string;
+  file_url: string;
+  r2_key: string;
+  uploaded_by_name: string;
+  uploaded_by_email: string;
+  created_at: number;
+  expires_at: number;
+}
+
+export async function fetchQuickDropFiles(email: string, viewAll = false): Promise<{ success: boolean; files: QuickDropFile[] }> {
+  const buster = `t=${Date.now()}`;
+  const res = await fetch(`${WORKER_URL}/api/quick-drop/list?email=${encodeURIComponent(email)}&viewAll=${viewAll}&${buster}`, {
+    method: "GET",
+  });
+  return handleResponse(res, "Fetch Quick Drop files");
+}
+
+export async function uploadQuickDropFile(
+  file: File,
+  uploaderName: string,
+  uploaderEmail: string
+): Promise<{ success: boolean; file: QuickDropFile }> {
+  const arrayBuffer = await file.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64Data = btoa(binary);
+
+  const res = await fetch(`${WORKER_URL}/api/quick-drop/upload`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type || "application/octet-stream",
+      uploadedByName: uploaderName,
+      uploadedByEmail: uploaderEmail,
+      base64Data,
+    }),
+  });
+  return handleResponse(res, "Upload Quick Drop file");
+}
+
+export async function deleteQuickDropFile(id: string, email: string): Promise<{ success: boolean; deletedId: string }> {
+  const res = await fetch(`${WORKER_URL}/api/quick-drop/delete`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ id, email }),
+  });
+  return handleResponse(res, "Delete Quick Drop file");
+}
+
+
 
 

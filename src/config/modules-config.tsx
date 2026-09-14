@@ -154,6 +154,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
         description: "Generate editable A6 delivery labels for quick printing and dispatch.",
       },
       {
+        title: "Quick Drop",
+        description: "Temporary cross-device file transfer for your account. Files auto-expire after 24 hours.",
+      },
+      {
         title: "Asset Library",
         description: "Store, organize, and manage photos, documents, and marketing assets securely.",
       }

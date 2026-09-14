@@ -158,15 +158,40 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
 
   const isDashboard = breadcrumbPath.length === 1 && breadcrumbPath[0]?.toLowerCase() === "dashboard";
   const [dashboardTab, setDashboardTab] = React.useState<"workspace" | "analysis" | "forecast">("workspace");
+  const [workspaceView, setWorkspaceView] = React.useState<"cards" | "today">("cards");
+
+  React.useEffect(() => {
+    const handleViewChange = (e: Event) => {
+      const customEvent = e as CustomEvent<"cards" | "today">;
+      if (customEvent.detail) {
+        setWorkspaceView(customEvent.detail);
+      }
+    };
+    window.addEventListener("dashboard-view-change", handleViewChange);
+    return () => window.removeEventListener("dashboard-view-change", handleViewChange);
+  }, []);
 
   const handleDashboardTabClick = (tab: "workspace" | "analysis" | "forecast") => {
     setDashboardTab(tab);
+    if (tab === "workspace") {
+      setWorkspaceView("cards");
+      window.dispatchEvent(new CustomEvent("dashboard-view-change", { detail: "cards" }));
+    }
     window.dispatchEvent(new CustomEvent("dashboard-tab-change", { detail: tab }));
+  };
+
+  const handleReturnToCards = (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    setWorkspaceView("cards");
+    window.dispatchEvent(new CustomEvent("dashboard-view-change", { detail: "cards" }));
   };
 
   return (
     <header className={cn(
-      "top-bar flex w-full items-center px-6 select-none relative z-40 transition-all",
+      "top-bar flex w-full items-center px-6 select-none relative z-50 transition-all",
       isDashboard ? "bg-transparent border-b-0 h-16 pt-2" : "bg-[#F0F4F9] border-b border-slate-200 h-14"
     )}>
       {/* Left: Breadcrumbs only (vertically centered in h-14) */}
@@ -194,20 +219,41 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
 
       {/* Center: Dashboard Rounded Pill Tabs (Positioned at top with comfortable spacing) */}
       {isDashboard && (
-        <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 mt-1 z-20">
+        <div className="absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 mt-1 z-30">
           <div className="inline-flex items-center p-1 bg-[#F0F4F9] border border-slate-200/80 rounded-full shadow-2xs gap-1">
-            <button
-              type="button"
-              onClick={() => handleDashboardTabClick("workspace")}
-              className={cn(
-                "px-5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer",
-                dashboardTab === "workspace"
-                  ? "bg-white text-[#0B57D0] shadow-xs border border-slate-200/70 font-bold"
-                  : "text-zinc-600 hover:text-zinc-950 hover:bg-white/60"
+            {/* Workspace Button with floating bubble directly underneath */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => handleDashboardTabClick("workspace")}
+                className={cn(
+                  "px-5 py-1.5 rounded-full text-xs font-semibold transition-all duration-150 cursor-pointer",
+                  dashboardTab === "workspace"
+                    ? "bg-white text-[#0B57D0] shadow-xs border border-slate-200/70 font-bold"
+                    : "text-zinc-600 hover:text-zinc-950 hover:bg-white/60"
+                )}
+              >
+                Workspace
+              </button>
+
+              {/* Floating Bubble: See what need to do today (Pointer centered directly under Workspace text) */}
+              {dashboardTab === "workspace" && workspaceView === "today" && (
+                <button
+                  type="button"
+                  onClick={handleReturnToCards}
+                  onMouseDown={handleReturnToCards}
+                  className="absolute right-6 top-full mt-4 z-[100] group flex items-center px-3.5 py-1.5 rounded-full bg-white border border-blue-200/90 shadow-md hover:shadow-lg hover:border-[#0B57D0] text-[#0B57D0] hover:text-[#0842A0] text-xs font-semibold transition-all duration-200 cursor-pointer animate-in fade-in zoom-in-95 hover:scale-105 whitespace-nowrap select-none pointer-events-auto"
+                  title="Return to cards view"
+                >
+                  <span className="relative z-10">
+                    See what need to do today
+                  </span>
+                  {/* Bubble pointer pointing directly up to the center of Workspace pill */}
+                  <span className="absolute right-6 -top-1 w-2.5 h-2.5 bg-white border-l border-t border-blue-200/90 group-hover:border-[#0B57D0] rotate-45 transform transition-colors z-0" />
+                </button>
               )}
-            >
-              Workspace
-            </button>
+            </div>
+
             <button
               type="button"
               onClick={() => handleDashboardTabClick("analysis")}
