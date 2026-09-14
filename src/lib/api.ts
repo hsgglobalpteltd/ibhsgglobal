@@ -771,7 +771,10 @@ export async function approvePMDelayRequest(data: {
   return handleResponse(res, "Process delay request");
 }
 
-export async function fetchDashboardAiBriefing(userName: string): Promise<{ success: boolean; text: string; data?: any; error?: string }> {
+export async function fetchDashboardAiBriefing(
+  userName: string,
+  profile?: any
+): Promise<{ success: boolean; text: string; data?: any; error?: string }> {
   const token = await getFreshToken();
   const sessionHeaders = getSessionIdHeader();
   const res = await fetch(`${WORKER_URL}/api/dashboard/ai-briefing`, {
@@ -781,9 +784,50 @@ export async function fetchDashboardAiBriefing(userName: string): Promise<{ succ
       ...(token ? { "Authorization": `Bearer ${token}` } : {}),
       ...sessionHeaders,
     },
-    body: JSON.stringify({ user_name: userName }),
+    body: JSON.stringify({
+      user_name: userName,
+      role: profile?.role || "Operator",
+      email: profile?.email || "",
+      modules_access: profile?.modules_access || {},
+    }),
   });
   return handleResponse(res, "Fetch dashboard briefing");
+}
+
+export interface AdminConsolePreferences {
+  track_orders: boolean;
+  tiktok_orders: boolean;
+  direct_orders: boolean;
+  personal_tasks: boolean;
+}
+
+export async function fetchAdminConsolePreferences(email: string): Promise<{ success: boolean; preferences: AdminConsolePreferences }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/admin-preferences?email=${encodeURIComponent(email)}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+  });
+  return handleResponse(res, "Fetch admin preferences");
+}
+
+export async function saveAdminConsolePreferences(email: string, preferences: AdminConsolePreferences): Promise<{ success: boolean; preferences: AdminConsolePreferences }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/admin-preferences`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+    body: JSON.stringify({ email, preferences }),
+  });
+  return handleResponse(res, "Save admin preferences");
 }
 
 // 18. QUICK DROP (24-HOUR TEMPORARY FILE SHARING) APIs

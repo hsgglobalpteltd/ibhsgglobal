@@ -726,9 +726,10 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         zoomControl: true,
       }).setView([1.3521, 103.8198], 12);
 
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-        maxZoom: 19
+      L.tileLayer("https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}", {
+        maxZoom: 20,
+        subdomains: ["mt0", "mt1", "mt2", "mt3"],
+        opacity: 0.5
       }).addTo(mapRef.current);
 
       trailGroupRef.current = L.featureGroup().addTo(mapRef.current);
@@ -2254,7 +2255,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
               {/* Right Column: Full Interactive Map Canvas */}
               <div className="flex-1 bg-white border border-slate-200 rounded-lg overflow-hidden relative shadow-xs min-h-[400px]">
-                <div id="merch-leaflet-map" className="w-full h-full z-10" />
+                <div id="merch-leaflet-map" className="w-full h-full z-10 bg-white" />
 
                 {!leafletLoaded && (
                   <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-20">

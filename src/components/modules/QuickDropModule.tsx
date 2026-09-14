@@ -40,7 +40,6 @@ export function QuickDropModule({ profile }: QuickDropModuleProps) {
   const [isUploading, setIsUploading] = React.useState(false);
   const [uploadProgress, setUploadProgress] = React.useState<{ current: number; total: number; filename: string } | null>(null);
   const [searchQuery, setSearchQuery] = React.useState("");
-  const [selectedCategory, setSelectedCategory] = React.useState<"all" | "pdf" | "image" | "document" | "other">("all");
   const [previewFile, setPreviewFile] = React.useState<QuickDropFile | null>(null);
   const [isDragging, setIsDragging] = React.useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = React.useState<string | null>(null);
@@ -120,6 +119,18 @@ export function QuickDropModule({ profile }: QuickDropModuleProps) {
   React.useEffect(() => {
     loadFiles();
     loadTextNote();
+  }, [loadFiles, loadTextNote]);
+
+  // Listen to global breadcrumb header refresh button
+  React.useEffect(() => {
+    const handleGlobalRefresh = () => {
+      loadFiles(true);
+      loadTextNote();
+    };
+    window.addEventListener("db-refresh", handleGlobalRefresh);
+    return () => {
+      window.removeEventListener("db-refresh", handleGlobalRefresh);
+    };
   }, [loadFiles, loadTextNote]);
 
   // Save Text Note with debouncing
@@ -366,19 +377,15 @@ export function QuickDropModule({ profile }: QuickDropModuleProps) {
     showToast("File link copied to clipboard!", "success");
   };
 
-  // Format countdown
+  // Format countdown: Only appears when 59 min or less (e.g. 59m, 45m); hides when > 59 min
   const getExpiryCountdown = (expiresAt: number) => {
     const diff = expiresAt - now;
-    if (diff <= 0) return "Expired (Purging)";
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    if (hours === 0) return `${mins}m left`;
-    return `${hours}h ${mins}m left`;
-  };
-
-  const isExpiringSoon = (expiresAt: number) => {
-    const diff = expiresAt - now;
-    return diff > 0 && diff < 2 * 60 * 60 * 1000;
+    if (diff <= 0) return "Expired";
+    const totalMinutes = Math.floor(diff / (1000 * 60));
+    if (totalMinutes <= 59) {
+      return `${totalMinutes}m`;
+    }
+    return null; // More than 59 min -> hide
   };
 
   const formatFileSize = (bytes: number) => {
@@ -410,13 +417,10 @@ export function QuickDropModule({ profile }: QuickDropModuleProps) {
   };
 
   const filteredFiles = React.useMemo(() => {
-    return files.filter((f) => {
-      const matchesSearch = f.file_name.toLowerCase().includes(searchQuery.toLowerCase().trim());
-      if (!matchesSearch) return false;
-      if (selectedCategory === "all") return true;
-      return getFileCategory(f) === selectedCategory;
-    });
-  }, [files, searchQuery, selectedCategory]);
+    if (!searchQuery.trim()) return files;
+    const query = searchQuery.toLowerCase().trim();
+    return files.filter((f) => f.file_name.toLowerCase().includes(query));
+  }, [files, searchQuery]);
 
   const totalBytes = React.useMemo(() => {
     return files.reduce((acc, f) => acc + (f.file_size || 0), 0);
@@ -449,19 +453,6 @@ export function QuickDropModule({ profile }: QuickDropModuleProps) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => {
-              loadFiles();
-              loadTextNote();
-            }}
-            disabled={isLoading}
-            className="h-9 px-3 text-xs font-semibold text-zinc-700 bg-white border border-slate-200 rounded-lg hover:bg-zinc-50 flex items-center gap-1.5 transition-colors"
-            title="Refresh files & text"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 text-zinc-500 ${isLoading ? "animate-spin" : ""}`} />
-            <span>Refresh</span>
-          </button>
-
           {/* Folder Drop Button */}
           <button
             onClick={() => folderInputRef.current?.click()}
@@ -573,31 +564,6 @@ export function QuickDropModule({ profile }: QuickDropModuleProps) {
               </div>
             </div>
 
-            {/* Category Filter Pills */}
-            <div className="flex items-center gap-1 overflow-x-auto">
-              {[
-                { id: "all", label: "All", count: files.length },
-                { id: "pdf", label: "PDFs", count: files.filter((f) => getFileCategory(f) === "pdf").length },
-                { id: "image", label: "Images", count: files.filter((f) => getFileCategory(f) === "image").length },
-                { id: "document", label: "Docs", count: files.filter((f) => getFileCategory(f) === "document").length },
-                { id: "other", label: "Others", count: files.filter((f) => getFileCategory(f) === "other").length },
-              ].map((tab) => (
-                <button
-                  key={tab.id}
-                  onClick={() => setSelectedCategory(tab.id as any)}
-                  className={`h-6 px-2 rounded-full text-[11px] font-semibold flex items-center gap-1 transition-all ${
-                    selectedCategory === tab.id
-                      ? "bg-[#D3E3FD] text-[#041E49] font-bold"
-                      : "bg-white text-zinc-600 hover:bg-zinc-100 border border-slate-200"
-                  }`}
-                >
-                  <span>{tab.label}</span>
-                  <span className={`text-[9px] px-1 rounded-full ${selectedCategory === tab.id ? "bg-[#0B57D0] text-white" : "bg-zinc-100 text-zinc-500"}`}>
-                    {tab.count}
-                  </span>
-                </button>
-              ))}
-            </div>
 
             {/* Stats Summary */}
             <div className="text-[11px] text-zinc-500 flex items-center gap-1.5 shrink-0">
@@ -641,7 +607,6 @@ export function QuickDropModule({ profile }: QuickDropModuleProps) {
                 {filteredFiles.map((file) => {
                   const category = getFileCategory(file);
                   const countdown = getExpiryCountdown(file.expires_at);
-                  const expiringSoon = isExpiringSoon(file.expires_at);
                   const isDeleting = deleteConfirmId === file.id;
 
                   return (
@@ -666,17 +631,15 @@ export function QuickDropModule({ profile }: QuickDropModuleProps) {
                           {file.file_name.split(".").pop() || "FILE"}
                         </span>
 
-                        <span
-                          className={`text-[9px] font-semibold flex items-center gap-1 px-1.5 py-0.5 rounded-full ${
-                            expiringSoon
-                              ? "bg-amber-100 text-amber-900 animate-pulse font-bold"
-                              : "bg-slate-100 text-zinc-600"
-                          }`}
-                          title={`Expires at: ${new Date(file.expires_at).toLocaleString()}`}
-                        >
-                          <Clock className="w-2.5 h-2.5" />
-                          <span>{countdown}</span>
-                        </span>
+                        {countdown && (
+                          <span
+                            className="text-[9px] font-bold flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-900 animate-pulse border border-amber-200"
+                            title={`Expires in ${countdown} (${new Date(file.expires_at).toLocaleTimeString()})`}
+                          >
+                            <Clock className="w-2.5 h-2.5" />
+                            <span>{countdown}</span>
+                          </span>
+                        )}
                       </div>
 
                       {/* Middle: Visual Thumbnail Preview */}
@@ -716,69 +679,66 @@ export function QuickDropModule({ profile }: QuickDropModuleProps) {
                         </div>
                       </div>
 
-                      {/* Bottom: File Name, Size & 2 Action Buttons (Download & Delete only) */}
+                      {/* Bottom: File Name, Size & Icon-Only Action Buttons */}
                       <div
                         className="p-1.5 bg-white border-t border-slate-100 shrink-0 flex flex-col gap-1"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="flex flex-col">
-                          <span
-                            className="text-[11px] font-semibold text-zinc-900 truncate"
-                            title={file.file_name}
-                          >
-                            {file.file_name}
-                          </span>
-                          <div className="flex items-center justify-between text-[9px] text-zinc-500">
+                        <span
+                          className="text-[11px] font-semibold text-zinc-900 truncate"
+                          title={file.file_name}
+                        >
+                          {file.file_name}
+                        </span>
+
+                        <div className="flex items-center justify-between pt-0.5 border-t border-slate-50">
+                          <div className="flex items-center gap-1 text-[9px] text-zinc-500">
                             <span>{formatFileSize(file.file_size)}</span>
+                            <span>•</span>
                             <span>{formatRelativeTime(file.created_at)}</span>
                           </div>
-                        </div>
 
-                        {/* Strictly Two Action Buttons: Download & Delete */}
-                        {isDeleting ? (
-                          <div className="flex items-center justify-between gap-1 pt-1 border-t border-slate-100">
-                            <span className="text-[9px] font-bold text-red-600">Delete?</span>
+                          {isDeleting ? (
                             <div className="flex items-center gap-1">
+                              <span className="text-[9px] font-bold text-red-600">Delete?</span>
                               <button
                                 onClick={() => handleDelete(file)}
-                                className="px-1.5 py-0.5 text-[9px] font-bold text-white bg-red-600 hover:bg-red-700 rounded transition-colors"
+                                className="px-1 py-0.5 text-[9px] font-bold text-white bg-red-600 hover:bg-red-700 rounded transition-colors"
                               >
                                 Yes
                               </button>
                               <button
                                 onClick={() => setDeleteConfirmId(null)}
-                                className="px-1.5 py-0.5 text-[9px] font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
+                                className="px-1 py-0.5 text-[9px] font-medium text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded transition-colors"
                               >
                                 No
                               </button>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-2 gap-1 pt-1 border-t border-slate-100">
-                            {/* Download Button */}
-                            <button
-                              onClick={(e) => handleDownload(file, e)}
-                              className="h-5 px-1 text-[10px] font-semibold text-zinc-700 bg-[#F0F4F9] hover:bg-[#D3E3FD] hover:text-[#041E49] rounded flex items-center justify-center gap-1 transition-colors"
-                              title="Download file"
-                            >
-                              <Download className="w-2.5 h-2.5 text-[#0B57D0]" />
-                              <span>Download</span>
-                            </button>
+                          ) : (
+                            <div className="flex items-center gap-0.5">
+                              {/* Download Icon Button */}
+                              <button
+                                onClick={(e) => handleDownload(file, e)}
+                                className="w-5 h-5 rounded hover:bg-[#D3E3FD] text-zinc-600 hover:text-[#041E49] flex items-center justify-center transition-colors"
+                                title="Download file"
+                              >
+                                <Download className="w-3 h-3 text-[#0B57D0]" />
+                              </button>
 
-                            {/* Delete Button */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setDeleteConfirmId(file.id);
-                              }}
-                              className="h-5 px-1 text-[10px] font-semibold text-zinc-600 bg-white hover:bg-red-50 hover:text-red-700 border border-slate-200 hover:border-red-200 rounded flex items-center justify-center gap-1 transition-colors"
-                              title="Delete file"
-                            >
-                              <Trash2 className="w-2.5 h-2.5 text-zinc-400 hover:text-red-600" />
-                              <span>Delete</span>
-                            </button>
-                          </div>
-                        )}
+                              {/* Delete Icon Button */}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteConfirmId(file.id);
+                                }}
+                                className="w-5 h-5 rounded hover:bg-red-50 text-zinc-400 hover:text-red-600 flex items-center justify-center transition-colors"
+                                title="Delete file"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );

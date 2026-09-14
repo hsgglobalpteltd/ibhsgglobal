@@ -2,6 +2,7 @@ export interface ModulePermission {
   view: boolean;
   edit: boolean;
   delete: boolean;
+  console?: boolean; // Controls whether this module appears in daily briefing console (default: false)
 }
 
 export type UserModulePermissions = Record<string, ModulePermission>;
@@ -17,21 +18,21 @@ export interface PermissionProfile {
 /**
  * Returns the granular permissions for a given module.
  * Administrators always have full permissions.
- * Operators have explicit view/edit/delete access based on modules_access map.
+ * Operators have explicit view/edit/delete/console access based on modules_access map.
  */
 export function getModulePermission(profile?: PermissionProfile | null, moduleTitle?: string): ModulePermission {
   if (!profile || !moduleTitle) {
-    return { view: false, edit: false, delete: false };
+    return { view: false, edit: false, delete: false, console: false };
   }
 
   // Staff Claims is strictly hidden and disabled for accounts not bound to an employee record
   if (moduleTitle === "Staff Claims" && !profile.employee_id) {
-    return { view: false, edit: false, delete: false };
+    return { view: false, edit: false, delete: false, console: false };
   }
 
   // Administrator role has full unrestricted access
   if (profile.role === "Administrator") {
-    return { view: true, edit: true, delete: true };
+    return { view: true, edit: true, delete: true, console: true };
   }
 
   let modAccess = profile.modules_access;
@@ -46,7 +47,7 @@ export function getModulePermission(profile?: PermissionProfile | null, moduleTi
   // Legacy format support (array of module titles)
   if (Array.isArray(modAccess)) {
     const has = modAccess.includes(moduleTitle);
-    return { view: has, edit: has, delete: has };
+    return { view: has, edit: has, delete: has, console: false };
   }
 
   if (modAccess && typeof modAccess === "object") {
@@ -56,11 +57,12 @@ export function getModulePermission(profile?: PermissionProfile | null, moduleTi
         view: !!perm.view,
         edit: !!perm.edit,
         delete: !!perm.delete,
+        console: !!perm.console,
       };
     }
   }
 
-  return { view: false, edit: false, delete: false };
+  return { view: false, edit: false, delete: false, console: false };
 }
 
 export function canViewModule(profile?: PermissionProfile | null, moduleTitle?: string): boolean {

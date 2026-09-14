@@ -192,11 +192,11 @@ function validatePoscode(code: any) {
   return /^\d{5,6}$/.test(clean);
 }
 
-// Fetch exact coordinates from public Singapore OneMap API
+// Fetch exact coordinates from Singapore OneMap via Worker proxy (CORS-safe)
 async function fetchPostcodeCoordinates(
   poscode: string,
-  baseUrl = "https://www.onemap.gov.sg/api/common/elastic/search",
-  token?: string
+  _baseUrl?: string,
+  _token?: string
 ): Promise<{ lat: number, lng: number } | null> {
   const clean = String(poscode || "").trim();
   if (!clean) return null;
@@ -207,12 +207,8 @@ async function fetchPostcodeCoordinates(
   }
   
   try {
-    const url = `${baseUrl}?searchVal=${padded}&returnGeom=Y&getAddrDetails=N&pageNum=1`;
-    const headers: HeadersInit = {};
-    if (token) {
-      headers["Authorization"] = token;
-    }
-    const res = await fetch(url, { headers });
+    const url = `https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/geocode?poscode=${encodeURIComponent(padded)}`;
+    const res = await fetch(url);
     if (res.ok) {
       const data = await res.json();
       if (data.results && data.results.length > 0) {
@@ -225,6 +221,15 @@ async function fetchPostcodeCoordinates(
       }
     }
   } catch (_) {}
+
+  // Fallback to Singapore postal sector approximation
+  try {
+    const fallback = getSingaporeLatLng(padded);
+    if (fallback && fallback.lat && fallback.lng) {
+      return { lat: fallback.lat, lng: fallback.lng };
+    }
+  } catch (_) {}
+
   return null;
 }
 
@@ -835,7 +840,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Unknown Store ID Confirmation States
   const [isUnknownStoreModalOpen, setIsUnknownStoreModalOpen] = React.useState<boolean>(false);
-  const [unknownStoreInfo, setUnknownStoreInfo] = React.useState<{ storeId: string; pendingDrafts: TrackOrderDraft[]; doNumber: string } | null>(null);
+  const [unknownStoreInfo, setUnknownStoreInfo] = React.useState<{
+    unregisteredOrders: { doNumber: string; refNumber: string; storeId: string }[];
+    validDrafts: TrackOrderDraft[];
+    allDrafts: TrackOrderDraft[];
+  } | null>(null);
 
   // Inline Link Store editing state for Complete tables
   const [activeLinkStoreDropdown, setActiveLinkStoreDropdown] = React.useState<string | null>(null);
@@ -2343,9 +2352,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         zoomControl: true,
       }).setView([1.3521, 103.8198], 11);
 
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-        attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-        maxZoom: 19
+      L.tileLayer("https://{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}", {
+        maxZoom: 20,
+        subdomains: ["mt0", "mt1", "mt2", "mt3"],
+        opacity: 0.5
       }).addTo(mapRef.current);
 
       markersGroupRef.current = L.featureGroup().addTo(mapRef.current);
@@ -3757,6 +3767,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       const duplicates: string[] = [];
       const uniqueNewDrafts: TrackOrderDraft[] = [];
+      const validDrafts: TrackOrderDraft[] = [];
+      const unregisteredStoreOrders: { doNumber: string; refNumber: string; storeId: string }[] = [];
       const tempAssignedMarks: string[] = [];
 
       for (let i = 1; i < sheetData.length; i++) {
@@ -3789,6 +3801,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           let finalDeliverTo = rawDeliverTo;
           let finalPoscode = rawPoscode;
           let linkStoreVal = "";
+          let isUnregisteredStore = false;
 
           if (extractedStoreId) {
             const matchedStoreInfo = resolveStoreById(extractedStoreId);
@@ -3798,6 +3811,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               if (!finalPoscode && matchedStoreInfo.poscode) {
                 finalPoscode = matchedStoreInfo.poscode;
               }
+            } else {
+              isUnregisteredStore = true;
+              unregisteredStoreOrders.push({
+                doNumber: doNum,
+                refNumber: refNum,
+                storeId: extractedStoreId
+              });
             }
           }
 
@@ -3806,7 +3826,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             tempAssignedMarks.push(assignedMark);
           }
 
-          uniqueNewDrafts.push({
+          const newDraft: TrackOrderDraft = {
             id: `${doNum}_${refNum || "NA"}`,
             doNumber: doNum,
             refNumber: refNum,
@@ -3820,7 +3840,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             deliverMethod: deliverMethod,
             pdfImages: [],
             link_store: linkStoreVal
-          });
+          };
+
+          uniqueNewDrafts.push(newDraft);
+          if (!isUnregisteredStore) {
+            validDrafts.push(newDraft);
+          }
         }
       }
 
@@ -3828,7 +3853,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         showToast(`Warning: Order(s) ${duplicates.join(", ")} already registered in system.`, "warning");
       }
 
-      if (uniqueNewDrafts.length > 0) {
+      if (unregisteredStoreOrders.length > 0) {
+        setUnknownStoreInfo({
+          unregisteredOrders: unregisteredStoreOrders,
+          validDrafts: validDrafts,
+          allDrafts: uniqueNewDrafts
+        });
+        setIsUnknownStoreModalOpen(true);
+      } else if (uniqueNewDrafts.length > 0) {
         const mergedDrafts = [...drafts, ...uniqueNewDrafts];
         saveDraftsToStorage(mergedDrafts);
         showToast(`Successfully read spreadsheet. Added ${uniqueNewDrafts.length} orders to drafts.`, "success");
@@ -4010,8 +4042,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       if (unifiedOrders.length > 0) {
         const duplicates: string[] = [];
         const uniqueNewDrafts: TrackOrderDraft[] = [];
+        const validDrafts: TrackOrderDraft[] = [];
+        const unregisteredStoreOrders: { doNumber: string; refNumber: string; storeId: string }[] = [];
         const tempAssignedMarks: string[] = [];
-        let unconfirmedStoreDraft: { storeId: string; draft: TrackOrderDraft; doNumber: string } | null = null;
 
         unifiedOrders.forEach((item: any, idx: number) => {
           const doNum = item.doNumber || `DO-${Date.now()}-${idx}`;
@@ -4054,6 +4087,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             let finalDeliverTo = rawDeliverTo;
             let finalPoscode = rawPoscode;
             let linkStoreVal = "";
+            let isUnregisteredStore = false;
 
             if (extractedStoreId) {
               const matchedStoreInfo = resolveStoreById(extractedStoreId);
@@ -4065,34 +4099,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 }
               } else {
                 // Store ID exists in DO but NOT in store database
-                if (!unconfirmedStoreDraft) {
-                  unconfirmedStoreDraft = {
-                    storeId: extractedStoreId,
-                    doNumber: doNum,
-                    draft: {
-                      id: `${doNum}_${refNum || "NA"}`,
-                      doNumber: doNum,
-                      refNumber: refNum,
-                      mark: assignedMark,
-                      type: "Normal",
-                      deliverTo: rawDeliverTo,
-                      poscode: rawPoscode,
-                      items: Array.isArray(item.items) ? item.items.map((i: any) => ({
-                        sku: i.sku || "Unknown SKU",
-                        qty: Number(i.qty) || 1
-                      })) : [],
-                      appointmentDate: undefined,
-                      appointmentTimeWindow: undefined,
-                      deliverMethod: "Company Delivery",
-                      pdfImages: orderPdfImages,
-                      link_store: ""
-                    }
-                  };
-                }
+                isUnregisteredStore = true;
+                unregisteredStoreOrders.push({
+                  doNumber: doNum,
+                  refNumber: refNum,
+                  storeId: extractedStoreId
+                });
               }
             }
 
-            uniqueNewDrafts.push({
+            const newDraft: TrackOrderDraft = {
               id: `${doNum}_${refNum || "NA"}`,
               doNumber: doNum,
               refNumber: refNum,
@@ -4109,7 +4125,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               deliverMethod: "Company Delivery",
               pdfImages: orderPdfImages,
               link_store: linkStoreVal
-            });
+            };
+
+            uniqueNewDrafts.push(newDraft);
+            if (!isUnregisteredStore) {
+              validDrafts.push(newDraft);
+            }
           }
         });
 
@@ -4117,13 +4138,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           showToast(`Warning: Order(s) ${duplicates.join(", ")} already registered in system. Please check order.`, "warning");
         }
 
-        if (unconfirmedStoreDraft) {
-          // Store ID not found in database -> popup confirmation
-          const targetUnconfirmed = unconfirmedStoreDraft as { storeId: string; draft: TrackOrderDraft; doNumber: string };
+        if (unregisteredStoreOrders.length > 0) {
           setUnknownStoreInfo({
-            storeId: targetUnconfirmed.storeId,
-            doNumber: targetUnconfirmed.doNumber,
-            pendingDrafts: uniqueNewDrafts
+            unregisteredOrders: unregisteredStoreOrders,
+            validDrafts: validDrafts,
+            allDrafts: uniqueNewDrafts
           });
           setIsUnknownStoreModalOpen(true);
         } else if (uniqueNewDrafts.length > 0) {
@@ -5916,7 +5935,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     </button>
                   </div>
 
-                  <div id="leaflet-map" className="w-full h-full z-10" />
+                  <div id="leaflet-map" className="w-full h-full z-10 bg-white" />
                   {!leafletLoaded && (
                     <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-20">
                       <div className="flex flex-col items-center gap-2">
@@ -8797,7 +8816,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       {/* UNKNOWN STORE ID CONFIRMATION MODAL */}
       {isUnknownStoreModalOpen && unknownStoreInfo && (
         <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
-          <div className="bg-white rounded-lg shadow-xl border border-slate-200 max-w-md w-full overflow-hidden flex flex-col animate-zoom-in">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 max-w-lg w-full overflow-hidden flex flex-col animate-zoom-in">
             <div className="px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
               <div className="flex items-center gap-2">
                 <div className="w-6 h-6 rounded-full bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 text-xs font-bold">
@@ -8818,33 +8837,74 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 <X size={16} />
               </button>
             </div>
+            
             <div className="p-5 flex flex-col gap-3 text-xs">
               <p className="text-zinc-700 font-medium leading-relaxed">
-                The Delivery Order <strong>{unknownStoreInfo.doNumber}</strong> contains store ID <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-900 font-bold">[{unknownStoreInfo.storeId}]</span>, but this store ID was not found in your Stores Database.
+                The following order(s) contain Store IDs that have not been registered in your Stores Database:
               </p>
-              <p className="text-zinc-500 leading-normal">
-                Do you want to continue importing as normal with the original address, or cancel to register the store first?
-              </p>
+
+              {/* Table of unregistered orders */}
+              <div className="border border-slate-200 rounded-md overflow-hidden max-h-56 overflow-y-auto">
+                <table className="min-w-full divide-y divide-slate-200 text-xs">
+                  <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-semibold text-zinc-600">DO Number</th>
+                      <th className="px-3 py-2 text-left font-semibold text-zinc-600">Ref Number</th>
+                      <th className="px-3 py-2 text-left font-semibold text-zinc-600">Store ID</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-slate-100">
+                    {unknownStoreInfo.unregisteredOrders.map((unreg, uIdx) => (
+                      <tr key={uIdx} className="hover:bg-slate-50/80">
+                        <td className="px-3 py-2 font-mono text-[11px] font-medium text-zinc-900 whitespace-nowrap">
+                          {unreg.doNumber || "-"}
+                        </td>
+                        <td className="px-3 py-2 font-mono text-[11px] text-zinc-600 whitespace-nowrap">
+                          {unreg.refNumber || "-"}
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-900 font-bold font-mono text-[11px]">
+                            [{unreg.storeId}]
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded p-2.5 text-[11px] text-zinc-600 flex flex-col gap-1 mt-1">
+                <div><strong>Skip:</strong> Ignore all unregistered store orders and import only valid registered orders to drafts.</div>
+                <div><strong>Continue:</strong> Import all orders to drafts using their original delivery name as normal.</div>
+              </div>
             </div>
+
             <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex justify-between items-center gap-2">
               <CustomButton 
                 variant="secondary" 
                 onClick={() => {
+                  if (unknownStoreInfo && unknownStoreInfo.validDrafts.length > 0) {
+                    const mergedDrafts = [...drafts, ...unknownStoreInfo.validDrafts];
+                    saveDraftsToStorage(mergedDrafts);
+                    showToast(`Imported ${unknownStoreInfo.validDrafts.length} orders. Skipped ${unknownStoreInfo.unregisteredOrders.length} unregistered order(s).`, "info");
+                  } else {
+                    showToast(`Skipped ${unknownStoreInfo?.unregisteredOrders.length || 0} unregistered order(s). No valid orders to import.`, "info");
+                  }
                   setIsUnknownStoreModalOpen(false);
                   setUnknownStoreInfo(null);
-                  showToast("DO import cancelled. Please register store in Stores Database.", "info");
                 }}
               >
-                Cancel
+                Skip
               </CustomButton>
+
               <div className="flex items-center gap-2">
                 <CustomButton 
                   variant="dark" 
                   onClick={() => {
-                    if (unknownStoreInfo && unknownStoreInfo.pendingDrafts.length > 0) {
-                      const mergedDrafts = [...drafts, ...unknownStoreInfo.pendingDrafts];
+                    if (unknownStoreInfo && unknownStoreInfo.allDrafts.length > 0) {
+                      const mergedDrafts = [...drafts, ...unknownStoreInfo.allDrafts];
                       saveDraftsToStorage(mergedDrafts);
-                      showToast(`Successfully read DO. Added ${unknownStoreInfo.pendingDrafts.length} orders to drafts.`, "success");
+                      showToast(`Successfully read DO. Added ${unknownStoreInfo.allDrafts.length} orders to drafts.`, "success");
                     }
                     setIsUnknownStoreModalOpen(false);
                     setUnknownStoreInfo(null);

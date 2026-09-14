@@ -331,12 +331,8 @@ export function DashboardPage({ profile }: DashboardPageProps) {
 
           {/* Workspace SubView B: What's happening today (WPD2) */}
           {workspaceView === "today" && (
-            <div className="flex flex-1 w-full h-full gap-6 animate-in fade-in duration-300 min-h-0 overflow-hidden">
-              {/* Left / Main Workspace Content Area */}
-              <div className="flex-1 min-w-0 flex flex-col h-full" />
-
-              {/* Right Side AI Summary Container (420px min-width, full height, rounded-2xl) */}
-              <DashboardAiSummary userName={userName} />
+            <div className="flex flex-1 w-full h-full items-center justify-center animate-in fade-in duration-300 min-h-0 overflow-hidden py-2">
+              <DashboardAiSummary userName={userName} profile={currentUserProfile} />
             </div>
           )}
         </>
