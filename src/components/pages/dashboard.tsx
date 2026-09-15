@@ -250,13 +250,14 @@ export function DashboardPage({ profile }: DashboardPageProps) {
                 {allCards.map((card) => {
                   if (card.enabled) {
                     return (
-                      <Link
+                      <div
                         key={card.id}
-                        href={card.url}
-                        prefetch={true}
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent("dashboard-workspace-view", { detail: card.id }));
+                        }}
                         onMouseEnter={() => prefetchWorkspaceDashboard().catch(() => {})}
                         onTouchStart={() => prefetchWorkspaceDashboard().catch(() => {})}
-                        className="bg-white rounded-2xl border border-slate-200/90 p-6 md:p-7 flex flex-col h-full shadow-xs hover:shadow-md hover:border-[#0B57D0]/50 transition-all duration-200 cursor-pointer group w-full"
+                        className="bg-white rounded-2xl border border-slate-200/90 p-6 md:p-7 flex flex-col h-full shadow-xs hover:shadow-md hover:border-[#0B57D0]/50 transition-all duration-200 cursor-pointer group w-full select-none"
                       >
                         {/* Top Row: Icon & Badge */}
                         <div className="flex items-center justify-between shrink-0">
@@ -286,7 +287,7 @@ export function DashboardPage({ profile }: DashboardPageProps) {
                           <span>Open View</span>
                           <span className="group-hover:translate-x-1 transition-transform">➔</span>
                         </div>
-                      </Link>
+                      </div>
                     );
                   }
 
@@ -336,7 +337,7 @@ export function DashboardPage({ profile }: DashboardPageProps) {
           {/* Workspace SubView B: What's happening today (WPD2) */}
           {workspaceView === "today" && (
             <div className="flex flex-1 w-full h-full items-center justify-center animate-in fade-in duration-300 min-h-0 overflow-hidden py-2">
-              <DashboardAiSummary userName={userName} profile={currentUserProfile} />
+              <DashboardAiSummary userName={userName} profile={effectiveProfile} />
             </div>
           )}
         </>

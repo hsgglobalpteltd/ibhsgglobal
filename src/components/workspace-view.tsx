@@ -787,12 +787,15 @@ function generateTimelineZoomConfig(zoom: ManagementZoomMode | LeaderZoomMode | 
   };
 }
 
-function StandaloneWorkspaceContent() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const viewParam = searchParams.get("view");
+export interface WorkspaceViewProps {
+  initialView?: "management" | "team_leader" | "team_member" | string;
+  profile?: UserProfile | any;
+  onBack?: () => void;
+}
 
+export function WorkspaceView({ initialView = "management", profile: propProfile, onBack }: WorkspaceViewProps) {
   const [profile, setProfile] = React.useState<UserProfile | null>(() => {
+    if (propProfile) return propProfile;
     if (typeof window !== "undefined") {
       try {
         const cached = localStorage.getItem("ib_user_profile");
@@ -816,7 +819,21 @@ function StandaloneWorkspaceContent() {
 
   const [loading, setLoading] = React.useState(false);
   const [mounted, setMounted] = React.useState(true);
-  const [activeView, setActiveView] = React.useState<string | null>(viewParam || "management");
+  const [activeView, setActiveView] = React.useState<string | null>(initialView || "management");
+
+  // Keep activeView in sync with initialView prop
+  React.useEffect(() => {
+    if (initialView) {
+      setActiveView(initialView);
+    }
+  }, [initialView]);
+
+  // Keep profile in sync with propProfile
+  React.useEffect(() => {
+    if (propProfile) {
+      setProfile(propProfile);
+    }
+  }, [propProfile]);
 
   // Restore cached profile on client mount
   React.useEffect(() => {
@@ -1775,15 +1792,6 @@ function StandaloneWorkspaceContent() {
   // Timeline horizontal scroll container ref for Option C (Auto-scroll to Today)
   const timelineScrollRef = React.useRef<HTMLDivElement>(null);
 
-  // 0. Synchronize view parameter from URL instantly without resetting data or re-subscribing auth
-  React.useEffect(() => {
-    if (viewParam && ["management", "team_leader", "team_member"].includes(viewParam)) {
-      setActiveView(viewParam);
-    } else if (!viewParam) {
-      router.push("/");
-    }
-  }, [viewParam, router]);
-
   // 1. Initial mount: load data and set up auth once
   React.useEffect(() => {
     setMounted(true);
@@ -1875,7 +1883,11 @@ function StandaloneWorkspaceContent() {
   }, [loadWorkspaceData]);
 
   const handleBackToMain = () => {
-    router.push("/");
+    if (onBack) {
+      onBack();
+    } else {
+      setActiveView("cards");
+    }
   };
 
   const toggleProject = (id: string) => {
@@ -4058,7 +4070,7 @@ function StandaloneWorkspaceContent() {
   // Only block if unauthenticated and actively loading
   if (!profile && loading) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-[#F8F9FC] font-primary select-none">
+      <div className="flex h-full w-full items-center justify-center bg-[#F8F9FC] font-primary select-none">
         <span className="text-xs font-bold text-zinc-500 animate-pulse">Loading Workspace...</span>
       </div>
     );
@@ -4070,12 +4082,12 @@ function StandaloneWorkspaceContent() {
     const userRoleStr = (profile?.role || "").trim().toLowerCase();
     const isUserAdmin = userRoleStr === "administrator" || userRoleStr === "admin";
     if (profile && !isUserAdmin) {
-      router.push("/workspace?view=team_member");
+      setActiveView("team_member");
       return null;
     }
 
     return (
-      <div className="h-screen w-full bg-[#FAFAFC] font-primary select-none flex flex-col overflow-hidden">
+      <div className="h-full w-full bg-[#FAFAFC] font-primary select-none flex flex-col overflow-hidden">
         {/* Simplified, Clean Minimal Top Bar */}
         <div className="px-5 py-2.5 bg-white border-b border-slate-200/90 flex items-center justify-between shrink-0 shadow-2xs">
           {/* Left Title & Back (Clean, No Icon) */}
@@ -5667,7 +5679,7 @@ function StandaloneWorkspaceContent() {
     };
 
     return (
-      <div className="h-screen w-full bg-[#FAFAFC] font-primary select-none flex flex-col overflow-hidden">
+      <div className="h-full w-full bg-[#FAFAFC] font-primary select-none flex flex-col overflow-hidden">
         {/* Top Header Bar */}
         <div className="px-5 py-2.5 bg-white border-b border-slate-200/90 flex items-center justify-between shrink-0 shadow-2xs">
           {/* Left Title & Back */}
@@ -7353,7 +7365,7 @@ function StandaloneWorkspaceContent() {
     const myCompletedCount = myAllTasks.filter((t) => t.action.status === "Complete" || (t.action.status as any) === "Completed").length;
 
     return (
-      <div className="h-screen w-full bg-[#FAFAFC] font-primary select-none flex flex-col overflow-hidden">
+      <div className="h-full w-full bg-[#FAFAFC] font-primary select-none flex flex-col overflow-hidden">
         {/* Top Header Bar with Filter Tabs & Search Bar */}
         <div className="px-5 py-2.5 bg-white border-b border-slate-200/90 flex items-center justify-between gap-3 shrink-0 shadow-2xs">
           {/* Left Title & Back */}
@@ -7713,24 +7725,13 @@ function StandaloneWorkspaceContent() {
     );
   }
 
-  // Default: Fallback redirect to dashboard main page
+  // Default: Fallback
   return (
-    <div className="flex h-screen w-full items-center justify-center bg-[#F8F9FC] font-primary select-none">
-      <span className="text-xs font-bold text-zinc-500 animate-pulse">Redirecting to Dashboard...</span>
+    <div className="flex h-full w-full items-center justify-center bg-[#F8F9FC] font-primary select-none">
+      <span className="text-xs font-bold text-zinc-500 animate-pulse">Loading Workspace...</span>
     </div>
   );
 }
 
-export default function StandaloneWorkspacePage() {
-  return (
-    <Suspense fallback={
-      <div className="flex h-screen w-full items-center justify-center bg-[#F8F9FC] font-primary select-none">
-        <span className="text-xs font-bold text-zinc-400">Loading workspace...</span>
-      </div>
-    }>
-      <StandaloneWorkspaceContent />
-      <ToastContainer />
-    </Suspense>
-  );
-}
+export default WorkspaceView;
 

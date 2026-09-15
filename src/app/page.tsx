@@ -18,6 +18,7 @@ import { fetchMaintenanceSettings, getClientIp, checkIsUnderMaintenance, Mainten
 import { canAccessPage } from "@/lib/permissions";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { PwaInstallModal } from "@/components/pwa-install-modal";
+import { WorkspaceView } from "@/components/workspace-view";
 
 // Helper to format remaining lockout time nicely
 function formatLockoutTime(seconds: number): string {
@@ -115,6 +116,26 @@ export default function Home() {
       document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
       document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
       document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+    };
+  }, []);
+
+  // Fullscreen Workspace Perspective state (P1 Management, P2 Team Leader, P3 Team Member)
+  const [fullscreenWorkspaceView, setFullscreenWorkspaceView] = React.useState<"management" | "team_leader" | "team_member" | null>(null);
+
+  React.useEffect(() => {
+    const handleWorkspaceView = (e: Event) => {
+      const customEvent = e as CustomEvent<"cards" | "today" | "management" | "team_leader" | "team_member">;
+      const detail = customEvent.detail;
+      if (detail === "management" || detail === "team_leader" || detail === "team_member") {
+        setFullscreenWorkspaceView(detail);
+      } else {
+        setFullscreenWorkspaceView(null);
+      }
+    };
+
+    window.addEventListener("dashboard-workspace-view", handleWorkspaceView);
+    return () => {
+      window.removeEventListener("dashboard-workspace-view", handleWorkspaceView);
     };
   }, []);
 
@@ -944,6 +965,24 @@ export default function Home() {
           <div className="w-full max-w-sm h-1.5 bg-zinc-300/60 rounded-full mt-4 overflow-hidden relative">
             <div className="animate-progress-slide rounded-full" />
           </div>
+        </div>
+      );
+    }
+
+    // 5.5 Fullscreen Workspace Perspectives (P1 Management, P2 Team Leader, P3 Team Member)
+    // Fullscreen, full width, full height without SidePanel menu or TopBar tabs
+    if (fullscreenWorkspaceView) {
+      return (
+        <div className="h-screen w-screen bg-[#FAFAFC] overflow-hidden select-none font-primary animate-in fade-in duration-200">
+          <WorkspaceView
+            initialView={fullscreenWorkspaceView}
+            profile={profile}
+            onBack={() => {
+              setFullscreenWorkspaceView(null);
+              window.dispatchEvent(new CustomEvent("dashboard-workspace-view", { detail: "cards" }));
+              window.dispatchEvent(new CustomEvent("dashboard-view-change", { detail: "cards" }));
+            }}
+          />
         </div>
       );
     }
