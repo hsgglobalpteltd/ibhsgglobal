@@ -56,8 +56,11 @@ export function DashboardPage({ profile }: DashboardPageProps) {
     return null;
   });
 
+  const effectiveProfile = profile || currentUserProfile;
+
   const [userName, setUserName] = React.useState<string>(() => {
-    if (profile?.name) return profile.name;
+    if (effectiveProfile?.name) return effectiveProfile.name;
+    if (effectiveProfile?.email) return effectiveProfile.email.split("@")[0];
     if (typeof window !== "undefined") {
       try {
         const cached = localStorage.getItem("ib_user_profile");
@@ -90,14 +93,14 @@ export function DashboardPage({ profile }: DashboardPageProps) {
   // Helper to evaluate roles from workspace data
   const evaluateRoles = React.useCallback((res: any, userProf: any) => {
     if (!res || !res.success) return;
-    const userEmail = (userProf?.email || "").toLowerCase();
-    const uName = (userProf?.name || "").toLowerCase();
+    const userEmail = (userProf?.email || "").toLowerCase().trim();
+    const uName = (userProf?.name || "").toLowerCase().trim();
 
     // 1. Check if user is Project Manager (PM) of any active project
     const isPM = Array.isArray(res.projects) && res.projects.some((p: any) => {
       if (p.deleted_at) return false;
-      const pmEmail = (p.manager_user_id || "").toLowerCase();
-      const pmName = (p.manager_name || "").toLowerCase();
+      const pmEmail = (p.manager_user_id || "").toLowerCase().trim();
+      const pmName = (p.manager_name || "").toLowerCase().trim();
       return (
         (userEmail && (pmEmail === userEmail || pmName === userEmail)) ||
         (uName && (pmName === uName || pmEmail === uName))
@@ -107,8 +110,8 @@ export function DashboardPage({ profile }: DashboardPageProps) {
 
     // 2. Check if user is Team Leader / Lead of any active milestone
     const hasMilestone = Array.isArray(res.milestones) && res.milestones.some((m: any) => {
-      const leadEmail = (m.lead_user_id || "").toLowerCase();
-      const leadName = (m.lead_name || "").toLowerCase();
+      const leadEmail = (m.lead_user_id || "").toLowerCase().trim();
+      const leadName = (m.lead_name || "").toLowerCase().trim();
       return (
         (userEmail && (leadEmail === userEmail || leadName === userEmail)) ||
         (uName && (leadName === uName || leadEmail === uName))
@@ -118,8 +121,8 @@ export function DashboardPage({ profile }: DashboardPageProps) {
 
     // 3. Check if user is assigned to any active action/task
     const hasAction = Array.isArray(res.actions) && res.actions.some((a: any) => {
-      const assigneeEmail = (a.assigned_user_id || "").toLowerCase();
-      const assigneeName = (a.assigned_user_name || "").toLowerCase();
+      const assigneeEmail = (a.assigned_user_id || "").toLowerCase().trim();
+      const assigneeName = (a.assigned_user_name || "").toLowerCase().trim();
       const emailList = assigneeEmail.split(",").map((s: string) => s.trim()).filter(Boolean);
       const nameList = assigneeName.split(",").map((s: string) => s.trim()).filter(Boolean);
 
@@ -134,22 +137,22 @@ export function DashboardPage({ profile }: DashboardPageProps) {
   React.useEffect(() => {
     const cached = getCachedWorkspaceData();
     if (cached) {
-      evaluateRoles(cached, currentUserProfile);
+      evaluateRoles(cached, effectiveProfile);
     }
-  }, [currentUserProfile, evaluateRoles]);
+  }, [effectiveProfile, evaluateRoles]);
 
   // Load fresh workspace data in background to memory & local browser storage
   React.useEffect(() => {
     prefetchWorkspaceDashboard()
       .then((res) => {
         if (res && res.success) {
-          evaluateRoles(res, currentUserProfile);
+          evaluateRoles(res, effectiveProfile);
         }
       })
       .catch((err) => {
         console.warn("Background workspace prefetch failed:", err);
       });
-  }, [currentUserProfile, evaluateRoles]);
+  }, [effectiveProfile, evaluateRoles]);
 
   // Dynamic warm greeting based on time of day
   const greeting = React.useMemo(() => {
@@ -159,7 +162,8 @@ export function DashboardPage({ profile }: DashboardPageProps) {
     return "Good evening";
   }, []);
 
-  const isAdmin = currentUserProfile?.role === "Administrator";
+  const roleStr = (effectiveProfile?.role || "").trim().toLowerCase();
+  const isAdmin = roleStr === "administrator" || roleStr === "admin";
 
   const allCards = [
     {
@@ -167,10 +171,10 @@ export function DashboardPage({ profile }: DashboardPageProps) {
       title: "Project",
       subtitle: "Portfolio Governance",
       description: "Master timeline Gantt chart, portfolio governance, project schedules, and horizon tracking.",
-      icon: <FolderKanban size={28} className={isAdmin ? "text-[#0B57D0]" : "text-zinc-400"} />,
+      icon: <FolderKanban size={28} className="text-[#0B57D0]" />,
       badge: "Master View",
       url: "/workspace?view=management",
-      enabled: isAdmin,
+      enabled: true,
       disabledReason: "Access Denied",
     },
     {
@@ -178,10 +182,10 @@ export function DashboardPage({ profile }: DashboardPageProps) {
       title: "Milestone / Target",
       subtitle: "Operational Goals",
       description: "Milestone operational planning, action breakdown, delegation, and completion proof verification.",
-      icon: <Target size={28} className={(isAdmin || isProjectManager || isMilestoneLead) ? "text-[#0B57D0]" : "text-zinc-400"} />,
+      icon: <Target size={28} className="text-[#0B57D0]" />,
       badge: "Milestones",
       url: "/workspace?view=team_leader",
-      enabled: isAdmin || isProjectManager || isMilestoneLead,
+      enabled: true,
       disabledReason: "Access Denied",
     },
     {
@@ -189,10 +193,10 @@ export function DashboardPage({ profile }: DashboardPageProps) {
       title: "Action / Task",
       subtitle: "Execution & Proofs",
       description: "Personal action checklist, task execution, daily updates, and photo proof submissions.",
-      icon: <ListTodo size={28} className={(isAdmin || isProjectManager || isMilestoneLead || hasAssignedAction) ? "text-[#0B57D0]" : "text-zinc-400"} />,
+      icon: <ListTodo size={28} className="text-[#0B57D0]" />,
       badge: "Tasks",
       url: "/workspace?view=team_member",
-      enabled: isAdmin || isProjectManager || isMilestoneLead || hasAssignedAction,
+      enabled: true,
       disabledReason: "You do not have an assigned task",
     },
   ];

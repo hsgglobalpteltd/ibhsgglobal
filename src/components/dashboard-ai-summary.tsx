@@ -172,6 +172,7 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     if (nextBubbleTimeoutRef.current) clearTimeout(nextBubbleTimeoutRef.current);
 
     setIsGenerating(true);
+    setIsShowingIndicator(true);
     try {
       const res = await fetchDashboardAiBriefing(userName, profile, false);
       const text = res?.text || `Good morning, ${userName}.\n\nToday we have orders on route, and drivers are active on schedule.`;
@@ -202,6 +203,7 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
 
     setUserInput("");
     setIsGenerating(true);
+    setIsShowingIndicator(true);
     const timeNow = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     
     // Add user question bubble first
@@ -297,8 +299,18 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
           </div>
         </div>
 
-        {/* Action Buttons: Settings (Admin only) & Clear Chat */}
-        <div className="flex items-center gap-2">
+        {/* Action Buttons: Clear Chat (text only on left) & Settings (Gear on right) */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleClearChat}
+            disabled={isGenerating || (displayedBubbles.length === 0 && !isShowingIndicator)}
+            className="text-xs font-medium text-zinc-500 hover:text-red-600 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed bg-transparent border-0 shadow-none px-1 py-1 select-none"
+            title="Clear chat history"
+          >
+            Clear Chat
+          </button>
+
           {isAdmin && (
             <button
               type="button"
@@ -309,16 +321,6 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
               <Settings size={14} />
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={handleClearChat}
-            disabled={isGenerating || displayedBubbles.length === 0}
-            className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 hover:text-red-600 text-xs font-semibold transition-all cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-            title="Clear chat history"
-          >
-            Clear Chat
-          </button>
         </div>
       </div>
 
@@ -327,7 +329,7 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
         ref={chatScrollRef}
         className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3 bg-[#F0F2F5]"
       >
-        {displayedBubbles.length > 0 || isShowingIndicator ? (
+        {displayedBubbles.length > 0 || isShowingIndicator || isGenerating ? (
           <div className="flex flex-col space-y-2.5 max-w-2xl w-full">
             {displayedBubbles.map((item, index) => {
               const isUser = (item as any).isUser === true;
@@ -375,9 +377,18 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
               );
             })}
 
-            {/* Pre-typing Animated 3-dot Bubble indicator before long text pops */}
-            {isShowingIndicator && (
-              <div className="relative self-start bg-white border border-slate-200/60 shadow-xs px-4 py-3 rounded-2xl rounded-tl-md flex items-center gap-1.5 animate-in fade-in duration-150">
+            {/* Pre-typing Animated 3-dot Bubble indicator before long text pops / during generation */}
+            {(isShowingIndicator || isGenerating) && (
+              <div
+                className={`relative self-start bg-white border border-slate-200/60 shadow-xs px-4 py-3 flex items-center gap-1.5 animate-in fade-in duration-150 ${
+                  displayedBubbles.length === 0
+                    ? "rounded-2xl rounded-tl-xs"
+                    : "rounded-2xl rounded-tl-md"
+                }`}
+              >
+                {displayedBubbles.length === 0 && (
+                  <span className="absolute -left-1.5 top-0 w-2.5 h-2.5 bg-white border-l border-t border-slate-200/60 [clip-path:polygon(100%_0,0_0,100%_100%)] pointer-events-none" />
+                )}
                 <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.3s]" />
                 <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.15s]" />
                 <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce" />

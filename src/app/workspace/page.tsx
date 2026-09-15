@@ -4067,7 +4067,9 @@ function StandaloneWorkspaceContent() {
   // If inside Management view: Straight Gantt Chart (Administrator only)
   if (activeView === "management") {
     // If user is an Operator, restrict access to management view and redirect to personal Action view
-    if (profile && profile.role !== "Administrator") {
+    const userRoleStr = (profile?.role || "").trim().toLowerCase();
+    const isUserAdmin = userRoleStr === "administrator" || userRoleStr === "admin";
+    if (profile && !isUserAdmin) {
       router.push("/workspace?view=team_member");
       return null;
     }
