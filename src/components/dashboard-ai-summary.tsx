@@ -407,15 +407,39 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
 
       {/* Bottom Chat Platform Input Bar with Quick Suggestion Tag */}
       <div className="p-3.5 sm:p-4 bg-white border-t border-slate-100 flex flex-col gap-2 shrink-0">
-        {/* Quick Suggestion Tag Pill */}
-        <div className="flex items-center gap-2">
+        {/* Quick Suggestion Tag Pills */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar flex-wrap">
           <button
             type="button"
             onClick={handleRequestLatestUpdate}
             disabled={isGenerating}
-            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F0F4F9] hover:bg-[#D3E3FD] border border-blue-200/80 text-[#0B57D0] text-xs font-semibold transition-all cursor-pointer shadow-2xs hover:scale-102 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F0F4F9] hover:bg-[#D3E3FD] border border-blue-200/80 text-[#0B57D0] text-xs font-semibold transition-all cursor-pointer shadow-2xs hover:scale-102 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shrink-0"
           >
             <span>✨ Latest update please!</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSendMessage("Tiktok Status")}
+            disabled={isGenerating}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F0F4F9] hover:bg-[#D3E3FD] border border-blue-200/80 text-[#0B57D0] text-xs font-semibold transition-all cursor-pointer shadow-2xs hover:scale-102 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shrink-0"
+          >
+            <span>Tiktok Status</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSendMessage("Merch Status")}
+            disabled={isGenerating}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F0F4F9] hover:bg-[#D3E3FD] border border-blue-200/80 text-[#0B57D0] text-xs font-semibold transition-all cursor-pointer shadow-2xs hover:scale-102 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shrink-0"
+          >
+            <span>Merch Status</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSendMessage("Delivery Order status")}
+            disabled={isGenerating}
+            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F0F4F9] hover:bg-[#D3E3FD] border border-blue-200/80 text-[#0B57D0] text-xs font-semibold transition-all cursor-pointer shadow-2xs hover:scale-102 active:scale-98 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap shrink-0"
+          >
+            <span>Delivery Order status</span>
           </button>
         </div>
 
