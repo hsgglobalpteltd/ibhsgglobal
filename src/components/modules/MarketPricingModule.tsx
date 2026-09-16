@@ -51,6 +51,13 @@ interface PriceSheet {
   updated_at?: number;
 }
 
+interface BundleComponent {
+  sku: string;
+  name: string;
+  qty: number;
+  unit_cost: number;
+}
+
 interface PriceItem {
   id: string;
   sheet_id: string;
@@ -63,6 +70,8 @@ interface PriceItem {
   market_price: number | null; // Market Price (Shelf Price / RSP)
   uom: string;
   pack_size: string;
+  is_custom?: boolean;
+  bundle_components?: BundleComponent[] | string;
   status: string;
   price_logs: string | any[];
   created_at?: number;
@@ -128,8 +137,31 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
   const [editingSheet, setEditingSheet] = React.useState<Partial<PriceSheet> | null>(null);
 
   const [isAddProductsModalOpen, setIsAddProductsModalOpen] = React.useState(false);
+  const [addProductModalTab, setAddProductModalTab] = React.useState<"catalog" | "bundle" | "custom">("catalog");
   const [selectedSkusToAdd, setSelectedSkusToAdd] = React.useState<Set<string>>(new Set());
   const [defaultStoreTier, setDefaultStoreTier] = React.useState("Standard");
+
+  // Custom Combo / Set Form State
+  const [customSetForm, setCustomSetForm] = React.useState({
+    product_sku: "",
+    product_name: "",
+    retailer_sku: "",
+    store_tier: "Standard",
+    cost_price: "",
+    retailer_price: "",
+    market_price: "",
+    uom: "SET",
+    pack_size: "1 Set"
+  });
+
+  // Bundle Builder Component Picker State
+  const [bundleComponents, setBundleComponents] = React.useState<Array<{
+    sku: string;
+    name: string;
+    qty: number;
+    unit_cost: number;
+  }>>([]);
+  const [bundleSearch, setBundleSearch] = React.useState("");
 
   const [isEditItemModalOpen, setIsEditItemModalOpen] = React.useState(false);
   const [editingItem, setEditingItem] = React.useState<PriceItem | null>(null);
@@ -677,6 +709,143 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       showToast(`Added ${itemsToAdd.length} products to sheet`, "success");
       setIsAddProductsModalOpen(false);
       setSelectedSkusToAdd(new Set());
+      await fetchItems(selectedSheetId);
+    } catch (err: any) {
+      showToast("Add failed: " + err.message, "error");
+    }
+  };
+
+  // Handle Adding Ad-hoc Custom Set / Item to Sheet (Scenario 2)
+  const handleAddCustomSetToSheet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSheetId) return;
+    if (!customSetForm.product_sku.trim()) {
+      showToast("Custom SKU is required", "error");
+      return;
+    }
+    if (!customSetForm.product_name.trim()) {
+      showToast("Set / Product Name is required", "error");
+      return;
+    }
+
+    const costNum = customSetForm.cost_price ? parseFloat(customSetForm.cost_price.replace(/[^0-9.]/g, "")) : null;
+    const retCostNum = customSetForm.retailer_price ? parseFloat(customSetForm.retailer_price.replace(/[^0-9.]/g, "")) : null;
+    const mktNum = customSetForm.market_price ? parseFloat(customSetForm.market_price.replace(/[^0-9.]/g, "")) : null;
+
+    const newItem = {
+      product_sku: customSetForm.product_sku.trim().toUpperCase(),
+      product_name: customSetForm.product_name.trim(),
+      retailer_sku: (customSetForm.retailer_sku || customSetForm.product_sku).trim().toUpperCase(),
+      store_tier: customSetForm.store_tier || "Standard",
+      cost_price: costNum,
+      retailer_price: retCostNum,
+      market_price: mktNum,
+      uom: customSetForm.uom || "SET",
+      pack_size: customSetForm.pack_size || "1 Set",
+      is_custom: true,
+      bundle_components: [],
+      status: "active"
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/api/market-pricing/items/upsert-bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet_id: selectedSheetId,
+          items: [newItem],
+          action_by: profile?.name || profile?.email || "Operator"
+        })
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to add custom set");
+      }
+      showToast(`Custom Item "${newItem.product_sku}" added to listing sheet`, "success");
+      setIsAddProductsModalOpen(false);
+      setCustomSetForm({
+        product_sku: "",
+        product_name: "",
+        retailer_sku: "",
+        store_tier: "Standard",
+        cost_price: "",
+        retailer_price: "",
+        market_price: "",
+        uom: "SET",
+        pack_size: "1 Set"
+      });
+      await fetchItems(selectedSheetId);
+    } catch (err: any) {
+      showToast("Add failed: " + err.message, "error");
+    }
+  };
+
+  // Handle Adding Bundle / Combo Set to Sheet (Scenario 1)
+  const handleAddBundleSetToSheet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSheetId) return;
+    if (!customSetForm.product_sku.trim()) {
+      showToast("Bundle Set SKU is required", "error");
+      return;
+    }
+    if (!customSetForm.product_name.trim()) {
+      showToast("Bundle Set Name is required", "error");
+      return;
+    }
+    if (bundleComponents.length === 0) {
+      showToast("Please add at least one component to the bundle", "error");
+      return;
+    }
+
+    // Auto-calculate combined cost if not manually entered
+    const calculatedCost = bundleComponents.reduce((sum, c) => sum + (c.unit_cost * c.qty), 0);
+    const costNum = customSetForm.cost_price ? parseFloat(customSetForm.cost_price.replace(/[^0-9.]/g, "")) : calculatedCost;
+    const retCostNum = customSetForm.retailer_price ? parseFloat(customSetForm.retailer_price.replace(/[^0-9.]/g, "")) : null;
+    const mktNum = customSetForm.market_price ? parseFloat(customSetForm.market_price.replace(/[^0-9.]/g, "")) : null;
+
+    const newItem = {
+      product_sku: customSetForm.product_sku.trim().toUpperCase(),
+      product_name: customSetForm.product_name.trim(),
+      retailer_sku: (customSetForm.retailer_sku || customSetForm.product_sku).trim().toUpperCase(),
+      store_tier: customSetForm.store_tier || "Standard",
+      cost_price: costNum,
+      retailer_price: retCostNum,
+      market_price: mktNum,
+      uom: customSetForm.uom || "SET",
+      pack_size: customSetForm.pack_size || `${bundleComponents.length} items combo`,
+      is_custom: true,
+      bundle_components: bundleComponents,
+      status: "active"
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/api/market-pricing/items/upsert-bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet_id: selectedSheetId,
+          items: [newItem],
+          action_by: profile?.name || profile?.email || "Operator"
+        })
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to add bundle set");
+      }
+      showToast(`Bundle Set "${newItem.product_sku}" added to listing sheet`, "success");
+      setIsAddProductsModalOpen(false);
+      setCustomSetForm({
+        product_sku: "",
+        product_name: "",
+        retailer_sku: "",
+        store_tier: "Standard",
+        cost_price: "",
+        retailer_price: "",
+        market_price: "",
+        uom: "SET",
+        pack_size: "1 Set"
+      });
+      setBundleComponents([]);
       await fetchItems(selectedSheetId);
     } catch (err: any) {
       showToast("Add failed: " + err.message, "error");
@@ -1898,6 +2067,11 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                           <div className="flex items-center gap-1.5 pl-4 font-mono text-zinc-600 text-xs">
                                             <span className="text-zinc-300">↳</span>
                                             <span>{item.product_sku}</span>
+                                            {item.is_custom && (
+                                              <span className="text-[9px] font-sans font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded border border-amber-200">
+                                                SET
+                                              </span>
+                                            )}
                                             {isEditMode && (
                                               <span title="Product SKU is locked">
                                                 <Lock size={10} className="text-zinc-400" />
@@ -2241,14 +2415,15 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         </div>
       )}
 
-      {/* ================= MODAL: ADD PRODUCTS TO SHEET ================= */}
+      {/* ================= MODAL: ADD PRODUCTS / SETS TO SHEET ================= */}
       {isAddProductsModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[85vh]">
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col max-h-[88vh]">
+            {/* Modal Header */}
+            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
               <div>
-                <h2 className="text-sm font-bold text-zinc-950">Add Products to Listing Sheet</h2>
-                <p className="text-xs text-zinc-500 mt-0.5">Select products carried by this retailer cluster.</p>
+                <h2 className="text-sm font-bold text-zinc-950">Add Items to Listing Sheet</h2>
+                <p className="text-xs text-zinc-500 mt-0.5">Select master products, build a combo bundle, or add a custom listing item.</p>
               </div>
               <button
                 onClick={() => setIsAddProductsModalOpen(false)}
@@ -2258,195 +2433,639 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               </button>
             </div>
 
-            {/* Filter & Search Bar */}
-            <div className="p-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-[#F8F9FA] shrink-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                {/* Brand Filter */}
-                <div className="flex items-center gap-1.5">
-                  <label className="text-xs font-semibold text-zinc-700">Brand:</label>
-                  <select
-                    value={addProductBrandFilter}
-                    onChange={(e) => setAddProductBrandFilter(e.target.value)}
-                    className="h-8 px-2.5 bg-white border border-slate-300 rounded text-xs text-zinc-800 font-medium focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                  >
-                    <option value="all">All Brands ({brands.length})</option>
-                    {brands.map((b) => (
-                      <option key={b.id || b.ID} value={String(b.id || b.ID)}>
-                        {b.id || b.ID} - {b.display_name || b["Display Name"] || b.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Search Box */}
-                <div className="relative">
-                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                  <input
-                    type="text"
-                    placeholder="Search SKU or Name..."
-                    value={addProductSearch}
-                    onChange={(e) => setAddProductSearch(e.target.value)}
-                    className="h-8 pl-7 pr-3 bg-white border border-slate-300 rounded text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] w-48"
-                  />
-                  {addProductSearch && (
-                    <button
-                      onClick={() => setAddProductSearch("")}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
-                    >
-                      <X size={12} />
-                    </button>
-                  )}
-                </div>
-
-                {/* Default Store Tier */}
-                <div className="flex items-center gap-1.5 ml-1">
-                  <label className="text-xs font-semibold text-zinc-700">Tier:</label>
-                  <select
-                    value={defaultStoreTier}
-                    onChange={(e) => setDefaultStoreTier(e.target.value)}
-                    className="h-8 px-2 bg-white border border-slate-300 rounded text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                  >
-                    <option value="Standard">Standard</option>
-                    <option value="Tier 1">Tier 1 (High Street / Premium)</option>
-                    <option value="Tier 2">Tier 2 (Heartland)</option>
-                    <option value="Tier 3">Tier 3 (Small Outlets)</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const availableSkus = sortedAndGroupedProductsToAdd
-                      .filter((p) => !items.some((it) => it.product_sku === (p.sku || p.SKU)))
-                      .map((p) => p.sku || p.SKU);
-                    if (availableSkus.every((sku) => selectedSkusToAdd.has(sku))) {
-                      const next = new Set(selectedSkusToAdd);
-                      availableSkus.forEach((sku) => next.delete(sku));
-                      setSelectedSkusToAdd(next);
-                    } else {
-                      const next = new Set(selectedSkusToAdd);
-                      availableSkus.forEach((sku) => next.add(sku));
-                      setSelectedSkusToAdd(next);
-                    }
-                  }}
-                  className="text-xs text-[#0B57D0] hover:underline font-semibold cursor-pointer"
-                >
-                  Select Filtered ({sortedAndGroupedProductsToAdd.length})
-                </button>
-                <span className="text-xs text-zinc-600 font-bold bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
-                  {selectedSkusToAdd.size} Selected
-                </span>
-              </div>
+            {/* Mode Switcher Tabs */}
+            <div className="flex border-b border-slate-200 bg-[#F8F9FA] px-4 pt-2 gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setAddProductModalTab("catalog")}
+                className={`px-3 py-1.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+                  addProductModalTab === "catalog"
+                    ? "border-[#0B57D0] text-[#0B57D0] bg-white rounded-t-md"
+                    : "border-transparent text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                Master Catalog
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddProductModalTab("bundle")}
+                className={`px-3 py-1.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+                  addProductModalTab === "bundle"
+                    ? "border-[#0B57D0] text-[#0B57D0] bg-white rounded-t-md"
+                    : "border-transparent text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                Bundle / Combo Set
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddProductModalTab("custom")}
+                className={`px-3 py-1.5 text-xs font-semibold border-b-2 transition-colors cursor-pointer ${
+                  addProductModalTab === "custom"
+                    ? "border-[#0B57D0] text-[#0B57D0] bg-white rounded-t-md"
+                    : "border-transparent text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                Quick Custom Item
+              </button>
             </div>
 
-            {/* Product Selector Table */}
-            <div className="flex-1 min-h-0 overflow-auto p-4">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead className="bg-[#F8F9FA] sticky top-0 border-b border-slate-200 text-zinc-600 font-bold z-10">
-                  <tr>
-                    <th className="w-8 px-2 py-2 text-center">
-                      <input
-                        type="checkbox"
-                        checked={
-                          sortedAndGroupedProductsToAdd.length > 0 &&
-                          sortedAndGroupedProductsToAdd.every((p) => selectedSkusToAdd.has(p.sku || p.SKU))
-                        }
-                        onChange={() => {
-                          const currentSkus = sortedAndGroupedProductsToAdd.map((p) => p.sku || p.SKU);
-                          if (currentSkus.every((sku) => selectedSkusToAdd.has(sku))) {
-                            const next = new Set(selectedSkusToAdd);
-                            currentSkus.forEach((s) => next.delete(s));
-                            setSelectedSkusToAdd(next);
-                          } else {
-                            const next = new Set(selectedSkusToAdd);
-                            currentSkus.forEach((s) => next.add(s));
-                            setSelectedSkusToAdd(next);
-                          }
-                        }}
-                        className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
-                      />
-                    </th>
-                    <th className="px-3 py-2">SKU</th>
-                    <th className="px-3 py-2">Product Name</th>
-                    <th className="px-3 py-2">UOM</th>
-                    <th className="px-3 py-2 text-right">Default Cost (Our Price)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {sortedAndGroupedProductsToAdd.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="text-center py-8 text-xs text-zinc-400">
-                        No products match your search criteria.
-                      </td>
-                    </tr>
-                  ) : (
-                    sortedAndGroupedProductsToAdd.map((p) => {
-                      const sku = p.sku || p.SKU;
-                      const isChecked = selectedSkusToAdd.has(sku);
-                      const alreadyInSheet = items.some((it) => it.product_sku === sku);
+            {/* TAB 1: MASTER CATALOG SELECTOR */}
+            {addProductModalTab === "catalog" && (
+              <>
+                {/* Filter & Search Bar */}
+                <div className="p-3 border-b border-slate-100 flex flex-wrap items-center justify-between gap-3 bg-[#F8F9FA] shrink-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Brand Filter */}
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-xs font-semibold text-zinc-700">Brand:</label>
+                      <select
+                        value={addProductBrandFilter}
+                        onChange={(e) => setAddProductBrandFilter(e.target.value)}
+                        className="h-8 px-2.5 bg-white border border-slate-300 rounded text-xs text-zinc-800 font-medium focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                      >
+                        <option value="all">All Brands ({brands.length})</option>
+                        {brands.map((b) => (
+                          <option key={b.id || b.ID} value={String(b.id || b.ID)}>
+                            {b.id || b.ID} - {b.display_name || b["Display Name"] || b.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-                      return (
-                        <tr
-                          key={sku}
-                          onClick={() => {
-                            if (alreadyInSheet) return;
-                            const next = new Set(selectedSkusToAdd);
-                            if (next.has(sku)) next.delete(sku);
-                            else next.add(sku);
-                            setSelectedSkusToAdd(next);
-                          }}
-                          className={`hover:bg-slate-50 cursor-pointer ${
-                            alreadyInSheet ? "opacity-40 cursor-not-allowed bg-slate-50" : ""
-                          }`}
+                    {/* Search Box */}
+                    <div className="relative">
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        type="text"
+                        placeholder="Search SKU or Name..."
+                        value={addProductSearch}
+                        onChange={(e) => setAddProductSearch(e.target.value)}
+                        className="h-8 pl-7 pr-3 bg-white border border-slate-300 rounded text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] w-44"
+                      />
+                      {addProductSearch && (
+                        <button
+                          onClick={() => setAddProductSearch("")}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600"
                         >
-                          <td className="px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
-                            <input
-                              type="checkbox"
-                              disabled={alreadyInSheet}
-                              checked={isChecked}
-                              onChange={(e) => {
+                          <X size={12} />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Default Store Tier */}
+                    <div className="flex items-center gap-1.5 ml-1">
+                      <label className="text-xs font-semibold text-zinc-700">Tier:</label>
+                      <select
+                        value={defaultStoreTier}
+                        onChange={(e) => setDefaultStoreTier(e.target.value)}
+                        className="h-8 px-2 bg-white border border-slate-300 rounded text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                      >
+                        <option value="Standard">Standard</option>
+                        <option value="Tier 1">Tier 1</option>
+                        <option value="Tier 2">Tier 2</option>
+                        <option value="Tier 3">Tier 3</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const availableSkus = sortedAndGroupedProductsToAdd
+                          .filter((p) => !items.some((it) => it.product_sku === (p.sku || p.SKU)))
+                          .map((p) => p.sku || p.SKU);
+                        if (availableSkus.every((sku) => selectedSkusToAdd.has(sku))) {
+                          const next = new Set(selectedSkusToAdd);
+                          availableSkus.forEach((sku) => next.delete(sku));
+                          setSelectedSkusToAdd(next);
+                        } else {
+                          const next = new Set(selectedSkusToAdd);
+                          availableSkus.forEach((sku) => next.add(sku));
+                          setSelectedSkusToAdd(next);
+                        }
+                      }}
+                      className="text-xs text-[#0B57D0] hover:underline font-semibold cursor-pointer"
+                    >
+                      Select All Filtered ({sortedAndGroupedProductsToAdd.length})
+                    </button>
+                    <span className="text-xs text-zinc-600 font-bold bg-blue-50 border border-blue-200 px-2 py-0.5 rounded">
+                      {selectedSkusToAdd.size} Selected
+                    </span>
+                  </div>
+                </div>
+
+                {/* Product Selector Table */}
+                <div className="flex-1 min-h-0 overflow-auto p-4">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead className="bg-[#F8F9FA] sticky top-0 border-b border-slate-200 text-zinc-600 font-bold z-10">
+                      <tr>
+                        <th className="w-8 px-2 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={
+                              sortedAndGroupedProductsToAdd.length > 0 &&
+                              sortedAndGroupedProductsToAdd.every((p) => selectedSkusToAdd.has(p.sku || p.SKU))
+                            }
+                            onChange={() => {
+                              const currentSkus = sortedAndGroupedProductsToAdd.map((p) => p.sku || p.SKU);
+                              if (currentSkus.every((sku) => selectedSkusToAdd.has(sku))) {
                                 const next = new Set(selectedSkusToAdd);
-                                if (e.target.checked) next.add(sku);
-                                else next.delete(sku);
+                                currentSkus.forEach((s) => next.delete(s));
                                 setSelectedSkusToAdd(next);
-                              }}
-                              className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
-                            />
-                          </td>
-                          <td className="px-3 py-2 font-mono font-bold text-zinc-900">{sku}</td>
-                          <td className="px-3 py-2 font-medium text-zinc-800">
-                            {p.display_name || p["Display Name"] || p.name || sku}
-                          </td>
-                          <td className="px-3 py-2 text-zinc-600">{p.uom || p.UOM || "CTN"}</td>
-                          <td className="px-3 py-2 text-right font-mono text-zinc-900">
-                            ${parseFloat(String(p.cost || p.Cost || "0").replace(/[^0-9.]/g, "") || "0").toFixed(2)}
+                              } else {
+                                const next = new Set(selectedSkusToAdd);
+                                currentSkus.forEach((s) => next.add(s));
+                                setSelectedSkusToAdd(next);
+                              }
+                            }}
+                            className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
+                          />
+                        </th>
+                        <th className="px-3 py-2">SKU</th>
+                        <th className="px-3 py-2">Product Name</th>
+                        <th className="px-3 py-2">UOM</th>
+                        <th className="px-3 py-2 text-right">Default Cost (Our Price)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {sortedAndGroupedProductsToAdd.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="text-center py-8 text-xs text-zinc-400">
+                            No products match your search criteria.
                           </td>
                         </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
+                      ) : (
+                        sortedAndGroupedProductsToAdd.map((p) => {
+                          const sku = p.sku || p.SKU;
+                          const isChecked = selectedSkusToAdd.has(sku);
+                          const alreadyInSheet = items.some((it) => it.product_sku === sku);
 
-            <div className="p-4 border-t border-slate-200 flex items-center justify-end gap-2 bg-white shrink-0">
-              <button
-                type="button"
-                onClick={() => setIsAddProductsModalOpen(false)}
-                className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleAddProductsToSheet}
-                className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs cursor-pointer"
-              >
-                Add Selected to Sheet
-              </button>
-            </div>
+                          return (
+                            <tr
+                              key={sku}
+                              onClick={() => {
+                                if (alreadyInSheet) return;
+                                const next = new Set(selectedSkusToAdd);
+                                if (next.has(sku)) next.delete(sku);
+                                else next.add(sku);
+                                setSelectedSkusToAdd(next);
+                              }}
+                              className={`hover:bg-slate-50 cursor-pointer ${
+                                alreadyInSheet ? "opacity-40 cursor-not-allowed bg-slate-50" : ""
+                              }`}
+                            >
+                              <td className="px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  disabled={alreadyInSheet}
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    const next = new Set(selectedSkusToAdd);
+                                    if (e.target.checked) next.add(sku);
+                                    else next.delete(sku);
+                                    setSelectedSkusToAdd(next);
+                                  }}
+                                  className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
+                                />
+                              </td>
+                              <td className="px-3 py-2 font-mono font-bold text-zinc-900">{sku}</td>
+                              <td className="px-3 py-2 font-medium text-zinc-800">
+                                {p.display_name || p["Display Name"] || p.name || sku}
+                              </td>
+                              <td className="px-3 py-2 text-zinc-600">{p.uom || p.UOM || "CTN"}</td>
+                              <td className="px-3 py-2 text-right font-mono text-zinc-900">
+                                ${parseFloat(String(p.cost || p.Cost || "0").replace(/[^0-9.]/g, "") || "0").toFixed(2)}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="p-4 border-t border-slate-200 flex items-center justify-end gap-2 bg-white shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddProductsModalOpen(false)}
+                    className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAddProductsToSheet}
+                    className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs cursor-pointer"
+                  >
+                    Add Selected to Sheet ({selectedSkusToAdd.size})
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* TAB 2: BUNDLE / COMBO SET BUILDER */}
+            {addProductModalTab === "bundle" && (
+              <form onSubmit={handleAddBundleSetToSheet} className="flex-1 flex flex-col min-h-0">
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Bundle Set SKU *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. SET-SUMMER-01"
+                        required
+                        value={customSetForm.product_sku}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, product_sku: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold uppercase focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Retailer SKU
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Default same as Set SKU"
+                        value={customSetForm.retailer_sku}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, retailer_sku: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                      Bundle Set Name / Description *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Refresh Combo (Shampoo 250ml + Conditioner 200ml)"
+                      required
+                      value={customSetForm.product_name}
+                      onChange={(e) => setCustomSetForm({ ...customSetForm, product_name: e.target.value })}
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                    />
+                  </div>
+
+                  {/* Bundle Components Selector */}
+                  <div className="border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-zinc-800">
+                        Bundle Components ({bundleComponents.length} items)
+                      </span>
+                      <span className="text-xs font-mono font-bold text-[#0B57D0]">
+                        Total Base Cost: $
+                        {bundleComponents.reduce((sum, c) => sum + (c.unit_cost * c.qty), 0).toFixed(2)}
+                      </span>
+                    </div>
+
+                    {/* Component Picker Input */}
+                    <div className="flex items-center gap-2">
+                      <div className="relative flex-1">
+                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                        <input
+                          type="text"
+                          placeholder="Search product from catalog to add into bundle..."
+                          value={bundleSearch}
+                          onChange={(e) => setBundleSearch(e.target.value)}
+                          className="w-full pl-7 pr-3 py-1.5 bg-white border border-slate-300 rounded text-xs text-zinc-800"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Search Results Dropdown / Picker */}
+                    {bundleSearch.trim() && (
+                      <div className="max-h-36 overflow-y-auto bg-white border border-slate-200 rounded shadow-xs divide-y divide-slate-100">
+                        {products
+                          .filter((p) => {
+                            const q = bundleSearch.toLowerCase();
+                            const sku = String(p.sku || p.SKU || "").toLowerCase();
+                            const name = String(p.display_name || p["Display Name"] || p.name || "").toLowerCase();
+                            return sku.includes(q) || name.includes(q);
+                          })
+                          .slice(0, 5)
+                          .map((p) => {
+                            const sku = p.sku || p.SKU;
+                            const name = p.display_name || p["Display Name"] || p.name || sku;
+                            const cost = parseFloat(String(p.cost || p.Cost || "0").replace(/[^0-9.]/g, "") || "0");
+                            return (
+                              <div
+                                key={sku}
+                                onClick={() => {
+                                  setBundleComponents((prev) => {
+                                    const existing = prev.find((c) => c.sku === sku);
+                                    if (existing) {
+                                      return prev.map((c) => c.sku === sku ? { ...c, qty: c.qty + 1 } : c);
+                                    }
+                                    return [...prev, { sku, name, qty: 1, unit_cost: cost }];
+                                  });
+                                  setBundleSearch("");
+                                }}
+                                className="p-2 flex items-center justify-between hover:bg-blue-50 cursor-pointer text-xs"
+                              >
+                                <div>
+                                  <span className="font-mono font-bold text-zinc-900">{sku}</span>
+                                  <span className="text-zinc-600 ml-2">{name}</span>
+                                </div>
+                                <span className="font-mono text-zinc-700">${cost.toFixed(2)}</span>
+                              </div>
+                            );
+                          })}
+                      </div>
+                    )}
+
+                    {/* Selected Components List */}
+                    {bundleComponents.length === 0 ? (
+                      <p className="text-[11px] text-zinc-400 italic text-center py-2">
+                        Search and pick products above to build this combo set.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {bundleComponents.map((comp, idx) => (
+                          <div key={comp.sku} className="flex items-center justify-between bg-white p-2 border border-slate-200 rounded text-xs">
+                            <div className="flex items-center gap-2 flex-1 min-w-0 pr-2">
+                              <span className="font-mono font-bold text-zinc-900">{comp.sku}</span>
+                              <span className="text-zinc-600 truncate">{comp.name}</span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-zinc-400 text-[11px]">@ ${comp.unit_cost.toFixed(2)}</span>
+                              <div className="flex items-center gap-1">
+                                <label className="text-[10px] text-zinc-500 font-bold">Qty:</label>
+                                <input
+                                  type="number"
+                                  min={1}
+                                  value={comp.qty}
+                                  onChange={(e) => {
+                                    const q = Math.max(1, parseInt(e.target.value) || 1);
+                                    setBundleComponents((prev) => prev.map((c, i) => i === idx ? { ...c, qty: q } : c));
+                                  }}
+                                  className="w-12 h-6 px-1 text-center border border-slate-300 rounded font-mono font-bold text-xs"
+                                />
+                              </div>
+                              <span className="font-mono font-bold text-zinc-900 w-16 text-right">
+                                ${(comp.unit_cost * comp.qty).toFixed(2)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setBundleComponents((prev) => prev.filter((_, i) => i !== idx))}
+                                className="text-red-500 hover:text-red-700 p-0.5"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Pricing Inputs */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Our Cost (Set COGS)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder={bundleComponents.length > 0 ? bundleComponents.reduce((sum, c) => sum + (c.unit_cost * c.qty), 0).toFixed(2) : "0.00"}
+                        value={customSetForm.cost_price}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, cost_price: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Buyer Cost (Wholesale)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={customSetForm.retailer_price}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, retailer_price: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Market Price (RSP)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={customSetForm.market_price}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, market_price: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Store Tier & UOM */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Store Tier
+                      </label>
+                      <select
+                        value={customSetForm.store_tier}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, store_tier: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
+                      >
+                        <option value="Standard">Standard</option>
+                        <option value="Tier 1">Tier 1</option>
+                        <option value="Tier 2">Tier 2</option>
+                        <option value="Tier 3">Tier 3</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Pack Spec / Note
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 2-in-1 Combo Pack"
+                        value={customSetForm.pack_size}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, pack_size: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 border-t border-slate-200 flex items-center justify-end gap-2 bg-white shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddProductsModalOpen(false)}
+                    className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs cursor-pointer"
+                  >
+                    Save Bundle Set to Sheet
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {/* TAB 3: QUICK CUSTOM ITEM (SCENARIO 2) */}
+            {addProductModalTab === "custom" && (
+              <form onSubmit={handleAddCustomSetToSheet} className="flex-1 flex flex-col min-h-0">
+                <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Custom SKU *
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. CUST-PROMO-001"
+                        required
+                        value={customSetForm.product_sku}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, product_sku: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold uppercase focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Retailer SKU
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Default same as Custom SKU"
+                        value={customSetForm.retailer_sku}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, retailer_sku: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                      Product / Set Name *
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Special Holiday Gift Set"
+                      required
+                      value={customSetForm.product_name}
+                      onChange={(e) => setCustomSetForm({ ...customSetForm, product_name: e.target.value })}
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                    />
+                  </div>
+
+                  {/* Pricing Inputs */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Our Cost
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={customSetForm.cost_price}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, cost_price: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Buyer Cost
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={customSetForm.retailer_price}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, retailer_price: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Market Price (RSP)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={customSetForm.market_price}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, market_price: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Store Tier, UOM & Pack Size */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Store Tier
+                      </label>
+                      <select
+                        value={customSetForm.store_tier}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, store_tier: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
+                      >
+                        <option value="Standard">Standard</option>
+                        <option value="Tier 1">Tier 1</option>
+                        <option value="Tier 2">Tier 2</option>
+                        <option value="Tier 3">Tier 3</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        UOM
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="SET / BOX / CTN"
+                        value={customSetForm.uom}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, uom: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                        Pack Size / Spec
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 1 Box (3 pcs)"
+                        value={customSetForm.pack_size}
+                        onChange={(e) => setCustomSetForm({ ...customSetForm, pack_size: e.target.value })}
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-4 border-t border-slate-200 flex items-center justify-end gap-2 bg-white shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddProductsModalOpen(false)}
+                    className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs cursor-pointer"
+                  >
+                    Save Custom Item to Sheet
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
