@@ -147,6 +147,17 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     setIsShowingIndicator(true);
     try {
       const res = await fetchDashboardAiBriefing(userName, profile, false);
+      
+      console.log("🤖 [iB Gemini AI] Initial Briefing Response:", {
+        is_ai: res?.is_ai,
+        source: res?.source,
+        router_intent: res?.router_intent,
+        matched_brain_cells: (res as any)?.matched_brain_cells_count,
+        gemini_error: (res as any)?.debug_gemini_err || "None",
+        key_source: (res as any)?.debug_gemini_key_source,
+        full_payload: res
+      });
+
       const isAi = res?.is_ai ?? false;
       setIsGeminiLive(isAi);
       const text = res?.text || `Good morning, ${userName}.\n\nToday we have orders on route, and drivers are active on schedule.`;
@@ -157,7 +168,7 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
       const parsed = text.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
       startSequentialPopups(parsed, false, isAi);
     } catch (err) {
-      console.error("Failed to load live briefing:", err);
+      console.error("❌ [iB Gemini AI] Initial Briefing Failed:", err);
       setIsGeminiLive(false);
       const fallbackText = `Good morning, ${userName}.\n\nToday we have orders on route, and drivers are active on schedule.`;
       setFullBriefingText(fallbackText);
@@ -198,13 +209,24 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
         textToSend, 
         updatedWithUser
       );
+      
+      console.log("🤖 [iB Gemini AI] Response Details:", {
+        is_ai: res?.is_ai,
+        source: res?.source,
+        router_intent: res?.router_intent,
+        matched_brain_cells: (res as any)?.matched_brain_cells_count,
+        gemini_error: (res as any)?.debug_gemini_err || "None",
+        key_source: (res as any)?.debug_gemini_key_source,
+        full_payload: res
+      });
+
       const isAi = res?.is_ai ?? false;
       setIsGeminiLive(isAi);
       const text = res?.text || `Live update: All operations are currently proceeding on schedule.`;
       const parsed = text.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
       startSequentialPopups(parsed, true, isAi);
     } catch (err) {
-      console.error("Failed to process chat message:", err);
+      console.error("❌ [iB Gemini AI] Request Failed:", err);
       setIsGeminiLive(false);
       const fallbackText = `Live update: All operations are currently proceeding on schedule.`;
       const parsed = fallbackText.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
@@ -219,6 +241,14 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     handleSendMessage("Latest update please!");
   }, [handleSendMessage]);
 
+  // Helper to determine the current time block (morning, afternoon, evening)
+  const getCurrentTimeBlock = React.useCallback(() => {
+    const hr = new Date().getHours();
+    if (hr < 12) return "morning";
+    if (hr < 17) return "afternoon";
+    return "evening";
+  }, []);
+
   // Clear Chat function
   const handleClearChat = React.useCallback(() => {
     if (nextBubbleTimeoutRef.current) clearTimeout(nextBubbleTimeoutRef.current);
@@ -228,20 +258,39 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     if (typeof window !== "undefined") {
       try {
         localStorage.removeItem("ib_briefing_chat_history");
+        localStorage.removeItem("ib_briefing_time_block");
       } catch {}
     }
     showToast("Chat history cleared", "info");
   }, []);
 
-  // Initial trigger on mount (only if no existing messages in localStorage)
+  // Initial trigger on mount or time-block transition (morning, afternoon, evening)
   React.useEffect(() => {
-    if (displayedBubbles.length === 0) {
-      handleLoadInitialBriefing();
+    const currentBlock = getCurrentTimeBlock();
+    let savedBlock = "";
+    if (typeof window !== "undefined") {
+      try {
+        savedBlock = localStorage.getItem("ib_briefing_time_block") || "";
+      } catch {}
     }
+
+    if (displayedBubbles.length === 0 || (savedBlock && savedBlock !== currentBlock)) {
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("ib_briefing_time_block", currentBlock);
+        } catch {}
+      }
+      handleLoadInitialBriefing();
+    } else if (!savedBlock && typeof window !== "undefined") {
+      try {
+        localStorage.setItem("ib_briefing_time_block", currentBlock);
+      } catch {}
+    }
+
     return () => {
       if (nextBubbleTimeoutRef.current) clearTimeout(nextBubbleTimeoutRef.current);
     };
-  }, []); // Mount only
+  }, [getCurrentTimeBlock, handleLoadInitialBriefing, displayedBubbles.length]);
 
   return (
     <div className="w-full h-full min-w-0 flex flex-col bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden select-none font-primary">
@@ -318,7 +367,13 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
                     <div className="text-zinc-800 pr-5 pb-0.5 whitespace-pre-wrap">
                       {item.text}
                     </div>
-                    <div className="flex items-center justify-end text-[9px] text-zinc-400 select-none -mt-1">
+                    <div className="flex items-center justify-end gap-1.5 text-[9px] text-zinc-400 select-none -mt-1">
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          (item as any).isAi === false ? "bg-rose-500" : "bg-emerald-500"
+                        }`}
+                        title={(item as any).isAi === false ? "Rule Fallback" : "Live AI"}
+                      />
                       <span>{item.timestamp || "Now"}</span>
                     </div>
                   </div>

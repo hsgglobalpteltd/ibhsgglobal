@@ -18,7 +18,11 @@ import {
   Printer,
   SlidersHorizontal,
   Lock,
-  Save
+  Save,
+  ChevronRight,
+  ChevronDown,
+  Store,
+  FileText
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable, { applyPlugin } from "jspdf-autotable";
@@ -107,6 +111,13 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
   // Selection for bulk actions
   const [selectedItemIds, setSelectedItemIds] = React.useState<Set<string>>(new Set());
 
+  // View Mode: "sheet" | "retailer"
+  const [sidebarViewMode, setSidebarViewMode] = React.useState<"sheet" | "retailer">("retailer");
+  const [selectedRetailerId, setSelectedRetailerId] = React.useState<string>("");
+
+  // Collapsible Brand Rows State: Set of "tier:::brandName" keys
+  const [expandedBrandKeys, setExpandedBrandKeys] = React.useState<Set<string>>(new Set());
+
   // In-Table Edit Mode States
   const [isEditMode, setIsEditMode] = React.useState(false);
   const [editRowsMap, setEditRowsMap] = React.useState<Record<string, Partial<PriceItem>>>({});
@@ -154,23 +165,50 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
   }, []);
 
   const fetchRetailersAndProducts = async () => {
+    // Try immediate cache loading
+    try {
+      const cachedProds = localStorage.getItem("products_DB_data") || localStorage.getItem("products_db_data");
+      if (cachedProds) {
+        const parsed = JSON.parse(cachedProds);
+        if (Array.isArray(parsed) && parsed.length > 0) setProducts(parsed);
+      }
+      const cachedBrands = localStorage.getItem("brands_DB_data") || localStorage.getItem("brands_db_data");
+      if (cachedBrands) {
+        const parsed = JSON.parse(cachedBrands);
+        if (Array.isArray(parsed) && parsed.length > 0) setBrands(parsed);
+      }
+      const cachedRets = localStorage.getItem("retailers_DB_data") || localStorage.getItem("retailers_db_data");
+      if (cachedRets) {
+        const parsed = JSON.parse(cachedRets);
+        if (Array.isArray(parsed) && parsed.length > 0) setRetailers(parsed);
+      }
+    } catch {}
+
     try {
       const [retRes, prodRes, brandRes] = await Promise.all([
         fetch(`${API_BASE}/api/admin/db?table=retailers_DB`),
-        fetch(`${API_BASE}/api/admin/db?table=products_DB`),
-        fetch(`${API_BASE}/api/admin/db?table=brands_DB`)
+        fetch(`${API_BASE}/api/products`),
+        fetch(`${API_BASE}/api/brands`)
       ]);
       if (retRes.ok) {
         const retData = await retRes.json();
-        setRetailers(Array.isArray(retData) ? retData : retData.value || []);
+        const retList = Array.isArray(retData) ? retData : retData.value || [];
+        setRetailers(retList);
+        if (retList.length > 0 && !selectedRetailerId) {
+          setSelectedRetailerId(String(retList[0].id || retList[0].ID || ""));
+        }
       }
       if (prodRes.ok) {
         const prodData = await prodRes.json();
-        setProducts(Array.isArray(prodData) ? prodData : prodData.value || []);
+        const pList = Array.isArray(prodData) ? prodData : prodData.value || [];
+        setProducts(pList);
+        try { localStorage.setItem("products_DB_data", JSON.stringify(pList)); } catch {}
       }
       if (brandRes.ok) {
         const brandData = await brandRes.json();
-        setBrands(Array.isArray(brandData) ? brandData : brandData.value || []);
+        const bList = Array.isArray(brandData) ? brandData : brandData.value || [];
+        setBrands(bList);
+        try { localStorage.setItem("brands_DB_data", JSON.stringify(bList)); } catch {}
       }
     } catch (err) {
       console.error("Error loading baseline data:", err);
@@ -235,6 +273,78 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
     return found ? found.display_name || found["Display Name"] || found.name || `Retailer #${id}` : `Retailer #${id}`;
   };
 
+  // Helper: Get Brand Name for a product SKU or PriceItem
+  const getProductBrandName = React.useCallback((itemOrSku: PriceItem | string): string => {
+    const sku = typeof itemOrSku === "string" ? itemOrSku : (itemOrSku.product_sku || "");
+    const cleanSku = String(sku || "").trim().toLowerCase();
+    const itemName = typeof itemOrSku === "string" ? "" : (itemOrSku.product_name || "");
+
+    // 1. Try finding product in products table
+    const prod = products.find((p) => {
+      const pSku = String(p.sku || p.SKU || p.code || p.Code || "").trim().toLowerCase();
+      return pSku === cleanSku;
+    });
+
+    if (prod) {
+      // 1a. Check direct brand name field on product
+      const directBrand = prod.brand_name || prod["Brand Name"] || prod.brand || prod.Brand || prod.brandName;
+      if (directBrand && String(directBrand).trim() && String(directBrand).trim().toLowerCase() !== "null") {
+        return String(directBrand).trim();
+      }
+
+      // 1b. Check brands_id on product
+      const brandId = String(prod.brands_id || prod["Brands ID"] || prod.Brands_ID || prod.brand_id || prod.brandId || prod.Brand_ID || "").trim();
+      if (brandId) {
+        const foundBrand = brands.find((b) => {
+          const bId = String(b.id || b.ID || b.brand_id || b["Brand ID"] || b.Brands_ID || "").trim().toLowerCase();
+          return bId === brandId.toLowerCase();
+        });
+        if (foundBrand) {
+          const bName = foundBrand.brand_name || foundBrand["Brand Name"] || foundBrand.display_name || foundBrand["Display Name"] || foundBrand.name;
+          if (bName) return String(bName).trim();
+        }
+        // If not found in brands table, but brandId is not numeric, it might be the brand name itself
+        if (brandId && isNaN(Number(brandId))) {
+          return brandId;
+        }
+      }
+    }
+
+    // 2. If product not found in products array or no brand ID matched, check against brands array names
+    const searchTarget = `${sku} ${itemName}`.toLowerCase();
+    for (const b of brands) {
+      const bName = String(b.brand_name || b["Brand Name"] || b.display_name || b["Display Name"] || b.name || "").trim();
+      if (bName && bName.length >= 3 && searchTarget.includes(bName.toLowerCase())) {
+        return bName;
+      }
+    }
+
+    // 3. Check for [Brand] in product name, e.g. "[ABC] Coffee" or "ABC - Coffee"
+    if (itemName) {
+      const bracketMatch = itemName.match(/^\[(.*?)\]/);
+      if (bracketMatch && bracketMatch[1]?.trim()) {
+        return bracketMatch[1].trim();
+      }
+    }
+
+    return "Other Products";
+  }, [products, brands]);
+
+  // Helper: Extract Product Spec / Quantity / Pack size from item or product name
+  const extractItemSpec = React.useCallback((item: PriceItem): string => {
+    if (item.pack_size && item.pack_size.trim()) return item.pack_size.trim();
+    if (item.uom && item.uom.trim() && item.uom.trim() !== "1") return item.uom.trim();
+
+    const name = (item.product_name || "").trim();
+    // Match common FMCG quantity/volume/pack sizes (e.g. "80g", "120g", "5x85g", "6x330ml", "1.5L", "24s", "pack of 6", "500ml", "1kg")
+    const regex = /(\d+(?:\.\d+)?\s*(?:x|\*)\s*\d+(?:\.\d+)?\s*(?:g|kg|ml|l|ltr|oz|cl|pcs|s|pk|ct)\b|\d+(?:\.\d+)?\s*(?:g|kg|ml|l|ltr|oz|cl|pcs|s|pk|ct)\b|pack\s+of\s+\d+|\d+\s*pack|\b\d+\s*pcs\b|\b\d+\s*s\b)/i;
+    const match = name.match(regex);
+    if (match) {
+      return match[0].trim();
+    }
+    return "";
+  }, []);
+
   // Filtered Sheets
   const filteredSheets = React.useMemo(() => {
     if (!sheetSearch.trim()) return sheets;
@@ -267,6 +377,38 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       return [];
     }
   }, [activeSheet]);
+
+  // Retailer List with their associated listing sheets (Many-to-Many)
+  const retailersWithSheets = React.useMemo(() => {
+    return retailers.map((ret) => {
+      const retIdStr = String(ret.id || ret.ID || "");
+      const matchedSheets = sheets.filter((s) => {
+        try {
+          const rIds = typeof s.retailer_ids === "string" ? JSON.parse(s.retailer_ids) : (s.retailer_ids || []);
+          return rIds.some((id: string) => String(id) === retIdStr);
+        } catch {
+          return false;
+        }
+      });
+      return {
+        retailer: ret,
+        retailerId: retIdStr,
+        retailerName: ret.display_name || ret["Display Name"] || ret.name || `Retailer #${retIdStr}`,
+        sheets: matchedSheets
+      };
+    });
+  }, [retailers, sheets]);
+
+  // Filtered Retailers in Sidebar
+  const filteredRetailersWithSheets = React.useMemo(() => {
+    if (!sheetSearch.trim()) return retailersWithSheets;
+    const q = sheetSearch.toLowerCase();
+    return retailersWithSheets.filter((item) => {
+      const matchRetName = item.retailerName.toLowerCase().includes(q);
+      const matchSheetName = item.sheets.some((s) => s.name?.toLowerCase().includes(q));
+      return matchRetName || matchSheetName;
+    });
+  }, [retailersWithSheets, sheetSearch]);
 
   // Filtered and Brand-Sorted Products for Add Modal
   const sortedAndGroupedProductsToAdd = React.useMemo(() => {
@@ -317,9 +459,124 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         it.product_sku?.toLowerCase().includes(q) ||
         it.product_name?.toLowerCase().includes(q) ||
         it.retailer_sku?.toLowerCase().includes(q) ||
-        it.store_tier?.toLowerCase().includes(q)
+        it.store_tier?.toLowerCase().includes(q) ||
+        getProductBrandName(it).toLowerCase().includes(q)
     );
-  }, [items, itemSearch]);
+  }, [items, itemSearch, getProductBrandName]);
+
+  // Group items by Store Tier -> Brand Name (and split if varied / different specs / price points)
+  const groupedTierBrandItems = React.useMemo(() => {
+    const tierMap: Record<string, Record<string, PriceItem[]>> = {};
+
+    filteredItems.forEach((item) => {
+      const tier = item.store_tier || "Standard";
+      const brand = getProductBrandName(item);
+
+      if (!tierMap[tier]) tierMap[tier] = {};
+      if (!tierMap[tier][brand]) tierMap[tier][brand] = [];
+      tierMap[tier][brand].push(item);
+    });
+
+    // Structure into array with splitting for varied pricing / specs
+    return Object.keys(tierMap).sort().map((tierName) => {
+      const brandGroups: Array<{
+        brandKey: string;
+        brandName: string;
+        specLabel: string;
+        tierName: string;
+        items: PriceItem[];
+      }> = [];
+
+      Object.keys(tierMap[tierName]).sort().forEach((brandName) => {
+        const brandItems = tierMap[tierName][brandName];
+
+        // Check if all items in this brand have the same price and/or same spec
+        // We group items within this brand by: (spec + price signature) or price signature
+        const subMap: Record<string, { spec: string; items: PriceItem[] }> = {};
+
+        brandItems.forEach((item) => {
+          const spec = extractItemSpec(item);
+          // Pricing key: cost_price|retailer_price|market_price (rounded to 2 decimals)
+          const cost = item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price).toFixed(2) : "none";
+          const ret = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price).toFixed(2) : "none";
+          const mkt = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price).toFixed(2) : "none";
+
+          // Primary grouping subkey: if spec exists, combine with spec; else use price key
+          const subKey = spec ? `spec_${spec.toLowerCase()}__${cost}_${ret}_${mkt}` : `price_${cost}_${ret}_${mkt}`;
+
+          if (!subMap[subKey]) {
+            subMap[subKey] = { spec, items: [] };
+          }
+          subMap[subKey].items.push(item);
+        });
+
+        const subKeys = Object.keys(subMap);
+
+        if (subKeys.length === 1) {
+          // All items have uniform price / spec -> 1 brand row
+          const sub = subMap[subKeys[0]];
+          brandGroups.push({
+            brandKey: `${tierName}:::${brandName}:::0`,
+            brandName,
+            specLabel: sub.spec,
+            tierName,
+            items: sub.items
+          });
+        } else {
+          // Varied prices / specs -> split into separate brand rows
+          subKeys.forEach((subKey, idx) => {
+            const sub = subMap[subKey];
+            brandGroups.push({
+              brandKey: `${tierName}:::${brandName}:::${idx}_${subKey}`,
+              brandName,
+              specLabel: sub.spec,
+              tierName,
+              items: sub.items
+            });
+          });
+        }
+      });
+
+      return {
+        tierName,
+        brandGroups
+      };
+    });
+  }, [filteredItems, getProductBrandName, extractItemSpec]);
+
+  // Toggle brand expand/collapse
+  const toggleBrandExpand = (brandKey: string) => {
+    setExpandedBrandKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(brandKey)) next.delete(brandKey);
+      else next.add(brandKey);
+      return next;
+    });
+  };
+
+  // Expand all / collapse all brands
+  const toggleExpandAllBrands = () => {
+    const allKeys = groupedTierBrandItems.flatMap((t) => t.brandGroups.map((b) => b.brandKey));
+    if (expandedBrandKeys.size === allKeys.length) {
+      setExpandedBrandKeys(new Set());
+    } else {
+      setExpandedBrandKeys(new Set(allKeys));
+    }
+  };
+
+  // Cascade brand-level price edit to all child SKU rows
+  const handleBrandPriceChange = (brandItems: PriceItem[], field: "cost_price" | "retailer_price" | "market_price", val: number | null) => {
+    setEditRowsMap((prev) => {
+      const next = { ...prev };
+      brandItems.forEach((item) => {
+        next[item.id] = {
+          ...next[item.id],
+          [field]: val
+        };
+      });
+      return next;
+    });
+  };
 
   // Handle Sheet Creation / Update
   const handleSaveSheet = async (e: React.FormEvent) => {
@@ -579,100 +836,358 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
   };
 
   // Export / Print to Blob PDF (Direct new tab opening, no browser print dialog)
-  const handlePrintPdfBlob = () => {
+  const handlePrintPdfBlob = (forBuyer: boolean = false) => {
     if (!activeSheet) return;
     try {
-      showToast("Generating PDF Document...", "info");
+      showToast(forBuyer ? "Generating Buyer PDF Document..." : "Generating PDF Document...", "info");
       const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
       // Title & Header Information (Black & White Theme)
       doc.setFontSize(14);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(20, 20, 20); // Pure Black
-      doc.text("MARKET PRICE & RSP LISTING SHEET", 14, 15);
+      doc.text(forBuyer ? "PRODUCT & RSP LISTING SHEET" : "MARKET PRICE & RSP LISTING SHEET", 14, 15);
 
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(60, 60, 60); // Neutral dark charcoal
       doc.text(`Listing Sheet: ${activeSheet.name}`, 14, 21);
       
-      const retNames = activeSheetRetailerIds.map((rid) => getRetailerName(rid)).join(", ");
-      doc.text(`Assigned Retailers: ${retNames || "All Retailers"}`, 14, 26);
-      doc.text(`Generated Date: ${new Date().toLocaleString("en-SG")}`, 14, 31);
+      const retNames = activeSheetRetailerIds.map((rid) => getRetailerName(rid)).filter(Boolean).join(", ");
+      let currentHeaderY = 26;
+      if (retNames) {
+        doc.text(`Assigned Retailers: ${retNames}`, 14, currentHeaderY);
+        currentHeaderY += 5;
+      }
+      doc.text(`Generated Date: ${new Date().toLocaleString("en-SG")}`, 14, currentHeaderY);
 
-      // AutoTable Table (Clean Black & White / Grayscale Theme)
-      autoTable(doc, {
-        startY: 36,
-        head: [
-          [
-            "Product (SKU & Name)",
-            "Retailer SKU",
-            "Tier",
-            "Cost Price",
-            "Cost to Retailer",
-            "Market Price",
-            "Margin"
-          ]
-        ],
-        body: filteredItems.map((item) => {
-          const cost = item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price) : 0;
-          const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
-          const mkt = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : null;
-          
-          let marginStr = "-";
-          if (retCost > 0 || cost > 0) {
-            const gainAmt = retCost - cost;
-            marginStr = `${gainAmt >= 0 ? "+" : "-"}$${Math.abs(gainAmt).toFixed(2)}`;
-          }
-
-          const productCombined = `${item.product_sku || "-"}\n${item.product_name || ""}`.trim();
-
-          return [
-            productCombined,
-            item.retailer_sku || item.product_sku || "-",
-            item.store_tier || "Standard",
-            item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-",
-            item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-",
-            mkt !== null ? `$${mkt.toFixed(2)}` : "-",
-            marginStr
-          ];
-        }),
-        theme: "grid",
-        headStyles: {
-          fillColor: [30, 30, 30], // Black / Dark Charcoal
-          textColor: [255, 255, 255], // White
-          fontStyle: "bold",
-          fontSize: 8,
-          halign: "left"
-        },
-        bodyStyles: {
-          fontSize: 7.5,
-          textColor: [0, 0, 0] // Crisp Black
-        },
-        alternateRowStyles: {
-          fillColor: [248, 248, 248] // Subtle clean grayscale alternate
-        },
-        columnStyles: {
-          0: { cellWidth: "auto", fontStyle: "bold" },
-          1: { cellWidth: 28 },
-          2: { cellWidth: 18 },
-          3: { halign: "right", cellWidth: 22 },
-          4: { halign: "right", cellWidth: 26, fontStyle: "bold" },
-          5: { halign: "right", cellWidth: 24, fontStyle: "bold" },
-          6: { halign: "right", cellWidth: 30 }
-        },
-        didDrawPage: (data) => {
-          const pageCount = (doc.internal as any).getNumberOfPages();
-          doc.setFontSize(8);
-          doc.setTextColor(100, 100, 100);
-          doc.text(
-            `Page ${data.pageNumber} of ${pageCount} - HSG Global Internal Bridge (iB)`,
-            doc.internal.pageSize.getWidth() / 2,
-            doc.internal.pageSize.getHeight() - 8,
-            { align: "center" }
-          );
+      // Group items by Tier
+      const tierGroups: { [tierName: string]: PriceItem[] } = {};
+      filteredItems.forEach((item) => {
+        const tier = item.store_tier || "Standard";
+        if (!tierGroups[tier]) {
+          tierGroups[tier] = [];
         }
+        tierGroups[tier].push(item);
       });
+
+      const tierNames = Object.keys(tierGroups);
+
+      if (forBuyer) {
+        // ================= BUYER-FACING PDF (HIDES OUR COST) =================
+        tierNames.forEach((tierName, tierIdx) => {
+          const items = tierGroups[tierName];
+          const startY = tierIdx === 0 ? currentHeaderY + 5 : (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : currentHeaderY + 5;
+
+          // Tier Header Banner / Label
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(30, 30, 30);
+          doc.text(`Price Tier : ${tierName}`, 14, startY + 2);
+
+          autoTable(doc, {
+            startY: startY + 4,
+            head: [
+              [
+                "#",
+                "SKU",
+                "Description",
+                "Buyer Cost",
+                "Market Price"
+              ]
+            ],
+            body: items.map((item, idx) => {
+              const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
+              const mkt = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : 0;
+              
+              let mktMarginStr = "-";
+              if (mkt > 0 || retCost > 0) {
+                const mktGain = mkt - retCost;
+                const mktMarginPct = mkt > 0 ? Math.round(((mkt - retCost) / mkt) * 100) : (retCost > 0 ? -100 : 0);
+                mktMarginStr = `${mktGain >= 0 ? "+" : "-"}$${Math.abs(mktGain).toFixed(2)} (${mktMarginPct}%)`;
+              }
+
+              const productCombined = `${item.product_sku || "-"}\n${item.product_name || ""}`.trim();
+              const mktStr = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
+              const mktCombined = `${mktStr}\n${mktMarginStr}`;
+
+              return [
+                String(idx + 1),
+                item.retailer_sku || item.product_sku || "-",
+                productCombined,
+                item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-",
+                mktCombined
+              ];
+            }),
+            theme: "grid",
+            showHead: "everyPage",
+            rowPageBreak: "avoid",
+            margin: { top: 15, bottom: 20, left: 14, right: 14 },
+            headStyles: {
+              fillColor: [30, 30, 30],
+              textColor: [255, 255, 255],
+              fontStyle: "bold",
+              fontSize: 8,
+              halign: "center"
+            },
+            bodyStyles: {
+              fontSize: 7.5,
+              fontStyle: "normal",
+              textColor: [0, 0, 0]
+            },
+            alternateRowStyles: {
+              fillColor: [248, 248, 248]
+            },
+            columnStyles: {
+              0: { halign: "center", cellWidth: 10, fontStyle: "normal" },
+              1: { halign: "center", cellWidth: 32, fontStyle: "normal" },
+              2: { cellWidth: "auto", fontStyle: "normal" },
+              3: { halign: "right", cellWidth: 32, fontStyle: "normal" },
+              4: { halign: "right", cellWidth: 36, fontStyle: "normal" }
+            },
+            didParseCell: (data) => {
+              if (data.section === "body") {
+                if (data.column.index === 2 || data.column.index === 4) {
+                  data.cell.styles.minCellHeight = 9.5;
+                  data.cell.text = [];
+                }
+              }
+            },
+            didDrawCell: (data) => {
+              if (data.section === "body") {
+                const item = items[data.row.index];
+                if (!item) return;
+
+                if (data.column.index === 2) {
+                  const x = data.cell.x + 2;
+                  const y = data.cell.y + 3.8;
+                  // Our Product SKU (Bold)
+                  doc.setFont("helvetica", "bold");
+                  doc.setFontSize(7.5);
+                  doc.setTextColor(20, 20, 20);
+                  doc.text(item.product_sku || "-", x, y);
+                  // Product Name (small, unbold)
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(6);
+                  doc.setTextColor(80, 80, 80);
+                  const maxW = data.cell.width - 4;
+                  const nameLines = doc.splitTextToSize(item.product_name || "", maxW);
+                  doc.text(nameLines.slice(0, 2), x, y + 3.4);
+                } else if (data.column.index === 4) {
+                  const mktVal = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
+                  const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
+                  const mNum = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : 0;
+                  let mktMarginText = "-";
+                  if (mNum > 0 || retCost > 0) {
+                    const mktGain = mNum - retCost;
+                    const mktMarginPct = mNum > 0 ? Math.round(((mNum - retCost) / mNum) * 100) : (retCost > 0 ? -100 : 0);
+                    mktMarginText = `${mktGain >= 0 ? "+" : "-"}$${Math.abs(mktGain).toFixed(2)} (${mktMarginPct}%)`;
+                  }
+
+                  const x = data.cell.x + data.cell.width - 2;
+                  const y = data.cell.y + 3.8;
+                  // Market Price
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(7.5);
+                  doc.setTextColor(20, 20, 20);
+                  doc.text(mktVal, x, y, { align: "right" });
+                  // Market Margin (bottom, small font, unbold)
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(6);
+                  doc.setTextColor(90, 90, 90);
+                  doc.text(mktMarginText, x, y + 3.4, { align: "right" });
+                }
+              }
+            },
+            didDrawPage: (data) => {
+              const pageCount = (doc.internal as any).getNumberOfPages();
+              doc.setFontSize(8);
+              doc.setTextColor(100, 100, 100);
+              doc.text(
+                `Page ${data.pageNumber} of ${pageCount} - HSG Global Internal Bridge (iB)`,
+                doc.internal.pageSize.getWidth() / 2,
+                doc.internal.pageSize.getHeight() - 8,
+                { align: "center" }
+              );
+            }
+          });
+        });
+      } else {
+        // ================= INTERNAL FULL PDF (INCLUDES OUR COST) =================
+        tierNames.forEach((tierName, tierIdx) => {
+          const items = tierGroups[tierName];
+          const startY = tierIdx === 0 ? currentHeaderY + 5 : (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : currentHeaderY + 5;
+
+          // Tier Header Banner / Label
+          doc.setFontSize(9);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(30, 30, 30);
+          doc.text(`Price Tier : ${tierName}`, 14, startY + 2);
+
+          autoTable(doc, {
+            startY: startY + 4,
+            head: [
+              [
+                "#",
+                "SKU",
+                "Description",
+                "Our Cost",
+                "Buyer Cost",
+                "Market Price"
+              ]
+            ],
+            body: items.map((item, idx) => {
+              const cost = item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price) : 0;
+              const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
+              const mkt = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : 0;
+              
+              let ourMarginStr = "-";
+              if (retCost > 0 || cost > 0) {
+                const gainAmt = retCost - cost;
+                const marginPct = retCost > 0 ? Math.round(((retCost - cost) / retCost) * 100) : (cost > 0 ? -100 : 0);
+                ourMarginStr = `${gainAmt >= 0 ? "+" : "-"}$${Math.abs(gainAmt).toFixed(2)} (${marginPct}%)`;
+              }
+
+              let mktMarginStr = "-";
+              if (mkt > 0 || retCost > 0) {
+                const mktGain = mkt - retCost;
+                const mktMarginPct = mkt > 0 ? Math.round(((mkt - retCost) / mkt) * 100) : (retCost > 0 ? -100 : 0);
+                mktMarginStr = `${mktGain >= 0 ? "+" : "-"}$${Math.abs(mktGain).toFixed(2)} (${mktMarginPct}%)`;
+              }
+
+              const productCombined = `${item.product_sku || "-"}\n${item.product_name || ""}`.trim();
+              const costStr = item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-";
+              const costCombined = `${costStr}\n${ourMarginStr}`;
+              const mktStr = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
+              const mktCombined = `${mktStr}\n${mktMarginStr}`;
+
+              return [
+                String(idx + 1),
+                item.retailer_sku || item.product_sku || "-",
+                productCombined,
+                costCombined,
+                item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-",
+                mktCombined
+              ];
+            }),
+            theme: "grid",
+            showHead: "everyPage",
+            rowPageBreak: "avoid",
+            margin: { top: 15, bottom: 20, left: 14, right: 14 },
+            headStyles: {
+              fillColor: [30, 30, 30],
+              textColor: [255, 255, 255],
+              fontStyle: "bold",
+              fontSize: 8,
+              halign: "center"
+            },
+            bodyStyles: {
+              fontSize: 7.5,
+              fontStyle: "normal",
+              textColor: [0, 0, 0]
+            },
+            alternateRowStyles: {
+              fillColor: [248, 248, 248]
+            },
+            columnStyles: {
+              0: { halign: "center", cellWidth: 10, fontStyle: "normal" },
+              1: { halign: "center", cellWidth: 30, fontStyle: "normal" },
+              2: { cellWidth: "auto", fontStyle: "normal" },
+              3: { halign: "right", cellWidth: 32, fontStyle: "normal" },
+              4: { halign: "right", cellWidth: 28, fontStyle: "normal" },
+              5: { halign: "right", cellWidth: 32, fontStyle: "normal" }
+            },
+            didParseCell: (data) => {
+              if (data.section === "body") {
+                if (data.column.index === 2 || data.column.index === 3 || data.column.index === 5) {
+                  data.cell.styles.minCellHeight = 9.5;
+                  data.cell.text = [];
+                }
+              }
+            },
+            didDrawCell: (data) => {
+              if (data.section === "body") {
+                const item = items[data.row.index];
+                if (!item) return;
+
+                if (data.column.index === 2) {
+                  const x = data.cell.x + 2;
+                  const y = data.cell.y + 3.8;
+                  // Our Product SKU (Bold)
+                  doc.setFont("helvetica", "bold");
+                  doc.setFontSize(7.5);
+                  doc.setTextColor(20, 20, 20);
+                  doc.text(item.product_sku || "-", x, y);
+                  // Product Name (small, unbold)
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(6);
+                  doc.setTextColor(80, 80, 80);
+                  const maxW = data.cell.width - 4;
+                  const nameLines = doc.splitTextToSize(item.product_name || "", maxW);
+                  doc.text(nameLines.slice(0, 2), x, y + 3.4);
+                } else if (data.column.index === 3) {
+                  const cost = item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-";
+                  const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
+                  const cNum = item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price) : 0;
+                  let marginText = "-";
+                  if (retCost > 0 || cNum > 0) {
+                    const gainAmt = retCost - cNum;
+                    const marginPct = retCost > 0 ? Math.round(((retCost - cNum) / retCost) * 100) : (cNum > 0 ? -100 : 0);
+                    marginText = `${gainAmt >= 0 ? "+" : "-"}$${Math.abs(gainAmt).toFixed(2)} (${marginPct}%)`;
+                  }
+
+                  const x = data.cell.x + data.cell.width - 2;
+                  const y = data.cell.y + 3.8;
+                  // Our Cost
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(7.5);
+                  doc.setTextColor(20, 20, 20);
+                  doc.text(cost, x, y, { align: "right" });
+                  // Margin (bottom, small font, unbold)
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(6);
+                  doc.setTextColor(90, 90, 90);
+                  doc.text(marginText, x, y + 3.4, { align: "right" });
+                } else if (data.column.index === 5) {
+                  const mktVal = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
+                  const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
+                  const mNum = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : 0;
+                  let mktMarginText = "-";
+                  if (mNum > 0 || retCost > 0) {
+                    const mktGain = mNum - retCost;
+                    const mktMarginPct = mNum > 0 ? Math.round(((mNum - retCost) / mNum) * 100) : (retCost > 0 ? -100 : 0);
+                    mktMarginText = `${mktGain >= 0 ? "+" : "-"}$${Math.abs(mktGain).toFixed(2)} (${mktMarginPct}%)`;
+                  }
+
+                  const x = data.cell.x + data.cell.width - 2;
+                  const y = data.cell.y + 3.8;
+                  // Market Price
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(7.5);
+                  doc.setTextColor(20, 20, 20);
+                  doc.text(mktVal, x, y, { align: "right" });
+                  // Market Margin (bottom, small font, unbold)
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(6);
+                  doc.setTextColor(90, 90, 90);
+                  doc.text(mktMarginText, x, y + 3.4, { align: "right" });
+                }
+              }
+            },
+            didDrawPage: (data) => {
+              const pageCount = (doc.internal as any).getNumberOfPages();
+              doc.setFontSize(8);
+              doc.setTextColor(100, 100, 100);
+              doc.text(
+                `Page ${data.pageNumber} of ${pageCount} - HSG Global Internal Bridge (iB)`,
+                doc.internal.pageSize.getWidth() / 2,
+                doc.internal.pageSize.getHeight() - 8,
+                { align: "center" }
+              );
+            }
+          });
+        });
+      }
 
       // Output as Blob URL and open directly in new tab
       const blob = doc.output("blob");
@@ -693,19 +1208,29 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           <div>
             <h1 className="text-base font-bold text-zinc-950">Market Price & RSP Registry</h1>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Organize listing sheets, assign retailer clusters, manage Cost Price (Our Price), Cost to Retailer, Market Price (RSP), and Margin Gain.
+              Organize listing sheets, assign retailer clusters, manage Cost Price (Our Cost), Cost to Retailer (Buyer Cost), Market Price (RSP), and Margin Gain.
             </p>
           </div>
           <div className="flex items-center gap-2">
             {activeSheet && (
-              <button
-                onClick={handlePrintPdfBlob}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-zinc-800 text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer"
-                title="Open PDF in new tab (Blob)"
-              >
-                <Printer size={14} className="text-zinc-600" />
-                <span>Print PDF</span>
-              </button>
+              <>
+                <button
+                  onClick={() => handlePrintPdfBlob(false)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-zinc-800 text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer"
+                  title="Print full internal listing sheet with Our Cost"
+                >
+                  <Printer size={14} className="text-zinc-600" />
+                  <span>Print PDF</span>
+                </button>
+                <button
+                  onClick={() => handlePrintPdfBlob(true)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-zinc-800 text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer"
+                  title="Print buyer listing sheet (hides Our Cost)"
+                >
+                  <Printer size={14} className="text-[#0B57D0]" />
+                  <span>Print to Buyer</span>
+                </button>
+              </>
             )}
 
             <button
@@ -728,15 +1253,44 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         {/* Two-Panel Layout */}
         <div className="flex flex-1 min-h-0 overflow-hidden divide-x divide-slate-200">
           
-          {/* ================= LEFT PANEL: SHEETS LIST ================= */}
+          {/* ================= LEFT PANEL: SHEETS & RETAILERS LIST ================= */}
           <div className="w-80 shrink-0 flex flex-col bg-[#F8F9FA] overflow-hidden">
-            {/* Search Header */}
-            <div className="p-3 border-b border-slate-200 bg-white">
-              <div className="relative">
+            
+            {/* View Mode Toggle: View by Retailer vs View by Sheet */}
+            <div className="p-2.5 border-b border-slate-200 bg-white">
+              <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setSidebarViewMode("retailer")}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                    sidebarViewMode === "retailer"
+                      ? "bg-white text-[#0B57D0] shadow-xs font-bold"
+                      : "text-zinc-600 hover:text-zinc-900"
+                  }`}
+                >
+                  <Store size={13} />
+                  <span>By Retailer</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSidebarViewMode("sheet")}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                    sidebarViewMode === "sheet"
+                      ? "bg-white text-[#0B57D0] shadow-xs font-bold"
+                      : "text-zinc-600 hover:text-zinc-900"
+                  }`}
+                >
+                  <FileText size={13} />
+                  <span>By Sheet</span>
+                </button>
+              </div>
+
+              {/* Search Box */}
+              <div className="relative mt-2">
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
                 <input
                   type="text"
-                  placeholder="Search listing sheets..."
+                  placeholder={sidebarViewMode === "retailer" ? "Search retailers or sheets..." : "Search listing sheets..."}
                   value={sheetSearch}
                   onChange={(e) => setSheetSearch(e.target.value)}
                   className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] transition-all"
@@ -744,85 +1298,183 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               </div>
             </div>
 
-            {/* Sheets List Content */}
-            <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+            {/* Sidebar Content */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-2">
               {loadingSheets ? (
-                <div className="p-4 text-center text-xs text-zinc-400">Loading sheets...</div>
-              ) : filteredSheets.length === 0 ? (
-                <div className="p-6 text-center text-xs text-zinc-400">No listing sheets found.</div>
-              ) : (
-                filteredSheets.map((sheet) => {
-                  const isSelected = sheet.id === selectedSheetId;
-                  let rIds: string[] = [];
-                  try {
-                    rIds = typeof sheet.retailer_ids === "string" ? JSON.parse(sheet.retailer_ids) : (sheet.retailer_ids || []);
-                  } catch {}
+                <div className="p-4 text-center text-xs text-zinc-400">Loading catalog...</div>
+              ) : sidebarViewMode === "retailer" ? (
+                // ========== VIEW BY RETAILER (Retailer -> Listing Sheets) ==========
+                filteredRetailersWithSheets.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-zinc-400">No retailers found.</div>
+                ) : (
+                  filteredRetailersWithSheets.map((item) => {
+                    const isRetailerActive = item.retailerId === selectedRetailerId;
+                    const hasActiveSheetInRetailer = item.sheets.some((s) => s.id === selectedSheetId);
 
-                  return (
-                    <div
-                      key={sheet.id}
-                      onClick={() => setSelectedSheetId(sheet.id)}
-                      className={`group relative p-3 rounded-lg border transition-all cursor-pointer ${
-                        isSelected
-                          ? "bg-[#D3E3FD]/40 border-[#0B57D0] shadow-xs"
-                          : "bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <h3 className={`text-xs font-bold leading-tight ${isSelected ? "text-[#0B57D0]" : "text-zinc-900"}`}>
-                          {sheet.name}
-                        </h3>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setEditingSheet(sheet);
-                              setIsSheetModalOpen(true);
-                            }}
-                            className="p-1 hover:bg-slate-200 rounded text-zinc-600 hover:text-zinc-900"
-                            title="Edit Sheet"
-                          >
-                            <Edit2 size={12} />
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteSheet(sheet.id);
-                            }}
-                            className="p-1 hover:bg-red-50 rounded text-zinc-400 hover:text-red-600"
-                            title="Delete Sheet"
-                          >
-                            <Trash2 size={12} />
-                          </button>
+                    return (
+                      <div
+                        key={item.retailerId}
+                        className={`rounded-lg border transition-all overflow-hidden ${
+                          hasActiveSheetInRetailer
+                            ? "bg-white border-blue-300 shadow-xs"
+                            : "bg-white border-slate-200 hover:border-slate-300"
+                        }`}
+                      >
+                        {/* Retailer Header Card */}
+                        <div
+                          onClick={() => {
+                            setSelectedRetailerId(item.retailerId);
+                            if (item.sheets.length > 0 && !hasActiveSheetInRetailer) {
+                              setSelectedSheetId(item.sheets[0].id);
+                            }
+                          }}
+                          className={`p-2.5 flex items-center justify-between gap-2 cursor-pointer ${
+                            hasActiveSheetInRetailer ? "bg-[#D3E3FD]/30" : "hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="w-6 h-6 rounded bg-slate-100 flex items-center justify-center shrink-0 text-zinc-600">
+                              <Building2 size={13} />
+                            </div>
+                            <div className="min-w-0">
+                              <h3 className="text-xs font-bold text-zinc-900 truncate">
+                                {item.retailerName}
+                              </h3>
+                              <p className="text-[10px] text-zinc-500">
+                                {item.sheets.length} {item.sheets.length === 1 ? "Listing Sheet" : "Listing Sheets"}
+                              </p>
+                            </div>
+                          </div>
                         </div>
-                      </div>
 
-                      {sheet.description && (
-                        <p className="text-[11px] text-zinc-500 mt-1 line-clamp-1">{sheet.description}</p>
-                      )}
+                        {/* Associated Listing Sheets under this Retailer */}
+                        {item.sheets.length > 0 ? (
+                          <div className="p-1.5 bg-slate-50/70 border-t border-slate-100 space-y-1">
+                            {item.sheets.map((sheet) => {
+                              const isSheetSelected = sheet.id === selectedSheetId;
+                              return (
+                                <div
+                                  key={sheet.id}
+                                  onClick={() => {
+                                    setSelectedRetailerId(item.retailerId);
+                                    setSelectedSheetId(sheet.id);
+                                  }}
+                                  className={`group flex items-center justify-between p-2 rounded-md transition-all cursor-pointer ${
+                                    isSheetSelected
+                                      ? "bg-[#0B57D0] text-white shadow-xs font-semibold"
+                                      : "bg-white hover:bg-slate-100 border border-slate-200 text-zinc-800"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <FileText size={12} className={isSheetSelected ? "text-white" : "text-[#0B57D0]"} />
+                                    <span className="text-xs truncate">{sheet.name}</span>
+                                  </div>
 
-                      {/* Retailers Badge Pill */}
-                      <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                        <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-zinc-600 bg-slate-100 px-1.5 py-0.5 rounded">
-                          <Building2 size={10} />
-                          {rIds.length} Retailers
-                        </span>
-                        {rIds.slice(0, 2).map((rid) => (
-                          <span
-                            key={rid}
-                            className="text-[10px] text-zinc-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded truncate max-w-[110px]"
-                            title={getRetailerName(rid)}
-                          >
-                            {getRetailerName(rid)}
-                          </span>
-                        ))}
-                        {rIds.length > 2 && (
-                          <span className="text-[9px] text-zinc-400 font-bold">+{rIds.length - 2} more</span>
+                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setEditingSheet(sheet);
+                                        setIsSheetModalOpen(true);
+                                      }}
+                                      className={`p-0.5 rounded ${isSheetSelected ? "text-white hover:bg-blue-700" : "text-zinc-500 hover:bg-slate-200"}`}
+                                      title="Edit Sheet"
+                                    >
+                                      <Edit2 size={11} />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="p-2 text-[10px] text-zinc-400 text-center bg-slate-50/50">
+                            No listing sheets assigned
+                          </div>
                         )}
                       </div>
-                    </div>
-                  );
-                })
+                    );
+                  })
+                )
+              ) : (
+                // ========== VIEW BY LISTING SHEET (Flat Sheets List) ==========
+                filteredSheets.length === 0 ? (
+                  <div className="p-6 text-center text-xs text-zinc-400">No listing sheets found.</div>
+                ) : (
+                  filteredSheets.map((sheet) => {
+                    const isSelected = sheet.id === selectedSheetId;
+                    let rIds: string[] = [];
+                    try {
+                      rIds = typeof sheet.retailer_ids === "string" ? JSON.parse(sheet.retailer_ids) : (sheet.retailer_ids || []);
+                    } catch {}
+
+                    return (
+                      <div
+                        key={sheet.id}
+                        onClick={() => setSelectedSheetId(sheet.id)}
+                        className={`group relative p-3 rounded-lg border transition-all cursor-pointer ${
+                          isSelected
+                            ? "bg-[#D3E3FD]/40 border-[#0B57D0] shadow-xs"
+                            : "bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <h3 className={`text-xs font-bold leading-tight ${isSelected ? "text-[#0B57D0]" : "text-zinc-900"}`}>
+                            {sheet.name}
+                          </h3>
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingSheet(sheet);
+                                setIsSheetModalOpen(true);
+                              }}
+                              className="p-1 hover:bg-slate-200 rounded text-zinc-600 hover:text-zinc-900"
+                              title="Edit Sheet"
+                            >
+                              <Edit2 size={12} />
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSheet(sheet.id);
+                              }}
+                              className="p-1 hover:bg-red-50 rounded text-zinc-400 hover:text-red-600"
+                              title="Delete Sheet"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+
+                        {sheet.description && (
+                          <p className="text-[11px] text-zinc-500 mt-1 line-clamp-1">{sheet.description}</p>
+                        )}
+
+                        {/* Retailers Badge Pill */}
+                        <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                          <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-zinc-600 bg-slate-100 px-1.5 py-0.5 rounded">
+                            <Building2 size={10} />
+                            {rIds.length} Retailers
+                          </span>
+                          {rIds.slice(0, 2).map((rid) => (
+                            <span
+                              key={rid}
+                              className="text-[10px] text-zinc-500 bg-white border border-slate-200 px-1.5 py-0.5 rounded truncate max-w-[110px]"
+                              title={getRetailerName(rid)}
+                            >
+                              {getRetailerName(rid)}
+                            </span>
+                          ))}
+                          {rIds.length > 2 && (
+                            <span className="text-[9px] text-zinc-400 font-bold">+{rIds.length - 2} more</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                )
               )}
             </div>
           </div>
@@ -841,20 +1493,32 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                           {items.length} SKUs Listed
                         </span>
                       </div>
-                      <div className="text-[11px] text-zinc-500 mt-0.5 flex items-center gap-2">
-                        <span>Assigned Retailers:</span>
-                        <div className="flex items-center gap-1 flex-wrap">
-                          {activeSheetRetailerIds.map((rid) => (
-                            <span key={rid} className="font-semibold text-zinc-700 bg-white border border-slate-200 px-1.5 py-0.2 rounded text-[10px]">
-                              {getRetailerName(rid)}
-                            </span>
-                          ))}
+                      {activeSheetRetailerIds.length > 0 && (
+                        <div className="text-[11px] text-zinc-500 mt-0.5 flex items-center gap-2">
+                          <span>Assigned Retailers:</span>
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {activeSheetRetailerIds.map((rid) => (
+                              <span key={rid} className="font-semibold text-zinc-700 bg-white border border-slate-200 px-1.5 py-0.2 rounded text-[10px]">
+                                {getRetailerName(rid)}
+                              </span>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {/* Expand/Collapse All Brands Toggle */}
+                    <button
+                      type="button"
+                      onClick={toggleExpandAllBrands}
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium rounded-md shadow-xs cursor-pointer"
+                      title="Expand / Collapse all brand groups"
+                    >
+                      <span>{expandedBrandKeys.size > 0 ? "Collapse All Brands" : "Expand All Brands"}</span>
+                    </button>
+
                     {/* Toggle In-Table Edit Mode */}
                     <button
                       onClick={() => {
@@ -915,7 +1579,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
                       <input
                         type="text"
-                        placeholder="Search SKU or name..."
+                        placeholder="Search SKU, name, brand, or tier..."
                         value={itemSearch}
                         onChange={(e) => setItemSearch(e.target.value)}
                         className="w-full pl-8 pr-3 py-1 bg-slate-50 border border-slate-200 rounded text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
@@ -946,10 +1610,10 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   )}
                 </div>
 
-                {/* Table View */}
+                {/* Table View with Tier & Collapsible Brand Grouping */}
                 <div className="flex-1 min-h-0 overflow-auto">
                   <table className="w-full text-left border-collapse text-xs">
-                    <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 text-zinc-600 font-bold">
+                    <thead className="bg-[#F8F9FA] sticky top-0 z-20 border-b border-slate-200 text-zinc-600 font-bold">
                       <tr>
                         <th className="w-10 px-3 py-2 text-center">
                           <input
@@ -959,14 +1623,14 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                             className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
                           />
                         </th>
-                        <th className="px-3 py-2 min-w-[130px]">Product SKU</th>
-                        <th className="px-3 py-2 min-w-[180px]">Product Name</th>
-                        <th className="px-3 py-2 min-w-[130px]">Retailer SKU</th>
-                        <th className="px-3 py-2 min-w-[100px]">Store Tier</th>
-                        <th className="px-3 py-2 text-right min-w-[110px]">Cost Price (Our Price)</th>
-                        <th className="px-3 py-2 text-right min-w-[110px]">Cost to Retailer</th>
-                        <th className="px-3 py-2 text-right min-w-[110px]">Market Price (RSP)</th>
-                        <th className="px-3 py-2 text-right min-w-[110px]">Margin</th>
+                        <th className="px-3 py-2 min-w-[150px]">Product / Brand</th>
+                        <th className="px-3 py-2 min-w-[160px]">Product Name</th>
+                        <th className="px-3 py-2 min-w-[120px]">Retailer SKU</th>
+                        <th className="px-3 py-2 min-w-[90px]">Store Tier</th>
+                        <th className="px-3 py-2 text-right min-w-[115px]">Cost Price</th>
+                        <th className="px-3 py-2 text-right min-w-[115px]">Cost to Retailer</th>
+                        <th className="px-3 py-2 text-right min-w-[115px]">Market Price (RSP)</th>
+                        <th className="px-3 py-2 text-right min-w-[100px]">Margin</th>
                         <th className="w-24 px-3 py-2 text-center">Actions</th>
                       </tr>
                     </thead>
@@ -984,246 +1648,463 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                           </td>
                         </tr>
                       ) : (
-                        filteredItems.map((item) => {
-                          const isSelected = selectedItemIds.has(item.id);
-                          const editRow = editRowsMap[item.id] || item;
-
-                          // Values for computation
-                          const currentCost = isEditMode
-                            ? (editRow.cost_price !== undefined && editRow.cost_price !== null ? Number(editRow.cost_price) : 0)
-                            : (item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price) : 0);
-
-                          const currentRetailerCost = isEditMode
-                            ? (editRow.retailer_price !== undefined && editRow.retailer_price !== null ? Number(editRow.retailer_price) : 0)
-                            : (item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0);
-
-                          const gainAmt = currentRetailerCost - currentCost;
-                          const hasValues = (isEditMode ? (editRow.retailer_price !== null && editRow.retailer_price !== undefined) : (item.retailer_price !== null && item.retailer_price !== undefined)) ||
-                                            (isEditMode ? (editRow.cost_price !== null && editRow.cost_price !== undefined) : (item.cost_price !== null && item.cost_price !== undefined));
-
-                          return (
-                            <tr
-                              key={item.id}
-                              className={`transition-colors ${
-                                isSelected ? "bg-[#D3E3FD]/20" : isEditMode ? "hover:bg-amber-50/40 bg-amber-50/10" : "hover:bg-[#F0F4F9]/60"
-                              }`}
-                            >
-                              {/* Checkbox */}
-                              <td className="px-3 py-2 text-center align-middle">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => toggleSelectItem(item.id)}
-                                  className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
-                                />
-                              </td>
-
-                              {/* Product SKU (Locked) */}
-                              <td className="px-3 py-2 align-middle">
-                                <div className="font-mono font-bold text-zinc-800 flex items-center gap-1">
-                                  <span>{item.product_sku}</span>
-                                  {isEditMode && (
-                                    <span title="Product SKU is locked">
-                                      <Lock size={10} className="text-zinc-400" />
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-
-                              {/* Product Name */}
-                              <td className="px-3 py-2 align-middle">
-                                {isEditMode ? (
-                                  <input
-                                    type="text"
-                                    value={editRow.product_name ?? ""}
-                                    onChange={(e) => {
-                                      setEditRowsMap((prev) => ({
-                                        ...prev,
-                                        [item.id]: { ...prev[item.id], product_name: e.target.value }
-                                      }));
-                                    }}
-                                    className="w-full px-2 py-1 border border-slate-300 rounded bg-white text-xs text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                                  />
-                                ) : (
-                                  <span className="font-medium text-zinc-800 line-clamp-1" title={item.product_name}>
-                                    {item.product_name || "-"}
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Retailer SKU (Editable) */}
-                              <td className="px-3 py-2 align-middle">
-                                {isEditMode ? (
-                                  <input
-                                    type="text"
-                                    value={editRow.retailer_sku ?? ""}
-                                    onChange={(e) => {
-                                      setEditRowsMap((prev) => ({
-                                        ...prev,
-                                        [item.id]: { ...prev[item.id], retailer_sku: e.target.value }
-                                      }));
-                                    }}
-                                    className="w-full px-2 py-1 font-mono border border-slate-300 rounded bg-white text-xs text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                                  />
-                                ) : (
-                                  <span className="font-mono text-zinc-700">
-                                    {item.retailer_sku || item.product_sku}
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Store Tier */}
-                              <td className="px-3 py-2 align-middle">
-                                {isEditMode ? (
-                                  <select
-                                    value={editRow.store_tier || "Standard"}
-                                    onChange={(e) => {
-                                      setEditRowsMap((prev) => ({
-                                        ...prev,
-                                        [item.id]: { ...prev[item.id], store_tier: e.target.value }
-                                      }));
-                                    }}
-                                    className="w-full px-1.5 py-1 border border-slate-300 rounded bg-white text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                                  >
-                                    <option value="Standard">Standard</option>
-                                    <option value="Tier 1">Tier 1</option>
-                                    <option value="Tier 2">Tier 2</option>
-                                    <option value="Tier 3">Tier 3</option>
-                                  </select>
-                                ) : (
-                                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-zinc-700">
-                                    {item.store_tier || "Standard"}
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Cost Price (Our Price) */}
-                              <td className="px-3 py-2 text-right align-middle font-mono">
-                                {isEditMode ? (
-                                  <div className="relative">
-                                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      value={editRow.cost_price !== null && editRow.cost_price !== undefined ? editRow.cost_price : ""}
-                                      onChange={(e) => {
-                                        const val = e.target.value === "" ? null : parseFloat(e.target.value);
-                                        setEditRowsMap((prev) => ({
-                                          ...prev,
-                                          [item.id]: { ...prev[item.id], cost_price: val }
-                                        }));
-                                      }}
-                                      className="w-20 pl-4 pr-1 py-1 text-right border border-slate-300 rounded bg-white text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                                    />
-                                  </div>
-                                ) : (
-                                  <span className="font-semibold text-zinc-900">
-                                    {item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-"}
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Cost to Retailer */}
-                              <td className="px-3 py-2 text-right align-middle font-mono">
-                                {isEditMode ? (
-                                  <div className="relative">
-                                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      value={editRow.retailer_price !== null && editRow.retailer_price !== undefined ? editRow.retailer_price : ""}
-                                      onChange={(e) => {
-                                        const val = e.target.value === "" ? null : parseFloat(e.target.value);
-                                        setEditRowsMap((prev) => ({
-                                          ...prev,
-                                          [item.id]: { ...prev[item.id], retailer_price: val }
-                                        }));
-                                      }}
-                                      className="w-20 pl-4 pr-1 py-1 text-right border border-blue-300 rounded bg-white text-xs font-mono font-bold text-[#0B57D0] focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                                    />
-                                  </div>
-                                ) : (
-                                  <span className="font-bold text-[#0B57D0]">
-                                    {item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-"}
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Market Price (RSP) */}
-                              <td className="px-3 py-2 text-right align-middle font-mono">
-                                {isEditMode ? (
-                                  <div className="relative">
-                                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
-                                    <input
-                                      type="number"
-                                      step="0.01"
-                                      value={editRow.market_price !== null && editRow.market_price !== undefined ? editRow.market_price : ""}
-                                      onChange={(e) => {
-                                        const val = e.target.value === "" ? null : parseFloat(e.target.value);
-                                        setEditRowsMap((prev) => ({
-                                          ...prev,
-                                          [item.id]: { ...prev[item.id], market_price: val }
-                                        }));
-                                      }}
-                                      className="w-20 pl-4 pr-1 py-1 text-right border border-slate-300 rounded bg-white text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                                    />
-                                  </div>
-                                ) : (
-                                  <span className="font-bold text-zinc-950">
-                                    {item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-"}
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Margin (Live calculation) */}
-                              <td className="px-3 py-2 text-right align-middle font-mono">
-                                {hasValues ? (
-                                  gainAmt >= 0 ? (
-                                    <span className="text-emerald-700 font-semibold">
-                                      +${gainAmt.toFixed(2)}
-                                    </span>
-                                  ) : (
-                                    <span className="text-red-600 font-semibold">
-                                      -${Math.abs(gainAmt).toFixed(2)}
-                                    </span>
-                                  )
-                                ) : (
-                                  <span className="text-zinc-400">-</span>
-                                )}
-                              </td>
-
-                              {/* Actions */}
-                              <td className="px-3 py-2 text-center align-middle">
-                                <div className="flex items-center justify-center gap-1">
-                                  <button
-                                    onClick={() => {
-                                      setEditingItem(item);
-                                      setIsEditItemModalOpen(true);
-                                    }}
-                                    className="p-1 text-zinc-500 hover:text-zinc-900 hover:bg-slate-100 rounded cursor-pointer"
-                                    title="Edit Price"
-                                  >
-                                    <Edit2 size={13} />
-                                  </button>
-                                  <button
-                                    onClick={() => setHistoryDrawerItem(item)}
-                                    className="p-1 text-zinc-500 hover:text-[#0B57D0] hover:bg-blue-50 rounded cursor-pointer"
-                                    title="Price Audit Logs"
-                                  >
-                                    <History size={13} />
-                                  </button>
-                                  <button
-                                    onClick={() => handleDeleteItem(item.id)}
-                                    className="p-1 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer"
-                                    title="Delete Item"
-                                  >
-                                    <Trash2 size={13} />
-                                  </button>
-                                </div>
+                        groupedTierBrandItems.map((tierGroup) => (
+                          <React.Fragment key={tierGroup.tierName}>
+                            {/* Tier Header Divider */}
+                            <tr className="bg-[#F8F9FA] border-y border-slate-200 text-zinc-600 font-medium">
+                              <td colSpan={10} className="px-4 py-1 text-xs">
+                                <span className="font-semibold text-zinc-700">Tier:</span> {tierGroup.tierName}{" "}
+                                <span className="text-zinc-400 font-normal">
+                                  ({tierGroup.brandGroups.reduce((acc, bg) => acc + bg.items.length, 0)} SKUs)
+                                </span>
                               </td>
                             </tr>
-                          );
-                        })
+
+                            {/* Brand Parent / Summary Rows */}
+                            {tierGroup.brandGroups.map((bg) => {
+                              const isExpanded = expandedBrandKeys.has(bg.brandKey);
+                              const isAllSelected = bg.items.every((it) => selectedItemIds.has(it.id));
+                              const isSomeSelected = bg.items.some((it) => selectedItemIds.has(it.id)) && !isAllSelected;
+
+                              // Calculate brand summary prices (check if uniform or varied)
+                              const brandCostPrices = bg.items.map((it) => {
+                                const ed = editRowsMap[it.id] || it;
+                                return isEditMode ? ed.cost_price : it.cost_price;
+                              });
+                              const brandRetailerPrices = bg.items.map((it) => {
+                                const ed = editRowsMap[it.id] || it;
+                                return isEditMode ? ed.retailer_price : it.retailer_price;
+                              });
+                              const brandMarketPrices = bg.items.map((it) => {
+                                const ed = editRowsMap[it.id] || it;
+                                return isEditMode ? ed.market_price : it.market_price;
+                              });
+
+                              const uniformCost = brandCostPrices.every((v) => v === brandCostPrices[0]) ? brandCostPrices[0] : null;
+                              const uniformRetailer = brandRetailerPrices.every((v) => v === brandRetailerPrices[0]) ? brandRetailerPrices[0] : null;
+                              const uniformMarket = brandMarketPrices.every((v) => v === brandMarketPrices[0]) ? brandMarketPrices[0] : null;
+
+                              const numCost = uniformCost !== null && uniformCost !== undefined ? Number(uniformCost) : 0;
+                              const numRet = uniformRetailer !== null && uniformRetailer !== undefined ? Number(uniformRetailer) : 0;
+                              const brandGain = numRet - numCost;
+                              const brandHasValues = uniformRetailer !== null || uniformCost !== null;
+
+                              return (
+                                <React.Fragment key={bg.brandKey}>
+                                  {/* ============ BRAND PARENT ROW ============ */}
+                                  <tr
+                                    className={`border-b border-slate-200 transition-colors ${
+                                      isExpanded ? "bg-slate-50/70" : "bg-white hover:bg-slate-50/50"
+                                    }`}
+                                  >
+                                    {/* Selection Checkbox for all items in Brand */}
+                                    <td className="px-3 py-2 text-center align-middle">
+                                      <input
+                                        type="checkbox"
+                                        checked={isAllSelected}
+                                        ref={(el) => { if (el) el.indeterminate = isSomeSelected; }}
+                                        onChange={() => {
+                                          const next = new Set(selectedItemIds);
+                                          if (isAllSelected) {
+                                            bg.items.forEach((it) => next.delete(it.id));
+                                          } else {
+                                            bg.items.forEach((it) => next.add(it.id));
+                                          }
+                                          setSelectedItemIds(next);
+                                        }}
+                                        className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
+                                      />
+                                    </td>
+
+                                    {/* Brand Expand Toggle & Brand Name */}
+                                    <td className="px-3 py-2 align-middle">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleBrandExpand(bg.brandKey)}
+                                        className="flex items-center gap-1.5 text-left text-zinc-900 hover:text-[#0B57D0] cursor-pointer group"
+                                      >
+                                        <div className="w-4 h-4 rounded bg-slate-100 group-hover:bg-blue-100 flex items-center justify-center shrink-0 text-zinc-500 group-hover:text-[#0B57D0] transition-colors">
+                                          {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-xs font-semibold">{bg.brandName}</span>
+                                          {bg.specLabel && (
+                                            <span className="text-xs text-zinc-500 font-normal">
+                                              ({bg.specLabel})
+                                            </span>
+                                          )}
+                                        </div>
+                                      </button>
+                                    </td>
+
+                                    {/* Product Count (Simple text) */}
+                                    <td className="px-3 py-2 align-middle text-zinc-500 text-xs font-normal">
+                                      {bg.items.length} {bg.items.length === 1 ? "SKU" : "SKUs"}
+                                    </td>
+
+                                    {/* Retailer SKU col (Brand placeholder) */}
+                                    <td className="px-3 py-2 align-middle text-zinc-300 text-xs font-normal">
+                                      -
+                                    </td>
+
+                                    {/* Store Tier */}
+                                    <td className="px-3 py-2 align-middle text-zinc-500 text-xs font-normal">
+                                      {bg.tierName}
+                                    </td>
+
+                                    {/* Brand Cost Price (Cascade Edit) */}
+                                    <td className="px-3 py-2 text-right align-middle font-mono text-xs">
+                                      {isEditMode ? (
+                                        <div className="relative">
+                                          <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                          <input
+                                            type="number"
+                                            step="0.01"
+                                            placeholder={uniformCost === null ? "?" : "0.00"}
+                                            value={uniformCost !== null && uniformCost !== undefined ? uniformCost : ""}
+                                            onChange={(e) => {
+                                              const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                                              handleBrandPriceChange(bg.items, "cost_price", val);
+                                            }}
+                                            className="w-20 pl-4 pr-1 py-1 text-right border border-slate-300 rounded bg-amber-50/50 text-xs font-mono font-medium focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                            title="Edit Cost Price for ALL products in this brand"
+                                          />
+                                        </div>
+                                      ) : (
+                                        <span className={uniformCost !== null && uniformCost !== undefined ? "text-zinc-800 font-normal" : "text-zinc-400 font-normal"}>
+                                          {uniformCost !== null && uniformCost !== undefined ? `$${Number(uniformCost).toFixed(2)}` : "?"}
+                                        </span>
+                                      )}
+                                    </td>
+
+                                    {/* Brand Cost to Retailer (Cascade Edit) */}
+                                    <td className="px-3 py-2 text-right align-middle font-mono text-xs">
+                                      {isEditMode ? (
+                                        <div className="relative">
+                                          <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                          <input
+                                            type="number"
+                                            step="0.01"
+                                            placeholder={uniformRetailer === null ? "?" : "0.00"}
+                                            value={uniformRetailer !== null && uniformRetailer !== undefined ? uniformRetailer : ""}
+                                            onChange={(e) => {
+                                              const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                                              handleBrandPriceChange(bg.items, "retailer_price", val);
+                                            }}
+                                            className="w-20 pl-4 pr-1 py-1 text-right border border-blue-300 rounded bg-blue-50/40 text-xs font-mono font-medium text-[#0B57D0] focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                            title="Edit Cost to Retailer for ALL products in this brand"
+                                          />
+                                        </div>
+                                      ) : (
+                                        <span className={uniformRetailer !== null && uniformRetailer !== undefined ? "text-[#0B57D0] font-medium" : "text-zinc-400 font-normal"}>
+                                          {uniformRetailer !== null && uniformRetailer !== undefined ? `$${Number(uniformRetailer).toFixed(2)}` : "?"}
+                                        </span>
+                                      )}
+                                    </td>
+
+                                    {/* Brand Market Price (Cascade Edit) */}
+                                    <td className="px-3 py-2 text-right align-middle font-mono text-xs">
+                                      {isEditMode ? (
+                                        <div className="relative">
+                                          <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                          <input
+                                            type="number"
+                                            step="0.01"
+                                            placeholder={uniformMarket === null ? "?" : "0.00"}
+                                            value={uniformMarket !== null && uniformMarket !== undefined ? uniformMarket : ""}
+                                            onChange={(e) => {
+                                              const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                                              handleBrandPriceChange(bg.items, "market_price", val);
+                                            }}
+                                            className="w-20 pl-4 pr-1 py-1 text-right border border-slate-300 rounded bg-amber-50/50 text-xs font-mono font-medium focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                            title="Edit Market Price for ALL products in this brand"
+                                          />
+                                        </div>
+                                      ) : (
+                                        <span className={uniformMarket !== null && uniformMarket !== undefined ? "text-zinc-800 font-normal" : "text-zinc-400 font-normal"}>
+                                          {uniformMarket !== null && uniformMarket !== undefined ? `$${Number(uniformMarket).toFixed(2)}` : "?"}
+                                        </span>
+                                      )}
+                                    </td>
+
+                                    {/* Brand Margin */}
+                                    <td className="px-3 py-2 text-right align-middle font-mono text-xs">
+                                      {brandHasValues && uniformCost !== null && uniformRetailer !== null ? (
+                                        (() => {
+                                          const marginPct = numRet > 0 ? Math.round(((numRet - numCost) / numRet) * 100) : (numCost > 0 ? -100 : 0);
+                                          return brandGain >= 0 ? (
+                                            <span className="text-emerald-700 font-normal">
+                                              +${brandGain.toFixed(2)} ({marginPct}%)
+                                            </span>
+                                          ) : (
+                                            <span className="text-red-600 font-normal">
+                                              -${Math.abs(brandGain).toFixed(2)} ({marginPct}%)
+                                            </span>
+                                          );
+                                        })()
+                                      ) : (
+                                        <span className="text-zinc-400 font-normal">?</span>
+                                      )}
+                                    </td>
+
+                                    {/* Brand Actions */}
+                                    <td className="px-3 py-2 text-center align-middle">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleBrandExpand(bg.brandKey)}
+                                        className="text-xs text-zinc-500 hover:text-[#0B57D0] cursor-pointer"
+                                      >
+                                        {isExpanded ? "Collapse" : "Expand"}
+                                      </button>
+                                    </td>
+                                  </tr>
+
+                                  {/* ============ CHILD SKU ROWS (Expanded) ============ */}
+                                  {isExpanded && bg.items.map((item) => {
+                                    const isSelected = selectedItemIds.has(item.id);
+                                    const editRow = editRowsMap[item.id] || item;
+
+                                    const currentCost = isEditMode
+                                      ? (editRow.cost_price !== undefined && editRow.cost_price !== null ? Number(editRow.cost_price) : 0)
+                                      : (item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price) : 0);
+
+                                    const currentRetailerCost = isEditMode
+                                      ? (editRow.retailer_price !== undefined && editRow.retailer_price !== null ? Number(editRow.retailer_price) : 0)
+                                      : (item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0);
+
+                                    const gainAmt = currentRetailerCost - currentCost;
+                                    const hasValues = (isEditMode ? (editRow.retailer_price !== null && editRow.retailer_price !== undefined) : (item.retailer_price !== null && item.retailer_price !== undefined)) ||
+                                                      (isEditMode ? (editRow.cost_price !== null && editRow.cost_price !== undefined) : (item.cost_price !== null && item.cost_price !== undefined));
+
+                                    return (
+                                      <tr
+                                        key={item.id}
+                                        className={`transition-colors bg-slate-50/30 ${
+                                          isSelected ? "bg-[#D3E3FD]/20" : isEditMode ? "hover:bg-amber-50/40 bg-amber-50/10" : "hover:bg-[#F0F4F9]/50"
+                                        }`}
+                                      >
+                                        {/* Child Checkbox */}
+                                        <td className="px-3 py-2 text-center align-middle">
+                                          <input
+                                            type="checkbox"
+                                            checked={isSelected}
+                                            onChange={() => toggleSelectItem(item.id)}
+                                            className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
+                                          />
+                                        </td>
+
+                                        {/* Product SKU (Locked) with indented tree line */}
+                                        <td className="px-3 py-2 align-middle">
+                                          <div className="flex items-center gap-1.5 pl-4 font-mono text-zinc-600 text-xs">
+                                            <span className="text-zinc-300">↳</span>
+                                            <span>{item.product_sku}</span>
+                                            {isEditMode && (
+                                              <span title="Product SKU is locked">
+                                                <Lock size={10} className="text-zinc-400" />
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+
+                                        {/* Product Name */}
+                                        <td className="px-3 py-2 align-middle">
+                                          {isEditMode ? (
+                                            <input
+                                              type="text"
+                                              value={editRow.product_name ?? ""}
+                                              onChange={(e) => {
+                                                setEditRowsMap((prev) => ({
+                                                  ...prev,
+                                                  [item.id]: { ...prev[item.id], product_name: e.target.value }
+                                                }));
+                                              }}
+                                              className="w-full px-2 py-1 border border-slate-300 rounded bg-white text-xs text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                            />
+                                          ) : (
+                                            <span className="text-zinc-700 text-xs line-clamp-1" title={item.product_name}>
+                                              {item.product_name || "-"}
+                                            </span>
+                                          )}
+                                        </td>
+
+                                        {/* Retailer SKU (Editable) */}
+                                        <td className="px-3 py-2 align-middle">
+                                          {isEditMode ? (
+                                            <input
+                                              type="text"
+                                              value={editRow.retailer_sku ?? ""}
+                                              onChange={(e) => {
+                                                setEditRowsMap((prev) => ({
+                                                  ...prev,
+                                                  [item.id]: { ...prev[item.id], retailer_sku: e.target.value }
+                                                }));
+                                              }}
+                                              className="w-full px-2 py-1 font-mono border border-slate-300 rounded bg-white text-xs text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                            />
+                                          ) : (
+                                            <span className="font-mono text-zinc-600 text-xs">
+                                              {item.retailer_sku || item.product_sku}
+                                            </span>
+                                          )}
+                                        </td>
+
+                                        {/* Store Tier */}
+                                        <td className="px-3 py-2 align-middle">
+                                          {isEditMode ? (
+                                            <select
+                                              value={editRow.store_tier || "Standard"}
+                                              onChange={(e) => {
+                                                setEditRowsMap((prev) => ({
+                                                  ...prev,
+                                                  [item.id]: { ...prev[item.id], store_tier: e.target.value }
+                                                }));
+                                              }}
+                                              className="w-full px-1.5 py-1 border border-slate-300 rounded bg-white text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                            >
+                                              <option value="Standard">Standard</option>
+                                              <option value="Tier 1">Tier 1</option>
+                                              <option value="Tier 2">Tier 2</option>
+                                              <option value="Tier 3">Tier 3</option>
+                                            </select>
+                                          ) : (
+                                            <span className="text-zinc-500 text-xs">
+                                              {item.store_tier || "Standard"}
+                                            </span>
+                                          )}
+                                        </td>
+
+                                        {/* Cost Price (Our Price) */}
+                                        <td className="px-3 py-2 text-right align-middle font-mono text-xs">
+                                          {isEditMode ? (
+                                            <div className="relative">
+                                              <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                              <input
+                                                type="number"
+                                                step="0.01"
+                                                value={editRow.cost_price !== null && editRow.cost_price !== undefined ? editRow.cost_price : ""}
+                                                onChange={(e) => {
+                                                  const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                                                  setEditRowsMap((prev) => ({
+                                                    ...prev,
+                                                    [item.id]: { ...prev[item.id], cost_price: val }
+                                                  }));
+                                                }}
+                                                className="w-20 pl-4 pr-1 py-1 text-right border border-slate-300 rounded bg-white text-xs font-mono font-medium focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                              />
+                                            </div>
+                                          ) : (
+                                            <span className="text-zinc-700">
+                                              {item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-"}
+                                            </span>
+                                          )}
+                                        </td>
+
+                                        {/* Cost to Retailer */}
+                                        <td className="px-3 py-2 text-right align-middle font-mono text-xs">
+                                          {isEditMode ? (
+                                            <div className="relative">
+                                              <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                              <input
+                                                type="number"
+                                                step="0.01"
+                                                value={editRow.retailer_price !== null && editRow.retailer_price !== undefined ? editRow.retailer_price : ""}
+                                                onChange={(e) => {
+                                                  const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                                                  setEditRowsMap((prev) => ({
+                                                    ...prev,
+                                                    [item.id]: { ...prev[item.id], retailer_price: val }
+                                                  }));
+                                                }}
+                                                className="w-20 pl-4 pr-1 py-1 text-right border border-blue-300 rounded bg-white text-xs font-mono font-medium text-[#0B57D0] focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                              />
+                                            </div>
+                                          ) : (
+                                            <span className="text-[#0B57D0] font-medium">
+                                              {item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-"}
+                                            </span>
+                                          )}
+                                        </td>
+
+                                        {/* Market Price (RSP) */}
+                                        <td className="px-3 py-2 text-right align-middle font-mono text-xs">
+                                          {isEditMode ? (
+                                            <div className="relative">
+                                              <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                              <input
+                                                type="number"
+                                                step="0.01"
+                                                value={editRow.market_price !== null && editRow.market_price !== undefined ? editRow.market_price : ""}
+                                                onChange={(e) => {
+                                                  const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                                                  setEditRowsMap((prev) => ({
+                                                    ...prev,
+                                                    [item.id]: { ...prev[item.id], market_price: val }
+                                                  }));
+                                                }}
+                                                className="w-20 pl-4 pr-1 py-1 text-right border border-slate-300 rounded bg-white text-xs font-mono font-medium focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                              />
+                                            </div>
+                                          ) : (
+                                            <span className="text-zinc-700">
+                                              {item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-"}
+                                            </span>
+                                          )}
+                                        </td>
+
+                                        {/* Margin (Live calculation) */}
+                                        <td className="px-3 py-2 text-right align-middle font-mono text-xs">
+                                          {hasValues ? (
+                                            (() => {
+                                              const marginPct = currentRetailerCost > 0
+                                                ? Math.round(((currentRetailerCost - currentCost) / currentRetailerCost) * 100)
+                                                : (currentCost > 0 ? -100 : 0);
+                                              return gainAmt >= 0 ? (
+                                                <span className="text-emerald-700 font-normal">
+                                                  +${gainAmt.toFixed(2)} ({marginPct}%)
+                                                </span>
+                                              ) : (
+                                                <span className="text-red-600 font-normal">
+                                                  -${Math.abs(gainAmt).toFixed(2)} ({marginPct}%)
+                                                </span>
+                                              );
+                                            })()
+                                          ) : (
+                                            <span className="text-zinc-400 font-normal">-</span>
+                                          )}
+                                        </td>
+
+                                        {/* Actions */}
+                                        <td className="px-3 py-2 text-center align-middle">
+                                          <div className="flex items-center justify-center gap-1">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setEditingItem(item);
+                                                setIsEditItemModalOpen(true);
+                                              }}
+                                              className="p-1 hover:bg-slate-100 text-zinc-500 hover:text-[#0B57D0] rounded cursor-pointer transition-colors"
+                                              title="Edit item details"
+                                            >
+                                              <Edit2 size={12} />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeleteItem(item.id)}
+                                              className="p-1 hover:bg-red-50 text-zinc-400 hover:text-red-600 rounded cursor-pointer transition-colors"
+                                              title="Remove product from sheet"
+                                            >
+                                              <Trash2 size={12} />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </React.Fragment>
+                              );
+                            })}
+                          </React.Fragment>
+                        ))
                       )}
                     </tbody>
                   </table>
