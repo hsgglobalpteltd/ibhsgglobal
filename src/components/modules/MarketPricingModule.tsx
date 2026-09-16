@@ -64,7 +64,8 @@ interface PriceItem {
   product_sku: string;
   product_name: string;
   retailer_sku: string;
-  store_tier: string;
+  store_tier?: string;
+  listing_type?: string;
   cost_price: number | null; // Our Price (Base Cost)
   retailer_price: number | null; // Cost to Retailer (Wholesale Price)
   market_price: number | null; // Market Price (Shelf Price / RSP)
@@ -77,6 +78,15 @@ interface PriceItem {
   created_at?: number;
   updated_at?: number;
 }
+
+const LISTING_TYPES = [
+  "Standard",
+  "Permanent",
+  "Promotion",
+  "Special A",
+  "Special B",
+  "Special C"
+] as const;
 
 interface PriceLogEntry {
   action: string;
@@ -272,7 +282,15 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       const res = await fetch(`${API_BASE}/api/market-pricing/items?sheet_id=${encodeURIComponent(sheetId)}`);
       if (!res.ok) throw new Error("Failed to fetch sheet items");
       const data = await res.json();
-      const itemList = Array.isArray(data) ? data : [];
+      const rawList = Array.isArray(data) ? data : [];
+      const itemList = rawList.map((it: any) => {
+        const lt = it.listing_type || it.store_tier || "Standard";
+        return {
+          ...it,
+          listing_type: lt,
+          store_tier: lt
+        };
+      });
       setItems(itemList);
       setSelectedItemIds(new Set()); // Reset selection
       // Initialize edit map
@@ -682,6 +700,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         product_sku: sku,
         product_name: prodName,
         retailer_sku: sku, // Small retailers default to same SKU
+        listing_type: defaultStoreTier,
         store_tier: defaultStoreTier,
         cost_price: baseCost || null,
         retailer_price: null,
@@ -736,6 +755,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       product_sku: customSetForm.product_sku.trim().toUpperCase(),
       product_name: customSetForm.product_name.trim(),
       retailer_sku: (customSetForm.retailer_sku || customSetForm.product_sku).trim().toUpperCase(),
+      listing_type: customSetForm.store_tier || "Standard",
       store_tier: customSetForm.store_tier || "Standard",
       cost_price: costNum,
       retailer_price: retCostNum,
@@ -807,6 +827,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       product_sku: customSetForm.product_sku.trim().toUpperCase(),
       product_name: customSetForm.product_name.trim(),
       retailer_sku: (customSetForm.retailer_sku || customSetForm.product_sku).trim().toUpperCase(),
+      listing_type: customSetForm.store_tier || "Standard",
       store_tier: customSetForm.store_tier || "Standard",
       cost_price: costNum,
       retailer_price: retCostNum,
@@ -857,6 +878,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
     e.preventDefault();
     if (!editingItem) return;
 
+    const lt = editingItem.listing_type || editingItem.store_tier || "Standard";
+
     try {
       const res = await fetch(`${API_BASE}/api/market-pricing/items/bulk-edit`, {
         method: "POST",
@@ -865,7 +888,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           item_ids: [editingItem.id],
           product_name: editingItem.product_name,
           retailer_sku: editingItem.retailer_sku,
-          store_tier: editingItem.store_tier,
+          listing_type: lt,
+          store_tier: lt,
           cost_price: editingItem.cost_price,
           retailer_price: editingItem.retailer_price,
           market_price: editingItem.market_price,
@@ -930,11 +954,13 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
 
     const itemsToUpsert = items.map((orig) => {
       const edited = editRowsMap[orig.id] || {};
+      const lt = edited.listing_type !== undefined ? edited.listing_type : (edited.store_tier !== undefined ? edited.store_tier : (orig.listing_type || orig.store_tier || "Standard"));
       return {
         ...orig,
         product_name: edited.product_name !== undefined ? edited.product_name : orig.product_name,
         retailer_sku: edited.retailer_sku !== undefined ? edited.retailer_sku : orig.retailer_sku,
-        store_tier: edited.store_tier !== undefined ? edited.store_tier : orig.store_tier,
+        listing_type: lt,
+        store_tier: lt,
         cost_price: edited.cost_price !== undefined ? edited.cost_price : orig.cost_price,
         retailer_price: edited.retailer_price !== undefined ? edited.retailer_price : orig.retailer_price,
         market_price: edited.market_price !== undefined ? edited.market_price : orig.market_price,
@@ -1048,11 +1074,11 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           const items = tierGroups[tierName];
           const startY = tierIdx === 0 ? currentHeaderY + 5 : (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : currentHeaderY + 5;
 
-          // Tier Header Banner / Label
+          // Listing Type Header Banner / Label
           doc.setFontSize(9);
           doc.setFont("helvetica", "bold");
           doc.setTextColor(30, 30, 30);
-          doc.text(`Price Tier : ${tierName}`, 14, startY + 2);
+          doc.text(`Listing Type : ${tierName}`, 14, startY + 2);
 
           autoTable(doc, {
             startY: startY + 4,
@@ -1187,11 +1213,11 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           const items = tierGroups[tierName];
           const startY = tierIdx === 0 ? currentHeaderY + 5 : (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : currentHeaderY + 5;
 
-          // Tier Header Banner / Label
+          // Listing Type Header Banner / Label
           doc.setFontSize(9);
           doc.setFont("helvetica", "bold");
           doc.setTextColor(30, 30, 30);
-          doc.text(`Price Tier : ${tierName}`, 14, startY + 2);
+          doc.text(`Listing Type : ${tierName}`, 14, startY + 2);
 
           autoTable(doc, {
             startY: startY + 4,
@@ -1484,8 +1510,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       <div
                         key={item.retailerId}
                         className={`rounded-lg border transition-all overflow-hidden ${
-                          hasActiveSheetInRetailer
-                            ? "bg-white border-blue-300 shadow-xs"
+                          isRetailerActive
+                            ? "bg-white border-[#0B57D0]/40 shadow-xs"
                             : "bg-white border-slate-200 hover:border-slate-300"
                         }`}
                       >
@@ -1498,7 +1524,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                             }
                           }}
                           className={`p-2.5 flex items-center justify-between gap-2 cursor-pointer ${
-                            hasActiveSheetInRetailer ? "bg-[#D3E3FD]/30" : "hover:bg-slate-50"
+                            isRetailerActive ? "bg-slate-50" : "hover:bg-slate-50/50"
                           }`}
                         >
                           <div className="flex items-center gap-2 min-w-0">
@@ -1518,7 +1544,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
 
                         {/* Associated Listing Sheets under this Retailer */}
                         {item.sheets.length > 0 ? (
-                          <div className="p-1.5 bg-slate-50/70 border-t border-slate-100 space-y-1">
+                          <div className="p-1.5 bg-slate-50/50 border-t border-slate-100 space-y-1">
                             {item.sheets.map((sheet) => {
                               const isSheetSelected = sheet.id === selectedSheetId;
                               return (
@@ -1529,13 +1555,20 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                     setSelectedSheetId(sheet.id);
                                   }}
                                   className={`group flex items-center justify-between p-2 rounded-md transition-all cursor-pointer ${
-                                    isSheetSelected
-                                      ? "bg-[#0B57D0] text-white shadow-xs font-semibold"
-                                      : "bg-white hover:bg-slate-100 border border-slate-200 text-zinc-800"
+                                    isSheetSelected && isRetailerActive
+                                      ? "bg-[#D3E3FD]/70 border border-[#0B57D0]/30 text-[#041E49] font-semibold"
+                                      : isSheetSelected
+                                      ? "bg-blue-50/50 border border-blue-200/60 text-[#0B57D0] font-medium"
+                                      : "bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700"
                                   }`}
                                 >
                                   <div className="flex items-center gap-1.5 min-w-0">
-                                    <FileText size={12} className={isSheetSelected ? "text-white" : "text-[#0B57D0]"} />
+                                    <FileText
+                                      size={12}
+                                      className={
+                                        isSheetSelected ? "text-[#0B57D0]" : "text-zinc-400"
+                                      }
+                                    />
                                     <span className="text-xs truncate">{sheet.name}</span>
                                   </div>
 
@@ -1547,7 +1580,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                         setEditingSheet(sheet);
                                         setIsSheetModalOpen(true);
                                       }}
-                                      className={`p-0.5 rounded ${isSheetSelected ? "text-white hover:bg-blue-700" : "text-zinc-500 hover:bg-slate-200"}`}
+                                      className="p-0.5 rounded text-zinc-400 hover:text-zinc-700 hover:bg-slate-200/70"
                                       title="Edit Sheet"
                                     >
                                       <Edit2 size={11} />
@@ -1652,53 +1685,62 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           <div className="flex-1 flex flex-col bg-white overflow-hidden min-w-0">
             {activeSheet ? (
               <>
-                {/* Active Sheet Details Toolbar */}
-                <div className="px-4 py-2.5 border-b border-slate-200 bg-[#F8F9FA] flex flex-wrap items-center justify-between gap-3 shrink-0">
+                {/* Consolidated Clean Toolbar */}
+                <div className="px-4 py-2.5 border-b border-slate-200 bg-[#F8F9FA] flex items-center justify-between gap-3 shrink-0">
+                  {/* Left: Search Bar & Bulk Selection Action */}
                   <div className="flex items-center gap-3">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-zinc-900">{activeSheet.name}</span>
-                        <span className="text-[10px] font-semibold bg-blue-50 text-[#0B57D0] border border-blue-200 px-1.5 py-0.2 rounded">
-                          {items.length} SKUs Listed
-                        </span>
-                      </div>
-                      {activeSheetRetailerIds.length > 0 && (
-                        <div className="text-[11px] text-zinc-500 mt-0.5 flex items-center gap-2">
-                          <span>Assigned Retailers:</span>
-                          <div className="flex items-center gap-1 flex-wrap">
-                            {activeSheetRetailerIds.map((rid) => (
-                              <span key={rid} className="font-semibold text-zinc-700 bg-white border border-slate-200 px-1.5 py-0.2 rounded text-[10px]">
-                                {getRetailerName(rid)}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
+                    <div className="relative w-64">
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        type="text"
+                        placeholder="Search SKU, name, brand, or type..."
+                        value={itemSearch}
+                        onChange={(e) => setItemSearch(e.target.value)}
+                        className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                      />
                     </div>
+
+                    {selectedItemIds.size > 0 && !isEditMode && (
+                      <div className="flex items-center gap-2 pl-3 border-l border-slate-300 animate-in fade-in duration-150">
+                        <span className="text-xs font-semibold text-zinc-600 bg-white border border-slate-200 px-2 py-1 rounded">
+                          {selectedItemIds.size} Selected
+                        </span>
+                        <button
+                          onClick={() => {
+                            setBulkCostPrice("");
+                            setBulkRetailerPrice("");
+                            setBulkMarketPrice("");
+                            setBulkPriceRemark("");
+                            setIsBulkPriceModalOpen(true);
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-800 rounded-md shadow-xs cursor-pointer"
+                        >
+                          <TrendingUp size={13} className="text-[#0B57D0]" />
+                          <span>Bulk Edit</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
 
+                  {/* Right: Actions */}
                   <div className="flex items-center gap-2">
-                    {/* Expand/Collapse All Brands Toggle */}
                     <button
                       type="button"
                       onClick={toggleExpandAllBrands}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium rounded-md shadow-xs cursor-pointer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-zinc-700 text-xs font-medium rounded-md shadow-xs cursor-pointer"
                       title="Expand / Collapse all brand groups"
                     >
-                      <span>{expandedBrandKeys.size > 0 ? "Collapse All Brands" : "Expand All Brands"}</span>
+                      <span>{expandedBrandKeys.size > 0 ? "Collapse All" : "Expand All"}</span>
                     </button>
 
-                    {/* Toggle In-Table Edit Mode */}
                     <button
                       onClick={() => {
                         if (isEditMode) {
-                          // Cancel edit mode and reset
                           const map: Record<string, Partial<PriceItem>> = {};
                           items.forEach((it) => { map[it.id] = { ...it }; });
                           setEditRowsMap(map);
                           setIsEditMode(false);
                         } else {
-                          // Enter edit mode
                           const map: Record<string, Partial<PriceItem>> = {};
                           items.forEach((it) => { map[it.id] = { ...it }; });
                           setEditRowsMap(map);
@@ -1708,7 +1750,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer ${
                         isEditMode
                           ? "bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
-                          : "bg-white border border-slate-300 hover:bg-slate-50 text-zinc-800"
+                          : "bg-white border border-slate-200 hover:bg-slate-50 text-zinc-800"
                       }`}
                     >
                       <SlidersHorizontal size={13} className={isEditMode ? "text-amber-700" : "text-[#0B57D0]"} />
@@ -1722,7 +1764,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                         className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer disabled:opacity-50"
                       >
                         <Save size={13} />
-                        <span>{isSavingDirectEdit ? "Saving..." : "Save All Changes"}</span>
+                        <span>{isSavingDirectEdit ? "Saving..." : "Save Changes"}</span>
                       </button>
                     )}
 
@@ -1732,51 +1774,13 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                           setSelectedSkusToAdd(new Set());
                           setIsAddProductsModalOpen(true);
                         }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-zinc-800 rounded-md shadow-xs transition-colors cursor-pointer"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer"
                       >
-                        <Plus size={13} className="text-[#0B57D0]" />
+                        <Plus size={13} />
                         <span>Add Products</span>
                       </button>
                     )}
                   </div>
-                </div>
-
-                {/* Bulk Actions & Filter Toolbar */}
-                <div className="px-4 py-2 border-b border-slate-100 flex items-center justify-between gap-2 bg-white shrink-0">
-                  <div className="flex items-center gap-2 flex-1">
-                    <div className="relative w-64">
-                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                      <input
-                        type="text"
-                        placeholder="Search SKU, name, brand, or tier..."
-                        value={itemSearch}
-                        onChange={(e) => setItemSearch(e.target.value)}
-                        className="w-full pl-8 pr-3 py-1 bg-slate-50 border border-slate-200 rounded text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Bulk Action Buttons (Appear when >= 1 item selected) */}
-                  {selectedItemIds.size > 0 && !isEditMode && (
-                    <div className="flex items-center gap-2 animate-in fade-in duration-150">
-                      <span className="text-xs font-semibold text-zinc-500">
-                        {selectedItemIds.size} Selected
-                      </span>
-                      <button
-                        onClick={() => {
-                          setBulkCostPrice("");
-                          setBulkRetailerPrice("");
-                          setBulkMarketPrice("");
-                          setBulkPriceRemark("");
-                          setIsBulkPriceModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-800 rounded shadow-xs cursor-pointer"
-                      >
-                        <TrendingUp size={12} className="text-blue-600" />
-                        <span>Bulk Edit Prices</span>
-                      </button>
-                    </div>
-                  )}
                 </div>
 
                 {/* Table View with Tier & Collapsible Brand Grouping */}
@@ -1795,7 +1799,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                         <th className="px-3 py-2 min-w-[150px]">Product / Brand</th>
                         <th className="px-3 py-2 min-w-[160px]">Product Name</th>
                         <th className="px-3 py-2 min-w-[120px]">Retailer SKU</th>
-                        <th className="px-3 py-2 min-w-[90px]">Store Tier</th>
+                        <th className="px-3 py-2 min-w-[100px]">Listing Type</th>
                         <th className="px-3 py-2 text-right min-w-[115px]">Cost Price</th>
                         <th className="px-3 py-2 text-right min-w-[115px]">Cost to Retailer</th>
                         <th className="px-3 py-2 text-right min-w-[115px]">Market Price (RSP)</th>
@@ -1822,7 +1826,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                             {/* Tier Header Divider */}
                             <tr className="bg-[#F8F9FA] border-y border-slate-200 text-zinc-600 font-medium">
                               <td colSpan={10} className="px-4 py-1 text-xs">
-                                <span className="font-semibold text-zinc-700">Tier:</span> {tierGroup.tierName}{" "}
+                                <span className="font-semibold text-zinc-700">Listing Type:</span> {tierGroup.tierName}{" "}
                                 <span className="text-zinc-400 font-normal">
                                   ({tierGroup.brandGroups.reduce((acc, bg) => acc + bg.items.length, 0)} SKUs)
                                 </span>
@@ -2122,27 +2126,32 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                           )}
                                         </td>
 
-                                        {/* Store Tier */}
+                                        {/* Listing Type */}
                                         <td className="px-3 py-2 align-middle">
                                           {isEditMode ? (
                                             <select
-                                              value={editRow.store_tier || "Standard"}
+                                              value={editRow.listing_type || editRow.store_tier || "Standard"}
                                               onChange={(e) => {
                                                 setEditRowsMap((prev) => ({
                                                   ...prev,
-                                                  [item.id]: { ...prev[item.id], store_tier: e.target.value }
+                                                  [item.id]: {
+                                                    ...prev[item.id],
+                                                    listing_type: e.target.value,
+                                                    store_tier: e.target.value
+                                                  }
                                                 }));
                                               }}
                                               className="w-full px-1.5 py-1 border border-slate-300 rounded bg-white text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
                                             >
-                                              <option value="Standard">Standard</option>
-                                              <option value="Tier 1">Tier 1</option>
-                                              <option value="Tier 2">Tier 2</option>
-                                              <option value="Tier 3">Tier 3</option>
+                                              {LISTING_TYPES.map((lt) => (
+                                                <option key={lt} value={lt}>
+                                                  {lt}
+                                                </option>
+                                              ))}
                                             </select>
                                           ) : (
                                             <span className="text-zinc-500 text-xs">
-                                              {item.store_tier || "Standard"}
+                                              {item.listing_type || item.store_tier || "Standard"}
                                             </span>
                                           )}
                                         </td>
@@ -2513,18 +2522,19 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       )}
                     </div>
 
-                    {/* Default Store Tier */}
+                    {/* Default Listing Type */}
                     <div className="flex items-center gap-1.5 ml-1">
-                      <label className="text-xs font-semibold text-zinc-700">Tier:</label>
+                      <label className="text-xs font-semibold text-zinc-700">Listing Type:</label>
                       <select
                         value={defaultStoreTier}
                         onChange={(e) => setDefaultStoreTier(e.target.value)}
                         className="h-8 px-2 bg-white border border-slate-300 rounded text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
                       >
-                        <option value="Standard">Standard</option>
-                        <option value="Tier 1">Tier 1</option>
-                        <option value="Tier 2">Tier 2</option>
-                        <option value="Tier 3">Tier 3</option>
+                        {LISTING_TYPES.map((lt) => (
+                          <option key={lt} value={lt}>
+                            {lt}
+                          </option>
+                        ))}
                       </select>
                     </div>
                   </div>
@@ -2866,21 +2876,22 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                     </div>
                   </div>
 
-                  {/* Store Tier & UOM */}
+                  {/* Listing Type & Pack Spec */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        Store Tier
+                        Listing Type
                       </label>
                       <select
                         value={customSetForm.store_tier}
                         onChange={(e) => setCustomSetForm({ ...customSetForm, store_tier: e.target.value })}
                         className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
                       >
-                        <option value="Standard">Standard</option>
-                        <option value="Tier 1">Tier 1</option>
-                        <option value="Tier 2">Tier 2</option>
-                        <option value="Tier 3">Tier 3</option>
+                        {LISTING_TYPES.map((lt) => (
+                          <option key={lt} value={lt}>
+                            {lt}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div>
@@ -3005,21 +3016,22 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                     </div>
                   </div>
 
-                  {/* Store Tier, UOM & Pack Size */}
+                  {/* Listing Type, UOM & Pack Size */}
                   <div className="grid grid-cols-3 gap-3">
                     <div>
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        Store Tier
+                        Listing Type
                       </label>
                       <select
                         value={customSetForm.store_tier}
                         onChange={(e) => setCustomSetForm({ ...customSetForm, store_tier: e.target.value })}
                         className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
                       >
-                        <option value="Standard">Standard</option>
-                        <option value="Tier 1">Tier 1</option>
-                        <option value="Tier 2">Tier 2</option>
-                        <option value="Tier 3">Tier 3</option>
+                        {LISTING_TYPES.map((lt) => (
+                          <option key={lt} value={lt}>
+                            {lt}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div>
@@ -3116,17 +3128,24 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                    Store Tier
+                    Listing Type
                   </label>
                   <select
-                    value={editingItem.store_tier || "Standard"}
-                    onChange={(e) => setEditingItem({ ...editingItem, store_tier: e.target.value })}
+                    value={editingItem.listing_type || editingItem.store_tier || "Standard"}
+                    onChange={(e) =>
+                      setEditingItem({
+                        ...editingItem,
+                        listing_type: e.target.value,
+                        store_tier: e.target.value
+                      })
+                    }
                     className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
                   >
-                    <option value="Standard">Standard</option>
-                    <option value="Tier 1">Tier 1</option>
-                    <option value="Tier 2">Tier 2</option>
-                    <option value="Tier 3">Tier 3</option>
+                    {LISTING_TYPES.map((lt) => (
+                      <option key={lt} value={lt}>
+                        {lt}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>

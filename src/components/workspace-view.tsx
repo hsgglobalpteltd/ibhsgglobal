@@ -10,6 +10,7 @@ import {
   fetchWorkspaceDashboard,
   prefetchWorkspaceDashboard,
   getCachedWorkspaceData,
+  setCachedWorkspaceData,
   savePMProject,
   savePMMilestone,
   savePMAction,
@@ -953,6 +954,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
   const [formActionStartDate, setFormActionStartDate] = React.useState<string>("");
   const [formActionEndDate, setFormActionEndDate] = React.useState<string>("");
   const [formActionError, setFormActionError] = React.useState<string>("");
+  const [isSavingAction, setIsSavingAction] = React.useState<boolean>(false);
   const [proofReviewTarget, setProofReviewTarget] = React.useState<DummyTaskUpdate | null>(null);
   const [deleteActionConfirmTarget, setDeleteActionConfirmTarget] = React.useState<{
     action: DummyAction;
@@ -5292,7 +5294,26 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
 
       const previousProjects = [...projectsList];
 
-      // Optimistically update projectsList
+      setIsSavingAction(true);
+
+      // Construct the newly created dummy action or updated action
+      let targetNewAction: DummyAction | null = null;
+      if (!isEdit) {
+        targetNewAction = {
+          id: actionId,
+          title: formActionTitle.trim(),
+          assignee: assigneeNameCombined || "Unassigned",
+          assigneeEmail: assigneeEmailCombined,
+          startDate: startDateStr,
+          endDate: endDateStr,
+          status: "Pending Action",
+          progress: 0,
+          instructions: formActionInstructions.trim(),
+          logs: [],
+        };
+      }
+
+      // 1. Optimistically update local component state
       setProjectsList(prev => prev.map(proj => {
         if (proj.id !== currentProject.id) return proj;
         return {
@@ -5318,26 +5339,52 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                 })
               };
             } else {
-              const newAct: DummyAction = {
-                id: actionId,
-                title: formActionTitle.trim(),
-                assignee: assigneeNameCombined || "Unassigned",
-                assigneeEmail: assigneeEmailCombined,
-                startDate: startDateStr,
-                endDate: endDateStr,
-                status: "Pending Action",
-                progress: 0,
-                instructions: formActionInstructions.trim(),
-                logs: [],
-              };
               return {
                 ...ms,
-                actions: [...ms.actions, newAct]
+                actions: [...ms.actions, targetNewAction!]
               };
             }
           })
         };
       }));
+
+      // 2. Persist directly into localStorage cache (ib_workspace_cache) for instant local load across tabs/views
+      setCachedWorkspaceData(prev => {
+        const actions = Array.isArray(prev.actions) ? [...prev.actions] : [];
+        if (isEdit) {
+          const idx = actions.findIndex(a => a.id === actionId);
+          if (idx >= 0) {
+            actions[idx] = {
+              ...actions[idx],
+              title: formActionTitle.trim(),
+              instructions: formActionInstructions.trim(),
+              assigned_user_name: assigneeNameCombined,
+              assigned_user_id: assigneeEmailCombined,
+              start_date: startMs,
+              end_date: endMs,
+            };
+          }
+        } else {
+          actions.push({
+            id: actionId,
+            project_id: currentProject.id,
+            milestone_id: currentMilestone.id,
+            title: formActionTitle.trim(),
+            instructions: formActionInstructions.trim(),
+            assigned_user_name: assigneeNameCombined,
+            assigned_user_id: assigneeEmailCombined,
+            start_date: startMs,
+            end_date: endMs,
+            logs: JSON.stringify([]),
+            super_state: "Pending Action",
+            custom_status: "Pending Action",
+          });
+        }
+        return {
+          ...prev,
+          actions,
+        };
+      });
 
       // Close modal & reset fields immediately
       setIsAddActionModalOpen(false);
@@ -5345,10 +5392,10 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
       setFormActionInstructions("");
       showToast(isEdit ? "Action updated successfully!" : "Action created successfully!", "success");
 
-      // Background sync
+      // 3. Background sync to Cloudflare Workers / DB
       (async () => {
         try {
-          await savePMAction({
+          const saveRes = await savePMAction({
             id: actionId,
             project_id: currentProject.id,
             milestone_id: currentMilestone.id,
@@ -5359,11 +5406,39 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
             start_date: startMs,
             end_date: endMs,
           });
-          await loadWorkspaceData(true);
+
+          // If the backend assigned a canonical database ID, update it silently
+          if (saveRes && saveRes.action && saveRes.action.id && saveRes.action.id !== actionId) {
+            const canonicalId = saveRes.action.id;
+            setProjectsList(prev => prev.map(proj => {
+              if (proj.id !== currentProject.id) return proj;
+              return {
+                ...proj,
+                milestones: proj.milestones.map(ms => {
+                  if (ms.id !== currentMilestone.id) return ms;
+                  return {
+                    ...ms,
+                    actions: ms.actions.map(act => act.id === actionId ? { ...act, id: canonicalId } : act)
+                  };
+                })
+              };
+            }));
+
+            setCachedWorkspaceData(prev => {
+              const actions = Array.isArray(prev.actions) ? [...prev.actions] : [];
+              const idx = actions.findIndex(a => a.id === actionId);
+              if (idx >= 0) {
+                actions[idx] = { ...actions[idx], id: canonicalId };
+              }
+              return { ...prev, actions };
+            });
+          }
         } catch (err: any) {
           console.error("Failed to save action:", err);
           setProjectsList(previousProjects);
           showToast(err.message || "Failed to save action", "error");
+        } finally {
+          setIsSavingAction(false);
         }
       })();
     };
@@ -5967,6 +6042,10 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                             const logsCount = (act.logs || []).length;
                             const isSelectedAct = selectedLeaderActionId === act.id;
 
+                            const actEndMs = new Date(act.endDate).getTime();
+                            const actDaysLeft = Math.ceil((actEndMs - todayMs) / (1000 * 60 * 60 * 24));
+                            const isDueWithinWeek = (act.status !== "Completed" && act.status !== "Complete") && actDaysLeft >= 0 && actDaysLeft <= 7;
+
                             return (
                               <div
                                 key={act.id}
@@ -5977,10 +6056,16 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                                 className={`h-9 px-3 pl-8 flex items-center justify-between gap-2 border-t border-slate-100/70 text-xs cursor-pointer group/actrow transition-colors ${
                                   isSelectedAct ? "bg-blue-50/70" : "bg-white hover:bg-blue-50/40"
                                 }`}
-                                title="Click to select action"
+                                title={`Click to select action${isDueWithinWeek ? ` (Due in ${actDaysLeft}d)` : ""}`}
                               >
                                 <div className="flex items-center gap-2 flex-1 min-w-0 pr-1">
                                   <span className="text-zinc-300 text-[10px] shrink-0">↳</span>
+                                  {isDueWithinWeek && (
+                                    <span 
+                                      className="w-2 h-2 rounded-full bg-amber-500 animate-pulse-slow shrink-0 shadow-xs shadow-amber-500/50" 
+                                      title={`Due in ${actDaysLeft} day${actDaysLeft === 1 ? "" : "s"}`}
+                                    />
+                                  )}
                                   <span className="text-[11.5px] font-medium text-zinc-800 truncate group-hover/actrow:text-[#0B57D0]" title={act.title}>
                                     {act.title}
                                   </span>
@@ -6395,27 +6480,47 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                 displayedLeaderMilestones.map((item) => {
                   const isSelected = item.milestone.id === selectedLeaderMilestoneId;
                   const totalActs = item.milestone.actions.length;
-                  const compActs = item.milestone.actions.filter((a) => a.status === "Completed").length;
+                  const compActs = item.milestone.actions.filter((a) => a.status === "Completed" || a.status === "Complete").length;
+
+                  // Check if milestone has pending tasks due within 7 days
+                  const hasDueSoonTask = item.milestone.actions.some((act) => {
+                    const isDone = act.status === "Completed" || act.status === "Complete";
+                    if (isDone) return false;
+                    const dueMs = new Date(act.endDate).getTime();
+                    const diffDays = Math.ceil((dueMs - todayMs) / (1000 * 60 * 60 * 24));
+                    return diffDays >= 0 && diffDays <= 7;
+                  });
 
                   return (
                     <div
                       key={item.milestone.id}
                       onClick={() => setSelectedLeaderMilestoneId(item.milestone.id)}
-                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-2 ${
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex flex-col gap-2 relative ${
                         isSelected
                           ? "bg-[#D3E3FD]/30 border-[#0B57D0] shadow-2xs"
                           : "bg-white border-slate-200/90 hover:border-slate-300 hover:bg-zinc-50/70 shadow-xs"
                       }`}
                     >
                       {/* 1. Milestone Title: Big on top, wraps max 2 lines */}
-                      <h2
-                        className={`text-sm font-bold leading-snug line-clamp-2 ${
-                          isSelected ? "text-[#0B57D0]" : "text-zinc-950"
-                        }`}
-                        title={item.milestone.title}
-                      >
-                        {item.milestone.title}
-                      </h2>
+                      <div className="flex items-start justify-between gap-2">
+                        <h2
+                          className={`text-sm font-bold leading-snug line-clamp-2 flex-1 ${
+                            isSelected ? "text-[#0B57D0]" : "text-zinc-950"
+                          }`}
+                          title={item.milestone.title}
+                        >
+                          {item.milestone.title}
+                        </h2>
+                        {hasDueSoonTask && (
+                          <div 
+                            className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded-md bg-amber-50 border border-amber-200/80 text-[10px] font-semibold text-amber-800"
+                            title="Pending task inside due within 7 days"
+                          >
+                            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse-slow shrink-0 shadow-xs shadow-amber-500/50" />
+                            <span>Due soon</span>
+                          </div>
+                        )}
+                      </div>
 
                       {/* 2. Project Name: Small under milestone title */}
                       <div className="text-[11px] font-medium text-zinc-500 truncate" title={item.project.title}>
@@ -6583,6 +6688,11 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                   const isSelected = selectedLeaderAction?.id === act.id;
                   const logsCount = (act.logs || []).length;
 
+                  // Check if this pending action is due within 7 days
+                  const actEndMs = new Date(act.endDate).getTime();
+                  const actDaysLeft = Math.ceil((actEndMs - todayMs) / (1000 * 60 * 60 * 24));
+                  const isDueWithinWeek = !isDone && actDaysLeft >= 0 && actDaysLeft <= 7;
+
                   return (
                     <div
                       key={act.id}
@@ -6596,7 +6706,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                       {/* Left info */}
                       <div className="flex items-start gap-3 min-w-0 flex-1">
                         <div
-                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
+                          className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 relative ${
                             isDone
                               ? "bg-emerald-50 text-emerald-600 border border-emerald-200"
                               : isPendingVerif
@@ -6608,6 +6718,12 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                               : "bg-slate-100 text-zinc-500 border border-slate-200"
                           }`}
                         >
+                          {isDueWithinWeek && (
+                            <span 
+                              className="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse-slow shadow-xs shadow-amber-500/50 ring-2 ring-white" 
+                              title={`Deliverable due in ${actDaysLeft === 0 ? "today" : `${actDaysLeft} day${actDaysLeft === 1 ? "" : "s"}`}`}
+                            />
+                          )}
                           {isDone ? (
                             <Check size={16} className="stroke-[3]" />
                           ) : isPendingVerif ? (
@@ -6622,7 +6738,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                         </div>
 
                         <div className="flex flex-col gap-1 min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <h3 className={`text-xs font-bold leading-snug ${isSelected ? "text-[#0B57D0]" : "text-zinc-900"}`}>
                               {act.title}
                             </h3>
@@ -6645,6 +6761,15 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                             ) : (
                               <span className="text-[10px] font-medium px-2.5 py-0.5 rounded-full bg-slate-100 text-zinc-600 border border-slate-200 shrink-0">
                                 Pending Action
+                              </span>
+                            )}
+                            {isDueWithinWeek && (
+                              <span 
+                                className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200/90 flex items-center gap-1.5 shrink-0"
+                                title={`Due in ${actDaysLeft} day${actDaysLeft === 1 ? "" : "s"}`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse-slow" />
+                                <span>{actDaysLeft === 0 ? "Due Today" : `Due in ${actDaysLeft}d`}</span>
                               </span>
                             )}
                           </div>
@@ -7169,9 +7294,13 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                 <button
                   type="submit"
                   form="action-form"
-                  className="px-4 py-1.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium cursor-pointer shadow-2xs"
+                  disabled={isSavingAction}
+                  className="px-4 py-1.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-medium cursor-pointer shadow-2xs transition-all active:scale-95 flex items-center gap-1.5"
                 >
-                  {editingActionItem ? "Save Changes" : "Create Task"}
+                  {isSavingAction && (
+                    <div className="w-3 h-3 rounded-full border-2 border-white/30 border-t-white animate-spin shrink-0" />
+                  )}
+                  <span>{editingActionItem ? "Save Changes" : "Create Task"}</span>
                 </button>
               </div>
             </div>

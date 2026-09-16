@@ -669,6 +669,19 @@ export function prefetchWorkspaceDashboard(): Promise<any> {
   return workspaceDashboardPromise;
 }
 
+export function setCachedWorkspaceData(updater: (prev: any) => any) {
+  if (typeof window !== "undefined") {
+    try {
+      const current = getCachedWorkspaceData() || { success: true, projects: [], milestones: [], actions: [], pendingDelays: [], pipelines: [], systemUsers: [] };
+      const updated = updater(current);
+      cachedWorkspaceData = updated;
+      localStorage.setItem("ib_workspace_cache", JSON.stringify(updated));
+    } catch (e) {
+      console.error("Failed to update workspace cache:", e);
+    }
+  }
+}
+
 export async function fetchWorkspaceDashboard(forceFresh = false): Promise<{
   success: boolean;
   projects: any[];
