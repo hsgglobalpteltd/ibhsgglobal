@@ -8,18 +8,27 @@ import {
   Edit2,
   Trash2,
   History,
-  Tag,
   Building2,
   Check,
   X,
-  Clock,
   ArrowRight,
   TrendingUp,
-  Percent,
   Layers,
-  Sparkles,
-  AlertCircle
+  AlertCircle,
+  Printer,
+  SlidersHorizontal,
+  Lock,
+  Save
 } from "lucide-react";
+import jsPDF from "jspdf";
+import autoTable, { applyPlugin } from "jspdf-autotable";
+
+// Ensure autoTable plugin is registered on jsPDF instance
+try {
+  applyPlugin(jsPDF);
+} catch (_) {
+  // Ignored if already applied
+}
 
 interface MarketPricingModuleProps {
   profile?: {
@@ -45,12 +54,9 @@ interface PriceItem {
   product_name: string;
   retailer_sku: string;
   store_tier: string;
-  cost_price: number | null;
-  market_price: number | null;
-  promo_price: number | null;
-  promo_name: string | null;
-  promo_start: string | null;
-  promo_end: string | null;
+  cost_price: number | null; // Our Price (Base Cost)
+  retailer_price: number | null; // Cost to Retailer (Wholesale Price)
+  market_price: number | null; // Market Price (Shelf Price / RSP)
   uom: string;
   pack_size: string;
   status: string;
@@ -63,12 +69,10 @@ interface PriceLogEntry {
   action: string;
   old_cost?: number | null;
   new_cost?: number | null;
+  old_retailer_price?: number | null;
+  new_retailer_price?: number | null;
   old_market?: number | null;
   new_market?: number | null;
-  promo_name?: string | null;
-  promo_price?: number | null;
-  promo_start?: string | null;
-  promo_end?: string | null;
   remark?: string;
   action_by?: string;
   timestamp: number;
@@ -103,6 +107,11 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
   // Selection for bulk actions
   const [selectedItemIds, setSelectedItemIds] = React.useState<Set<string>>(new Set());
 
+  // In-Table Edit Mode States
+  const [isEditMode, setIsEditMode] = React.useState(false);
+  const [editRowsMap, setEditRowsMap] = React.useState<Record<string, Partial<PriceItem>>>({});
+  const [isSavingDirectEdit, setIsSavingDirectEdit] = React.useState(false);
+
   // Modals
   const [isSheetModalOpen, setIsSheetModalOpen] = React.useState(false);
   const [editingSheet, setEditingSheet] = React.useState<Partial<PriceSheet> | null>(null);
@@ -116,15 +125,9 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
 
   const [isBulkPriceModalOpen, setIsBulkPriceModalOpen] = React.useState(false);
   const [bulkCostPrice, setBulkCostPrice] = React.useState("");
+  const [bulkRetailerPrice, setBulkRetailerPrice] = React.useState("");
   const [bulkMarketPrice, setBulkMarketPrice] = React.useState("");
   const [bulkPriceRemark, setBulkPriceRemark] = React.useState("");
-
-  const [isBulkPromoModalOpen, setIsBulkPromoModalOpen] = React.useState(false);
-  const [bulkPromoName, setBulkPromoName] = React.useState("");
-  const [bulkPromoPrice, setBulkPromoPrice] = React.useState("");
-  const [bulkPromoStart, setBulkPromoStart] = React.useState("");
-  const [bulkPromoEnd, setBulkPromoEnd] = React.useState("");
-  const [bulkPromoRemark, setBulkPromoRemark] = React.useState("");
 
   // History Drawer State
   const [historyDrawerItem, setHistoryDrawerItem] = React.useState<PriceItem | null>(null);
@@ -199,8 +202,15 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       const res = await fetch(`${API_BASE}/api/market-pricing/items?sheet_id=${encodeURIComponent(sheetId)}`);
       if (!res.ok) throw new Error("Failed to fetch sheet items");
       const data = await res.json();
-      setItems(Array.isArray(data) ? data : []);
+      const itemList = Array.isArray(data) ? data : [];
+      setItems(itemList);
       setSelectedItemIds(new Set()); // Reset selection
+      // Initialize edit map
+      const map: Record<string, Partial<PriceItem>> = {};
+      itemList.forEach((it) => {
+        map[it.id] = { ...it };
+      });
+      setEditRowsMap(map);
     } catch (err: any) {
       showToast("Error loading items: " + err.message, "error");
     } finally {
@@ -210,10 +220,12 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
 
   // Fetch items when active sheet changes
   React.useEffect(() => {
+    setIsEditMode(false);
     if (selectedSheetId) {
       fetchItems(selectedSheetId);
     } else {
       setItems([]);
+      setEditRowsMap({});
     }
   }, [selectedSheetId]);
 
@@ -222,23 +234,6 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
     const found = retailers.find((r) => String(r.id || r.ID) === String(id));
     return found ? found.display_name || found["Display Name"] || found.name || `Retailer #${id}` : `Retailer #${id}`;
   };
-
-  // Retailer Assignment Map (Check which retailer belongs to which sheet)
-  const assignedRetailersMap = React.useMemo(() => {
-    const map = new Map<string, string>(); // retailer_id -> sheet_name
-    sheets.forEach((s) => {
-      let rIds: string[] = [];
-      try {
-        rIds = typeof s.retailer_ids === "string" ? JSON.parse(s.retailer_ids) : (s.retailer_ids || []);
-      } catch {
-        rIds = [];
-      }
-      rIds.forEach((rid) => {
-        map.set(String(rid), s.name);
-      });
-    });
-    return map;
-  }, [sheets]);
 
   // Filtered Sheets
   const filteredSheets = React.useMemo(() => {
@@ -272,12 +267,6 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       return [];
     }
   }, [activeSheet]);
-
-  // Find Brand Name Helper
-  const getBrandName = (brandId: string) => {
-    const found = brands.find((b) => String(b.id || b.ID) === String(brandId));
-    return found ? found.display_name || found["Display Name"] || found.name || brandId : brandId;
-  };
 
   // Filtered and Brand-Sorted Products for Add Modal
   const sortedAndGroupedProductsToAdd = React.useMemo(() => {
@@ -328,8 +317,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         it.product_sku?.toLowerCase().includes(q) ||
         it.product_name?.toLowerCase().includes(q) ||
         it.retailer_sku?.toLowerCase().includes(q) ||
-        it.store_tier?.toLowerCase().includes(q) ||
-        it.promo_name?.toLowerCase().includes(q)
+        it.store_tier?.toLowerCase().includes(q)
     );
   }, [items, itemSearch]);
 
@@ -348,7 +336,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         body: JSON.stringify(editingSheet)
       });
       if (!res.ok) {
-        const errData = await res.json();
+        const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || "Failed to save sheet");
       }
       showToast("Listing Sheet saved successfully!", "success");
@@ -407,6 +395,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         retailer_sku: sku, // Small retailers default to same SKU
         store_tier: defaultStoreTier,
         cost_price: baseCost || null,
+        retailer_price: null,
         market_price: null,
         uom: uom,
         pack_size: pack,
@@ -424,7 +413,10 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           action_by: profile?.name || profile?.email || "Operator"
         })
       });
-      if (!res.ok) throw new Error("Failed to add products");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to add products");
+      }
       showToast(`Added ${itemsToAdd.length} products to sheet`, "success");
       setIsAddProductsModalOpen(false);
       setSelectedSkusToAdd(new Set());
@@ -445,15 +437,21 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           item_ids: [editingItem.id],
-          update_type: "price",
+          product_name: editingItem.product_name,
+          retailer_sku: editingItem.retailer_sku,
+          store_tier: editingItem.store_tier,
           cost_price: editingItem.cost_price,
+          retailer_price: editingItem.retailer_price,
           market_price: editingItem.market_price,
           remark: "Manual Item Edit",
           action_by: profile?.name || profile?.email || "Operator"
         })
       });
-      if (!res.ok) throw new Error("Failed to update item");
-      showToast("Pricing updated", "success");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to update item");
+      }
+      showToast("Pricing updated successfully", "success");
       setIsEditItemModalOpen(false);
       setEditingItem(null);
       await fetchItems(selectedSheetId);
@@ -465,8 +463,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
   // Handle Bulk Price Update
   const handleApplyBulkPrice = async () => {
     if (selectedItemIds.size === 0) return;
-    if (!bulkCostPrice && !bulkMarketPrice) {
-      showToast("Please enter either a Cost Price or Market Price", "error");
+    if (!bulkCostPrice && !bulkRetailerPrice && !bulkMarketPrice) {
+      showToast("Please enter at least one price to update", "error");
       return;
     }
 
@@ -476,17 +474,21 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           item_ids: Array.from(selectedItemIds),
-          update_type: "price",
           cost_price: bulkCostPrice || undefined,
+          retailer_price: bulkRetailerPrice || undefined,
           market_price: bulkMarketPrice || undefined,
           remark: bulkPriceRemark || "Bulk Price Update",
           action_by: profile?.name || profile?.email || "Operator"
         })
       });
-      if (!res.ok) throw new Error("Failed to apply bulk pricing");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to apply bulk pricing");
+      }
       showToast(`Updated pricing for ${selectedItemIds.size} items`, "success");
       setIsBulkPriceModalOpen(false);
       setBulkCostPrice("");
+      setBulkRetailerPrice("");
       setBulkMarketPrice("");
       setBulkPriceRemark("");
       await fetchItems(selectedSheetId);
@@ -495,61 +497,45 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
     }
   };
 
-  // Handle Bulk Promo Update
-  const handleApplyBulkPromo = async () => {
-    if (selectedItemIds.size === 0) return;
-    if (!bulkPromoPrice) {
-      showToast("Promotion Price is required", "error");
-      return;
-    }
+  // Handle Direct In-Table CRUD Save All
+  const handleSaveAllEditRows = async () => {
+    if (!selectedSheetId) return;
+    setIsSavingDirectEdit(true);
+
+    const itemsToUpsert = items.map((orig) => {
+      const edited = editRowsMap[orig.id] || {};
+      return {
+        ...orig,
+        product_name: edited.product_name !== undefined ? edited.product_name : orig.product_name,
+        retailer_sku: edited.retailer_sku !== undefined ? edited.retailer_sku : orig.retailer_sku,
+        store_tier: edited.store_tier !== undefined ? edited.store_tier : orig.store_tier,
+        cost_price: edited.cost_price !== undefined ? edited.cost_price : orig.cost_price,
+        retailer_price: edited.retailer_price !== undefined ? edited.retailer_price : orig.retailer_price,
+        market_price: edited.market_price !== undefined ? edited.market_price : orig.market_price,
+      };
+    });
 
     try {
-      const res = await fetch(`${API_BASE}/api/market-pricing/items/bulk-edit`, {
+      const res = await fetch(`${API_BASE}/api/market-pricing/items/upsert-bulk`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          item_ids: Array.from(selectedItemIds),
-          update_type: "promotion",
-          promo_name: bulkPromoName || "Special Promotion",
-          promo_price: bulkPromoPrice,
-          promo_start: bulkPromoStart || null,
-          promo_end: bulkPromoEnd || null,
-          remark: bulkPromoRemark || "Bulk Promo Update",
+          sheet_id: selectedSheetId,
+          items: itemsToUpsert,
           action_by: profile?.name || profile?.email || "Operator"
         })
       });
-      if (!res.ok) throw new Error("Failed to apply promotion");
-      showToast(`Applied promotion to ${selectedItemIds.size} items`, "success");
-      setIsBulkPromoModalOpen(false);
-      setBulkPromoName("");
-      setBulkPromoPrice("");
-      setBulkPromoStart("");
-      setBulkPromoEnd("");
-      setBulkPromoRemark("");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to save table edits");
+      }
+      showToast("All table changes saved successfully!", "success");
+      setIsEditMode(false);
       await fetchItems(selectedSheetId);
     } catch (err: any) {
-      showToast("Bulk promo failed: " + err.message, "error");
-    }
-  };
-
-  // Handle Remove Promotion
-  const handleRemovePromo = async (itemId: string) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/market-pricing/items/bulk-edit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          item_ids: [itemId],
-          update_type: "remove_promotion",
-          remark: "Promo Ended",
-          action_by: profile?.name || profile?.email || "Operator"
-        })
-      });
-      if (!res.ok) throw new Error("Failed to remove promotion");
-      showToast("Promotion removed", "success");
-      await fetchItems(selectedSheetId);
-    } catch (err: any) {
-      showToast("Action failed: " + err.message, "error");
+      showToast("Save failed: " + err.message, "error");
+    } finally {
+      setIsSavingDirectEdit(false);
     }
   };
 
@@ -592,6 +578,111 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
     setSelectedItemIds(next);
   };
 
+  // Export / Print to Blob PDF (Direct new tab opening, no browser print dialog)
+  const handlePrintPdfBlob = () => {
+    if (!activeSheet) return;
+    try {
+      showToast("Generating PDF Document...", "info");
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+
+      // Title & Header Information (Black & White Theme)
+      doc.setFontSize(14);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(20, 20, 20); // Pure Black
+      doc.text("MARKET PRICE & RSP LISTING SHEET", 14, 15);
+
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(60, 60, 60); // Neutral dark charcoal
+      doc.text(`Listing Sheet: ${activeSheet.name}`, 14, 21);
+      
+      const retNames = activeSheetRetailerIds.map((rid) => getRetailerName(rid)).join(", ");
+      doc.text(`Assigned Retailers: ${retNames || "All Retailers"}`, 14, 26);
+      doc.text(`Generated Date: ${new Date().toLocaleString("en-SG")}`, 14, 31);
+
+      // AutoTable Table (Clean Black & White / Grayscale Theme)
+      autoTable(doc, {
+        startY: 36,
+        head: [
+          [
+            "Product (SKU & Name)",
+            "Retailer SKU",
+            "Tier",
+            "Cost Price",
+            "Cost to Retailer",
+            "Market Price",
+            "Margin"
+          ]
+        ],
+        body: filteredItems.map((item) => {
+          const cost = item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price) : 0;
+          const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
+          const mkt = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : null;
+          
+          let marginStr = "-";
+          if (retCost > 0 || cost > 0) {
+            const gainAmt = retCost - cost;
+            marginStr = `${gainAmt >= 0 ? "+" : "-"}$${Math.abs(gainAmt).toFixed(2)}`;
+          }
+
+          const productCombined = `${item.product_sku || "-"}\n${item.product_name || ""}`.trim();
+
+          return [
+            productCombined,
+            item.retailer_sku || item.product_sku || "-",
+            item.store_tier || "Standard",
+            item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-",
+            item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-",
+            mkt !== null ? `$${mkt.toFixed(2)}` : "-",
+            marginStr
+          ];
+        }),
+        theme: "grid",
+        headStyles: {
+          fillColor: [30, 30, 30], // Black / Dark Charcoal
+          textColor: [255, 255, 255], // White
+          fontStyle: "bold",
+          fontSize: 8,
+          halign: "left"
+        },
+        bodyStyles: {
+          fontSize: 7.5,
+          textColor: [0, 0, 0] // Crisp Black
+        },
+        alternateRowStyles: {
+          fillColor: [248, 248, 248] // Subtle clean grayscale alternate
+        },
+        columnStyles: {
+          0: { cellWidth: "auto", fontStyle: "bold" },
+          1: { cellWidth: 28 },
+          2: { cellWidth: 18 },
+          3: { halign: "right", cellWidth: 22 },
+          4: { halign: "right", cellWidth: 26, fontStyle: "bold" },
+          5: { halign: "right", cellWidth: 24, fontStyle: "bold" },
+          6: { halign: "right", cellWidth: 30 }
+        },
+        didDrawPage: (data) => {
+          const pageCount = (doc.internal as any).getNumberOfPages();
+          doc.setFontSize(8);
+          doc.setTextColor(100, 100, 100);
+          doc.text(
+            `Page ${data.pageNumber} of ${pageCount} - HSG Global Internal Bridge (iB)`,
+            doc.internal.pageSize.getWidth() / 2,
+            doc.internal.pageSize.getHeight() - 8,
+            { align: "center" }
+          );
+        }
+      });
+
+      // Output as Blob URL and open directly in new tab
+      const blob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank");
+    } catch (err: any) {
+      showToast("PDF generation failed: " + err.message, "error");
+    }
+  };
+
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden bg-[#F8F9FA] font-primary">
       {/* 🏛️ Outer Shell Container (Section 7 Standard) */}
@@ -602,10 +693,21 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           <div>
             <h1 className="text-base font-bold text-zinc-950">Market Price & RSP Registry</h1>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Organize pricing sheets, assign retailer clusters, manage shelf market prices, RSP tiers, and run bulk promotions with immutable audit logs.
+              Organize listing sheets, assign retailer clusters, manage Cost Price (Our Price), Cost to Retailer, Market Price (RSP), and Margin Gain.
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {activeSheet && (
+              <button
+                onClick={handlePrintPdfBlob}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-300 hover:bg-slate-50 text-zinc-800 text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer"
+                title="Open PDF in new tab (Blob)"
+              >
+                <Printer size={14} className="text-zinc-600" />
+                <span>Print PDF</span>
+              </button>
+            )}
+
             <button
               onClick={() => {
                 setEditingSheet({
@@ -753,16 +855,56 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   </div>
 
                   <div className="flex items-center gap-2">
+                    {/* Toggle In-Table Edit Mode */}
                     <button
                       onClick={() => {
-                        setSelectedSkusToAdd(new Set());
-                        setIsAddProductsModalOpen(true);
+                        if (isEditMode) {
+                          // Cancel edit mode and reset
+                          const map: Record<string, Partial<PriceItem>> = {};
+                          items.forEach((it) => { map[it.id] = { ...it }; });
+                          setEditRowsMap(map);
+                          setIsEditMode(false);
+                        } else {
+                          // Enter edit mode
+                          const map: Record<string, Partial<PriceItem>> = {};
+                          items.forEach((it) => { map[it.id] = { ...it }; });
+                          setEditRowsMap(map);
+                          setIsEditMode(true);
+                        }
                       }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-zinc-800 rounded-md shadow-xs transition-colors cursor-pointer"
+                      className={`inline-flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer ${
+                        isEditMode
+                          ? "bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200"
+                          : "bg-white border border-slate-300 hover:bg-slate-50 text-zinc-800"
+                      }`}
                     >
-                      <Plus size={13} className="text-[#0B57D0]" />
-                      <span>Add Products</span>
+                      <SlidersHorizontal size={13} className={isEditMode ? "text-amber-700" : "text-[#0B57D0]"} />
+                      <span>{isEditMode ? "Exit Edit Mode" : "Edit Mode"}</span>
                     </button>
+
+                    {isEditMode && (
+                      <button
+                        onClick={handleSaveAllEditRows}
+                        disabled={isSavingDirectEdit}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <Save size={13} />
+                        <span>{isSavingDirectEdit ? "Saving..." : "Save All Changes"}</span>
+                      </button>
+                    )}
+
+                    {!isEditMode && (
+                      <button
+                        onClick={() => {
+                          setSelectedSkusToAdd(new Set());
+                          setIsAddProductsModalOpen(true);
+                        }}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-zinc-800 rounded-md shadow-xs transition-colors cursor-pointer"
+                      >
+                        <Plus size={13} className="text-[#0B57D0]" />
+                        <span>Add Products</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -773,7 +915,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
                       <input
                         type="text"
-                        placeholder="Search SKU, name, or promo..."
+                        placeholder="Search SKU or name..."
                         value={itemSearch}
                         onChange={(e) => setItemSearch(e.target.value)}
                         className="w-full pl-8 pr-3 py-1 bg-slate-50 border border-slate-200 rounded text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
@@ -782,7 +924,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   </div>
 
                   {/* Bulk Action Buttons (Appear when >= 1 item selected) */}
-                  {selectedItemIds.size > 0 && (
+                  {selectedItemIds.size > 0 && !isEditMode && (
                     <div className="flex items-center gap-2 animate-in fade-in duration-150">
                       <span className="text-xs font-semibold text-zinc-500">
                         {selectedItemIds.size} Selected
@@ -790,6 +932,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       <button
                         onClick={() => {
                           setBulkCostPrice("");
+                          setBulkRetailerPrice("");
                           setBulkMarketPrice("");
                           setBulkPriceRemark("");
                           setIsBulkPriceModalOpen(true);
@@ -798,20 +941,6 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       >
                         <TrendingUp size={12} className="text-blue-600" />
                         <span>Bulk Edit Prices</span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setBulkPromoName("");
-                          setBulkPromoPrice("");
-                          setBulkPromoStart("");
-                          setBulkPromoEnd("");
-                          setBulkPromoRemark("");
-                          setIsBulkPromoModalOpen(true);
-                        }}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-[#0B57D0] hover:bg-[#0842A0] text-xs font-semibold text-white rounded shadow-xs cursor-pointer"
-                      >
-                        <Tag size={12} />
-                        <span>Set Bulk Promotion</span>
                       </button>
                     </div>
                   )}
@@ -830,14 +959,14 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                             className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
                           />
                         </th>
-                        <th className="px-3 py-2">Product SKU</th>
-                        <th className="px-3 py-2">Product Name</th>
-                        <th className="px-3 py-2">Retailer SKU</th>
-                        <th className="px-3 py-2">Store Tier</th>
-                        <th className="px-3 py-2 text-right">Cost Price</th>
-                        <th className="px-3 py-2 text-right">Market Price (RSP)</th>
-                        <th className="px-3 py-2 text-right">Margin / Gain</th>
-                        <th className="px-3 py-2">Active Promotion</th>
+                        <th className="px-3 py-2 min-w-[130px]">Product SKU</th>
+                        <th className="px-3 py-2 min-w-[180px]">Product Name</th>
+                        <th className="px-3 py-2 min-w-[130px]">Retailer SKU</th>
+                        <th className="px-3 py-2 min-w-[100px]">Store Tier</th>
+                        <th className="px-3 py-2 text-right min-w-[110px]">Cost Price (Our Price)</th>
+                        <th className="px-3 py-2 text-right min-w-[110px]">Cost to Retailer</th>
+                        <th className="px-3 py-2 text-right min-w-[110px]">Market Price (RSP)</th>
+                        <th className="px-3 py-2 text-right min-w-[110px]">Margin</th>
                         <th className="w-24 px-3 py-2 text-center">Actions</th>
                       </tr>
                     </thead>
@@ -857,21 +986,30 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       ) : (
                         filteredItems.map((item) => {
                           const isSelected = selectedItemIds.has(item.id);
-                          const cost = item.cost_price || 0;
-                          const market = item.market_price || 0;
-                          const promo = item.promo_price;
-                          const effectiveShelfPrice = promo !== null && promo !== undefined ? promo : market;
-                          const marginAmt = effectiveShelfPrice && cost ? effectiveShelfPrice - cost : 0;
-                          const marginPct = effectiveShelfPrice && cost ? ((marginAmt / cost) * 100).toFixed(1) : "0.0";
+                          const editRow = editRowsMap[item.id] || item;
+
+                          // Values for computation
+                          const currentCost = isEditMode
+                            ? (editRow.cost_price !== undefined && editRow.cost_price !== null ? Number(editRow.cost_price) : 0)
+                            : (item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price) : 0);
+
+                          const currentRetailerCost = isEditMode
+                            ? (editRow.retailer_price !== undefined && editRow.retailer_price !== null ? Number(editRow.retailer_price) : 0)
+                            : (item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0);
+
+                          const gainAmt = currentRetailerCost - currentCost;
+                          const hasValues = (isEditMode ? (editRow.retailer_price !== null && editRow.retailer_price !== undefined) : (item.retailer_price !== null && item.retailer_price !== undefined)) ||
+                                            (isEditMode ? (editRow.cost_price !== null && editRow.cost_price !== undefined) : (item.cost_price !== null && item.cost_price !== undefined));
 
                           return (
                             <tr
                               key={item.id}
-                              className={`hover:bg-[#F0F4F9]/60 transition-colors ${
-                                isSelected ? "bg-[#D3E3FD]/20" : ""
+                              className={`transition-colors ${
+                                isSelected ? "bg-[#D3E3FD]/20" : isEditMode ? "hover:bg-amber-50/40 bg-amber-50/10" : "hover:bg-[#F0F4F9]/60"
                               }`}
                             >
-                              <td className="px-3 py-2 text-center">
+                              {/* Checkbox */}
+                              <td className="px-3 py-2 text-center align-middle">
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
@@ -879,76 +1017,204 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                   className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
                                 />
                               </td>
-                              <td className="px-3 py-2 font-mono font-bold text-zinc-900">
-                                {item.product_sku}
+
+                              {/* Product SKU (Locked) */}
+                              <td className="px-3 py-2 align-middle">
+                                <div className="font-mono font-bold text-zinc-800 flex items-center gap-1">
+                                  <span>{item.product_sku}</span>
+                                  {isEditMode && (
+                                    <span title="Product SKU is locked">
+                                      <Lock size={10} className="text-zinc-400" />
+                                    </span>
+                                  )}
+                                </div>
                               </td>
-                              <td className="px-3 py-2 font-medium text-zinc-800 max-w-[200px] truncate" title={item.product_name}>
-                                {item.product_name || "-"}
-                              </td>
-                              <td className="px-3 py-2 font-mono text-zinc-600">
-                                {item.retailer_sku || item.product_sku}
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-zinc-700">
-                                  {item.store_tier || "Standard"}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2 text-right font-mono font-semibold text-zinc-900">
-                                {item.cost_price !== null ? `$${Number(item.cost_price).toFixed(2)}` : "-"}
-                              </td>
-                              <td className="px-3 py-2 text-right font-mono font-bold text-zinc-950">
-                                {item.market_price !== null ? `$${Number(item.market_price).toFixed(2)}` : "-"}
-                              </td>
-                              <td className="px-3 py-2 text-right font-mono text-zinc-600">
-                                {marginAmt > 0 ? (
-                                  <span className="text-emerald-700 font-semibold">
-                                    +${marginAmt.toFixed(2)} ({marginPct}%)
-                                  </span>
+
+                              {/* Product Name */}
+                              <td className="px-3 py-2 align-middle">
+                                {isEditMode ? (
+                                  <input
+                                    type="text"
+                                    value={editRow.product_name ?? ""}
+                                    onChange={(e) => {
+                                      setEditRowsMap((prev) => ({
+                                        ...prev,
+                                        [item.id]: { ...prev[item.id], product_name: e.target.value }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 border border-slate-300 rounded bg-white text-xs text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                  />
                                 ) : (
-                                  "-"
+                                  <span className="font-medium text-zinc-800 line-clamp-1" title={item.product_name}>
+                                    {item.product_name || "-"}
+                                  </span>
                                 )}
                               </td>
-                              <td className="px-3 py-2">
-                                {promo !== null && promo !== undefined ? (
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                                      <Tag size={9} />
-                                      {item.promo_name || "Promo"}: ${Number(promo).toFixed(2)}
-                                    </span>
-                                    <button
-                                      onClick={() => handleRemovePromo(item.id)}
-                                      className="text-zinc-400 hover:text-red-600"
-                                      title="Remove Promotion"
-                                    >
-                                      <X size={11} />
-                                    </button>
+
+                              {/* Retailer SKU (Editable) */}
+                              <td className="px-3 py-2 align-middle">
+                                {isEditMode ? (
+                                  <input
+                                    type="text"
+                                    value={editRow.retailer_sku ?? ""}
+                                    onChange={(e) => {
+                                      setEditRowsMap((prev) => ({
+                                        ...prev,
+                                        [item.id]: { ...prev[item.id], retailer_sku: e.target.value }
+                                      }));
+                                    }}
+                                    className="w-full px-2 py-1 font-mono border border-slate-300 rounded bg-white text-xs text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                  />
+                                ) : (
+                                  <span className="font-mono text-zinc-700">
+                                    {item.retailer_sku || item.product_sku}
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Store Tier */}
+                              <td className="px-3 py-2 align-middle">
+                                {isEditMode ? (
+                                  <select
+                                    value={editRow.store_tier || "Standard"}
+                                    onChange={(e) => {
+                                      setEditRowsMap((prev) => ({
+                                        ...prev,
+                                        [item.id]: { ...prev[item.id], store_tier: e.target.value }
+                                      }));
+                                    }}
+                                    className="w-full px-1.5 py-1 border border-slate-300 rounded bg-white text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                  >
+                                    <option value="Standard">Standard</option>
+                                    <option value="Tier 1">Tier 1</option>
+                                    <option value="Tier 2">Tier 2</option>
+                                    <option value="Tier 3">Tier 3</option>
+                                  </select>
+                                ) : (
+                                  <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-zinc-700">
+                                    {item.store_tier || "Standard"}
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Cost Price (Our Price) */}
+                              <td className="px-3 py-2 text-right align-middle font-mono">
+                                {isEditMode ? (
+                                  <div className="relative">
+                                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={editRow.cost_price !== null && editRow.cost_price !== undefined ? editRow.cost_price : ""}
+                                      onChange={(e) => {
+                                        const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                                        setEditRowsMap((prev) => ({
+                                          ...prev,
+                                          [item.id]: { ...prev[item.id], cost_price: val }
+                                        }));
+                                      }}
+                                      className="w-20 pl-4 pr-1 py-1 text-right border border-slate-300 rounded bg-white text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                    />
                                   </div>
                                 ) : (
-                                  <span className="text-[10px] text-zinc-400 italic">No Active Promo</span>
+                                  <span className="font-semibold text-zinc-900">
+                                    {item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-"}
+                                  </span>
                                 )}
                               </td>
-                              <td className="px-3 py-2 text-center">
+
+                              {/* Cost to Retailer */}
+                              <td className="px-3 py-2 text-right align-middle font-mono">
+                                {isEditMode ? (
+                                  <div className="relative">
+                                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={editRow.retailer_price !== null && editRow.retailer_price !== undefined ? editRow.retailer_price : ""}
+                                      onChange={(e) => {
+                                        const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                                        setEditRowsMap((prev) => ({
+                                          ...prev,
+                                          [item.id]: { ...prev[item.id], retailer_price: val }
+                                        }));
+                                      }}
+                                      className="w-20 pl-4 pr-1 py-1 text-right border border-blue-300 rounded bg-white text-xs font-mono font-bold text-[#0B57D0] focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                    />
+                                  </div>
+                                ) : (
+                                  <span className="font-bold text-[#0B57D0]">
+                                    {item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-"}
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Market Price (RSP) */}
+                              <td className="px-3 py-2 text-right align-middle font-mono">
+                                {isEditMode ? (
+                                  <div className="relative">
+                                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      value={editRow.market_price !== null && editRow.market_price !== undefined ? editRow.market_price : ""}
+                                      onChange={(e) => {
+                                        const val = e.target.value === "" ? null : parseFloat(e.target.value);
+                                        setEditRowsMap((prev) => ({
+                                          ...prev,
+                                          [item.id]: { ...prev[item.id], market_price: val }
+                                        }));
+                                      }}
+                                      className="w-20 pl-4 pr-1 py-1 text-right border border-slate-300 rounded bg-white text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                    />
+                                  </div>
+                                ) : (
+                                  <span className="font-bold text-zinc-950">
+                                    {item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-"}
+                                  </span>
+                                )}
+                              </td>
+
+                              {/* Margin (Live calculation) */}
+                              <td className="px-3 py-2 text-right align-middle font-mono">
+                                {hasValues ? (
+                                  gainAmt >= 0 ? (
+                                    <span className="text-emerald-700 font-semibold">
+                                      +${gainAmt.toFixed(2)}
+                                    </span>
+                                  ) : (
+                                    <span className="text-red-600 font-semibold">
+                                      -${Math.abs(gainAmt).toFixed(2)}
+                                    </span>
+                                  )
+                                ) : (
+                                  <span className="text-zinc-400">-</span>
+                                )}
+                              </td>
+
+                              {/* Actions */}
+                              <td className="px-3 py-2 text-center align-middle">
                                 <div className="flex items-center justify-center gap-1">
                                   <button
                                     onClick={() => {
                                       setEditingItem(item);
                                       setIsEditItemModalOpen(true);
                                     }}
-                                    className="p-1 text-zinc-500 hover:text-zinc-900 hover:bg-slate-100 rounded"
+                                    className="p-1 text-zinc-500 hover:text-zinc-900 hover:bg-slate-100 rounded cursor-pointer"
                                     title="Edit Price"
                                   >
                                     <Edit2 size={13} />
                                   </button>
                                   <button
                                     onClick={() => setHistoryDrawerItem(item)}
-                                    className="p-1 text-zinc-500 hover:text-[#0B57D0] hover:bg-blue-50 rounded"
+                                    className="p-1 text-zinc-500 hover:text-[#0B57D0] hover:bg-blue-50 rounded cursor-pointer"
                                     title="Price Audit Logs"
                                   >
                                     <History size={13} />
                                   </button>
                                   <button
                                     onClick={() => handleDeleteItem(item.id)}
-                                    className="p-1 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                    className="p-1 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded cursor-pointer"
                                     title="Delete Item"
                                   >
                                     <Trash2 size={13} />
@@ -989,7 +1255,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   setIsSheetModalOpen(false);
                   setEditingSheet(null);
                 }}
-                className="text-zinc-400 hover:text-zinc-600"
+                className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -1078,13 +1344,13 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                     setIsSheetModalOpen(false);
                     setEditingSheet(null);
                   }}
-                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md"
+                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs"
+                  className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs cursor-pointer"
                 >
                   Save Sheet
                 </button>
@@ -1105,7 +1371,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               </div>
               <button
                 onClick={() => setIsAddProductsModalOpen(false)}
-                className="text-zinc-400 hover:text-zinc-600"
+                className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -1184,7 +1450,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       setSelectedSkusToAdd(next);
                     }
                   }}
-                  className="text-xs text-[#0B57D0] hover:underline font-semibold"
+                  className="text-xs text-[#0B57D0] hover:underline font-semibold cursor-pointer"
                 >
                   Select Filtered ({sortedAndGroupedProductsToAdd.length})
                 </button>
@@ -1224,7 +1490,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                     <th className="px-3 py-2">SKU</th>
                     <th className="px-3 py-2">Product Name</th>
                     <th className="px-3 py-2">UOM</th>
-                    <th className="px-3 py-2 text-right">Default Cost</th>
+                    <th className="px-3 py-2 text-right">Default Cost (Our Price)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1288,14 +1554,14 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               <button
                 type="button"
                 onClick={() => setIsAddProductsModalOpen(false)}
-                className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md"
+                className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleAddProductsToSheet}
-                className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs"
+                className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs cursor-pointer"
               >
                 Add Selected to Sheet
               </button>
@@ -1315,16 +1581,60 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               </div>
               <button
                 onClick={() => setIsEditItemModalOpen(false)}
-                className="text-zinc-400 hover:text-zinc-600"
+                className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
               >
                 <X size={16} />
               </button>
             </div>
 
             <form onSubmit={handleSaveItem} className="p-5 space-y-4">
+              {/* Product Name */}
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  Cost Price (What Retailer Pays Us)
+                  Product Name
+                </label>
+                <input
+                  type="text"
+                  value={editingItem.product_name || ""}
+                  onChange={(e) => setEditingItem({ ...editingItem, product_name: e.target.value })}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-medium focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                />
+              </div>
+
+              {/* Retailer SKU & Tier */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                    Retailer SKU
+                  </label>
+                  <input
+                    type="text"
+                    value={editingItem.retailer_sku || ""}
+                    onChange={(e) => setEditingItem({ ...editingItem, retailer_sku: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                    Store Tier
+                  </label>
+                  <select
+                    value={editingItem.store_tier || "Standard"}
+                    onChange={(e) => setEditingItem({ ...editingItem, store_tier: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  >
+                    <option value="Standard">Standard</option>
+                    <option value="Tier 1">Tier 1</option>
+                    <option value="Tier 2">Tier 2</option>
+                    <option value="Tier 3">Tier 3</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Cost Price (Our Price) */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                  Cost Price (Our Price / COGS)
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">$</span>
@@ -1332,11 +1642,11 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                     type="number"
                     step="0.01"
                     placeholder="0.00"
-                    value={editingItem.cost_price !== null ? editingItem.cost_price : ""}
+                    value={editingItem.cost_price !== null && editingItem.cost_price !== undefined ? editingItem.cost_price : ""}
                     onChange={(e) =>
                       setEditingItem({
                         ...editingItem,
-                        cost_price: e.target.value ? parseFloat(e.target.value) : null
+                        cost_price: e.target.value !== "" ? parseFloat(e.target.value) : null
                       })
                     }
                     className="w-full pl-7 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
@@ -1344,6 +1654,30 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 </div>
               </div>
 
+              {/* Cost to Retailer (Wholesale Price) */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                  Cost to Retailer (What Retailer Pays Us)
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={editingItem.retailer_price !== null && editingItem.retailer_price !== undefined ? editingItem.retailer_price : ""}
+                    onChange={(e) =>
+                      setEditingItem({
+                        ...editingItem,
+                        retailer_price: e.target.value !== "" ? parseFloat(e.target.value) : null
+                      })
+                    }
+                    className="w-full pl-7 pr-3 py-1.5 border border-blue-300 text-[#0B57D0] rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              {/* Market Price (Shelf Price / RSP) */}
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">
                   Market Price (Shelf Price / RSP)
@@ -1354,11 +1688,11 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                     type="number"
                     step="0.01"
                     placeholder="0.00"
-                    value={editingItem.market_price !== null ? editingItem.market_price : ""}
+                    value={editingItem.market_price !== null && editingItem.market_price !== undefined ? editingItem.market_price : ""}
                     onChange={(e) =>
                       setEditingItem({
                         ...editingItem,
-                        market_price: e.target.value ? parseFloat(e.target.value) : null
+                        market_price: e.target.value !== "" ? parseFloat(e.target.value) : null
                       })
                     }
                     className="w-full pl-7 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
@@ -1366,17 +1700,38 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 </div>
               </div>
 
+              {/* Live Calculated Margin Badge */}
+              {(() => {
+                const cost = Number(editingItem.cost_price || 0);
+                const retCost = Number(editingItem.retailer_price || 0);
+                const gainAmt = retCost - cost;
+                return (
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-between text-xs font-mono">
+                    <span className="text-zinc-600 font-sans font-medium">Margin:</span>
+                    {gainAmt >= 0 ? (
+                      <span className="font-bold text-emerald-700 font-mono">
+                        +${gainAmt.toFixed(2)}
+                      </span>
+                    ) : (
+                      <span className="font-bold text-red-600 font-mono">
+                        -${Math.abs(gainAmt).toFixed(2)}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
+
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setIsEditItemModalOpen(false)}
-                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md"
+                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs"
+                  className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs cursor-pointer"
                 >
                   Save Changes
                 </button>
@@ -1397,7 +1752,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               </div>
               <button
                 onClick={() => setIsBulkPriceModalOpen(false)}
-                className="text-zinc-400 hover:text-zinc-600"
+                className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -1406,7 +1761,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
             <div className="p-5 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  New Cost Price (Optional)
+                  New Cost Price (Our Price) [Optional]
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">$</span>
@@ -1423,7 +1778,24 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  New Market Price (Optional)
+                  New Cost to Retailer [Optional]
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Leave blank to keep existing"
+                    value={bulkRetailerPrice}
+                    onChange={(e) => setBulkRetailerPrice(e.target.value)}
+                    className="w-full pl-7 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                  New Market Price (RSP) [Optional]
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">$</span>
@@ -1455,117 +1827,16 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 <button
                   type="button"
                   onClick={() => setIsBulkPriceModalOpen(false)}
-                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md"
+                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleApplyBulkPrice}
-                  className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs"
+                  className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs cursor-pointer"
                 >
                   Apply Price Update
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ================= MODAL: BULK SET PROMOTION ================= */}
-      {isBulkPromoModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
-              <div>
-                <h2 className="text-sm font-bold text-zinc-950">Set Bulk Promotion</h2>
-                <p className="text-xs text-zinc-500 mt-0.5">Applying promotional pricing to {selectedItemIds.size} items</p>
-              </div>
-              <button
-                onClick={() => setIsBulkPromoModalOpen(false)}
-                className="text-zinc-400 hover:text-zinc-600"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  Promotion Campaign Name <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Great Singapore Sale, CNY Promo, Weekend Blitz"
-                  value={bulkPromoName}
-                  onChange={(e) => setBulkPromoName(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  Promo Shelf Price <span className="text-red-500">*</span>
-                </label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="0.00"
-                    value={bulkPromoPrice}
-                    onChange={(e) => setBulkPromoPrice(e.target.value)}
-                    className="w-full pl-7 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Start Date</label>
-                  <input
-                    type="date"
-                    value={bulkPromoStart}
-                    onChange={(e) => setBulkPromoStart(e.target.value)}
-                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-700 mb-1">End Date</label>
-                  <input
-                    type="date"
-                    value={bulkPromoEnd}
-                    onChange={(e) => setBulkPromoEnd(e.target.value)}
-                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 mb-1">Promo Remark</label>
-                <input
-                  type="text"
-                  placeholder="Optional details or terms..."
-                  value={bulkPromoRemark}
-                  onChange={(e) => setBulkPromoRemark(e.target.value)}
-                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                />
-              </div>
-
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsBulkPromoModalOpen(false)}
-                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleApplyBulkPromo}
-                  className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-md shadow-xs"
-                >
-                  Apply Promotion
                 </button>
               </div>
             </div>
@@ -1581,13 +1852,13 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               <div className="flex items-center gap-2">
                 <History size={16} className="text-[#0B57D0]" />
                 <div>
-                  <h2 className="text-sm font-bold text-zinc-950">Price & Promo Audit Log</h2>
+                  <h2 className="text-sm font-bold text-zinc-950">Price & Audit Log</h2>
                   <p className="text-xs text-zinc-500">{historyDrawerItem.product_sku} - {historyDrawerItem.product_name}</p>
                 </div>
               </div>
               <button
                 onClick={() => setHistoryDrawerItem(null)}
-                className="text-zinc-400 hover:text-zinc-600"
+                className="text-zinc-400 hover:text-zinc-600 cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -1628,10 +1899,19 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                             {/* Price Diffs */}
                             {(entry.old_cost !== undefined || entry.new_cost !== undefined) && (
                               <div className="text-xs text-zinc-700 flex items-center gap-1.5 mt-1 font-mono">
-                                <span className="text-zinc-500 font-sans">Cost:</span>
+                                <span className="text-zinc-500 font-sans">Cost Price (Our):</span>
                                 <span>${Number(entry.old_cost || 0).toFixed(2)}</span>
                                 <ArrowRight size={11} className="text-zinc-400" />
                                 <span className="font-bold text-zinc-900">${Number(entry.new_cost || 0).toFixed(2)}</span>
+                              </div>
+                            )}
+
+                            {(entry.old_retailer_price !== undefined || entry.new_retailer_price !== undefined) && (
+                              <div className="text-xs text-zinc-700 flex items-center gap-1.5 mt-1 font-mono">
+                                <span className="text-zinc-500 font-sans">Cost to Retailer:</span>
+                                <span>${Number(entry.old_retailer_price || 0).toFixed(2)}</span>
+                                <ArrowRight size={11} className="text-zinc-400" />
+                                <span className="font-bold text-[#0B57D0]">${Number(entry.new_retailer_price || 0).toFixed(2)}</span>
                               </div>
                             )}
 
@@ -1640,13 +1920,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                 <span className="text-zinc-500 font-sans">Market RSP:</span>
                                 <span>${Number(entry.old_market || 0).toFixed(2)}</span>
                                 <ArrowRight size={11} className="text-zinc-400" />
-                                <span className="font-bold text-blue-600">${Number(entry.new_market || 0).toFixed(2)}</span>
-                              </div>
-                            )}
-
-                            {entry.promo_price !== undefined && entry.promo_price !== null && (
-                              <div className="mt-1 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1">
-                                {entry.promo_name || "Promotion"}: ${Number(entry.promo_price).toFixed(2)}
+                                <span className="font-bold text-zinc-900">${Number(entry.new_market || 0).toFixed(2)}</span>
                               </div>
                             )}
 
@@ -1688,7 +1962,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               <button
                 type="button"
                 onClick={() => setConfirmDialog((prev) => ({ ...prev, isOpen: false }))}
-                className="px-3 py-1.5 border border-slate-300 hover:bg-slate-100 text-xs font-semibold text-zinc-700 rounded-md transition-colors"
+                className="px-3 py-1.5 border border-slate-300 hover:bg-slate-100 text-xs font-semibold text-zinc-700 rounded-md transition-colors cursor-pointer"
               >
                 Cancel
               </button>
@@ -1699,7 +1973,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   setConfirmDialog((prev) => ({ ...prev, isOpen: false }));
                   cb();
                 }}
-                className={`px-3.5 py-1.5 text-white text-xs font-semibold rounded-md shadow-xs transition-colors ${
+                className={`px-3.5 py-1.5 text-white text-xs font-semibold rounded-md shadow-xs transition-colors cursor-pointer ${
                   confirmDialog.confirmButtonClass || "bg-red-600 hover:bg-red-700"
                 }`}
               >

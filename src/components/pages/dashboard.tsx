@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { FolderKanban, Target, ListTodo, Lock } from "lucide-react";
+import { FolderKanban, Target, ListTodo, ChevronRight } from "lucide-react";
 import { showToast } from "@/lib/toast";
 
 import { fetchWorkspaceDashboard, prefetchWorkspaceDashboard, getCachedWorkspaceData } from "@/lib/api";
@@ -16,31 +16,18 @@ interface DashboardPageProps {
 
 export function DashboardPage({ profile }: DashboardPageProps) {
   const [activeTab, setActiveTab] = React.useState<"workspace" | "analysis" | "forecast">("workspace");
-  const [workspaceView, setWorkspaceView] = React.useState<"cards" | "today">("cards");
 
   React.useEffect(() => {
     const handleTabChange = (e: Event) => {
       const customEvent = e as CustomEvent<"workspace" | "analysis" | "forecast">;
       if (customEvent.detail) {
         setActiveTab(customEvent.detail);
-        if (customEvent.detail === "workspace") {
-          setWorkspaceView("cards");
-        }
-      }
-    };
-
-    const handleViewChange = (e: Event) => {
-      const customEvent = e as CustomEvent<"cards" | "today">;
-      if (customEvent.detail) {
-        setWorkspaceView(customEvent.detail);
       }
     };
 
     window.addEventListener("dashboard-tab-change", handleTabChange);
-    window.addEventListener("dashboard-view-change", handleViewChange);
     return () => {
       window.removeEventListener("dashboard-tab-change", handleTabChange);
-      window.removeEventListener("dashboard-view-change", handleViewChange);
     };
   }, []);
 
@@ -169,10 +156,8 @@ export function DashboardPage({ profile }: DashboardPageProps) {
     {
       id: "management",
       title: "Project",
-      subtitle: "Portfolio Governance",
-      description: "Master timeline Gantt chart, portfolio governance, project schedules, and horizon tracking.",
-      icon: <FolderKanban size={28} className="text-[#0B57D0]" />,
-      badge: "Master View",
+      subtitle: "Portfolio Governance & Timeline",
+      icon: <FolderKanban size={20} />,
       url: "/workspace?view=management",
       enabled: true,
       disabledReason: "Access Denied",
@@ -180,10 +165,8 @@ export function DashboardPage({ profile }: DashboardPageProps) {
     {
       id: "team_leader",
       title: "Milestone / Target",
-      subtitle: "Operational Goals",
-      description: "Milestone operational planning, action breakdown, delegation, and completion proof verification.",
-      icon: <Target size={28} className="text-[#0B57D0]" />,
-      badge: "Milestones",
+      subtitle: "Operational Goals & Verification",
+      icon: <Target size={20} />,
       url: "/workspace?view=team_leader",
       enabled: true,
       disabledReason: "Access Denied",
@@ -191,10 +174,8 @@ export function DashboardPage({ profile }: DashboardPageProps) {
     {
       id: "team_member",
       title: "Action / Task",
-      subtitle: "Execution & Proofs",
-      description: "Personal action checklist, task execution, daily updates, and photo proof submissions.",
-      icon: <ListTodo size={28} className="text-[#0B57D0]" />,
-      badge: "Tasks",
+      subtitle: "Execution Feed & Proof Submissions",
+      icon: <ListTodo size={20} />,
       url: "/workspace?view=team_member",
       enabled: true,
       disabledReason: "You do not have an assigned task",
@@ -202,145 +183,99 @@ export function DashboardPage({ profile }: DashboardPageProps) {
   ];
 
   return (
-    <div className="content-body flex flex-col flex-1 h-full select-none font-primary overflow-y-auto p-4 md:p-8 items-center justify-center">
-      {/* Tab Content: Workspace */}
+    <div className="content-body flex flex-col flex-1 h-full select-none font-primary overflow-hidden p-3 md:p-4">
+      {/* Tab Content: Workspace (Combined WPD1 & WPD2 Side-by-Side) */}
       {activeTab === "workspace" && (
-        <>
-          {/* Workspace SubView A: Default 3 Cards View */}
-          {workspaceView === "cards" && (
-            <div className="w-full max-w-6xl flex flex-col items-center gap-8 animate-in fade-in duration-300">
-              {/* Personalized Header Title with Floating Speech Bubble on top-right of iB HSG Global */}
-              <div className="text-center flex flex-col items-center gap-1.5 w-full max-w-2xl relative">
-                {/* Top Badge Group: iB HSG Global centered + Speech Bubble floating to right */}
-                <div className="relative inline-flex items-center justify-center mb-1">
-                  {/* iB HSG Global Badge (Solid button blue with white text) */}
-                  <div className="inline-flex items-center px-3 py-1 rounded-full bg-[#0B57D0] text-white text-xs font-semibold shadow-xs select-none">
-                    <span>iB HSG Global</span>
-                  </div>
-
-                  {/* Floating Speech Bubble: What's happening today? lifted higher with space, no pulse dot */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setWorkspaceView("today");
-                      window.dispatchEvent(new CustomEvent("dashboard-view-change", { detail: "today" }));
-                    }}
-                    className="absolute left-[65%] -top-9 sm:-top-10 z-30 group flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-blue-200/90 shadow-xs hover:shadow-md hover:border-[#0B57D0] text-[#0B57D0] hover:text-[#0842A0] text-[11px] font-semibold transition-all duration-200 cursor-pointer animate-in fade-in zoom-in-95 hover:scale-105 whitespace-nowrap select-none"
-                    title="View what's happening today"
-                  >
-                    <span className="relative z-10">
-                      What&apos;s happening today?
-                    </span>
-                    {/* Downward pointing tail at bottom-left with synchronized hover border */}
-                    <span className="absolute left-3.5 -bottom-1 w-2.5 h-2.5 bg-white border-r border-b border-blue-200/90 group-hover:border-[#0B57D0] rotate-45 transform transition-colors z-0" />
-                  </button>
-                </div>
-
-                <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-zinc-950">
-                  {greeting}, <span className="text-[#0B57D0]">{userName}</span>
-                </h1>
-
-                <p className="text-xs md:text-sm text-zinc-500 font-normal">
-                  Bridging Strategy, Governance &amp; Operational Excellence
-                </p>
+        <div className="flex flex-row gap-4 lg:gap-5 xl:gap-6 w-full h-full min-h-0 overflow-hidden items-stretch animate-in fade-in duration-300">
+          
+          {/* Left Side: WPD1 (Clean Workspace Navigation - Fixed proportion) */}
+          <div className="w-[280px] sm:w-[300px] lg:w-[330px] xl:w-[360px] shrink-0 h-full min-h-0 flex flex-col justify-center gap-5 overflow-y-auto pr-1">
+            {/* Header Greeting (Moved down, attached nicely above cards) */}
+            <div className="flex flex-col items-start gap-1 shrink-0">
+              <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#0B57D0] text-white text-[11px] font-semibold shadow-2xs select-none">
+                <span>iB HSG Global</span>
               </div>
 
-              {/* Access Cards Container - Always 3 cards in one row on desktop */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full max-w-5xl">
-                {allCards.map((card) => {
-                  if (card.enabled) {
-                    return (
-                      <div
-                        key={card.id}
-                        onClick={() => {
-                          window.dispatchEvent(new CustomEvent("dashboard-workspace-view", { detail: card.id }));
-                        }}
-                        onMouseEnter={() => prefetchWorkspaceDashboard().catch(() => {})}
-                        onTouchStart={() => prefetchWorkspaceDashboard().catch(() => {})}
-                        className="bg-white rounded-2xl border border-slate-200/90 p-6 md:p-7 flex flex-col h-full shadow-xs hover:shadow-md hover:border-[#0B57D0]/50 transition-all duration-200 cursor-pointer group w-full select-none"
-                      >
-                        {/* Top Row: Icon & Badge */}
-                        <div className="flex items-center justify-between shrink-0">
-                          <div className="w-12 h-12 rounded-xl bg-[#F0F4F9] flex items-center justify-center group-hover:bg-[#D3E3FD] transition-colors">
-                            {card.icon}
-                          </div>
-                          <span className="text-[10px] font-medium px-2.5 py-1 rounded-full bg-slate-100 text-zinc-600 border border-slate-200 group-hover:bg-[#D3E3FD]/60 group-hover:text-[#0B57D0] transition-colors">
-                            {card.badge}
-                          </span>
-                        </div>
+              <h1 className="text-xl md:text-2xl font-bold tracking-tight text-zinc-950 mt-1">
+                {greeting}, <span className="text-[#0B57D0]">{userName}</span>
+              </h1>
 
-                        {/* Card Body (Strict top-aligned across all cards) */}
-                        <div className="flex flex-col mt-6 flex-1">
-                          <h2 className="text-base font-semibold text-zinc-900 group-hover:text-[#0B57D0] transition-colors leading-tight">
-                            {card.title}
-                          </h2>
-                          <span className="text-[11px] font-medium text-[#0B57D0] mt-1">
-                            {card.subtitle}
-                          </span>
-                          <p className="text-xs text-zinc-500 font-normal leading-relaxed mt-2.5">
-                            {card.description}
-                          </p>
-                        </div>
+              <p className="text-xs text-zinc-500 font-normal leading-relaxed">
+                Bridging Strategy, Governance &amp; Operational Excellence
+              </p>
+            </div>
 
-                        {/* Bottom Line */}
-                        <div className="mt-6 pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-medium text-zinc-400 group-hover:text-[#0B57D0] transition-colors shrink-0">
-                          <span>Open View</span>
-                          <span className="group-hover:translate-x-1 transition-transform">➔</span>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  // Disabled card (no layout shift, informative warning toast)
+            {/* 3 Simplified Sleek Action Cards */}
+            <div className="flex flex-col gap-3 min-h-0">
+              {allCards.map((card) => {
+                if (card.enabled) {
                   return (
                     <div
                       key={card.id}
-                      onClick={() => showToast(card.disabledReason, "warning")}
-                      className="bg-slate-50/70 rounded-2xl border border-slate-200/80 p-6 md:p-7 flex flex-col h-full opacity-60 cursor-not-allowed w-full shadow-none transition-all select-none group/dis"
-                      title={card.disabledReason}
+                      onClick={() => {
+                        window.dispatchEvent(new CustomEvent("dashboard-workspace-view", { detail: card.id }));
+                      }}
+                      onMouseEnter={() => prefetchWorkspaceDashboard().catch(() => {})}
+                      onTouchStart={() => prefetchWorkspaceDashboard().catch(() => {})}
+                      className="bg-white rounded-xl border border-slate-200/85 p-3.5 sm:p-4 flex items-center justify-between gap-3.5 shadow-2xs hover:shadow-xs hover:border-[#0B57D0]/50 hover:bg-[#F8F9FD] transition-all duration-150 cursor-pointer group select-none"
                     >
-                      {/* Top Row: Muted Icon & Disabled Badge */}
-                      <div className="flex items-center justify-between shrink-0">
-                        <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-xl bg-[#F0F4F9] text-[#0B57D0] group-hover:bg-[#0B57D0] group-hover:text-white flex items-center justify-center shrink-0 transition-colors shadow-2xs">
                           {card.icon}
                         </div>
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-200/70 text-zinc-500 border border-slate-200 flex items-center gap-1">
-                          <span>No Role</span>
-                        </span>
+                        <div className="flex flex-col min-w-0">
+                          <h2 className="text-sm font-bold text-zinc-900 group-hover:text-[#0B57D0] transition-colors leading-snug truncate">
+                            {card.title}
+                          </h2>
+                          <span className="text-[11px] text-zinc-500 truncate mt-0.5">
+                            {card.subtitle}
+                          </span>
+                        </div>
                       </div>
 
-                      {/* Card Body (Strict top-aligned across all cards) */}
-                      <div className="flex flex-col mt-6 flex-1">
-                        <h2 className="text-base font-semibold text-zinc-600 leading-tight">
-                          {card.title}
-                        </h2>
-                        <span className="text-[11px] font-medium text-zinc-400 mt-1">
-                          {card.subtitle}
-                        </span>
-                        <p className="text-xs text-zinc-400 font-normal leading-relaxed mt-2.5">
-                          {card.description}
-                        </p>
-                      </div>
-
-                      {/* Bottom Line */}
-                      <div className="mt-6 pt-3 border-t border-slate-200/70 flex items-center justify-between text-xs font-medium text-zinc-400 shrink-0">
-                        <span>Restricted Access</span>
-                        <span>➔</span>
+                      <div className="w-7 h-7 rounded-lg bg-slate-50 group-hover:bg-blue-50 flex items-center justify-center text-zinc-400 group-hover:text-[#0B57D0] shrink-0 transition-colors">
+                        <ChevronRight size={15} className="group-hover:translate-x-0.5 transition-transform" />
                       </div>
                     </div>
                   );
-                })}
-              </div>
-            </div>
-          )}
+                }
 
-          {/* Workspace SubView B: What's happening today (WPD2) */}
-          {workspaceView === "today" && (
-            <div className="flex flex-1 w-full h-full items-center justify-center animate-in fade-in duration-300 min-h-0 overflow-hidden py-2">
-              <DashboardAiSummary userName={userName} profile={effectiveProfile} />
+                // Disabled card (no layout shift, informative warning toast)
+                return (
+                  <div
+                    key={card.id}
+                    onClick={() => showToast(card.disabledReason, "warning")}
+                    className="bg-slate-50/70 rounded-xl border border-slate-200/60 p-3.5 sm:p-4 flex items-center justify-between gap-3.5 opacity-55 cursor-not-allowed shadow-none select-none"
+                    title={card.disabledReason}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-slate-200/70 text-zinc-400 flex items-center justify-center shrink-0">
+                        {card.icon}
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <h2 className="text-sm font-semibold text-zinc-600 leading-snug truncate">
+                          {card.title}
+                        </h2>
+                        <span className="text-[11px] text-zinc-400 truncate mt-0.5">
+                          {card.subtitle}
+                        </span>
+                      </div>
+                    </div>
+
+                    <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-slate-200/70 text-zinc-500 border border-slate-200 shrink-0">
+                      No Role
+                    </span>
+                  </div>
+                );
+              })}
             </div>
-          )}
-        </>
+          </div>
+
+          {/* Right Side: WPD2 (What's Happening Today Console) */}
+          <div className="flex-1 h-full min-h-0 overflow-hidden flex flex-col">
+            <DashboardAiSummary userName={userName} profile={effectiveProfile} />
+          </div>
+        </div>
       )}
 
       {/* Tab Content: Analysis / Forecast (Blank / Empty container) */}

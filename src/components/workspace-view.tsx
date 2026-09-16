@@ -169,19 +169,26 @@ function calculateActionStatus(
   customStatus?: string,
   nowMs: number = Date.now()
 ): ActionLifecycleStatus {
-  const isLeaderCompleted = superState === "Completed" || customStatus === "Completed" || superState === "Complete" || customStatus === "Complete";
   const hasLogs = Array.isArray(logs) && logs.length > 0;
+  const hasRedoLogs = hasLogs && logs.some((l) => l.reviewStatus === "redo");
   const allLogsAcknowledged = hasLogs && logs.every((l) => l.reviewStatus === "acknowledged");
+
+  // If ANY log is marked with "redo", the action is strictly "In Progress" (even if previously complete or pending verification)
+  if (hasRedoLogs) {
+    return "In Progress";
+  }
+
+  const isLeaderCompleted = superState === "Completed" || customStatus === "Completed" || superState === "Complete" || customStatus === "Complete";
+
+  if (isLeaderCompleted) {
+    return "Complete";
+  }
 
   const isMemberMarkedPending =
     customStatus === "Pending Verification" ||
     superState === "Pending Verification" ||
     customStatus === "Pending Review" ||
     superState === "Pending Review";
-
-  if (isLeaderCompleted) {
-    return "Complete";
-  }
 
   if (isMemberMarkedPending) {
     if (allLogsAcknowledged) {
@@ -1444,107 +1451,142 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
     );
   };
 
-  // 1. Admin A requests deletion (initiates 2-Admin approval process)
-  const handleRequestProjectDeletion = async (projId: string, projTitle: string) => {
-    const currentAdminEmail = profile?.email || "admin@hsgglobal.sg";
-    const currentAdminName = profile?.name || "Administrator";
+  // P3: Delete an unacknowledged progress log
+  const handleDeleteProgressLog = async (actionId: string, logId: string) => {
+    let targetAction: DummyAction | null = null;
+    let targetProject: DummyProject | null = null;
+    let targetMilestone: DummyMilestone | null = null;
+
+    for (const proj of projectsList) {
+      for (const ms of proj.milestones) {
+        const found = ms.actions.find(a => a.id === actionId);
+        if (found) {
+          targetAction = found;
+          targetProject = proj;
+          targetMilestone = ms;
+          break;
+        }
+      }
+      if (targetAction) break;
+    }
+
+    if (!targetAction || !targetAction.logs) return;
+
+    const currentLogs = targetAction.logs;
+    const logToDelete = currentLogs.find(l => l.id === logId);
+    if (!logToDelete) return;
+
+    // Guard: Do not allow deletion if already acknowledged by leader
+    if (logToDelete.reviewStatus === "acknowledged") {
+      showToast("Cannot delete a progress update that has already been acknowledged.", "warning");
+      return;
+    }
+
     const previousProjects = [...projectsList];
+    const updatedLogs = currentLogs.filter(l => l.id !== logId);
+
+    // Calculate new status and progress
+    const newStatus = calculateActionStatus(
+      targetAction.startDate,
+      updatedLogs,
+      targetAction.superState,
+      targetAction.customStatus,
+      Date.now()
+    );
+    const isDone = newStatus === "Complete";
+    const newProgress = calculateActionProgress(updatedLogs.length, isDone);
+
+    // Optimistically update projectsList
+    setProjectsList(prev => prev.map(proj => {
+      if (targetProject && proj.id === targetProject.id) {
+        return {
+          ...proj,
+          milestones: proj.milestones.map(ms => {
+            if (targetMilestone && ms.id === targetMilestone.id) {
+              return {
+                ...ms,
+                actions: ms.actions.map(act => {
+                  if (act.id === actionId) {
+                    return {
+                      ...act,
+                      logs: updatedLogs,
+                      status: newStatus,
+                      progress: newProgress,
+                    };
+                  }
+                  return act;
+                }),
+              };
+            }
+            return ms;
+          }),
+        };
+      }
+      return proj;
+    }));
+
+    // Optimistically update activeTaskDrawer if open
+    if (activeTaskDrawer && activeTaskDrawer.action.id === actionId) {
+      setActiveTaskDrawer({
+        ...activeTaskDrawer,
+        action: {
+          ...activeTaskDrawer.action,
+          logs: updatedLogs,
+          status: newStatus,
+          progress: newProgress,
+        },
+      });
+    }
+
+    showToast("Progress update deleted.", "info");
+
+    // Sync to backend in background
+    (async () => {
+      try {
+        await savePMAction({
+          id: actionId,
+          logs: updatedLogs,
+          super_state: newStatus === "Complete" ? "Completed" : (newStatus === "Pending Verification" ? "Pending Verification" : (newStatus === "In Progress" ? "In Progress" : null)),
+          custom_status: newStatus,
+        });
+      } catch (err: any) {
+        console.error("Failed to delete progress log:", err);
+        setProjectsList(previousProjects);
+        showToast(err.message || "Failed to delete progress update", "error");
+      }
+    })();
+  };
+
+  // P1: Move Project to 30-Day Trash
+  const handleConfirmMoveProjectToTrash = async (projId: string) => {
+    const previousProjects = [...projectsList];
+    const now = Date.now();
 
     // Optimistically update
     setProjectsList(prev => prev.map(p => p.id === projId ? {
       ...p,
-      deleteRequestedBy: currentAdminEmail,
-      deleteRequestedByName: currentAdminName,
-      deleteRequestedAt: Date.now(),
+      deletedAt: now,
     } : p));
     setDeleteConfirmTarget(null);
     setIsAddProjectOpen(false);
     setEditingProjectId(null);
-    showToast("Project deletion requested. Awaiting 2nd Admin approval.", "info");
+    showToast("Project moved to Trash.", "info");
 
     (async () => {
       try {
         await savePMProject({
           id: projId,
-          delete_requested_by: currentAdminEmail,
-          delete_requested_by_name: currentAdminName,
-          delete_requested_at: Date.now(),
+          deleted_at: now,
         });
-        await loadWorkspaceData(true);
       } catch (err: any) {
-        console.error("Failed to request project deletion:", err);
+        console.error("Failed to move project to trash:", err);
         setProjectsList(previousProjects);
-        showToast(err.message || "Failed to request project deletion", "error");
+        showToast(err.message || "Failed to move project to trash", "error");
       }
     })();
   };
 
-  // 2. Admin B approves deletion (moves project into 30-Day pending deletion queue)
-  const handleApproveProjectDeletion = async (projId: string, projTitle: string) => {
-    const currentAdminEmail = profile?.email || "admin@hsgglobal.sg";
-    const previousProjects = [...projectsList];
-
-    // Optimistically update
-    setProjectsList(prev => prev.map(p => p.id === projId ? {
-      ...p,
-      deleteApprovedBy: currentAdminEmail,
-      deletedAt: Date.now(),
-    } : p));
-    setDeleteConfirmTarget(null);
-    setIsAddProjectOpen(false);
-    setEditingProjectId(null);
-    showToast("Project deletion approved and moved to 30-day queue.", "info");
-
-    (async () => {
-      try {
-        await savePMProject({
-          id: projId,
-          delete_approved_by: currentAdminEmail,
-          deleted_at: Date.now(),
-        });
-        await loadWorkspaceData(true);
-      } catch (err: any) {
-        console.error("Failed to approve project deletion:", err);
-        setProjectsList(previousProjects);
-        showToast(err.message || "Failed to approve project deletion", "error");
-      }
-    })();
-  };
-
-  // 3. Admin A or Admin B cancels the deletion request
-  const handleCancelDeletionRequest = async (projId: string, projTitle: string) => {
-    const previousProjects = [...projectsList];
-
-    // Optimistically update
-    setProjectsList(prev => prev.map(p => p.id === projId ? {
-      ...p,
-      deleteRequestedBy: undefined,
-      deleteRequestedByName: undefined,
-      deleteRequestedAt: undefined,
-    } : p));
-    setDeleteConfirmTarget(null);
-    setIsAddProjectOpen(false);
-    setEditingProjectId(null);
-    showToast("Project deletion request cancelled.", "info");
-
-    (async () => {
-      try {
-        await savePMProject({
-          id: projId,
-          delete_requested_by: null,
-          delete_requested_by_name: null,
-          delete_requested_at: null,
-        });
-        await loadWorkspaceData(true);
-      } catch (err: any) {
-        console.error("Failed to cancel deletion request:", err);
-        setProjectsList(previousProjects);
-        showToast(err.message || "Failed to cancel deletion request", "error");
-      }
-    })();
-  };
-
-  // 4. Restore / Undelete from 30-day pending trash
+  // P1: Restore / Undelete from 30-day pending trash
   const handleRevokeDeletion = async (projId: string) => {
     const previousProjects = [...projectsList];
 
@@ -1552,10 +1594,6 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
     setProjectsList(prev => prev.map(p => p.id === projId ? {
       ...p,
       deletedAt: undefined,
-      deleteRequestedBy: undefined,
-      deleteRequestedByName: undefined,
-      deleteRequestedAt: undefined,
-      deleteApprovedBy: undefined,
     } : p));
     showToast("Project restored successfully!", "success");
 
@@ -1564,12 +1602,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
         await savePMProject({
           id: projId,
           deleted_at: null,
-          delete_requested_by: null,
-          delete_requested_by_name: null,
-          delete_requested_at: null,
-          delete_approved_by: null,
         });
-        await loadWorkspaceData(true);
       } catch (err: any) {
         console.error("Failed to restore project:", err);
         setProjectsList(previousProjects);
@@ -1578,6 +1611,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
     })();
   };
 
+  // P1: Permanently purge project and all child entities
   const handlePermanentPurgeProject = async (projId: string) => {
     const previousProjects = [...projectsList];
 
@@ -1588,7 +1622,6 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
     (async () => {
       try {
         await deletePMEntity("project", projId);
-        await loadWorkspaceData(true);
       } catch (err: any) {
         console.error("Failed to purge project:", err);
         setProjectsList(previousProjects);
@@ -1648,6 +1681,9 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
     const managerEmail = matchingManager?.email || (formManager.includes("@") ? formManager.trim() : profile?.email) || "";
 
     const activeMilestonesInput = milestonesInput.filter(m => m.title.trim() !== "");
+    const existingProject = isEdit ? projectsList.find(p => p.id === projId) : null;
+    const existingMilestones = existingProject?.milestones || [];
+
     const optimisticMilestones: DummyMilestone[] = activeMilestonesInput.map((m, index) => {
       let msStartMs = startMs;
       let msEndMs = m.deadline ? new Date(m.deadline).getTime() : endMs;
@@ -1663,6 +1699,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
       const leadName = matchingLead?.name || m.lead.trim() || managerName;
       const leadEmail = matchingLead?.email || (m.lead.includes("@") ? m.lead.trim() : managerEmail) || "";
       const msId = m.id.startsWith("ms-") ? `ms_${Date.now()}_${index}` : m.id;
+      const existingMs = existingMilestones.find(em => em.id === msId);
 
       return {
         id: msId,
@@ -1671,12 +1708,16 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
         leadEmail: leadEmail,
         startDate: new Date(msStartMs).toISOString().split("T")[0],
         endDate: new Date(msEndMs).toISOString().split("T")[0],
-        progress: 0,
-        actions: [],
+        progress: existingMs?.progress || 0,
+        actions: existingMs?.actions || [],
       };
     });
 
     const previousProjects = [...projectsList];
+
+    // Identify milestones removed by the user
+    const newMsIds = new Set(optimisticMilestones.map(m => m.id));
+    const deletedMilestones = existingMilestones.filter(em => !newMsIds.has(em.id));
 
     // Optimistically update projectsList immediately
     setProjectsList(prev => {
@@ -1690,7 +1731,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
               managerEmail: managerEmail,
               startDate: formStartDate,
               endDate: formEndDate,
-              milestones: optimisticMilestones.length > 0 ? optimisticMilestones : p.milestones,
+              milestones: optimisticMilestones,
             };
           }
           return p;
@@ -1747,6 +1788,12 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
           status: "Active",
         });
 
+        // Delete any removed milestones from database
+        for (const dms of deletedMilestones) {
+          await deletePMEntity("milestone", dms.id);
+        }
+
+        // Save new and updated milestones
         for (const [index, m] of activeMilestonesInput.entries()) {
           let msStartMs = startMs;
           let msEndMs = m.deadline ? new Date(m.deadline).getTime() : endMs;
@@ -1774,8 +1821,6 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
             end_date: msEndMs,
           });
         }
-
-        await loadWorkspaceData(true);
       } catch (err: any) {
         console.error("Failed to save project:", err);
         setProjectsList(previousProjects);
@@ -2797,6 +2842,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
         if (l.id === editingLogId) {
           return {
             ...l,
+            timestamp: fullTimestamp,
             whatIDidTitle: logFormWhatTitle.trim(),
             whatIDidDesc: logFormWhatDesc.trim(),
             whatIsNext: logFormWhatNext.trim() || undefined,
@@ -2804,6 +2850,10 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
             attachmentPdfs: logFormAttachmentPdfs.length > 0 ? logFormAttachmentPdfs : undefined,
             proofPhotoData: logFormProofPhotos[0] || undefined,
             proofPhotos: logFormProofPhotos.length > 0 ? logFormProofPhotos : undefined,
+            reviewStatus: undefined,
+            reviewedBy: undefined,
+            reviewedAt: undefined,
+            reviewNote: undefined,
           };
         }
         return l;
@@ -3101,6 +3151,9 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
         ...prev,
         action: {
           ...prev.action,
+          status: "In Progress",
+          superState: "In Progress",
+          customStatus: "In Progress",
           logs: updatedLogs,
         },
       };
@@ -3111,19 +3164,31 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
         ...p,
         milestones: p.milestones.map((m) => ({
           ...m,
-          actions: m.actions.map((a) => (a.id === actionId ? { ...a, logs: updatedLogs } : a)),
+          actions: m.actions.map((a) =>
+            a.id === actionId
+              ? {
+                  ...a,
+                  status: "In Progress",
+                  superState: "In Progress",
+                  customStatus: "In Progress",
+                  logs: updatedLogs,
+                }
+              : a
+          ),
         })),
       }))
     );
 
     setRedoModalTarget(null);
     setRedoCommentText("");
-    showToast("Redo requested! Team member has been notified to revise this update.", "info");
+    showToast("Redo requested! Action moved back to In Progress.", "info");
 
     // 2. Background API Sync
     savePMAction({
       id: actionId,
       logs: updatedLogs,
+      super_state: "In Progress",
+      custom_status: "In Progress",
     })
       .then(() => loadWorkspaceData(true))
       .catch((err: any) => {
@@ -3141,6 +3206,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
     const isTeamLeaderMode = activeView === "team_leader";
     const logs = activeTaskDrawer.action.logs || [];
     const ackedLogs = logs.filter((l) => l.reviewStatus === "acknowledged");
+    const hasRedoLogs = logs.some((l) => l.reviewStatus === "redo");
     const isPendingVerif = activeTaskDrawer.action.status === "Pending Verification";
     const allAcked = logs.length > 0 && ackedLogs.length === logs.length;
     const isActionComplete = activeTaskDrawer.action.status === "Completed" || activeTaskDrawer.action.status === "Complete";
@@ -3231,6 +3297,24 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
               <span className="text-zinc-500 font-normal">Assigned to:</span>
               <span className="text-zinc-800 font-medium">{activeTaskDrawer.action.assignee}</span>
             </div>
+
+            {/* Redo Banner for Team Member */}
+            {!isTeamLeaderMode && hasRedoLogs && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 flex flex-col gap-2 mt-0.5">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <RotateCcw size={14} className="text-rose-600 shrink-0" />
+                    <span className="text-xs font-bold text-rose-900 truncate">Revision / Redo Requested</span>
+                  </div>
+                  <span className="text-[10.5px] font-semibold text-rose-800 bg-rose-100 px-2 py-0.5 rounded border border-rose-200 shrink-0">
+                    Action Required
+                  </span>
+                </div>
+                <p className="text-[11px] text-rose-800/90 leading-snug">
+                  Your Team Leader has requested revisions on one or more progress updates. Please review the feedback below, revise your submission, and resubmit.
+                </p>
+              </div>
+            )}
 
             {/* Pending Verification Callout Banner for Team Leader */}
             {isTeamLeaderMode && isPendingVerif && (
@@ -3336,23 +3420,38 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                           </div>
                         </div>
 
-                        {/* Status or Edit Button (for Team Member) */}
+                        {/* Status or Edit/Delete Button (for Team Member) */}
                         {!isTeamLeaderMode && (
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0">
                             {isAcknowledged ? (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 text-[10px] font-semibold border border-emerald-200">
                                 <Check size={10} className="stroke-[3]" /> Acknowledged by Leader
                               </span>
                             ) : (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenEditProgress(log)}
-                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-50 hover:bg-slate-100 text-[#0B57D0] hover:text-[#0842A0] text-[11px] font-medium border border-slate-200 cursor-pointer transition-colors shadow-2xs"
-                                title="Edit progress update before team leader acknowledgment"
-                              >
-                                <Pencil size={11} />
-                                <span>Edit</span>
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenEditProgress(log)}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-50 hover:bg-slate-100 text-[#0B57D0] hover:text-[#0842A0] text-[11px] font-medium border border-slate-200 cursor-pointer transition-colors shadow-2xs"
+                                  title="Edit progress update"
+                                >
+                                  <Pencil size={11} />
+                                  <span>Edit</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (activeTaskDrawer) {
+                                      handleDeleteProgressLog(activeTaskDrawer.action.id, log.id);
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-slate-50 hover:bg-rose-50 text-rose-600 hover:text-rose-700 text-[11px] font-medium border border-slate-200 hover:border-rose-200 cursor-pointer transition-colors shadow-2xs"
+                                  title="Delete progress update"
+                                >
+                                  <Trash2 size={11} />
+                                  <span>Delete</span>
+                                </button>
+                              </>
                             )}
                           </div>
                         )}
@@ -3505,6 +3604,33 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                               </button>
                             </div>
                           )}
+                        </div>
+                      )}
+
+                      {/* Team Member Redo Review Callout & Revise Button */}
+                      {!isTeamLeaderMode && isRedo && (
+                        <div className="pt-2 border-t border-rose-100 flex flex-col gap-2">
+                          <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-900 text-[11px] flex flex-col gap-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold flex items-center gap-1 text-rose-700">
+                                <RotateCcw size={12} /> Redo Requested by {log.reviewedBy || "Leader"}
+                              </span>
+                              <span className="text-[10px] text-rose-500">{formatDateTime(log.reviewedAt)}</span>
+                            </div>
+                            <p className="text-rose-800 font-normal italic bg-white/70 p-2 rounded border border-rose-200/60">
+                              "{log.reviewNote || "Please revise and resubmit."}"
+                            </p>
+                            <div className="flex items-center justify-end pt-0.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditProgress(log)}
+                                className="px-3 py-1 rounded-md bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-semibold shadow-2xs cursor-pointer transition-all active:scale-95 flex items-center gap-1"
+                              >
+                                <Pencil size={11} />
+                                <span>Revise & Resubmit</span>
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       )}
 
@@ -4103,125 +4229,10 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
               <h1 className="text-base font-semibold text-zinc-900">Management Portfolio</h1>
               <span className="text-xs text-zinc-400 font-normal">2025 – 2027</span>
             </div>
-
-            {/* Subtle Status Color Indicator Legend */}
-            <div className="hidden lg:flex items-center gap-3 pl-4 ml-2 border-l border-slate-200 text-[11px] text-zinc-500">
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-sm bg-[#0B57D0]" />
-                <span>On Track / In Progress</span>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-sm bg-emerald-600" />
-                <span>Completed</span>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-sm bg-amber-400 border border-amber-500/30" />
-                <span>Near Deadline</span>
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-sm bg-rose-400 border border-rose-500/30" />
-                <span>Overdue (Past Date)</span>
-              </span>
-            </div>
           </div>
 
           {/* Right Clean Action Controls */}
           <div className="flex items-center gap-2.5">
-            {/* Status Segmented Buttons */}
-            <div className="flex items-center bg-[#F1F3F4] p-0.5 rounded-lg border border-slate-200/80 text-xs font-medium">
-              <button
-                type="button"
-                onClick={() => setStatusFilter("active")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  statusFilter === "active"
-                    ? "bg-white text-[#0B57D0] shadow-2xs font-medium"
-                    : "text-zinc-600 hover:text-zinc-900 font-normal"
-                }`}
-              >
-                Active
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter("past")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  statusFilter === "past"
-                    ? "bg-white text-[#0B57D0] shadow-2xs font-medium"
-                    : "text-zinc-600 hover:text-zinc-900 font-normal"
-                }`}
-              >
-                Past
-              </button>
-              <button
-                type="button"
-                onClick={() => setStatusFilter("all")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  statusFilter === "all"
-                    ? "bg-white text-[#0B57D0] shadow-2xs font-medium"
-                    : "text-zinc-600 hover:text-zinc-900 font-normal"
-                }`}
-              >
-                All
-              </button>
-              {/* Deleted / Retention Queue Tab */}
-              <button
-                type="button"
-                onClick={() => setStatusFilter("deleted")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
-                  statusFilter === "deleted"
-                    ? "bg-white text-rose-600 shadow-2xs font-medium"
-                    : "text-zinc-600 hover:text-rose-600 font-normal"
-                }`}
-                title="Projects queued for 30-day deletion"
-              >
-                <span>Trash</span>
-                {projectsList.filter(p => !!p.deletedAt).length > 0 && (
-                  <span className="w-4 h-4 rounded-full bg-rose-100 text-rose-700 text-[9px] font-bold flex items-center justify-center">
-                    {projectsList.filter(p => !!p.deletedAt).length}
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {/* Clean Zoom Segmented Control: Semester, Quarter, Month, Weeks */}
-            <div className="flex items-center bg-[#F1F3F4] p-0.5 rounded-lg border border-slate-200/80 text-xs font-medium">
-              <button
-                type="button"
-                onClick={() => setZoomMode("semester")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  zoomMode === "semester" ? "bg-white text-[#0B57D0] shadow-2xs font-medium" : "text-zinc-600 hover:text-zinc-900 font-normal"
-                }`}
-              >
-                Semester
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoomMode("quarter")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  zoomMode === "quarter" ? "bg-white text-[#0B57D0] shadow-2xs font-medium" : "text-zinc-600 hover:text-zinc-900 font-normal"
-                }`}
-              >
-                Quarter
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoomMode("month")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  zoomMode === "month" ? "bg-white text-[#0B57D0] shadow-2xs font-medium" : "text-zinc-600 hover:text-zinc-900 font-normal"
-                }`}
-              >
-                Month
-              </button>
-              <button
-                type="button"
-                onClick={() => setZoomMode("week")}
-                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                  zoomMode === "week" ? "bg-white text-[#0B57D0] shadow-2xs font-medium" : "text-zinc-600 hover:text-zinc-900 font-normal"
-                }`}
-              >
-                Weeks
-              </button>
-            </div>
-
             {/* + Add Project Primary Button */}
             <button
               type="button"
@@ -4482,7 +4493,8 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
               <div 
                 ref={timelineScrollRef} 
                 onScroll={updateTodayVisibility}
-                className="flex-1 overflow-x-auto overflow-y-auto flex flex-col relative"
+                className="flex-1 overflow-x-auto overflow-y-auto flex flex-col relative no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&::-webkit-scrollbar]:!hidden"
+                style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
               >
                 <div style={{ width: `${zoomConfig.totalWidth}px` }} className="min-w-full flex-1 flex flex-col relative">
                   
@@ -4689,6 +4701,125 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
             </div>
           </div>
 
+        </div>
+
+        {/* FLOATING CENTER-BOTTOM CONTROL DOCK: Filters on Top + Status Color Indicators Below */}
+        <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-1.5 p-2 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl animate-in fade-in slide-in-from-bottom-3 duration-200">
+          {/* Top Row: Status Tabs + Divider + Zoom Tabs */}
+          <div className="flex items-center gap-2">
+            {/* Status Filter Segmented Buttons */}
+            <div className="flex items-center bg-[#F1F3F4] p-0.5 rounded-lg border border-slate-200/80 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setStatusFilter("active")}
+                className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                  statusFilter === "active"
+                    ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                    : "text-zinc-600 hover:text-zinc-900 font-normal"
+                }`}
+              >
+                Active
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("past")}
+                className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                  statusFilter === "past"
+                    ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                    : "text-zinc-600 hover:text-zinc-900 font-normal"
+                }`}
+              >
+                Past
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("all")}
+                className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                  statusFilter === "all"
+                    ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                    : "text-zinc-600 hover:text-zinc-900 font-normal"
+                }`}
+              >
+                All
+              </button>
+              {/* Deleted / Retention Queue Tab (Bin Icon Only) */}
+              <button
+                type="button"
+                onClick={() => setStatusFilter("deleted")}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer flex items-center justify-center ${
+                  statusFilter === "deleted"
+                    ? "bg-white text-rose-600 shadow-2xs font-semibold"
+                    : "text-zinc-500 hover:text-rose-600 font-normal"
+                }`}
+                title="Trash (Retention Queue)"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+
+            {/* Vertical Hairline Divider */}
+            <div className="h-5 w-[1px] bg-slate-200" />
+
+            {/* Zoom Segmented Control: Semester, Quarter, Month, Weeks */}
+            <div className="flex items-center bg-[#F1F3F4] p-0.5 rounded-lg border border-slate-200/80 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setZoomMode("semester")}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  zoomMode === "semester" ? "bg-white text-[#0B57D0] shadow-2xs font-semibold" : "text-zinc-600 hover:text-zinc-900 font-normal"
+                }`}
+              >
+                Semester
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoomMode("quarter")}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  zoomMode === "quarter" ? "bg-white text-[#0B57D0] shadow-2xs font-semibold" : "text-zinc-600 hover:text-zinc-900 font-normal"
+                }`}
+              >
+                Quarter
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoomMode("month")}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  zoomMode === "month" ? "bg-white text-[#0B57D0] shadow-2xs font-semibold" : "text-zinc-600 hover:text-zinc-900 font-normal"
+                }`}
+              >
+                Month
+              </button>
+              <button
+                type="button"
+                onClick={() => setZoomMode("week")}
+                className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                  zoomMode === "week" ? "bg-white text-[#0B57D0] shadow-2xs font-semibold" : "text-zinc-600 hover:text-zinc-900 font-normal"
+                }`}
+              >
+                Weeks
+              </button>
+            </div>
+          </div>
+
+          {/* Bottom Row: Subtle Status Color Indicator Legend */}
+          <div className="flex items-center gap-3.5 pt-1 px-2 text-[10.5px] text-zinc-500 font-normal">
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
+              <span>On Track / In Progress</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-600" />
+              <span>Completed</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              <span>Near Deadline</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-rose-400" />
+              <span>Overdue (Past Date)</span>
+            </span>
+          </div>
         </div>
 
         {/* Milestone Actions & Verification Timeline Slide-Over Drawer */}
@@ -4906,101 +5037,36 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                 <div className="px-6 py-3.5 bg-[#FAFAFB] border-t border-slate-200 flex items-center justify-between shrink-0">
                   <div>
                     {currentProj && (
-                      isDeleteRequested ? (
-                        isAdminA ? (
-                          /* Admin A View: Disabled Delete Requested button (matching Delete styling) + regular gray text Undo Delete */
-                          <div className="flex items-center gap-3">
-                            <button
-                              type="button"
-                              disabled
-                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 bg-white text-rose-600 text-xs font-medium cursor-not-allowed opacity-80"
-                            >
-                              <Trash2 size={13} />
-                              <span>Delete Requested</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleCancelDeletionRequest(currentProj.id, currentProj.title)}
-                              className="text-xs text-zinc-500 hover:text-zinc-800 hover:underline font-normal cursor-pointer transition-colors"
-                            >
-                              Undo Delete
-                            </button>
-                          </div>
-                        ) : (
-                          /* Admin B View: Accept / Decline buttons + small note "This project is delete by Admin A" */
-                          <div className="flex items-center gap-3">
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => handleApproveProjectDeletion(currentProj.id, currentProj.title)}
-                                className="px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium cursor-pointer shadow-2xs transition-all active:scale-95"
-                              >
-                                Accept
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleCancelDeletionRequest(currentProj.id, currentProj.title)}
-                                className="px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-zinc-100 text-zinc-700 text-xs font-medium cursor-pointer transition-all active:scale-95"
-                              >
-                                Decline
-                              </button>
-                            </div>
-                            <span className="text-[11px] text-zinc-500 font-normal">
-                              This project is delete by <strong className="text-zinc-700">{requestedByName}</strong>
-                            </span>
-                          </div>
-                        )
-                      ) : (
-                        /* Initial State: Delete button triggers custom confirmation popup */
-                        <button
-                          type="button"
-                          onClick={() => setDeleteConfirmTarget({ id: currentProj.id, title: currentProj.title })}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-600 text-xs font-medium cursor-pointer transition-all active:scale-95"
-                        >
-                          <Trash2 size={13} />
-                          <span>Delete</span>
-                        </button>
-                      )
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirmTarget({ id: currentProj.id, title: currentProj.title })}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-600 text-xs font-medium cursor-pointer transition-all active:scale-95"
+                      >
+                        <Trash2 size={13} />
+                        <span>Delete Project</span>
+                      </button>
                     )}
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {isDeleteRequested ? (
-                      /* When in deleting / pending approval mode: show single Close button, remove Save Changes */
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsAddProjectOpen(false);
-                          setEditingProjectId(null);
-                          setFormError("");
-                        }}
-                        className="px-4 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-zinc-50 text-zinc-700 text-xs font-medium cursor-pointer transition-all"
-                      >
-                        Close
-                      </button>
-                    ) : (
-                      /* Standard Mode: Cancel & Save Changes / Create */
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsAddProjectOpen(false);
-                            setEditingProjectId(null);
-                            setFormError("");
-                          }}
-                          className="px-3.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-zinc-50 text-zinc-700 text-xs font-medium cursor-pointer transition-all"
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="submit"
-                          form="add-project-form"
-                          className="px-4 py-1.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium cursor-pointer shadow-2xs transition-all active:scale-95"
-                        >
-                          {editingProjectId ? "Save Changes" : "Create & Launch Project"}
-                        </button>
-                      </>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsAddProjectOpen(false);
+                        setEditingProjectId(null);
+                        setFormError("");
+                      }}
+                      className="px-3.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-zinc-50 text-zinc-700 text-xs font-medium cursor-pointer transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      form="add-project-form"
+                      className="px-4 py-1.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium cursor-pointer shadow-2xs transition-all active:scale-95"
+                    >
+                      {editingProjectId ? "Save Changes" : "Create & Launch Project"}
+                    </button>
                   </div>
                 </div>
               );
@@ -5009,7 +5075,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
         </div>
       )}
 
-      {/* Custom Clean Confirmation Popup for Initial Deletion Request */}
+      {/* Custom Clean Confirmation Popup for Project Deletion */}
       {deleteConfirmTarget && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/40 backdrop-blur-2xs p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-md overflow-hidden flex flex-col p-6 gap-4 animate-in zoom-in-95 duration-150">
@@ -5018,9 +5084,9 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                 <AlertTriangle size={20} />
               </div>
               <div className="flex flex-col gap-1">
-                <h3 className="text-sm font-semibold text-zinc-900">Confirm Project Deletion Request</h3>
+                <h3 className="text-sm font-semibold text-zinc-900">Move Project to Trash</h3>
                 <p className="text-xs text-zinc-500 font-normal leading-relaxed">
-                  Are you sure you want to request deletion for <strong className="text-zinc-800">"{deleteConfirmTarget.title}"</strong>? A second Administrator must accept before it is moved to Trash.
+                  Are you sure you want to move <strong className="text-zinc-800">"{deleteConfirmTarget.title}"</strong> to Trash? It will be held for 30 days before permanent purging.
                 </p>
               </div>
             </div>
@@ -5035,10 +5101,10 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
               </button>
               <button
                 type="button"
-                onClick={() => handleRequestProjectDeletion(deleteConfirmTarget.id, deleteConfirmTarget.title)}
+                onClick={() => handleConfirmMoveProjectToTrash(deleteConfirmTarget.id)}
                 className="px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-medium cursor-pointer shadow-2xs transition-all active:scale-95"
               >
-                Yes, Confirm Deletion
+                Move to Trash
               </button>
             </div>
           </div>
@@ -5056,10 +5122,8 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
       {/* Management View End */}
     </div>
   );
-}
+  }
 
-  // ----------------------------------------------------
-  // TEAM LEADER VIEW: Operational Hub
   // ----------------------------------------------------
   // TEAM LEADER VIEW: Operational Hub
   // ----------------------------------------------------
@@ -5321,14 +5385,16 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
       if (activeTaskDrawer?.action.id === actionId) {
         setActiveTaskDrawer(null);
       }
+      if (selectedLeaderActionId === actionId) {
+        setSelectedLeaderActionId(null);
+      }
       setDeleteActionConfirmTarget(null);
       showToast("Action deleted successfully!", "success");
 
-      // Background sync
+      // Non-blocking background sync (no heavy table refetch lag)
       (async () => {
         try {
           await deletePMEntity("action", actionId);
-          await loadWorkspaceData(true);
         } catch (err: any) {
           console.error("Failed to delete/archive action:", err);
           setProjectsList(previousProjects);
@@ -5562,6 +5628,9 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
             if (a.id === actionId) {
               return {
                 ...a,
+                status: "In Progress",
+                superState: "In Progress",
+                customStatus: "In Progress",
                 logs: updatedLogs,
               };
             }
@@ -5575,6 +5644,9 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
           ...prev,
           action: {
             ...prev.action,
+            status: "In Progress",
+            superState: "In Progress",
+            customStatus: "In Progress",
             logs: updatedLogs,
           }
         } : null);
@@ -5582,7 +5654,7 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
 
       setRedoModalTarget(null);
       setRedoCommentText("");
-      showToast("Redo requested! Team member has been notified to revise this update.", "info");
+      showToast("Redo requested! Action moved back to In Progress.", "info");
 
       // Background sync
       (async () => {
@@ -5590,6 +5662,8 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
           await savePMAction({
             id: actionId,
             logs: updatedLogs,
+            super_state: "In Progress",
+            custom_status: "In Progress",
           });
           await loadWorkspaceData(true);
         } catch (err: any) {
@@ -5680,9 +5754,9 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
 
     return (
       <div className="h-full w-full bg-[#FAFAFC] font-primary select-none flex flex-col overflow-hidden">
-        {/* Top Header Bar */}
+        {/* Simplified, Clean Minimal Top Bar */}
         <div className="px-5 py-2.5 bg-white border-b border-slate-200/90 flex items-center justify-between shrink-0 shadow-2xs">
-          {/* Left Title & Back */}
+          {/* Left Title & Back (Clean, No Icon) */}
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -5695,70 +5769,11 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
               <h1 className="text-base font-semibold text-zinc-900">Team Leader Workspace</h1>
               <span className="text-xs text-zinc-400 font-normal">Milestones & Action Delegation</span>
             </div>
-
-            {/* Subtle Status Color Indicator Legend (Gantt Mode) */}
-            {leaderViewMode === "gantt" && (
-              <div className="hidden xl:flex items-center gap-3 pl-4 ml-2 border-l border-slate-200 text-[11px] text-zinc-500">
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-sky-400 border border-sky-500/30" />
-                  <span>Incoming</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-slate-400 border border-slate-500/30" />
-                  <span>To Do</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-[#0B57D0]" />
-                  <span>In Progress</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-amber-400 border border-amber-500/30" />
-                  <span>Pending Verification</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-sm bg-emerald-600" />
-                  <span>Completed</span>
-                </span>
-              </div>
-            )}
           </div>
 
-          {/* Right Controls: Zoom Range (Left), View Toggle (Right), Add Action */}
+          {/* Right Controls: View Toggle (Gantt vs Hub) + Create Task */}
           <div className="flex items-center gap-2.5">
-            {/* 1. Zoom Controls (Only in Gantt Mode): Month, Week, Day */}
-            {leaderViewMode === "gantt" && (
-              <div className="flex items-center bg-[#F1F3F4] p-0.5 rounded-lg border border-slate-200/80 text-xs font-medium">
-                <button
-                  type="button"
-                  onClick={() => setLeaderZoomMode("month")}
-                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                    leaderZoomMode === "month" ? "bg-white text-[#0B57D0] shadow-2xs font-medium" : "text-zinc-600 hover:text-zinc-900 font-normal"
-                  }`}
-                >
-                  Month
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLeaderZoomMode("week")}
-                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                    leaderZoomMode === "week" ? "bg-white text-[#0B57D0] shadow-2xs font-medium" : "text-zinc-600 hover:text-zinc-900 font-normal"
-                  }`}
-                >
-                  Week
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLeaderZoomMode("day")}
-                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
-                    leaderZoomMode === "day" ? "bg-white text-[#0B57D0] shadow-2xs font-medium" : "text-zinc-600 hover:text-zinc-900 font-normal"
-                  }`}
-                >
-                  Day
-                </button>
-              </div>
-            )}
-
-            {/* 2. View Toggle Segmented Tabs: Timeline Gantt (Default) vs Operational Hub */}
+            {/* View Toggle Segmented Tabs: Timeline Gantt (Default) vs Operational Hub */}
             <div className="flex items-center bg-[#F1F3F4] p-0.5 rounded-lg border border-slate-200/80 text-xs font-medium">
               <button
                 type="button"
@@ -5864,100 +5879,279 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
         {leaderViewMode === "gantt" ? (
           <div className="flex-1 min-h-0 overflow-hidden p-3 flex flex-col bg-[#FAFAFC]">
             <div className="bg-white rounded-xl border border-slate-200 shadow-xs flex-1 flex overflow-hidden">
-              
-              {leaderMilestonesList.length === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-8 gap-3 bg-white">
-                  <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center border border-amber-100 shadow-xs">
-                    <Target size={26} />
-                  </div>
-                  <h3 className="text-sm font-bold text-zinc-800">No Assigned Milestones Found</h3>
-                  <p className="text-xs text-zinc-500 max-w-sm leading-relaxed">
-                    You currently do not have any milestones assigned under active projects.
-                  </p>
+              {/* LEFT FIXED PANE: Milestone & Action Hierarchy Structure */}
+              <div className="w-[440px] shrink-0 border-r border-slate-200 flex flex-col bg-white z-20 shadow-2xs">
+                {/* Left Header */}
+                <div className="h-12 px-3 bg-[#FAFAFB] border-b border-slate-200 flex items-center justify-between text-[11px] font-medium text-zinc-500 shrink-0">
+                  <span className="flex-1">Milestone / Action Structure</span>
+                  <span className="w-24 text-left font-medium shrink-0">Lead By</span>
+                  <span className="w-10 text-right font-medium shrink-0">Prog</span>
+                  <span className="w-12 text-right font-medium shrink-0">Actions</span>
                 </div>
-              ) : (
-                <>
-                  {/* LEFT FIXED PANE: Milestone & Action Hierarchy Structure */}
-                  <div className="w-[440px] shrink-0 border-r border-slate-200 flex flex-col bg-white z-20 shadow-2xs">
-                    {/* Left Header */}
-                    <div className="h-12 px-3 bg-[#FAFAFB] border-b border-slate-200 flex items-center justify-between text-[11px] font-medium text-zinc-500 shrink-0">
-                      <span className="flex-1">Milestone / Action Structure</span>
-                      <span className="w-24 text-left font-medium shrink-0">Lead By</span>
-                      <span className="w-10 text-right font-medium shrink-0">Prog</span>
-                      <span className="w-12 text-right font-medium shrink-0">Actions</span>
+
+                {/* Left Body: Milestones directly at top level */}
+                <div className="flex-1 overflow-y-hidden divide-y divide-slate-100">
+                  {leaderMilestonesList.length === 0 ? (
+                    <div className="p-8 text-center flex flex-col items-center justify-center gap-1 text-zinc-400">
+                      <span className="text-xs font-semibold text-zinc-500">No milestones assigned</span>
+                      <span className="text-[11px] text-zinc-400">Assigned milestones will appear here</span>
+                    </div>
+                  ) : (
+                    leaderMilestonesList.map((item) => {
+                      const ms = item.milestone;
+                      const isExpanded = expandedLeaderMilestones[ms.id] !== false; // default expanded
+
+                      return (
+                        <React.Fragment key={ms.id}>
+                          {/* Milestone Header Row */}
+                          <div
+                            onClick={() => {
+                              setSelectedLeaderMilestoneId(ms.id);
+                              toggleLeaderMilestone(ms.id);
+                            }}
+                            className={`h-11 px-3 flex items-center justify-between gap-2 transition-colors cursor-pointer group/msrow ${
+                              selectedLeaderMilestoneId === ms.id ? "bg-[#D3E3FD]/30" : "bg-[#F8F9FB] hover:bg-amber-50/50"
+                            }`}
+                            title="Click to select and toggle actions under this milestone"
+                          >
+                            <div className="flex items-center gap-2 flex-1 min-w-0 pr-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleLeaderMilestone(ms.id);
+                                }}
+                                className="w-4 h-4 flex items-center justify-center text-zinc-400 hover:text-zinc-700 cursor-pointer shrink-0"
+                              >
+                                {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                              </button>
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-xs font-semibold text-zinc-900 truncate" title={ms.title}>
+                                  {ms.title}
+                                </span>
+                                <span className="text-[10px] text-zinc-400 truncate" title={item.project.title}>
+                                  {item.project.title}
+                                </span>
+                              </div>
+                            </div>
+
+                            <span className="w-24 text-xs font-normal text-zinc-500 truncate shrink-0" title={`Lead: ${ms.lead}`}>
+                              {ms.lead}
+                            </span>
+
+                            <span className="w-10 text-right text-[11px] font-semibold text-amber-600 shrink-0">
+                              {ms.progress}%
+                            </span>
+
+                            <div className="w-12 shrink-0 flex items-center justify-end gap-1">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedLeaderMilestoneId(ms.id);
+                                  handleOpenAddAction();
+                                }}
+                                className="p-1 rounded hover:bg-blue-100 text-[#0B57D0] cursor-pointer"
+                                title="Add Action under this milestone"
+                              >
+                                <Plus size={13} />
+                              </button>
+                              <div className="text-zinc-300 group-hover/msrow:text-amber-600">
+                                {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Action Sub-rows under this Milestone */}
+                          {isExpanded && (ms.actions || []).map((act) => {
+                            const logsCount = (act.logs || []).length;
+                            const isSelectedAct = selectedLeaderActionId === act.id;
+
+                            return (
+                              <div
+                                key={act.id}
+                                onClick={() => {
+                                  setSelectedLeaderMilestoneId(ms.id);
+                                  setSelectedLeaderActionId(act.id);
+                                }}
+                                className={`h-9 px-3 pl-8 flex items-center justify-between gap-2 border-t border-slate-100/70 text-xs cursor-pointer group/actrow transition-colors ${
+                                  isSelectedAct ? "bg-blue-50/70" : "bg-white hover:bg-blue-50/40"
+                                }`}
+                                title="Click to select action"
+                              >
+                                <div className="flex items-center gap-2 flex-1 min-w-0 pr-1">
+                                  <span className="text-zinc-300 text-[10px] shrink-0">↳</span>
+                                  <span className="text-[11.5px] font-medium text-zinc-800 truncate group-hover/actrow:text-[#0B57D0]" title={act.title}>
+                                    {act.title}
+                                  </span>
+                                  {logsCount > 0 && (
+                                    <span className="text-[9.5px] font-semibold px-1.5 py-0.2 rounded bg-slate-100 text-zinc-600 border border-slate-200 shrink-0">
+                                      {logsCount} {logsCount === 1 ? "log" : "logs"}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <span className="w-24 text-[11px] text-zinc-400 truncate shrink-0" title={act.assignee}>
+                                  {act.assignee}
+                                </span>
+
+                                <span className="w-10 text-right text-[10.5px] font-semibold text-[#0B57D0] shrink-0">
+                                  {act.progress}%
+                                </span>
+
+                                <div className="w-12 shrink-0 flex items-center justify-end gap-1 text-zinc-400">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedLeaderMilestoneId(ms.id);
+                                      handleOpenEditAction(act);
+                                    }}
+                                    className="p-1 hover:text-[#0B57D0] hover:bg-blue-50 rounded cursor-pointer"
+                                    title="Edit action"
+                                  >
+                                    <Pencil size={11} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setDeleteActionConfirmTarget({ action: act, milestoneTitle: ms.title });
+                                    }}
+                                    className="p-1 hover:text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
+                                    title="Delete / Archive action"
+                                  >
+                                    <Trash2 size={11} />
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </React.Fragment>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* RIGHT SCROLLABLE TIMELINE PANE */}
+              <div className="flex-1 flex flex-col relative overflow-hidden bg-white">
+                {/* Floating Back-to-Today Buttons */}
+                {leaderTodayOffscreen === "left" && (
+                  <button
+                    type="button"
+                    onClick={scrollToLeaderToday}
+                    className="absolute left-4 bottom-5 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-xs hover:bg-rose-50 text-rose-700 border border-rose-200 shadow-md text-xs font-medium transition-all cursor-pointer hover:scale-105 active:scale-95 animate-in fade-in slide-in-from-left-2 duration-200"
+                    title="Scroll left to Today"
+                  >
+                    <ArrowLeft size={13} className="text-rose-600 animate-pulse" />
+                    <span>Today</span>
+                  </button>
+                )}
+
+                {leaderTodayOffscreen === "right" && (
+                  <button
+                    type="button"
+                    onClick={scrollToLeaderToday}
+                    className="absolute right-4 bottom-5 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-xs hover:bg-rose-50 text-rose-700 border border-rose-200 shadow-md text-xs font-medium transition-all cursor-pointer hover:scale-105 active:scale-95 animate-in fade-in slide-in-from-right-2 duration-200"
+                    title="Scroll right to Today"
+                  >
+                    <span>Today</span>
+                    <ArrowRight size={13} className="text-rose-600 animate-pulse" />
+                  </button>
+                )}
+
+                <div 
+                  ref={leaderTimelineScrollRef} 
+                  onScroll={updateLeaderTodayVisibility}
+                  className="flex-1 overflow-x-auto overflow-y-auto flex flex-col relative no-scrollbar [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [&::-webkit-scrollbar]:!hidden"
+                  style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
+                >
+                  <div style={{ width: `${leaderZoomConfig.totalWidth}px` }} className="min-w-full flex-1 flex flex-col relative">
+                    {/* Subtle Full-Height Vertical TODAY Indicator */}
+                    {mounted && isTodayInChartRange && (
+                      <div
+                        className="absolute top-0 bottom-0 z-30 pointer-events-none flex flex-col items-center -translate-x-1/2"
+                        style={{ left: `${leaderTodayPixelLeft.toFixed(2)}px` }}
+                      >
+                        <div className="sticky top-0 bg-rose-500/80 text-white text-[8px] font-medium px-1.5 py-0.5 rounded-b shadow-2xs uppercase tracking-wider z-40">
+                          Today
+                        </div>
+                        <div className="w-[1px] flex-1 bg-rose-400/40 border-l border-dashed border-rose-400/50" />
+                      </div>
+                    )}
+
+                    {/* Master Dynamic Timeline Header */}
+                    <div className="h-12 border-b border-slate-200 flex bg-[#FAFAFB] sticky top-0 z-30 divide-x divide-slate-200 shrink-0">
+                      {leaderZoomConfig.columns.map((col, idx) => (
+                        <div
+                          key={idx}
+                          style={{ width: `${leaderZoomConfig.colWidth}px` }}
+                          className="shrink-0 p-1.5 text-center flex flex-col justify-center bg-slate-50/50 select-none"
+                        >
+                          <div className="text-[10.5px] font-medium text-zinc-700 truncate">{col.label}</div>
+                          {col.sub && <div className="text-[8.5px] text-zinc-400 font-normal truncate">{col.sub}</div>}
+                        </div>
+                      ))}
                     </div>
 
-                    {/* Left Body: Milestones directly at top level */}
-                    <div className="flex-1 overflow-y-hidden divide-y divide-slate-100">
+                    {/* Timeline Canvas Body with Background Grid Lines */}
+                    <div className="flex-1 relative divide-y divide-slate-100 min-h-0">
+                      {/* Vertical Background Grid Columns */}
+                      <div className="absolute inset-0 flex divide-x divide-slate-100 pointer-events-none">
+                        {leaderZoomConfig.columns.map((_, i) => (
+                          <div key={i} style={{ width: `${leaderZoomConfig.colWidth}px` }} className="shrink-0 h-full" />
+                        ))}
+                      </div>
+
+                      {/* Timeline Rows for Milestones and Actions */}
                       {leaderMilestonesList.map((item) => {
                         const ms = item.milestone;
-                        const isExpanded = expandedLeaderMilestones[ms.id] !== false; // default expanded
+                        const isExpanded = expandedLeaderMilestones[ms.id] !== false;
+                        const msEndMs = new Date(ms.endDate).getTime();
+                        const isMsPast = msEndMs < todayMs;
+                        const isMsComplete = ms.progress >= 100;
+                        const isMsOverdue = !isMsComplete && isMsPast;
+                        const msDaysUntilDeadline = Math.ceil((msEndMs - todayMs) / (1000 * 60 * 60 * 24));
+                        const isMsNearDeadline = !isMsComplete && !isMsPast && msDaysUntilDeadline <= 14 && msDaysUntilDeadline >= 0;
 
                         return (
                           <React.Fragment key={ms.id}>
-                            {/* Milestone Header Row */}
+                            {/* Milestone Timeline Bar Row */}
                             <div
                               onClick={() => {
                                 setSelectedLeaderMilestoneId(ms.id);
                                 toggleLeaderMilestone(ms.id);
                               }}
-                              className={`h-11 px-3 flex items-center justify-between gap-2 transition-colors cursor-pointer group/msrow ${
-                                selectedLeaderMilestoneId === ms.id ? "bg-[#D3E3FD]/30" : "bg-[#F8F9FB] hover:bg-amber-50/50"
+                              className={`h-11 relative flex items-center transition-colors border-t border-slate-100/90 first:border-t-0 cursor-pointer ${
+                                isMsPast && isMsComplete ? "bg-slate-50/40 opacity-70" : "bg-[#F8F9FB] hover:bg-amber-50/30"
                               }`}
-                              title="Click to select and toggle actions under this milestone"
+                              title="Click to expand/collapse actions"
                             >
-                              <div className="flex items-center gap-2 flex-1 min-w-0 pr-1">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleLeaderMilestone(ms.id);
-                                  }}
-                                  className="w-4 h-4 flex items-center justify-center text-zinc-400 hover:text-zinc-700 cursor-pointer shrink-0"
-                                >
-                                  {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                                </button>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="text-xs font-semibold text-zinc-900 truncate" title={ms.title}>
-                                    {ms.title}
-                                  </span>
-                                  <span className="text-[10px] text-zinc-400 truncate" title={item.project.title}>
-                                    {item.project.title}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <span className="w-24 text-xs font-normal text-zinc-500 truncate shrink-0" title={`Lead: ${ms.lead}`}>
-                                {ms.lead}
-                              </span>
-
-                              <span className="w-10 text-right text-[11px] font-semibold text-amber-600 shrink-0">
-                                {ms.progress}%
-                              </span>
-
-                              <div className="w-12 shrink-0 flex items-center justify-end gap-1">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setSelectedLeaderMilestoneId(ms.id);
-                                    handleOpenAddAction();
-                                  }}
-                                  className="p-1 rounded hover:bg-blue-100 text-[#0B57D0] cursor-pointer"
-                                  title="Add Action under this milestone"
-                                >
-                                  <Plus size={13} />
-                                </button>
-                                <div className="text-zinc-300 group-hover/msrow:text-amber-600">
-                                  {isExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                                </div>
+                              <div
+                                className={`absolute h-5.5 rounded-md text-[9.5px] font-semibold flex items-center px-2.5 overflow-hidden truncate z-10 cursor-pointer transition-transform hover:scale-[1.01] shadow-2xs ${
+                                  isMsComplete
+                                    ? "bg-emerald-600 text-white"
+                                    : isMsOverdue
+                                      ? "bg-rose-300/90 text-rose-950 border border-rose-400/50"
+                                      : isMsNearDeadline
+                                        ? "bg-amber-300/90 text-amber-950 border border-amber-400/50"
+                                        : isMsPast
+                                          ? "bg-slate-400 text-white"
+                                          : "bg-amber-400/90 text-amber-950 border border-amber-500/40"
+                                }`}
+                                style={calculateLeaderBarStyle(ms.startDate, ms.endDate)}
+                              >
+                                <span className="truncate">{ms.title} • {ms.progress}%</span>
                               </div>
                             </div>
 
-                            {/* Action Sub-rows under this Milestone */}
+                            {/* Action Bars under this Milestone */}
                             {isExpanded && (ms.actions || []).map((act) => {
-                              const logsCount = (act.logs || []).length;
-                              const isSelectedAct = selectedLeaderActionId === act.id;
+                              const isActComplete = act.status === "Completed" || act.status === "Complete";
+                              const isActPending = act.status === "Pending Verification";
+                              const isActInProg = act.status === "In Progress";
+                              const isActIncoming = act.status === "Upcoming Task" || (act.status as any) === "Incoming";
 
                               return (
                                 <div
@@ -5965,56 +6159,30 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                                   onClick={() => {
                                     setSelectedLeaderMilestoneId(ms.id);
                                     setSelectedLeaderActionId(act.id);
+                                    handleOpenTaskDrawer({
+                                      action: act,
+                                      milestone: ms,
+                                      project: item.project,
+                                    });
                                   }}
-                                  className={`h-9 px-3 pl-8 flex items-center justify-between gap-2 border-t border-slate-100/70 text-xs cursor-pointer group/actrow transition-colors ${
-                                    isSelectedAct ? "bg-blue-50/70" : "bg-white hover:bg-blue-50/40"
-                                  }`}
-                                  title="Click to select action"
+                                  className="h-9 relative flex items-center bg-white/70 hover:bg-blue-50/20 border-t border-slate-100/60 cursor-pointer transition-colors"
+                                  title="Click to view action progress and verification"
                                 >
-                                  <div className="flex items-center gap-2 flex-1 min-w-0 pr-1">
-                                    <span className="text-zinc-300 text-[10px] shrink-0">↳</span>
-                                    <span className="text-[11.5px] font-medium text-zinc-800 truncate group-hover/actrow:text-[#0B57D0]" title={act.title}>
-                                      {act.title}
-                                    </span>
-                                    {logsCount > 0 && (
-                                      <span className="text-[9.5px] font-semibold px-1.5 py-0.2 rounded bg-slate-100 text-zinc-600 border border-slate-200 shrink-0">
-                                        {logsCount} {logsCount === 1 ? "log" : "logs"}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  <span className="w-24 text-[11px] text-zinc-400 truncate shrink-0" title={act.assignee}>
-                                    {act.assignee}
-                                  </span>
-
-                                  <span className="w-10 text-right text-[10.5px] font-semibold text-[#0B57D0] shrink-0">
-                                    {act.progress}%
-                                  </span>
-
-                                  <div className="w-12 shrink-0 flex items-center justify-end gap-1 text-zinc-400">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setSelectedLeaderMilestoneId(ms.id);
-                                        handleOpenEditAction(act);
-                                      }}
-                                      className="p-1 hover:text-[#0B57D0] hover:bg-blue-50 rounded cursor-pointer"
-                                      title="Edit action"
-                                    >
-                                      <Pencil size={11} />
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setDeleteActionConfirmTarget({ action: act, milestoneTitle: ms.title });
-                                      }}
-                                      className="p-1 hover:text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
-                                      title="Delete / Archive action"
-                                    >
-                                      <Trash2 size={11} />
-                                    </button>
+                                  <div
+                                    className={`absolute h-5 rounded-md text-[9px] font-semibold flex items-center px-2 overflow-hidden truncate z-10 shadow-2xs transition-all hover:scale-[1.01] ${
+                                      isActComplete
+                                        ? "bg-emerald-600 text-white"
+                                        : isActPending
+                                          ? "bg-amber-400 text-amber-950 border border-amber-500/40 ring-1 ring-amber-400/40"
+                                          : isActInProg
+                                            ? "bg-[#0B57D0] text-white"
+                                            : isActIncoming
+                                              ? "bg-sky-400 text-sky-950 border border-sky-500/40"
+                                              : "bg-slate-400 text-white"
+                                    }`}
+                                    style={calculateLeaderBarStyle(act.startDate, act.endDate)}
+                                  >
+                                    <span className="truncate">{act.title} • {act.progress}% ({act.status})</span>
                                   </div>
                                 </div>
                               );
@@ -6024,169 +6192,109 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                       })}
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
 
-                  {/* RIGHT SCROLLABLE TIMELINE PANE */}
-                  <div className="flex-1 flex flex-col relative overflow-hidden bg-white">
-                    {/* Floating Back-to-Today Buttons */}
-                    {leaderTodayOffscreen === "left" && (
-                      <button
-                        type="button"
-                        onClick={scrollToLeaderToday}
-                        className="absolute left-4 bottom-5 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-xs hover:bg-rose-50 text-rose-700 border border-rose-200 shadow-md text-xs font-medium transition-all cursor-pointer hover:scale-105 active:scale-95 animate-in fade-in slide-in-from-left-2 duration-200"
-                        title="Scroll left to Today"
-                      >
-                        <ArrowLeft size={13} className="text-rose-600 animate-pulse" />
-                        <span>Today</span>
-                      </button>
-                    )}
+            {/* FLOATING CENTER-BOTTOM CONTROL DOCK: Filters on Top + Status Color Indicators Below */}
+            <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-40 flex flex-col items-center gap-1.5 p-2 bg-white/95 backdrop-blur-md rounded-2xl border border-slate-200/90 shadow-xl animate-in fade-in slide-in-from-bottom-3 duration-200">
+              {/* Top Row: Status Tabs + Divider + Zoom Tabs */}
+              <div className="flex items-center gap-2">
+                {/* Status Filter Segmented Buttons */}
+                <div className="flex items-center bg-[#F1F3F4] p-0.5 rounded-lg border border-slate-200/80 text-xs font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setTlMilestoneStatusFilter("active")}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                      tlMilestoneStatusFilter === "active"
+                        ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                        : "text-zinc-600 hover:text-zinc-900 font-normal"
+                    }`}
+                  >
+                    Active
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTlMilestoneStatusFilter("past")}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                      tlMilestoneStatusFilter === "past"
+                        ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                        : "text-zinc-600 hover:text-zinc-900 font-normal"
+                    }`}
+                  >
+                    Past
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTlMilestoneStatusFilter("all")}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                      tlMilestoneStatusFilter === "all"
+                        ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                        : "text-zinc-600 hover:text-zinc-900 font-normal"
+                    }`}
+                  >
+                    All
+                  </button>
+                </div>
 
-                    {leaderTodayOffscreen === "right" && (
-                      <button
-                        type="button"
-                        onClick={scrollToLeaderToday}
-                        className="absolute right-4 bottom-5 z-50 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/95 backdrop-blur-xs hover:bg-rose-50 text-rose-700 border border-rose-200 shadow-md text-xs font-medium transition-all cursor-pointer hover:scale-105 active:scale-95 animate-in fade-in slide-in-from-right-2 duration-200"
-                        title="Scroll right to Today"
-                      >
-                        <span>Today</span>
-                        <ArrowRight size={13} className="text-rose-600 animate-pulse" />
-                      </button>
-                    )}
+                {/* Vertical Hairline Divider */}
+                <div className="h-5 w-[1px] bg-slate-200" />
 
-                    <div 
-                      ref={leaderTimelineScrollRef} 
-                      onScroll={updateLeaderTodayVisibility}
-                      className="flex-1 overflow-x-auto overflow-y-auto flex flex-col relative"
-                    >
-                      <div style={{ width: `${leaderZoomConfig.totalWidth}px` }} className="min-w-full flex-1 flex flex-col relative">
-                        {/* Subtle Full-Height Vertical TODAY Indicator */}
-                        {mounted && isTodayInChartRange && (
-                          <div
-                            className="absolute top-0 bottom-0 z-30 pointer-events-none flex flex-col items-center -translate-x-1/2"
-                            style={{ left: `${leaderTodayPixelLeft.toFixed(2)}px` }}
-                          >
-                            <div className="sticky top-0 bg-rose-500/80 text-white text-[8px] font-medium px-1.5 py-0.5 rounded-b shadow-2xs uppercase tracking-wider z-40">
-                              Today
-                            </div>
-                            <div className="w-[1px] flex-1 bg-rose-400/40 border-l border-dashed border-rose-400/50" />
-                          </div>
-                        )}
+                {/* Zoom Segmented Control: Month, Week, Day */}
+                <div className="flex items-center bg-[#F1F3F4] p-0.5 rounded-lg border border-slate-200/80 text-xs font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setLeaderZoomMode("month")}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      leaderZoomMode === "month" ? "bg-white text-[#0B57D0] shadow-2xs font-semibold" : "text-zinc-600 hover:text-zinc-900 font-normal"
+                    }`}
+                  >
+                    Month
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeaderZoomMode("week")}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      leaderZoomMode === "week" ? "bg-white text-[#0B57D0] shadow-2xs font-semibold" : "text-zinc-600 hover:text-zinc-900 font-normal"
+                    }`}
+                  >
+                    Week
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLeaderZoomMode("day")}
+                    className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                      leaderZoomMode === "day" ? "bg-white text-[#0B57D0] shadow-2xs font-semibold" : "text-zinc-600 hover:text-zinc-900 font-normal"
+                    }`}
+                  >
+                    Day
+                  </button>
+                </div>
+              </div>
 
-                        {/* Master Dynamic Timeline Header */}
-                        <div className="h-12 border-b border-slate-200 flex bg-[#FAFAFB] sticky top-0 z-30 divide-x divide-slate-200 shrink-0">
-                          {leaderZoomConfig.columns.map((col, idx) => (
-                            <div
-                              key={idx}
-                              style={{ width: `${leaderZoomConfig.colWidth}px` }}
-                              className="shrink-0 p-1.5 text-center flex flex-col justify-center bg-slate-50/50 select-none"
-                            >
-                              <div className="text-[10.5px] font-medium text-zinc-700 truncate">{col.label}</div>
-                              {col.sub && <div className="text-[8.5px] text-zinc-400 font-normal truncate">{col.sub}</div>}
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Timeline Canvas Body with Background Grid Lines */}
-                        <div className="flex-1 relative divide-y divide-slate-100 min-h-0">
-                          {/* Vertical Background Grid Columns */}
-                          <div className="absolute inset-0 flex divide-x divide-slate-100 pointer-events-none">
-                            {leaderZoomConfig.columns.map((_, i) => (
-                              <div key={i} style={{ width: `${leaderZoomConfig.colWidth}px` }} className="shrink-0 h-full" />
-                            ))}
-                          </div>
-
-                          {/* Timeline Rows for Milestones and Actions */}
-                          {leaderMilestonesList.map((item) => {
-                            const ms = item.milestone;
-                            const isExpanded = expandedLeaderMilestones[ms.id] !== false;
-                            const msEndMs = new Date(ms.endDate).getTime();
-                            const isMsPast = msEndMs < todayMs;
-                            const isMsComplete = ms.progress >= 100;
-                            const isMsOverdue = !isMsComplete && isMsPast;
-                            const msDaysUntilDeadline = Math.ceil((msEndMs - todayMs) / (1000 * 60 * 60 * 24));
-                            const isMsNearDeadline = !isMsComplete && !isMsPast && msDaysUntilDeadline <= 14 && msDaysUntilDeadline >= 0;
-
-                            return (
-                              <React.Fragment key={ms.id}>
-                                {/* Milestone Timeline Bar Row */}
-                                <div
-                                  onClick={() => {
-                                    setSelectedLeaderMilestoneId(ms.id);
-                                    toggleLeaderMilestone(ms.id);
-                                  }}
-                                  className={`h-11 relative flex items-center transition-colors border-t border-slate-100/90 first:border-t-0 cursor-pointer ${
-                                    isMsPast && isMsComplete ? "bg-slate-50/40 opacity-70" : "bg-[#F8F9FB] hover:bg-amber-50/30"
-                                  }`}
-                                  title="Click to expand/collapse actions"
-                                >
-                                  <div
-                                    className={`absolute h-5.5 rounded-md text-[9.5px] font-semibold flex items-center px-2.5 overflow-hidden truncate z-10 cursor-pointer transition-transform hover:scale-[1.01] shadow-2xs ${
-                                      isMsComplete
-                                        ? "bg-emerald-600 text-white"
-                                        : isMsOverdue
-                                          ? "bg-rose-300/90 text-rose-950 border border-rose-400/50"
-                                          : isMsNearDeadline
-                                            ? "bg-amber-300/90 text-amber-950 border border-amber-400/50"
-                                            : isMsPast
-                                              ? "bg-slate-400 text-white"
-                                              : "bg-amber-400/90 text-amber-950 border border-amber-500/40"
-                                    }`}
-                                    style={calculateLeaderBarStyle(ms.startDate, ms.endDate)}
-                                  >
-                                    <span className="truncate">{ms.title} • {ms.progress}%</span>
-                                  </div>
-                                </div>
-
-                                {/* Action Bars under this Milestone */}
-                                {isExpanded && (ms.actions || []).map((act) => {
-                                  const isActComplete = act.status === "Completed" || act.status === "Complete";
-                                  const isActPending = act.status === "Pending Verification";
-                                  const isActInProg = act.status === "In Progress";
-                                  const isActIncoming = act.status === "Upcoming Task" || (act.status as any) === "Incoming";
-
-                                  return (
-                                    <div
-                                      key={act.id}
-                                      onClick={() => {
-                                        setSelectedLeaderMilestoneId(ms.id);
-                                        setSelectedLeaderActionId(act.id);
-                                        handleOpenTaskDrawer({
-                                          action: act,
-                                          milestone: ms,
-                                          project: item.project,
-                                        });
-                                      }}
-                                      className="h-9 relative flex items-center bg-white/70 hover:bg-blue-50/20 border-t border-slate-100/60 cursor-pointer transition-colors"
-                                      title="Click to view action progress and verification"
-                                    >
-                                      <div
-                                        className={`absolute h-5 rounded-md text-[9px] font-semibold flex items-center px-2 overflow-hidden truncate z-10 shadow-2xs transition-all hover:scale-[1.01] ${
-                                          isActComplete
-                                            ? "bg-emerald-600 text-white"
-                                            : isActPending
-                                              ? "bg-amber-400 text-amber-950 border border-amber-500/40 ring-1 ring-amber-400/40"
-                                              : isActInProg
-                                                ? "bg-[#0B57D0] text-white"
-                                                : isActIncoming
-                                                  ? "bg-sky-400 text-sky-950 border border-sky-500/40"
-                                                  : "bg-slate-400 text-white"
-                                        }`}
-                                        style={calculateLeaderBarStyle(act.startDate, act.endDate)}
-                                      >
-                                        <span className="truncate">{act.title} • {act.progress}% ({act.status})</span>
-                                      </div>
-                                    </div>
-                                  );
-                                })}
-                              </React.Fragment>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </>
-              )}
-
+              {/* Bottom Row: Status Color Indicator Legend */}
+              <div className="flex items-center gap-3.5 pt-1 px-2 text-[10.5px] text-zinc-500 font-normal">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-sky-400" />
+                  <span>Incoming</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-slate-400" />
+                  <span>To Do</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
+                  <span>In Progress</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  <span>Pending Verification</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                  <span>Completed</span>
+                </span>
+              </div>
             </div>
           </div>
         ) : (
@@ -7508,6 +7616,8 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                       const isInProg = action.status === "In Progress";
                       const isIncoming = action.status === "Upcoming Task" || (action.status as any) === "Incoming";
                       const logsCount = (action.logs || []).length;
+                      const hasRedo = (action.logs || []).some((l: any) => l.reviewStatus === "redo");
+                      const redoLog = hasRedo ? (action.logs || []).find((l: any) => l.reviewStatus === "redo") : null;
                       const latestLog = action.logs && action.logs.length > 0 ? action.logs[0] : null;
 
                       // Due date calculation for 7-day near deadline highlight
@@ -7521,7 +7631,9 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                           key={action.id}
                           onClick={() => handleOpenTaskDrawer({ action, milestone, project })}
                           className={`bg-white rounded-2xl border p-5 shadow-2xs transition-all hover:border-[#0B57D0]/60 hover:shadow-md cursor-pointer flex flex-col justify-between min-h-[200px] gap-4 group/taskcard ${
-                            isDone
+                            hasRedo
+                              ? "border-rose-300 bg-rose-50/15 ring-1 ring-rose-500/20"
+                              : isDone
                               ? "border-emerald-200/80 bg-emerald-50/10"
                               : isPendingVerif
                               ? "border-amber-200 bg-amber-50/10 ring-1 ring-amber-500/10"
@@ -7546,7 +7658,11 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
 
                             {/* Status Badge */}
                             <div className="flex items-center gap-1.5 shrink-0">
-                              {isDone ? (
+                              {hasRedo ? (
+                                <span className="text-[10.5px] font-bold px-3 py-0.5 rounded-full bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1">
+                                  <RotateCcw size={11} className="text-rose-600" /> Redo Requested
+                                </span>
+                              ) : isDone ? (
                                 <span className="text-[10.5px] font-bold px-3 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
                                   <Check size={11} className="stroke-[3]" /> Complete
                                 </span>
@@ -7571,7 +7687,23 @@ export function WorkspaceView({ initialView = "management", profile: propProfile
                           </div>
 
                           {/* Middle Section: Last Progress Title, Description, and Next */}
-                          {latestLog ? (
+                          {hasRedo && redoLog ? (
+                            <div className="p-3.5 rounded-xl bg-rose-50/70 border border-rose-200 text-xs flex flex-col justify-center gap-1.5 flex-1">
+                              <div className="flex items-center justify-between text-[10.5px] text-rose-700 font-bold">
+                                <span className="flex items-center gap-1.5 truncate">
+                                  <RotateCcw size={12} className="text-rose-600 shrink-0" />
+                                  <span className="truncate">Revision Needed: {redoLog.whatIDidTitle}</span>
+                                </span>
+                                <span className="shrink-0 text-rose-500 text-[10px] font-normal">{redoLog.reviewedAt ? formatDateTime(redoLog.reviewedAt) : ""}</span>
+                              </div>
+                              <div className="text-[11px] text-rose-900 bg-white/80 p-2 rounded-lg border border-rose-200/70 italic leading-relaxed">
+                                "{redoLog.reviewNote || "Please revise and resubmit."}"
+                              </div>
+                              <div className="text-[10px] text-rose-700 font-semibold flex items-center gap-1 pt-0.5">
+                                <span>➔ Click card to revise & resubmit</span>
+                              </div>
+                            </div>
+                          ) : latestLog ? (
                             <div className="p-4 rounded-xl bg-[#F8F9FB] border border-slate-200/80 text-xs flex flex-col justify-center gap-2 flex-1">
                               <div className="flex items-center justify-between text-[10.5px] text-zinc-400">
                                 <span className="font-semibold text-zinc-800 flex items-center gap-1.5 truncate">

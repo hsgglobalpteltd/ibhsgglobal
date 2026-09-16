@@ -771,6 +771,81 @@ export async function approvePMDelayRequest(data: {
   return handleResponse(res, "Process delay request");
 }
 
+export interface BrainCellMapping {
+  table: string;
+  column: string;
+  description: string;
+}
+
+export interface BrainCellItem {
+  id: string;
+  name: string;
+  assigned_modules: string[];
+  keywords: string[];
+  mappings: BrainCellMapping[];
+  custom_rules: string;
+  is_active: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export async function fetchDbSchema(): Promise<{ success: boolean; schema: Record<string, string[]>; source?: string }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/db-schema`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+  });
+  return handleResponse(res, "Fetch database schema");
+}
+
+export async function fetchBrainCells(): Promise<{ success: boolean; brain_cells: BrainCellItem[] }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/brain-cells`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+  });
+  return handleResponse(res, "Fetch brain cells");
+}
+
+export async function saveBrainCell(cell: Partial<BrainCellItem>): Promise<{ success: boolean; brain_cell: BrainCellItem }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/brain-cells`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+    body: JSON.stringify(cell),
+  });
+  return handleResponse(res, "Save brain cell");
+}
+
+export async function deleteBrainCell(id: string): Promise<{ success: boolean; deletedId: string }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/brain-cells?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+  });
+  return handleResponse(res, "Delete brain cell");
+}
+
 export interface ConsoleContextItem {
   id: string;
   title: string;
@@ -829,7 +904,7 @@ export async function fetchDashboardAiBriefing(
   skipGreeting = false,
   message?: string,
   history?: any[]
-): Promise<{ success: boolean; text: string; data?: any; error?: string }> {
+): Promise<{ success: boolean; text: string; is_ai?: boolean; source?: string; router_intent?: string; data?: any; error?: string }> {
   const token = await getFreshToken();
   const sessionHeaders = getSessionIdHeader();
   const res = await fetch(`${WORKER_URL}/api/dashboard/ai-briefing`, {

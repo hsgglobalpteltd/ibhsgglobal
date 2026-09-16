@@ -1,12 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { RefreshCw, Send, Settings, X, Check } from "lucide-react";
+import { RefreshCw, Send } from "lucide-react";
 import {
   fetchDashboardAiBriefing,
-  fetchAdminConsolePreferences,
-  saveAdminConsolePreferences,
-  AdminConsolePreferences
 } from "@/lib/api";
 import { showToast } from "@/lib/toast";
 
@@ -17,15 +14,15 @@ interface DashboardAiSummaryProps {
 
 export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProps) {
   const isAdmin = profile?.role === "Administrator" || profile?.role === "Admin";
-  const userEmail = profile?.email || "default";
 
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [fullBriefingText, setFullBriefingText] = React.useState("");
   const [lastGeneratedAt, setLastGeneratedAt] = React.useState<string>("");
+  const [isGeminiLive, setIsGeminiLive] = React.useState<boolean | null>(null);
   
   // Sequential bubble popup states
   // Initialize messages from localStorage (persists until logout)
-  const [displayedBubbles, setDisplayedBubbles] = React.useState<{ text: string; isFirst?: boolean; timestamp?: string }[]>(() => {
+  const [displayedBubbles, setDisplayedBubbles] = React.useState<{ text: string; isFirst?: boolean; timestamp?: string; isAi?: boolean }[]>(() => {
     if (typeof window !== "undefined") {
       try {
         const cached = localStorage.getItem("ib_briefing_chat_history");
@@ -39,17 +36,6 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
   });
   const [isShowingIndicator, setIsShowingIndicator] = React.useState<boolean>(false);
   const [isTypingComplete, setIsTypingComplete] = React.useState<boolean>(true);
-
-  // Admin Preferences modal states
-  const [isSettingsOpen, setIsSettingsOpen] = React.useState<boolean>(false);
-  const [isSavingSettings, setIsSavingSettings] = React.useState<boolean>(false);
-  const [adminPrefs, setAdminPrefs] = React.useState<AdminConsolePreferences>({
-    track_orders: true,
-    tiktok_orders: true,
-    direct_orders: true,
-    merch_visits: true,
-    personal_tasks: true,
-  });
 
   const nextBubbleTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const chatScrollRef = React.useRef<HTMLDivElement | null>(null);
@@ -66,7 +52,6 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
 
   // Ensure scroll is at the very bottom whenever component mounts or displayedBubbles change
   React.useEffect(() => {
-    // Immediate scroll on mount
     scrollToBottom("auto");
     const t1 = setTimeout(() => scrollToBottom("auto"), 50);
     const t2 = setTimeout(() => scrollToBottom("auto"), 200);
@@ -85,21 +70,8 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     }
   }, [displayedBubbles]);
 
-  // Fetch admin preferences on mount if user is Admin
-  React.useEffect(() => {
-    if (isAdmin && userEmail) {
-      fetchAdminConsolePreferences(userEmail)
-        .then((res) => {
-          if (res?.preferences) {
-            setAdminPrefs(res.preferences);
-          }
-        })
-        .catch((err) => console.warn("Could not load admin console preferences:", err));
-    }
-  }, [isAdmin, userEmail]);
-
   // Sequential bubble popup coordinator with pre-typing indicator for long text (supports appending)
-  const startSequentialPopups = React.useCallback((items: string[], isAppend = false) => {
+  const startSequentialPopups = React.useCallback((items: string[], isAppend = false, isAi = true) => {
     if (nextBubbleTimeoutRef.current) clearTimeout(nextBubbleTimeoutRef.current);
 
     if (items.length === 0) {
@@ -130,7 +102,7 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
         setIsShowingIndicator(false);
         setDisplayedBubbles((prev) => [
           ...prev,
-          { text: targetText, isFirst: !isAppend && prev.length === 0 && bubbleIdx === 0, timestamp: nowStr }
+          { text: targetText, isFirst: !isAppend && prev.length === 0 && bubbleIdx === 0, timestamp: nowStr, isAi }
         ]);
         setTimeout(scrollToBottom, 20);
 
@@ -149,7 +121,7 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
           setIsShowingIndicator(false);
           setDisplayedBubbles((prev) => [
             ...prev,
-            { text: targetText, isFirst: !isAppend && prev.length === 0 && bubbleIdx === 0, timestamp: nowStr }
+            { text: targetText, isFirst: !isAppend && prev.length === 0 && bubbleIdx === 0, timestamp: nowStr, isAi }
           ]);
           setTimeout(scrollToBottom, 20);
 
@@ -175,19 +147,22 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     setIsShowingIndicator(true);
     try {
       const res = await fetchDashboardAiBriefing(userName, profile, false);
+      const isAi = res?.is_ai ?? false;
+      setIsGeminiLive(isAi);
       const text = res?.text || `Good morning, ${userName}.\n\nToday we have orders on route, and drivers are active on schedule.`;
       setFullBriefingText(text);
       const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       setLastGeneratedAt(now);
 
       const parsed = text.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
-      startSequentialPopups(parsed, false);
+      startSequentialPopups(parsed, false, isAi);
     } catch (err) {
       console.error("Failed to load live briefing:", err);
+      setIsGeminiLive(false);
       const fallbackText = `Good morning, ${userName}.\n\nToday we have orders on route, and drivers are active on schedule.`;
       setFullBriefingText(fallbackText);
       const parsed = fallbackText.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
-      startSequentialPopups(parsed, false);
+      startSequentialPopups(parsed, false, false);
     } finally {
       setIsGenerating(false);
     }
@@ -223,14 +198,17 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
         textToSend, 
         updatedWithUser
       );
+      const isAi = res?.is_ai ?? false;
+      setIsGeminiLive(isAi);
       const text = res?.text || `Live update: All operations are currently proceeding on schedule.`;
       const parsed = text.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
-      startSequentialPopups(parsed, true);
+      startSequentialPopups(parsed, true, isAi);
     } catch (err) {
       console.error("Failed to process chat message:", err);
+      setIsGeminiLive(false);
       const fallbackText = `Live update: All operations are currently proceeding on schedule.`;
       const parsed = fallbackText.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
-      startSequentialPopups(parsed, true);
+      startSequentialPopups(parsed, true, false);
     } finally {
       setIsGenerating(false);
     }
@@ -265,24 +243,8 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     };
   }, []); // Mount only
 
-  const handleSavePreferences = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSavingSettings(true);
-    try {
-      await saveAdminConsolePreferences(userEmail, adminPrefs);
-      showToast("Briefing preferences updated", "success");
-      setIsSettingsOpen(false);
-      // Trigger instant fresh briefing
-      handleLoadInitialBriefing();
-    } catch (err: any) {
-      showToast(err.message || "Failed to save preferences", "error");
-    } finally {
-      setIsSavingSettings(false);
-    }
-  };
-
   return (
-    <div className="w-full max-w-3xl h-full flex flex-col bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden select-none font-primary">
+    <div className="w-full h-full min-w-0 flex flex-col bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden select-none font-primary">
       {/* Header */}
       <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between gap-3 bg-white shrink-0">
         <div className="flex items-center gap-3.5">
@@ -299,28 +261,17 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
           </div>
         </div>
 
-        {/* Action Buttons: Clear Chat (text only on left) & Settings (Gear on right) */}
+        {/* Action Buttons: Clear Chat */}
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={handleClearChat}
             disabled={isGenerating || (displayedBubbles.length === 0 && !isShowingIndicator)}
-            className="text-xs font-medium text-zinc-500 hover:text-red-600 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed bg-transparent border-0 shadow-none px-1 py-1 select-none"
+            className="text-xs font-medium text-zinc-500 hover:text-red-600 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed bg-transparent border-0 shadow-none px-2 py-1 select-none"
             title="Clear chat history"
           >
             Clear Chat
           </button>
-
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => setIsSettingsOpen(true)}
-              className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 hover:text-[#0B57D0] transition-all cursor-pointer shadow-2xs"
-              title="Briefing Console Preferences (Admin)"
-            >
-              <Settings size={14} />
-            </button>
-          )}
         </div>
       </div>
 
@@ -330,7 +281,7 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
         className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-3 bg-[#F0F2F5]"
       >
         {displayedBubbles.length > 0 || isShowingIndicator || isGenerating ? (
-          <div className="flex flex-col space-y-2.5 max-w-2xl w-full">
+          <div className="flex flex-col space-y-2.5 w-full">
             {displayedBubbles.map((item, index) => {
               const isUser = (item as any).isUser === true;
               const isFirst = item.isFirst;
@@ -364,13 +315,11 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
                       <span className="absolute -left-1.5 top-0 w-2.5 h-2.5 bg-white border-l border-t border-slate-200/60 [clip-path:polygon(100%_0,0_0,100%_100%)] pointer-events-none" />
                     )}
 
-                    <div className="text-zinc-800 pr-6 pb-1 whitespace-pre-wrap">
+                    <div className="text-zinc-800 pr-5 pb-0.5 whitespace-pre-wrap">
                       {item.text}
                     </div>
-
-                    {/* Timestamp in bottom-right corner */}
-                    <div className="flex items-center justify-end text-[10px] text-zinc-400 font-medium select-none -mt-1">
-                      <span>{item.timestamp || "Today"}</span>
+                    <div className="flex items-center justify-end text-[9px] text-zinc-400 select-none -mt-1">
+                      <span>{item.timestamp || "Now"}</span>
                     </div>
                   </div>
                 </div>
@@ -443,118 +392,6 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
           </button>
         </form>
       </div>
-
-      {/* Admin Briefing Console Preferences Modal */}
-      {isSettingsOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 select-none animate-in fade-in duration-200">
-          <form
-            onSubmit={handleSavePreferences}
-            className="w-full max-w-md bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
-          >
-            {/* Modal Header */}
-            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-white">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950">Console Briefing Preferences</h3>
-                <p className="text-xs text-zinc-500 mt-0.5">Customize which operational modules appear in your briefing.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setIsSettingsOpen(false)}
-                className="p-1 rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Checkbox Options Body */}
-            <div className="p-5 space-y-3 bg-[#F8F9FA]">
-              <label className="flex items-start gap-3 p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-slate-300 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={adminPrefs.track_orders}
-                  onChange={(e) => setAdminPrefs((prev) => ({ ...prev, track_orders: e.target.checked }))}
-                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
-                />
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-zinc-900">Orders to Deliver & Driver Status</span>
-                  <span className="text-[11px] text-zinc-500 mt-0.5">Live delivery counts, pending dispatch orders, and driver route start times.</span>
-                </div>
-              </label>
-
-              <label className="flex items-start gap-3 p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-slate-300 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={adminPrefs.tiktok_orders}
-                  onChange={(e) => setAdminPrefs((prev) => ({ ...prev, tiktok_orders: e.target.checked }))}
-                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
-                />
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-zinc-900">TikTok Orders to Pack</span>
-                  <span className="text-[11px] text-zinc-500 mt-0.5">Live TikTok packing queue, orders packed waiting for courier pickup, and pending packing.</span>
-                </div>
-              </label>
-
-              <label className="flex items-start gap-3 p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-slate-300 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={adminPrefs.direct_orders}
-                  onChange={(e) => setAdminPrefs((prev) => ({ ...prev, direct_orders: e.target.checked }))}
-                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
-                />
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-zinc-900">Direct Orders & Quotations</span>
-                  <span className="text-[11px] text-zinc-500 mt-0.5">Pending direct client sales orders and unanswered quotations for this week.</span>
-                </div>
-              </label>
-
-              <label className="flex items-start gap-3 p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-slate-300 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={adminPrefs.merch_visits}
-                  onChange={(e) => setAdminPrefs((prev) => ({ ...prev, merch_visits: e.target.checked }))}
-                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
-                />
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-zinc-900">Merchandiser Store Visits</span>
-                  <span className="text-[11px] text-zinc-500 mt-0.5">Live store audit visits completed today, active merchandisers in the field, and monthly progress.</span>
-                </div>
-              </label>
-
-              <label className="flex items-start gap-3 p-3 bg-white border border-slate-200 rounded-lg cursor-pointer hover:border-slate-300 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={adminPrefs.personal_tasks}
-                  onChange={(e) => setAdminPrefs((prev) => ({ ...prev, personal_tasks: e.target.checked }))}
-                  className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
-                />
-                <div className="flex flex-col">
-                  <span className="text-xs font-bold text-zinc-900">Personal Assigned Tasks</span>
-                  <span className="text-[11px] text-zinc-500 mt-0.5">Assigned project actions, what was last completed, next steps, and deadlines/overdue tracking.</span>
-                </div>
-              </label>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="flex items-center justify-end gap-2.5 px-5 py-3 border-t border-slate-200 bg-white">
-              <button
-                type="button"
-                onClick={() => setIsSettingsOpen(false)}
-                disabled={isSavingSettings}
-                className="h-8 px-3 text-xs font-semibold rounded-lg border border-slate-200 bg-white text-zinc-700 hover:bg-slate-100 transition-all cursor-pointer shadow-xs disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={isSavingSettings}
-                className="h-8 px-3 text-xs font-semibold rounded-lg border border-[#0B57D0] bg-[#0B57D0] hover:bg-[#0842A0] text-white transition-all cursor-pointer shadow-xs disabled:opacity-50 active:scale-98"
-              >
-                {isSavingSettings ? "Saving..." : "Save Preferences"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
     </div>
   );
 }
