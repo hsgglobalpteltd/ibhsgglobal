@@ -4983,13 +4983,21 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         if (!Array.isArray(parsedItems)) parsedItems = [];
       } catch (_) {}
 
-      const tableRows = parsedItems.map((item, i) => [
-        String(i + 1),
-        item.sku || "Unknown SKU",
-        order.mark || "-",
-        String(item.qty || 1),
-        "CTN / PCS"
-      ]);
+      const tableRows = parsedItems.map((item: any, i) => {
+        let desc = item.description || item.name || "";
+        if (!desc) {
+          const product = productsDb.find((p) => p.sku === item.sku);
+          if (product) {
+            desc = product.display_name || product.description || product.name || product["Display Name"] || product["Description"] || "";
+          }
+        }
+        return [
+          String(i + 1),
+          item.sku || "Unknown SKU",
+          desc || "-",
+          String(item.qty || 1)
+        ];
+      });
 
       const totalQty = parsedItems.reduce((sum, it) => sum + (Number(it.qty) || 0), 0);
 
@@ -4998,16 +5006,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           "",
           "TOTAL QUANTITY",
           "",
-          String(totalQty),
-          "UNITS"
+          String(totalQty)
         ]);
       }
 
       autoTable(doc, {
         startY: 72,
         margin: { left: margin, right: margin },
-        head: [["#", "SKU / ITEM CODE", "MARK / BRAND", "QTY", "UNIT"]],
-        body: tableRows.length > 0 ? tableRows : [["-", "No SKU items recorded", "-", "-", "-"]],
+        head: [[
+          { content: "#", styles: { halign: "center" } },
+          "SKU",
+          "Description",
+          { content: "Qty", styles: { halign: "center" } }
+        ]],
+        body: tableRows.length > 0 ? tableRows : [["-", "No SKU items recorded", "-", "-"]],
         theme: "plain",
         headStyles: {
           fillColor: [241, 245, 249],
@@ -5026,10 +5038,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         },
         columnStyles: {
           0: { cellWidth: 12, halign: "center" },
-          1: { cellWidth: "auto", fontStyle: "bold" },
-          2: { cellWidth: 40 },
-          3: { cellWidth: 20, halign: "center", fontStyle: "bold" },
-          4: { cellWidth: 25, halign: "center" }
+          1: { cellWidth: 38, fontStyle: "bold" },
+          2: { cellWidth: "auto" },
+          3: { cellWidth: 22, halign: "center", fontStyle: "bold" }
         },
         didParseCell: (data) => {
           if (data.row.index === tableRows.length - 1 && tableRows.length > 1) {
@@ -5132,29 +5143,41 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           const doImgUrl = uniqueDoPapers[idx];
           doc.addPage();
 
-          // Header on DO page
-          doc.setFillColor(11, 87, 208);
-          doc.rect(margin, 12, 3, 10, "F");
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(11);
-          doc.setTextColor(15, 23, 42);
-          doc.text(`DELIVERY ORDER (DO) - ATTACHMENT ${uniqueDoPapers.length > 1 ? `(${idx + 1}/${uniqueDoPapers.length})` : ""}`, margin + 5, 18);
+          if (idx === 0) {
+            // Header on Signed Proof Paper page
+            doc.setFillColor(11, 87, 208);
+            doc.rect(margin, 12, 3, 10, "F");
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(11);
+            doc.setTextColor(15, 23, 42);
+            doc.text("Signed Proof Paper", margin + 5, 18);
 
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(8);
-          doc.setTextColor(100, 116, 139);
-          doc.text(`DO No: ${order.do_number} | Ref: ${order.ref_number || "-"}`, pageWidth - margin, 18, { align: "right" });
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(8);
+            doc.setTextColor(100, 116, 139);
+            doc.text(`DO No: ${order.do_number} | Ref: ${order.ref_number || "-"}`, pageWidth - margin, 18, { align: "right" });
 
-          doc.setDrawColor(226, 232, 240);
-          doc.line(margin, 24, pageWidth - margin, 24);
+            doc.setDrawColor(226, 232, 240);
+            doc.line(margin, 24, pageWidth - margin, 24);
 
-          const doBase64 = await loadImageBase64(doImgUrl);
-          if (doBase64) {
-            try {
-              const imgAreaWidth = contentWidth;
-              const imgAreaHeight = pageHeight - 34 - margin;
-              doc.addImage(doBase64, "JPEG", margin, 28, imgAreaWidth, imgAreaHeight, undefined, "FAST");
-            } catch (_) {}
+            const doBase64 = await loadImageBase64(doImgUrl);
+            if (doBase64) {
+              try {
+                const imgAreaWidth = contentWidth;
+                const imgAreaHeight = pageHeight - 34 - margin;
+                doc.addImage(doBase64, "JPEG", margin, 28, imgAreaWidth, imgAreaHeight, undefined, "FAST");
+              } catch (_) {}
+            }
+          } else {
+            // Subsequent DO attachment pages - display full document without title
+            const doBase64 = await loadImageBase64(doImgUrl);
+            if (doBase64) {
+              try {
+                const imgAreaWidth = contentWidth;
+                const imgAreaHeight = pageHeight - 2 * margin - 8;
+                doc.addImage(doBase64, "JPEG", margin, margin, imgAreaWidth, imgAreaHeight, undefined, "FAST");
+              } catch (_) {}
+            }
           }
         }
       }
@@ -5173,29 +5196,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           const invImgUrl = uniqueInvoicePapers[idx];
           doc.addPage();
 
-          // Header on Invoice page
-          doc.setFillColor(11, 87, 208);
-          doc.rect(margin, 12, 3, 10, "F");
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(11);
-          doc.setTextColor(15, 23, 42);
-          doc.text(isReturn ? `CREDIT NOTE (CN) - ATTACHMENT` : `BILLING INVOICE - ATTACHMENT`, margin + 5, 18);
-
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(8);
-          doc.setTextColor(100, 116, 139);
-          const invNo = isReturn ? (order.credit_note_number || "-") : (order.invoice_number || "-");
-          doc.text(`Invoice No: ${invNo} | Amount: $${order.invoice_amount || "0.00"}`, pageWidth - margin, 18, { align: "right" });
-
-          doc.setDrawColor(226, 232, 240);
-          doc.line(margin, 24, pageWidth - margin, 24);
-
+          // Full document without title Billing Invoice Attachment
           const invBase64 = await loadImageBase64(invImgUrl);
           if (invBase64) {
             try {
               const imgAreaWidth = contentWidth;
-              const imgAreaHeight = pageHeight - 34 - margin;
-              doc.addImage(invBase64, "JPEG", margin, 28, imgAreaWidth, imgAreaHeight, undefined, "FAST");
+              const imgAreaHeight = pageHeight - 2 * margin - 8;
+              doc.addImage(invBase64, "JPEG", margin, margin, imgAreaWidth, imgAreaHeight, undefined, "FAST");
             } catch (_) {}
           }
         }
@@ -5273,7 +5280,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         doc.setFontSize(7.5);
         doc.setTextColor(148, 163, 184);
         doc.text(`Page ${p} of ${totalPages}`, pageWidth - margin, pageHeight - 8, { align: "right" });
-        doc.text(`iB Logistics Management System • ${order.do_number}`, margin, pageHeight - 8);
+        doc.text(`HSG Global Pte Ltd • ${order.do_number}`, margin, pageHeight - 8);
       }
 
       // Download PDF blob
@@ -5344,7 +5351,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         logs: JSON.stringify(updatedLogs)
       };
 
-      if (newStatus === "Delivered" || newStatus === "Return Collected") {
+      if (newStatus === "Delivered" || newStatus === "Collected" || newStatus === "Return Collected") {
         payloadData.delivered_at = Date.now();
       }
 
@@ -8485,7 +8492,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
           <div className="bg-white rounded-lg shadow-xl border border-slate-200 max-w-sm w-full overflow-hidden flex flex-col animate-zoom-in">
             <div className="px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50">
-              <span className="font-bold text-sm text-zinc-900">Change Status : {statusOrder.do_number}</span>
+              <span className="font-bold text-sm text-zinc-900">Change Status : {statusOrder.ref_number || statusOrder.do_number}</span>
               <button 
                 onClick={() => setIsChangeStatusOpen(false)}
                 className="text-zinc-400 hover:text-zinc-600 focus:outline-none cursor-pointer"
@@ -8502,10 +8509,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
                 >
                   <option value="" disabled>Select Status</option>
-                  {statusOrder.type === "Return" ? (
+                  {(statusOrder.type || "").trim().toLowerCase() === "return" ? (
                     <>
                       <option value="Pending">Pending</option>
-                      <option value="Return Collected">Return Collected</option>
+                      <option value="Ready to Collect">Ready to Collect</option>
+                      <option value="Out for Collection">Out for Collection</option>
+                      <option value="Collected">Collected</option>
                     </>
                   ) : (
                     <>
@@ -8521,7 +8530,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               </div>
               
               <div className="flex flex-col gap-1.5">
-                <label className="font-bold text-zinc-700">Remark *</label>
+                <label className="font-bold text-zinc-700">Remark (Optional)</label>
                 <textarea
                   placeholder="e.g. Changed status due to logistics update"
                   value={statusRemark}
@@ -8568,7 +8577,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               <CustomButton 
                 variant="dark" 
                 onClick={handleSaveStatusOverwrite}
-                disabled={statusPhotoUploading || !newStatus || !statusRemark.trim()}
+                disabled={statusPhotoUploading || !newStatus}
               >
                 {statusPhotoUploading ? "Updating..." : "Update Status"}
               </CustomButton>
