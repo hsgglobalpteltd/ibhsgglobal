@@ -15,7 +15,12 @@ export interface RetailerItem {
   display_name: string;
   logo_image?: string;
   rank?: string;
+  has_multiple_stores?: boolean;
+  address?: string;
+  postcode?: string;
+  pin_location?: string;
   email?: string;
+  terms?: string;
   payment_terms?: string;
   [key: string]: any;
 }
@@ -38,7 +43,12 @@ const retailerColumns: Column[] = [
   { id: "display_name", header: "Display Name", accessor: "display_name" },
   { id: "logo_image", header: "Logo Image", accessor: "logo_image" },
   { id: "rank", header: "Rank", accessor: "rank" },
+  { id: "has_multiple_stores_display", header: "Multiple Stores", accessor: "has_multiple_stores_display" },
+  { id: "address", header: "Address", accessor: "address" },
+  { id: "postcode", header: "Postcode", accessor: "postcode" },
+  { id: "pin_location", header: "Pin Location", accessor: "pin_location" },
   { id: "email", header: "Email", accessor: "email" },
+  { id: "terms", header: "Terms", accessor: "terms" },
   { id: "payment_terms", header: "Payment Terms", accessor: "payment_terms" }
 ];
 
@@ -188,7 +198,12 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
 
   // Filtered retailers data (exclude group placeholders if any)
   const processedRetailersData = React.useMemo(() => {
-    return retailersData.filter(r => !String(r.id || "").startsWith("Group"));
+    return retailersData
+      .filter((r) => !String(r.id || "").startsWith("Group"))
+      .map((r) => ({
+        ...r,
+        has_multiple_stores_display: (r.has_multiple_stores === true || String(r.has_multiple_stores).toLowerCase() === "true") ? "Yes" : "No"
+      }));
   }, [retailersData]);
 
   // Edit Mode Handler
@@ -203,7 +218,10 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
   // Row Edit Trigger
   const handleEditRow = (row: any) => {
     if (activeTab === "retailers") {
-      setEditingRetailer({ ...row });
+      setEditingRetailer({
+        ...row,
+        has_multiple_stores: row.has_multiple_stores === true || String(row.has_multiple_stores).toLowerCase() === "true" || row.has_multiple_stores_display === "Yes"
+      });
     } else {
       setEditingStore({ ...row });
     }
@@ -218,7 +236,13 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
         display_name: "",
         logo_image: "",
         rank: "",
-        email: ""
+        has_multiple_stores: false,
+        address: "",
+        postcode: "",
+        pin_location: "",
+        email: "",
+        terms: "",
+        payment_terms: "30d"
       });
     } else {
       setEditingStore({
@@ -247,6 +271,12 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
     const cleanData = { ...updatedItem };
     delete cleanData.isNew;
     delete cleanData.retailer_name;
+    delete cleanData.has_multiple_stores_display;
+
+    // Coerce boolean for has_multiple_stores
+    if (isRetailer) {
+      cleanData.has_multiple_stores = cleanData.has_multiple_stores === true || String(cleanData.has_multiple_stores).toLowerCase() === "true";
+    }
 
     // Validation check for ID
     if (isNew) {
@@ -383,7 +413,12 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
             "Display Name": r.display_name || "",
             "Logo Image": r.logo_image || "",
             "Rank": r.rank || "",
+            "Has Multiple Stores": r.has_multiple_stores ? "Yes" : "No",
+            "Address": r.address || "",
+            "Postcode": r.postcode || "",
+            "Pin Location": r.pin_location || "",
             "Email": r.email || "",
+            "Terms": r.terms || "",
             "Payment Terms": r.payment_terms || "30d"
           }));
         } else {
@@ -393,7 +428,12 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
               "Display Name": "FairPrice Supermarket",
               "Logo Image": "https://example.com/fairprice.png",
               "Rank": "1",
+              "Has Multiple Stores": "Yes",
+              "Address": "1 Joo Koon Circle, Singapore",
+              "Postcode": "629117",
+              "Pin Location": "1.3275,103.6783",
               "Email": "info@fairprice.com.sg",
+              "Terms": "Standard Trade Terms",
               "Payment Terms": "30d"
             }
           ];
@@ -403,7 +443,12 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
           { wch: 30 },
           { wch: 35 },
           { wch: 10 },
+          { wch: 20 },
+          { wch: 40 },
+          { wch: 12 },
+          { wch: 25 },
           { wch: 30 },
+          { wch: 25 },
           { wch: 16 }
         ];
       } else {
@@ -486,12 +531,22 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
               errors.push(`Row ${idx + 2}: Missing ID`);
               return;
             }
+            const multiStoresVal = row["Has Multiple Stores"] ?? row["has_multiple_stores"] ?? row["Multiple Stores"] ?? row["multi_stores"];
+            const has_multiple_stores = typeof multiStoresVal === "boolean" 
+              ? multiStoresVal 
+              : ["yes", "true", "1", "y"].includes(String(multiStoresVal || "").trim().toLowerCase());
+
             parsedItems.push({
               id,
               display_name: String(row["Display Name"] ?? row["display_name"] ?? row["Name"] ?? id).trim(),
               logo_image: String(row["Logo Image"] ?? row["logo_image"] ?? row["Logo"] ?? "").trim(),
               rank: String(row["Rank"] ?? row["rank"] ?? "").trim(),
+              has_multiple_stores,
+              address: String(row["Address"] ?? row["address"] ?? "").trim(),
+              postcode: String(row["Postcode"] ?? row["postcode"] ?? row["Postal Code"] ?? "").trim(),
+              pin_location: String(row["Pin Location"] ?? row["pin_location"] ?? row["Coordinates"] ?? "").trim(),
               email: String(row["Email"] ?? row["email"] ?? "").trim(),
+              terms: String(row["Terms"] ?? row["terms"] ?? "").trim(),
               payment_terms: String(row["Payment Terms"] ?? row["payment_terms"] ?? row["Terms"] ?? "30d").trim()
             });
           } else {
@@ -689,7 +744,10 @@ function RetailerEditForm({
   onSave: (data: RetailerItem) => Promise<void>;
   onCancel: () => void;
 }) {
-  const [formData, setFormData] = React.useState<RetailerItem>({ ...retailer });
+  const [formData, setFormData] = React.useState<RetailerItem>({
+    ...retailer,
+    has_multiple_stores: retailer.has_multiple_stores === true || String(retailer.has_multiple_stores).toLowerCase() === "true"
+  });
   const [submitting, setSubmitting] = React.useState(false);
   const [uploading, setUploading] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -739,14 +797,14 @@ function RetailerEditForm({
 
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 font-primary p-4">
-      <div className="bg-white border border-slate-200 w-full max-w-lg rounded-lg shadow-xl flex flex-col overflow-hidden animate-tableFadeIn animate-duration-200">
+      <div className="bg-white border border-slate-200 w-full max-w-xl rounded-lg shadow-xl flex flex-col overflow-hidden animate-tableFadeIn animate-duration-200">
         {/* Dialog Header */}
         <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
           <div>
             <h3 className="text-base font-bold text-zinc-950">
               {isNew ? "Add Retailer" : "Edit Retailer"}
             </h3>
-            <p className="text-xs text-zinc-500 mt-0.5">Configure retailer entity details, group classification, and logo asset.</p>
+            <p className="text-xs text-zinc-500 mt-0.5">Configure master retailer entity details, address, multiple stores flag, and terms.</p>
           </div>
           <button
             type="button"
@@ -808,6 +866,7 @@ function RetailerEditForm({
               </div>
             </div>
 
+            {/* ID & Rank */}
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-zinc-600">Retailer ID</label>
@@ -816,7 +875,7 @@ function RetailerEditForm({
                   value={formData.id || ""}
                   disabled={!isNew}
                   onChange={(e) => handleChange("id", e.target.value)}
-                  placeholder="e.g. RET-001"
+                  placeholder="e.g. 3000/F011"
                   required
                   className={`w-full h-9 text-xs px-3 rounded-lg border font-medium outline-none transition-all ${
                     !isNew 
@@ -838,6 +897,7 @@ function RetailerEditForm({
               </div>
             </div>
 
+            {/* Display Name */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-semibold text-zinc-600">Display Name</label>
               <input
@@ -850,6 +910,58 @@ function RetailerEditForm({
               />
             </div>
 
+            {/* Multiple Stores Checkbox */}
+            <div className="flex items-center gap-3 p-3 bg-slate-50/70 border border-slate-200 rounded-lg">
+              <input
+                type="checkbox"
+                id="has_multiple_stores"
+                checked={!!formData.has_multiple_stores}
+                onChange={(e) => handleChange("has_multiple_stores", e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
+              />
+              <label htmlFor="has_multiple_stores" className="text-xs font-semibold text-zinc-800 cursor-pointer select-none">
+                Has Multiple Stores / Branches (e.g. Supermarket Chain with multiple outlets)
+              </label>
+            </div>
+
+            {/* Address */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Address / HQ Location</label>
+              <textarea
+                value={formData.address || ""}
+                onChange={(e) => handleChange("address", e.target.value)}
+                placeholder="Full address, building name, and unit number..."
+                rows={2}
+                className="w-full text-xs bg-white border border-slate-200 rounded-lg p-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium resize-none transition-all"
+              />
+            </div>
+
+            {/* Postcode & Pin Location */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Postal Code</label>
+                <input
+                  type="text"
+                  value={formData.postcode || ""}
+                  onChange={(e) => handleChange("postcode", e.target.value)}
+                  placeholder="e.g. 518239"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">GPS Pin Location (Lat, Lng)</label>
+                <input
+                  type="text"
+                  value={formData.pin_location || ""}
+                  onChange={(e) => handleChange("pin_location", e.target.value)}
+                  placeholder="e.g. 1.3714, 103.9640"
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+            </div>
+
+            {/* Contact Email & Payment Terms */}
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-zinc-600">Contact Email</label>
@@ -872,6 +984,18 @@ function RetailerEditForm({
                   className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
                 />
               </div>
+            </div>
+
+            {/* Terms */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-600">Trading / Contract Terms</label>
+              <textarea
+                value={formData.terms || ""}
+                onChange={(e) => handleChange("terms", e.target.value)}
+                placeholder="Specific trading terms, rebate agreements, delivery constraints..."
+                rows={2}
+                className="w-full text-xs bg-white border border-slate-200 rounded-lg p-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium resize-none transition-all"
+              />
             </div>
           </div>
 

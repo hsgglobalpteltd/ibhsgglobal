@@ -12,6 +12,19 @@ interface DashboardAiSummaryProps {
   profile?: any;
 }
 
+// Helper to determine the current 6 AM daily cycle ID (e.g. "2026-09-17_06:00")
+// A cycle runs from 06:00 AM on Day X to 05:59:59 AM on Day X+1.
+function getDaily6AmCycleId(date = new Date()): string {
+  const d = new Date(date);
+  if (d.getHours() < 6) {
+    d.setDate(d.getDate() - 1);
+  }
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}_06:00`;
+}
+
 export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProps) {
   const isAdmin = profile?.role === "Administrator" || profile?.role === "Admin";
 
@@ -21,10 +34,20 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
   const [isGeminiLive, setIsGeminiLive] = React.useState<boolean | null>(null);
   
   // Sequential bubble popup states
-  // Initialize messages from localStorage (persists until logout)
+  // Initialize messages from localStorage (persists within current 6:00 AM daily cycle)
   const [displayedBubbles, setDisplayedBubbles] = React.useState<{ text: string; isFirst?: boolean; timestamp?: string; isAi?: boolean }[]>(() => {
     if (typeof window !== "undefined") {
       try {
+        const currentCycle = getDaily6AmCycleId();
+        const savedCycle = localStorage.getItem("ib_briefing_chat_cycle");
+
+        // If cycle changed (e.g. opened after 6:00 AM next day), start fresh
+        if (savedCycle && savedCycle !== currentCycle) {
+          localStorage.removeItem("ib_briefing_chat_history");
+          localStorage.setItem("ib_briefing_chat_cycle", currentCycle);
+          return [];
+        }
+
         const cached = localStorage.getItem("ib_briefing_chat_history");
         if (cached) {
           const parsed = JSON.parse(cached);
@@ -65,7 +88,9 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
   React.useEffect(() => {
     if (typeof window !== "undefined") {
       try {
+        const currentCycle = getDaily6AmCycleId();
         localStorage.setItem("ib_briefing_chat_history", JSON.stringify(displayedBubbles));
+        localStorage.setItem("ib_briefing_chat_cycle", currentCycle);
       } catch {}
     }
   }, [displayedBubbles]);
@@ -258,39 +283,79 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     if (typeof window !== "undefined") {
       try {
         localStorage.removeItem("ib_briefing_chat_history");
-        localStorage.removeItem("ib_briefing_time_block");
+        localStorage.setItem("ib_briefing_chat_cycle", getDaily6AmCycleId());
       } catch {}
     }
     showToast("Chat history cleared", "info");
   }, []);
 
-  // Initial trigger on mount or time-block transition (morning, afternoon, evening)
-  React.useEffect(() => {
-    const currentBlock = getCurrentTimeBlock();
-    let savedBlock = "";
-    if (typeof window !== "undefined") {
-      try {
-        savedBlock = localStorage.getItem("ib_briefing_time_block") || "";
-      } catch {}
-    }
+  const hasLoadedInitialRef = React.useRef(false);
 
-    if (displayedBubbles.length === 0 || (savedBlock && savedBlock !== currentBlock)) {
+  // Initial trigger on mount or 6 AM cycle transition
+  React.useEffect(() => {
+    if (!hasLoadedInitialRef.current) {
+      hasLoadedInitialRef.current = true;
+      const currentCycle = getDaily6AmCycleId();
+      let savedCycle = "";
+      let hasCachedHistory = false;
       if (typeof window !== "undefined") {
         try {
-          localStorage.setItem("ib_briefing_time_block", currentBlock);
+          savedCycle = localStorage.getItem("ib_briefing_chat_cycle") || "";
+          const cached = localStorage.getItem("ib_briefing_chat_history");
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              hasCachedHistory = true;
+            }
+          }
         } catch {}
       }
-      handleLoadInitialBriefing();
-    } else if (!savedBlock && typeof window !== "undefined") {
-      try {
-        localStorage.setItem("ib_briefing_time_block", currentBlock);
-      } catch {}
+
+      if (!hasCachedHistory || (savedCycle && savedCycle !== currentCycle)) {
+        if (typeof window !== "undefined") {
+          try {
+            localStorage.setItem("ib_briefing_chat_cycle", currentCycle);
+            if (savedCycle && savedCycle !== currentCycle) {
+              localStorage.removeItem("ib_briefing_chat_history");
+            }
+          } catch {}
+        }
+        handleLoadInitialBriefing();
+      } else if (!savedCycle && typeof window !== "undefined") {
+        try {
+          localStorage.setItem("ib_briefing_chat_cycle", currentCycle);
+        } catch {}
+      }
     }
 
+    // Interval check every 30 seconds to automatically clear and start fresh at 6:00 AM if user is active
+    const interval = setInterval(() => {
+      const nowCycle = getDaily6AmCycleId();
+      let activeCycle = "";
+      try {
+        activeCycle = localStorage.getItem("ib_briefing_chat_cycle") || "";
+      } catch {}
+      if (activeCycle && activeCycle !== nowCycle) {
+        try {
+          localStorage.removeItem("ib_briefing_chat_history");
+          localStorage.setItem("ib_briefing_chat_cycle", nowCycle);
+        } catch {}
+        setDisplayedBubbles([]);
+        handleLoadInitialBriefing();
+      }
+    }, 30000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [handleLoadInitialBriefing]);
+
+  // Clean up timers on unmount
+  React.useEffect(() => {
     return () => {
       if (nextBubbleTimeoutRef.current) clearTimeout(nextBubbleTimeoutRef.current);
     };
-  }, [getCurrentTimeBlock, handleLoadInitialBriefing, displayedBubbles.length]);
+  }, []);
 
   return (
     <div className="w-full h-full min-w-0 flex flex-col bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden select-none font-primary">

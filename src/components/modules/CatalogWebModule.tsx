@@ -1892,12 +1892,11 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                           <table className="w-full text-left text-xs border-collapse">
                             <thead>
                               <tr className="bg-slate-50/50 border-b border-slate-200 text-zinc-500 font-bold uppercase tracking-wider text-[10px]">
-                                <th className="py-2 px-3 text-center w-24">In Catalog</th>
-                                <th className="py-2 px-3 text-center w-28">Accept Order</th>
-                                <th className="py-2 px-3 w-32">SKU</th>
-                                <th className="py-2 px-3">Product Name</th>
-                                <th className="py-2 px-3 w-40">Carton Spec</th>
-                                <th className="py-2 px-3 w-40">Storage / Shelf</th>
+                                <th className="py-2 px-3 text-center w-20">In Catalog</th>
+                                <th className="py-2 px-3 text-center w-24">Accept Order</th>
+                                <th className="py-2 px-3 w-28">SKU</th>
+                                <th className="py-2 px-3 w-48">Product Name</th>
+                                <th className="py-2 px-3">Product Details</th>
                                 <th className="py-2 px-3 text-right w-20">Action</th>
                               </tr>
                             </thead>
@@ -1905,6 +1904,21 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                               {brandProds.map((p) => {
                                 const isProductListed = p.list_in_catalog === true || p.list_in_catalog === 1;
                                 const isAcceptOrder = p.accept_order === true || p.accept_order === 1 || p.accept_order === undefined;
+                                const meta = p.product_meta || {};
+
+                                // Check completeness of each section
+                                const hasTitle = Boolean(meta.Short_Title?.trim() || meta.Title?.trim() || p.display_name?.trim());
+                                const hasDescription = Boolean(meta.Short_Des?.trim() || meta.Long_Des?.trim());
+                                const hasPhoto = Boolean(
+                                  (meta.Images && Array.isArray(meta.Images) && meta.Images.length > 0 && meta.Images.some((img: string) => img?.trim())) ||
+                                  p.image?.trim() ||
+                                  p.thumbnail?.trim()
+                                );
+                                const hasPackaging = Boolean(
+                                  p.carton || p.pallet_ctn || p.storage_condition || p.shelf_life || p.carton_weight
+                                );
+                                const hasBarcode = Boolean(p.single_barcode?.trim() || p.carton_barcode?.trim());
+
                                 return (
                                   <tr key={p.sku} className="hover:bg-slate-50/70 transition-colors">
                                     <td className="py-2 px-3 text-center">
@@ -1942,19 +1956,72 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                                     <td className="py-2 px-3 font-mono font-bold text-zinc-900">
                                       {p.sku}
                                     </td>
-                                    <td className="py-2 px-3 font-semibold text-zinc-800 max-w-sm truncate">
+                                    <td className="py-2 px-3 font-semibold text-zinc-800 max-w-xs truncate" title={p.display_name}>
                                       {p.display_name}
                                     </td>
-                                    <td className="py-2 px-3 text-zinc-600 text-[11px]">
-                                      {p.carton || 12} EA/CTN • {p.pallet_ctn || 80} CTN/PLT
-                                    </td>
-                                    <td className="py-2 px-3 text-zinc-600 text-[11px]">
-                                      {p.storage_condition || "15°–25°C"} • {p.shelf_life || "24M"}
+                                    <td className="py-2 px-3">
+                                      {/* Product Details Completeness Matrix */}
+                                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                        <span
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
+                                            hasTitle
+                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                              : "bg-slate-100 text-slate-400 border border-slate-200"
+                                          }`}
+                                        >
+                                          {hasTitle ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
+                                          <span>Title</span>
+                                        </span>
+
+                                        <span
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
+                                            hasDescription
+                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                              : "bg-slate-100 text-slate-400 border border-slate-200"
+                                          }`}
+                                        >
+                                          {hasDescription ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
+                                          <span>Description</span>
+                                        </span>
+
+                                        <span
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
+                                            hasPhoto
+                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                              : "bg-slate-100 text-slate-400 border border-slate-200"
+                                          }`}
+                                        >
+                                          {hasPhoto ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
+                                          <span>Photo</span>
+                                        </span>
+
+                                        <span
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
+                                            hasPackaging
+                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                              : "bg-slate-100 text-slate-400 border border-slate-200"
+                                          }`}
+                                        >
+                                          {hasPackaging ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
+                                          <span>Packaging Detail</span>
+                                        </span>
+
+                                        <span
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
+                                            hasBarcode
+                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                              : "bg-slate-100 text-slate-400 border border-slate-200"
+                                          }`}
+                                        >
+                                          {hasBarcode ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
+                                          <span>Barcode</span>
+                                        </span>
+                                      </div>
                                     </td>
                                     <td className="py-2 px-3 text-right">
                                       <button
                                         onClick={() => setEditingProduct(p)}
-                                        className="px-2 py-1 rounded bg-slate-100 hover:bg-[#0B57D0] hover:text-white text-zinc-700 text-xs font-semibold transition-all cursor-pointer inline-flex items-center gap-1"
+                                        className="px-2.5 py-1 rounded bg-slate-100 hover:bg-[#0B57D0] hover:text-white text-zinc-700 text-xs font-semibold transition-all cursor-pointer inline-flex items-center gap-1"
                                       >
                                         <Edit2 className="w-3 h-3" />
                                         <span>Edit</span>
@@ -2871,20 +2938,76 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                 </label>
               </div>
 
-              {/* Descriptions */}
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 mb-1">Catalog Description (Long Description)</label>
+              {/* Short & Long Descriptions */}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Short Description (Summary / Tagline)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Traditional authentic spice blend for quick culinary preparation..."
+                    value={editingProduct.product_meta?.Short_Des || ""}
+                    onChange={(e) =>
+                      setEditingProduct({
+                        ...editingProduct,
+                        product_meta: { ...(editingProduct.product_meta || {}), Short_Des: e.target.value }
+                      })
+                    }
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Catalog Description (Long Marketing &amp; Recipe Story)</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Official marketing, taste profile & recipe description for the catalog..."
+                    value={editingProduct.product_meta?.Long_Des || ""}
+                    onChange={(e) =>
+                      setEditingProduct({
+                        ...editingProduct,
+                        product_meta: { ...(editingProduct.product_meta || {}), Long_Des: e.target.value }
+                      })
+                    }
+                    className="w-full p-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white resize-none focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              {/* Multi-Photo Image URLs Gallery */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-900">Product Photo Gallery (Multiple Photos)</label>
+                    <span className="text-[10px] text-zinc-500">Add comma or newline-separated image URLs (e.g. from R2 or Cloudinary)</span>
+                  </div>
+                  <span className="text-[10px] text-[#0B57D0] font-semibold">
+                    {((editingProduct.product_meta?.Images && Array.isArray(editingProduct.product_meta.Images)) ? editingProduct.product_meta.Images.length : 0)} Photo(s)
+                  </span>
+                </div>
                 <textarea
                   rows={2}
-                  placeholder="Official marketing & recipe description for the catalog..."
-                  value={editingProduct.product_meta?.Long_Des || ""}
-                  onChange={(e) =>
+                  placeholder="https://pub-....r2.dev/...webp, https://pub-....r2.dev/...webp"
+                  value={
+                    Array.isArray(editingProduct.product_meta?.Images)
+                      ? editingProduct.product_meta.Images.join("\n")
+                      : editingProduct.image || ""
+                  }
+                  onChange={(e) => {
+                    const rawVal = e.target.value;
+                    const imgs = rawVal
+                      .split(/[\n,]/)
+                      .map((s) => s.trim())
+                      .filter(Boolean);
                     setEditingProduct({
                       ...editingProduct,
-                      product_meta: { ...(editingProduct.product_meta || {}), Long_Des: e.target.value }
-                    })
-                  }
-                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white resize-none focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      product_meta: {
+                        ...(editingProduct.product_meta || {}),
+                        Images: imgs
+                      },
+                      image: imgs[0] || editingProduct.image || ""
+                    });
+                  }}
+                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs font-mono text-zinc-900 bg-white resize-none focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
                 />
               </div>
 
