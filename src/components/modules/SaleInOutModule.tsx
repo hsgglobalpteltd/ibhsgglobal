@@ -28,7 +28,10 @@ import {
   Search,
   Filter,
   FileSpreadsheet,
-  Sparkles
+  Sparkles,
+  Link2,
+  Unlink,
+  Settings
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -56,21 +59,36 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
   const [salesOut, setSalesOut] = React.useState<any[]>([]);
   const [retailersList, setRetailersList] = React.useState<any[]>([]);
   const [productsList, setProductsList] = React.useState<any[]>([]);
+  const [brandsList, setBrandsList] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState<boolean>(false);
   const [revalidating, setRevalidating] = React.useState<boolean>(false);
 
-  // Main UI Tabs & Sorting
-  const [activeTab, setActiveTab] = React.useState<"reconciliation" | "sell_in" | "sell_out">("reconciliation");
-  const [sortBy, setSortBy] = React.useState<"top_sale" | "bottom_sale" | "brand">("top_sale");
+  // Main UI Tabs
+  const [activeTab, setActiveTab] = React.useState<"sell_in" | "sell_out">("sell_in");
   const [searchTerm, setSearchTerm] = React.useState<string>("");
   const [retailerFilter, setRetailerFilter] = React.useState<string>("all");
+  const [channelFilter, setChannelFilter] = React.useState<string>("all");
+
+  // Sales Channels State
+  const [channelsList, setChannelsList] = React.useState<any[]>([
+    { id: "channel_retailer", name: "Retailer", is_default: true },
+    { id: "channel_small_retailer", name: "Small Retailer", is_default: true },
+    { id: "channel_convenience_store", name: "Convenience Store", is_default: true },
+    { id: "channel_online", name: "Online", is_default: true },
+  ]);
+  const [groupChannelsList, setGroupChannelsList] = React.useState<any[]>([]);
+  const [newChannelName, setNewChannelName] = React.useState<string>("");
+  const [showManageChannels, setShowManageChannels] = React.useState<boolean>(false);
+  const [creatingChannel, setCreatingChannel] = React.useState<boolean>(false);
+  const [mappingChannel, setMappingChannel] = React.useState<boolean>(false);
+  const [retailerChannelDrafts, setRetailerChannelDrafts] = React.useState<Record<string, string>>({});
+  const [savingChannels, setSavingChannels] = React.useState<boolean>(false);
 
   // Centered Upload Modal State
   const [showUploadModal, setShowUploadModal] = React.useState<boolean>(false);
   const [uploadTab, setUploadTab] = React.useState<"sell_in" | "sell_out">("sell_in");
   const [selectedFile, setSelectedFile] = React.useState<File | null>(null);
   const [uploadingExcel, setUploadingExcel] = React.useState<boolean>(false);
-  const [actionLoadingRetailer, setActionLoadingRetailer] = React.useState<string | null>(null);
   const [posRetailerModal, setPosRetailerModal] = React.useState<any | null>(null);
   const [posUploadText, setPosUploadText] = React.useState<string>("");
   const [posUploading, setPosUploading] = React.useState<boolean>(false);
@@ -83,11 +101,34 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
   // Invoices Breakdown Modal State
   const [viewingInvoicesBreakdown, setViewingInvoicesBreakdown] = React.useState<any | null>(null);
 
-  // Combine / Merge Retailers Modal State
+  // Link Buyers & Groups Modal State
   const [showMergeRetailerModal, setShowMergeRetailerModal] = React.useState<boolean>(false);
+  const [linkModalTab, setLinkModalTab] = React.useState<"channels" | "link">("channels");
   const [selectedMergeSources, setSelectedMergeSources] = React.useState<string[]>([]);
   const [selectedMergeTarget, setSelectedMergeTarget] = React.useState<string>("");
   const [mergingRetailers, setMergingRetailers] = React.useState<boolean>(false);
+  const [selectedUnlinkSources, setSelectedUnlinkSources] = React.useState<string[]>([]);
+  const [unlinkingRetailers, setUnlinkingRetailers] = React.useState<boolean>(false);
+
+  // Sync drafts only when opening the modal
+  React.useEffect(() => {
+    if (showMergeRetailerModal) {
+      const initialDrafts: Record<string, string> = {};
+      retailersList.forEach((r) => {
+        const retId = r.id || r.retailer_id;
+        if (retId) {
+          initialDrafts[retId] = r.sales_channel || "Retailer";
+        }
+      });
+      safeSalesIn.forEach((si) => {
+        const retId = String(si.retailer_id || "").trim();
+        if (retId && !initialDrafts[retId]) {
+          initialDrafts[retId] = si.sales_channel || "Retailer";
+        }
+      });
+      setRetailerChannelDrafts(initialDrafts);
+    }
+  }, [showMergeRetailerModal]);
 
   // Resolution Modal State
   const [showUnresolvedModal, setShowUnresolvedModal] = React.useState<boolean>(false);
@@ -132,6 +173,21 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
         setCurrentBatch(data.batch || null);
         setSalesIn(Array.isArray(data.sales_in) ? data.sales_in : []);
         setSalesOut(Array.isArray(data.sales_out) ? data.sales_out : []);
+        if (Array.isArray(data.channels) && data.channels.length > 0) {
+          setChannelsList(data.channels);
+        }
+        if (Array.isArray(data.group_channels)) {
+          setGroupChannelsList(data.group_channels);
+        }
+        if (Array.isArray(data.brands) && data.brands.length > 0) {
+          setBrandsList(data.brands);
+        }
+        if (Array.isArray(data.products) && data.products.length > 0) {
+          setProductsList(data.products);
+        }
+        if (Array.isArray(data.retailers) && data.retailers.length > 0) {
+          setRetailersList(data.retailers);
+        }
       } else {
         setCurrentBatch(null);
         setSalesIn([]);
@@ -211,9 +267,10 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
       const retId = String(r.retailer_id || "").toLowerCase().trim();
       if (!retId) return;
 
-      const isUnregistered = 
-        r.unmapped_retailer === true || 
-        (!registeredRetSet.has(retId) && registeredRetSet.size > 0);
+      const hasGroup = Boolean(r.retailer_group && String(r.retailer_group).trim().length > 0);
+      const isUnregistered =
+        !hasGroup &&
+        (r.unmapped_retailer === true || (!registeredRetSet.has(retId) && registeredRetSet.size > 0));
 
       if (isUnregistered && !seen.has(retId)) {
         seen.add(retId);
@@ -223,6 +280,7 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
         list.push({
           retailer_id: r.retailer_id,
           retailer_name: name,
+          retailer_group: r.retailer_group || null,
           unmapped_retailer: true,
         });
       }
@@ -231,23 +289,76 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
   }, [safeSalesIn, safeSalesOut, retailersList]);
 
   const getRetailerDisplay = React.useCallback(
-    (retailerId: string) => {
-      if (!retailerId) return { name: "Unknown Retailer", isUnregistered: false };
+    (retailerId: string, itemRecord?: any) => {
+      if (!retailerId) return { name: "Unknown Retailer", isUnregistered: false, group: null };
       const cleanId = retailerId.toLowerCase().trim();
       const retObj = retailersList.find(
         (r) => String(r.id || r.retailer_id || "").toLowerCase().trim() === cleanId
       );
 
-      const name = retObj?.display_name || retObj?.name || retailerId;
+      const group = itemRecord?.retailer_group || null;
+      const name = itemRecord?.retailer_name || retObj?.display_name || retObj?.name || retailerId;
 
       const isUnregistered =
-        retObj?.unmapped_retailer === true ||
-        unmappedSellInRet.some((u) => u.retailer_id.toLowerCase().trim() === cleanId);
+        !group &&
+        (retObj?.unmapped_retailer === true ||
+          unmappedSellInRet.some((u) => u.retailer_id.toLowerCase().trim() === cleanId));
 
-      return { name, isUnregistered };
+      return { name, isUnregistered, group };
     },
     [retailersList, unmappedSellInRet]
   );
+
+  const formatExpectedCashMonth = React.useCallback((dateStr?: string) => {
+    if (!dateStr) return "—";
+    const clean = String(dateStr).trim();
+    if (!clean) return "—";
+    const parts = clean.split(/[-/]/);
+    if (parts.length >= 2) {
+      if (parts[0].length === 4) {
+        // yyyy-mm or yyyy-mm-dd -> mm/yyyy
+        return `${parts[1].padStart(2, "0")}/${parts[0]}`;
+      }
+      if (parts[parts.length - 1].length === 4) {
+        // dd-mm-yyyy or mm-yyyy -> mm/yyyy
+        return `${parts[parts.length - 2].padStart(2, "0")}/${parts[parts.length - 1]}`;
+      }
+    }
+    return clean;
+  }, []);
+
+  // Derived list of all currently linked buyers in this period
+  const linkedBuyersList = React.useMemo(() => {
+    const map = new Map<string, {
+      retailer_id: string;
+      retailer_name: string;
+      retailer_group: string;
+      sku_count: number;
+      total_qty: number;
+      total_amount: number;
+    }>();
+
+    safeSalesIn.forEach((r) => {
+      if (r.retailer_group) {
+        const retId = String(r.retailer_id || "").trim();
+        const existing = map.get(retId.toLowerCase()) || {
+          retailer_id: retId,
+          retailer_name: r.retailer_name || retId,
+          retailer_group: r.retailer_group,
+          sku_count: 0,
+          total_qty: 0,
+          total_amount: 0,
+        };
+        existing.sku_count++;
+        existing.total_qty += Number(r.total_qty || 0);
+        existing.total_amount += Number(r.total_amount || 0);
+        existing.retailer_group = r.retailer_group;
+        map.set(retId.toLowerCase(), existing);
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.retailer_group.localeCompare(b.retailer_group) || a.retailer_name.localeCompare(b.retailer_name));
+  }, [safeSalesIn]);
 
   // Only include retailers that actually exist in the current data list below
   const activeTabRetailers = React.useMemo(() => {
@@ -261,15 +372,24 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
       targetList = [...safeSalesIn, ...safeSalesOut];
     }
 
+    // Add any active Groups first
+    const groupsSet = new Set<string>();
+    targetList.forEach((r) => {
+      if (r.retailer_group) groupsSet.add(r.retailer_group);
+    });
+    Array.from(groupsSet).sort().forEach((g) => {
+      map.set(`group_${g.toLowerCase()}`, { id: g, name: `📦 ${g}` });
+    });
+
     targetList.forEach((r) => {
       const id = String(r.retailer_id || "");
       if (id && !map.has(id.toLowerCase().trim())) {
-        const display = getRetailerDisplay(id);
+        const display = getRetailerDisplay(id, r);
         map.set(id.toLowerCase().trim(), { id, name: display.name });
       }
     });
 
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return Array.from(map.values());
   }, [activeTab, safeSalesIn, safeSalesOut, getRetailerDisplay]);
 
   const unmappedSellOutStore = React.useMemo(() => {
@@ -366,117 +486,7 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
     }
   };
 
-  // 3. Fallback: Use Sell-In as Sell-Out for all non-reporting
-  const handleCalculateSellOutFromSellIn = () => {
-    setConfirmConfig({
-      open: true,
-      title: "Calculate Estimated Sell-Out",
-      description: `Calculate estimated Sell-Out from Net Sell-In for non-reporting retailers (e.g. 7-Eleven Singapore) in ${currentPeriod}?`,
-      variant: "default",
-      onConfirm: async () => {
-        setLoading(true);
-        try {
-          const reportingSet = new Set(salesOut.map((o) => String(o.retailer_id).toLowerCase()));
-          const newEstimates: any[] = [];
-          const now = Date.now();
-
-          salesIn.forEach((si) => {
-            const retId = String(si.retailer_id).toLowerCase();
-            if (!reportingSet.has(retId) && Number(si.total_qty || 0) > 0) {
-              const totalVal = Number((si.total_qty * si.unit_price).toFixed(2));
-              newEstimates.push({
-                id: `est_${currentPeriod}_${si.retailer_id.replace('/', '_')}_${si.sku}`,
-                batch_id: `batch_${currentPeriod}`,
-                period: currentPeriod,
-                retailer_id: si.retailer_id,
-                store_id: "ESTIMATED_DC",
-                raw_store_name: "Consolidated DC (Sell-In Fallback)",
-                sku: si.sku,
-                raw_sku: si.raw_sku || si.sku,
-                qty_sold: Number(si.total_qty || 0),
-                buyer_cost: Number(si.unit_price || 0),
-                total_value: totalVal,
-                is_estimated: true,
-                is_combined: false,
-                combine_group: null,
-                unmapped_store: false,
-                unmapped_sku: Boolean(si.unmapped_sku),
-                unmapped_listing: false,
-                created_at: now,
-                updated_at: now
-              });
-            }
-          });
-
-          const updatedOut = [...salesOut, ...newEstimates];
-          const updatedSellOutTotal = updatedOut.reduce((acc, r) => acc + Number(r.total_value || 0), 0);
-          const updatedBatch = {
-            ...(currentBatch || {}),
-            total_sellout: updatedSellOutTotal,
-            sellout_row_count: updatedOut.length,
-            updated_at: now
-          };
-
-          persistDataset(currentPeriod, updatedBatch, salesIn, updatedOut);
-          showToast(`Generated ${newEstimates.length} estimated sell-out records for non-reporting accounts!`, "success");
-        } catch (err: any) {
-          showToast("Calculation error: " + err.message, "error");
-        } finally {
-          setLoading(false);
-        }
-      }
-    });
-  };
-
-  // 4. Use Sell-In data for a single specific retailer
-  const handleUseSellInForRetailer = async (retailerId: string) => {
-    setActionLoadingRetailer(retailerId);
-    try {
-      const existingOutWithoutRet = salesOut.filter((o) => o.retailer_id !== retailerId);
-      const retInRecords = salesIn.filter((i) => i.retailer_id === retailerId);
-      const now = Date.now();
-
-      const newRecords = retInRecords.map((si) => ({
-        id: `est_${currentPeriod}_${si.retailer_id.replace('/', '_')}_${si.sku}_${Math.random().toString(36).substring(2, 6)}`,
-        batch_id: `batch_${currentPeriod}`,
-        period: currentPeriod,
-        retailer_id: si.retailer_id,
-        store_id: "ESTIMATED_DC",
-        raw_store_name: "Consolidated DC (Sell-In Fallback)",
-        sku: si.sku,
-        raw_sku: si.raw_sku || si.sku,
-        qty_sold: Number(si.total_qty || 0),
-        buyer_cost: Number(si.unit_price || 0),
-        total_value: Number((si.total_qty * si.unit_price).toFixed(2)),
-        is_estimated: true,
-        is_combined: false,
-        combine_group: null,
-        unmapped_store: false,
-        unmapped_sku: Boolean(si.unmapped_sku),
-        unmapped_listing: false,
-        created_at: now,
-        updated_at: now
-      }));
-
-      const updatedOut = [...existingOutWithoutRet, ...newRecords];
-      const updatedSellOutTotal = updatedOut.reduce((acc, r) => acc + Number(r.total_value || 0), 0);
-      const updatedBatch = {
-        ...(currentBatch || {}),
-        total_sellout: updatedSellOutTotal,
-        sellout_row_count: updatedOut.length,
-        updated_at: now
-      };
-
-      persistDataset(currentPeriod, updatedBatch, salesIn, updatedOut);
-      showToast(`Copied ${newRecords.length} Sell-In records to Sell-Out for ${retailerId}`, "success");
-    } catch (err: any) {
-      showToast(err.message, "error");
-    } finally {
-      setActionLoadingRetailer(null);
-    }
-  };
-
-  // 5. Direct Fast Excel Upload & Ingest for Customer Sales Report
+  // 3. Direct Fast Excel Upload & Ingest for Customer Sales Report
   const handleExcelUpload = async (file: File) => {
     if (!file) return;
     setUploadingExcel(true);
@@ -486,73 +496,100 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
       const workbook = XLSX.read(data, { type: "array" });
       const firstSheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[firstSheetName];
-      const rawRows = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+
+      // Array-of-arrays to inspect all rows
+      const rawRowsAOA: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: "" });
+
+      // Identify the exact header row by scoring all rows in the first 15 rows
+      let bestHeaderIndex = 2; // Default to Row 3 (0-indexed 2) as requested
+      let maxScore = 0;
+
+      for (let i = 0; i < Math.min(rawRowsAOA.length, 15); i++) {
+        const row = rawRowsAOA[i] || [];
+        const nonBlankCells = row.filter((c) => String(c).trim().length > 0);
+
+        // Skip title/subtitle lines that only have 1 or 2 populated cells
+        if (nonBlankCells.length < 3) continue;
+
+        const rowStrArr = nonBlankCells.map((v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, ""));
+        let score = 0;
+        if (rowStrArr.some((k) => k.includes("custcode") || k === "cust" || k === "code" || k.includes("customer"))) score += 3;
+        if (rowStrArr.some((k) => k.includes("prodcode") || k.includes("sku") || k.includes("itemcode") || k === "prod" || k.includes("item"))) score += 3;
+        if (rowStrArr.some((k) => k.includes("qty") || k.includes("quantity"))) score += 2;
+        if (rowStrArr.some((k) => k.includes("totalsi") || k === "si" || k.includes("salesinvoice") || k.includes("invoice"))) score += 2;
+        if (rowStrArr.some((k) => k.includes("totalcn") || k === "cn" || k.includes("creditnote"))) score += 2;
+        if (rowStrArr.some((k) => k.includes("nett") || k === "net" || k.includes("total"))) score += 1;
+        if (rowStrArr.some((k) => k.includes("proddesp") || k.includes("proddesc") || k.includes("description") || k.includes("name"))) score += 1;
+
+        if (score > maxScore) {
+          maxScore = score;
+          bestHeaderIndex = i;
+        }
+      }
+
+      // Parse sheet starting from the detected bestHeaderIndex
+      const rawRows = XLSX.utils.sheet_to_json(worksheet, { range: bestHeaderIndex, defval: "" });
 
       if (!rawRows || rawRows.length === 0) {
         throw new Error("The selected Excel spreadsheet contains no data rows.");
       }
 
-      // Normalize row column keys to lowercase
+      // Helper function to extract field by matching any known alias
+      const getField = (rowObj: Record<string, any>, aliases: string[]) => {
+        for (const alias of aliases) {
+          const cleanAlias = alias.toLowerCase().replace(/[^a-z0-9]/g, "");
+          for (const key of Object.keys(rowObj)) {
+            const cleanKey = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+            if (cleanKey === cleanAlias || cleanKey.includes(cleanAlias)) {
+              const val = rowObj[key];
+              if (val !== undefined && val !== null && String(val).trim() !== "") {
+                return val;
+              }
+            }
+          }
+        }
+        return "";
+      };
+
       const parsedRows = rawRows.map((r: any) => {
-        const normalized: Record<string, any> = {};
-        Object.keys(r).forEach((k) => {
-          const cleanKey = k.toLowerCase().replace(/[^a-z0-9]/g, "");
-          normalized[cleanKey] = r[k];
-        });
+        const custcode = String(getField(r, ["custcode", "customercode", "custno", "customerid", "customerno", "accode", "debtorcode", "retailerid", "cust", "code"]) || "").trim();
+        const name = String(getField(r, ["name", "customername", "custname", "companyname", "clientname", "retailername", "company"]) || custcode).trim();
+        const prodcode = String(getField(r, ["prodcode", "productcode", "itemcode", "itemno", "productno", "prodno", "sku", "skucode", "skunumber", "barcode", "articleno", "item", "prod"]) || "").trim();
+        const proddesp = String(getField(r, ["proddesp", "proddesc", "productname", "itemname", "itemdescription", "description", "proddetails", "desp", "desc"]) || prodcode).trim();
 
-        const custcode = String(
-          normalized.custcode ||
-          normalized.customercode ||
-          normalized.customerid ||
-          normalized.retailerid ||
-          normalized.code ||
-          ""
-        ).trim();
+        const rawQty = getField(r, ["qty", "quantity", "totalqty", "salesqty", "units", "pcs"]);
+        const rawSi = getField(r, ["totalsi", "si", "totalsinv", "salesinvoice", "siinv", "siamount", "totalinvoice", "grossamount", "gross", "totalsales", "saleamt"]);
+        const rawCn = getField(r, ["totalcn", "cn", "creditnote", "cnamount", "creditamt", "returns", "returnamt", "totalcredit"]);
+        const rawTotal = getField(r, ["total", "totalamt", "totalamount"]);
+        const rawNett = getField(r, ["nett", "net", "netamount", "nettamount", "balance", "nettotal"]);
 
-        const name = String(
-          normalized.name ||
-          normalized.customername ||
-          normalized.retailername ||
-          ""
-        ).trim();
-
-        const prodcode = String(
-          normalized.prodcode ||
-          normalized.productcode ||
-          normalized.sku ||
-          normalized.itemcode ||
-          ""
-        ).trim();
-
-        const proddesp = String(
-          normalized.proddesp ||
-          normalized.proddesc ||
-          normalized.productname ||
-          normalized.description ||
-          ""
-        ).trim();
-
-        const qty = parseFloat(normalized.qty || normalized.quantity || 0) || 0;
-        const totalsi = parseFloat(normalized.totalsi || normalized.si || normalized.salesinvoice || 0) || 0;
-        const totalcn = parseFloat(normalized.totalcn || normalized.cn || normalized.creditnote || 0) || 0;
-        const total = parseFloat(normalized.total || 0) || 0;
-        const nett = parseFloat(normalized.nett || normalized.net || (totalsi - totalcn)) || (totalsi - totalcn);
+        const qty = parseFloat(String(rawQty).replace(/[^0-9.-]/g, "")) || 0;
+        const totalsi = parseFloat(String(rawSi).replace(/[^0-9.-]/g, "")) || 0;
+        const totalcn = parseFloat(String(rawCn).replace(/[^0-9.-]/g, "")) || 0;
+        const total = parseFloat(String(rawTotal).replace(/[^0-9.-]/g, "")) || 0;
+        const nett = parseFloat(String(rawNett).replace(/[^0-9.-]/g, "")) || (totalsi - totalcn);
 
         return {
-          custcode,
-          name,
+          custcode: custcode || name,
+          name: name || custcode,
           prodcode,
           proddesp,
           qty,
           totalsi,
           totalcn,
-          total,
+          total: total || nett,
           nett
         };
-      }).filter((r) => r.custcode && r.prodcode);
+      }).filter((r) => {
+        // Skip grand total / summary rows or completely blank lines
+        const isTotalRow = String(r.custcode).toLowerCase().includes("total") || String(r.prodcode).toLowerCase().includes("total");
+        if (isTotalRow) return false;
+        return Boolean(r.prodcode && (r.custcode || r.qty !== 0 || r.totalsi !== 0 || r.totalcn !== 0 || r.nett !== 0));
+      });
 
       if (parsedRows.length === 0) {
-        throw new Error("Could not find required columns (custcode, prodcode, qty, totalsi, totalcn, nett) in Excel.");
+        const detectedHeaders = Object.keys(rawRows[0] || {}).join(", ");
+        throw new Error(`Could not find required columns. Found headers: [${detectedHeaders || "None"}]. Please verify Excel file.`);
       }
 
       // Ingest directly into Supabase via backend endpoint
@@ -580,7 +617,172 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
     }
   };
 
-  // 5b. Upload POS rows for a single retailer
+  // 5b. Export Sell-In to Excel grouped by Brand and Channel
+  const handleExportExcel = React.useCallback(() => {
+    if (safeSalesIn.length === 0) {
+      showToast("No Sell-In records to export for " + currentPeriod, "error");
+      return;
+    }
+
+    try {
+      // Build lookup for quick brand resolution
+      const brandLookup = new Map<string, string>();
+      brandsList.forEach((b: any) => {
+        const bName = String(b.display_name || b.name || b.brand_name || b.id || "").trim();
+        if (b.id) brandLookup.set(String(b.id).trim().toLowerCase(), bName);
+        if (b.name) brandLookup.set(String(b.name).trim().toLowerCase(), bName);
+        if (b.display_name) brandLookup.set(String(b.display_name).trim().toLowerCase(), bName);
+      });
+
+      const prodBrandMap = new Map<string, string>();
+      productsList.forEach((p: any) => {
+        const s = String(p.sku_number || p.sku || p.id || "").trim().toLowerCase();
+        const bKey = String(p.brands_id || p.brand_id || p.brand || "").trim().toLowerCase();
+        const resolved = brandLookup.get(bKey) || p.brand_name || p.brand || "";
+        if (s && resolved) prodBrandMap.set(s, resolved);
+      });
+
+      // 1. Group records by Brand -> (Retailer Name if channel is 'Retailer', else Channel Name) -> Totals
+      const brandGroupMap = new Map<string, Map<string, { qtySI: number; amountSI: number }>>();
+
+      safeSalesIn.forEach((item) => {
+        const rawSku = String(item.sku || item.raw_sku || "").trim().toLowerCase();
+        let brandName = item.brand_name;
+        if (!brandName || brandName === "Other / Unassigned") {
+          brandName = prodBrandMap.get(rawSku) || "Other / Unassigned";
+        }
+        brandName = String(brandName || "Other / Unassigned").trim();
+
+        const channelName = String(item.sales_channel || "Retailer").trim();
+        const isRetailerChannel = channelName.toLowerCase() === "retailer" || channelName.toLowerCase() === "retail";
+
+        let entityOrChannelName = "";
+        if (isRetailerChannel) {
+          const retDisplay = getRetailerDisplay(item.retailer_id, item);
+          entityOrChannelName = retDisplay.name || item.retailer_name || item.retailer_id;
+        } else {
+          entityOrChannelName = channelName;
+        }
+
+        const grossQty = Number(item.gross_qty || (Number(item.total_qty || 0) > 0 ? item.total_qty : 0));
+        const grossAmt = Number(item.gross_amount || (Number(item.total_amount || 0) > 0 ? item.total_amount : 0));
+
+        if (!brandGroupMap.has(brandName)) {
+          brandGroupMap.set(brandName, new Map());
+        }
+        const groupMap = brandGroupMap.get(brandName)!;
+
+        if (!groupMap.has(entityOrChannelName)) {
+          groupMap.set(entityOrChannelName, { qtySI: 0, amountSI: 0 });
+        }
+        const rowData = groupMap.get(entityOrChannelName)!;
+        rowData.qtySI += grossQty;
+        rowData.amountSI += grossAmt;
+      });
+
+      // 2. Build rows for Summary Sheet
+      const summaryRows: (string | number)[][] = [];
+      summaryRows.push([`Monthly Sell-In Report: ${currentPeriod}`]);
+      summaryRows.push([]);
+
+      let grandTotalQty = 0;
+      let grandTotalAmt = 0;
+
+      const sortedBrands = Array.from(brandGroupMap.keys()).sort((a, b) => a.localeCompare(b));
+
+      sortedBrands.forEach((brandName) => {
+        const groupMap = brandGroupMap.get(brandName)!;
+
+        // Brand Section Header
+        summaryRows.push([`Brand: ${brandName}`]);
+        summaryRows.push(["Buyer / Channel", "Qty SI", "Amount SI ($)"]);
+
+        let brandTotalQty = 0;
+        let brandTotalAmt = 0;
+
+        const sortedEntities = Array.from(groupMap.keys()).sort((a, b) => a.localeCompare(b));
+        sortedEntities.forEach((entityName) => {
+          const { qtySI, amountSI } = groupMap.get(entityName)!;
+          summaryRows.push([entityName, qtySI, Number(amountSI.toFixed(2))]);
+          brandTotalQty += qtySI;
+          brandTotalAmt += amountSI;
+        });
+
+        // Brand Subtotal
+        summaryRows.push([
+          `Total ${brandName}`,
+          brandTotalQty,
+          Number(brandTotalAmt.toFixed(2))
+        ]);
+
+        grandTotalQty += brandTotalQty;
+        grandTotalAmt += brandTotalAmt;
+
+        // Blank line between brands
+        summaryRows.push([]);
+      });
+
+      // Grand Total Row
+      summaryRows.push([
+        "GRAND TOTAL (ALL BRANDS)",
+        grandTotalQty,
+        Number(grandTotalAmt.toFixed(2))
+      ]);
+
+      const wb = XLSX.utils.book_new();
+
+      // Sheet 1: Brand & Channel Summary
+      const wsSummary = XLSX.utils.aoa_to_sheet(summaryRows);
+      wsSummary["!cols"] = [{ wch: 35 }, { wch: 18 }, { wch: 22 }];
+      XLSX.utils.book_append_sheet(wb, wsSummary, "Brand & Channel Summary");
+
+      // Sheet 2: Raw Sell-In Records
+      const rawRows: (string | number)[][] = [
+        ["Period", "Buyer Entity", "Buyer Code", "Channel", "Brand", "Product SKU", "Product Description", "Unit Price ($)", "Qty SI", "Amount SI ($)", "Qty CN", "Amount CN ($)", "Payment Term", "Expected Cash Date"]
+      ];
+      safeSalesIn.forEach((item) => {
+        const retDisplay = getRetailerDisplay(item.retailer_id, item);
+        const grossQty = Number(item.gross_qty || (Number(item.total_qty || 0) > 0 ? item.total_qty : 0));
+        const returnsQty = Number(item.returns_qty || (Number(item.total_qty || 0) < 0 ? Math.abs(item.total_qty) : 0));
+        const grossAmt = Number(item.gross_amount || (Number(item.total_amount || 0) > 0 ? item.total_amount : 0));
+        const returnsAmt = Number(item.returns_amount || (Number(item.total_amount || 0) < 0 ? Math.abs(item.total_amount) : 0));
+        const rawSku = String(item.sku || item.raw_sku || "").trim().toLowerCase();
+        const brandName = item.brand_name || prodBrandMap.get(rawSku) || "Other / Unassigned";
+
+        rawRows.push([
+          item.period || currentPeriod,
+          retDisplay.name || item.retailer_name || item.retailer_id,
+          item.retailer_id || "",
+          item.sales_channel || "Retailer",
+          brandName,
+          item.sku || "",
+          item.product_name || "",
+          Number(item.unit_price || 0),
+          grossQty,
+          Number(grossAmt.toFixed(2)),
+          returnsQty,
+          Number(returnsAmt.toFixed(2)),
+          item.payment_terms || "30d",
+          formatExpectedCashMonth(item.expected_cash_date)
+        ]);
+      });
+
+      const wsRaw = XLSX.utils.aoa_to_sheet(rawRows);
+      wsRaw["!cols"] = [
+        { wch: 12 }, { wch: 28 }, { wch: 14 }, { wch: 18 }, { wch: 20 },
+        { wch: 16 }, { wch: 32 }, { wch: 14 }, { wch: 12 }, { wch: 16 },
+        { wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 18 }
+      ];
+      XLSX.utils.book_append_sheet(wb, wsRaw, "Detailed Records");
+
+      XLSX.writeFile(wb, `Sell_In_Report_${currentPeriod}_${new Date().toISOString().split("T")[0]}.xlsx`);
+      showToast("Sell-In Excel report exported successfully!", "success");
+    } catch (err: any) {
+      showToast("Failed to export Excel: " + err.message, "error");
+    }
+  }, [safeSalesIn, currentPeriod, brandsList, productsList, getRetailerDisplay, formatExpectedCashMonth, showToast]);
+
+  // 5c. Upload POS rows for a single retailer
   const handlePosUploadSubmit = async () => {
     if (!posRetailerModal || !posUploadText.trim()) {
       showToast("Please enter POS rows or CSV text.", "error");
@@ -766,8 +968,7 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
       }
 
       const data = await res.json();
-      showToast(data.message || "Retailers successfully merged!", "success");
-      setShowMergeRetailerModal(false);
+      showToast(data.message || "Buyers successfully linked!", "success");
       setSelectedMergeSources([]);
       setSelectedMergeTarget("");
       await fetchBatchDetails(currentPeriod, true);
@@ -778,148 +979,155 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
     }
   };
 
-  // Reconciled SKU Matrix
-  const reconciliationMatrix = React.useMemo(() => {
-    const prodMap = new Map<string, any>();
-    productsList.forEach((p) => {
-      if (p.sku) prodMap.set(p.sku.toLowerCase().trim(), p);
+  // 7d. Unlink Buyers / Reset Group Link
+  const handleUnlinkRetailers = async (retailerIds: string[]) => {
+    if (!retailerIds || retailerIds.length === 0) {
+      showToast("Please select at least one buyer to unlink", "error");
+      return;
+    }
+
+    setUnlinkingRetailers(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sales-inout/unlink-retailers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: currentPeriod,
+          retailer_ids: retailerIds,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || "Failed to unlink buyers");
+      }
+
+      const data = await res.json();
+      showToast(data.message || "Buyers successfully unlinked!", "success");
+      setSelectedUnlinkSources([]);
+      await fetchBatchDetails(currentPeriod, true);
+    } catch (err: any) {
+      showToast(err.message, "error");
+    } finally {
+      setUnlinkingRetailers(false);
+    }
+  };
+
+  // 7e. Create New Sales Channel
+  const handleCreateChannel = async () => {
+    if (!newChannelName.trim()) {
+      showToast("Please enter a channel name", "error");
+      return;
+    }
+    setCreatingChannel(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sales-inout/channels`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newChannelName.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to create channel");
+      showToast(`Channel "${newChannelName.trim()}" created successfully!`, "success");
+      setNewChannelName("");
+      await fetchBatchDetails(currentPeriod, true);
+    } catch (err: any) {
+      showToast(err.message, "error");
+    } finally {
+      setCreatingChannel(false);
+    }
+  };
+
+  // 7f. Delete Sales Channel
+  const handleDeleteChannel = async (channelId: string, channelName: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/sales-inout/channels/${encodeURIComponent(channelId)}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete channel");
+      }
+      showToast(`Channel "${channelName}" deleted`, "success");
+      await fetchBatchDetails(currentPeriod, true);
+    } catch (err: any) {
+      showToast(err.message, "error");
+    }
+  };
+
+  // 7g. Save All Channel Mapping Changes
+  const handleSaveAllChannels = async () => {
+    // Find all changed retailers from active Sell-In records and retailersList
+    const activeIds = Array.from(new Set(safeSalesIn.map((si) => String(si.retailer_id || "").trim()).filter(Boolean)));
+    const changedMappings: { id: string; sales_channel: string }[] = [];
+
+    activeIds.forEach((retId) => {
+      const matchedRet = retailersList.find(
+        (r) =>
+          String(r.id || "").toLowerCase() === retId.toLowerCase() ||
+          String(r.retailer_id || "").toLowerCase() === retId.toLowerCase()
+      );
+      const currentCh = matchedRet?.sales_channel || "Retailer";
+      if (retailerChannelDrafts[retId] && retailerChannelDrafts[retId] !== currentCh) {
+        changedMappings.push({ id: retId, sales_channel: retailerChannelDrafts[retId] });
+      }
     });
 
-    const map = new Map<string, {
-      sku: string;
-      retailer_id: string;
-      retailer_name: string;
-      brand: string;
-      product_name: string;
-      sellin_qty: number;
-      sellin_amount: number;
-      sellout_qty: number;
-      sellout_value: number;
-      buyer_cost: number;
-      sell_through: number;
-      is_unregistered_retailer: boolean;
-    }>();
+    if (changedMappings.length === 0) {
+      showToast("No channel changes to save", "info");
+      return;
+    }
 
-    safeSalesIn.forEach((si) => {
-      const key = `${si.retailer_id}_${si.sku}`;
-      const prod = prodMap.get((si.sku || "").toLowerCase().trim());
-      const retDisplay = getRetailerDisplay(si.retailer_id);
-      const existing = map.get(key) || {
-        sku: si.sku,
-        retailer_id: si.retailer_id,
-        retailer_name: retDisplay.name,
-        brand: prod?.brand || "—",
-        product_name: prod?.name || prod?.product_name || "",
-        sellin_qty: 0,
-        sellin_amount: 0,
-        sellout_qty: 0,
-        sellout_value: 0,
-        buyer_cost: Number(si.unit_price || 0),
-        sell_through: 0,
-        is_unregistered_retailer: retDisplay.isUnregistered,
-      };
-      existing.sellin_qty += Number(si.total_qty || 0);
-      existing.sellin_amount += Number(si.total_amount || 0);
-      if (si.unit_price) existing.buyer_cost = Number(si.unit_price);
-      if ((!existing.brand || existing.brand === "—") && prod?.brand) {
-        existing.brand = prod.brand;
-      }
-      if (!existing.product_name && (prod?.name || prod?.product_name)) {
-        existing.product_name = prod?.name || prod?.product_name;
-      }
-      if (retDisplay.name && (!existing.retailer_name || existing.retailer_name === si.retailer_id)) {
-        existing.retailer_name = retDisplay.name;
-      }
-      map.set(key, existing);
-    });
+    setSavingChannels(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sales-inout/map-channel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mappings: changedMappings,
+          period: currentPeriod,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save channel mappings");
 
-    safeSalesOut.forEach((so) => {
-      const key = `${so.retailer_id}_${so.sku}`;
-      const prod = prodMap.get((so.sku || "").toLowerCase().trim());
-      const retDisplay = getRetailerDisplay(so.retailer_id);
-      const existing = map.get(key) || {
-        sku: so.sku,
-        retailer_id: so.retailer_id,
-        retailer_name: retDisplay.name,
-        brand: prod?.brand || "—",
-        product_name: prod?.name || prod?.product_name || "",
-        sellin_qty: 0,
-        sellin_amount: 0,
-        sellout_qty: 0,
-        sellout_value: 0,
-        buyer_cost: Number(so.buyer_cost || 0),
-        sell_through: 0,
-        is_unregistered_retailer: retDisplay.isUnregistered,
-      };
-      existing.sellout_qty += Number(so.qty_sold || 0);
-      existing.sellout_value += Number(so.total_value || 0);
-      if (!existing.buyer_cost && so.buyer_cost) existing.buyer_cost = Number(so.buyer_cost);
-      if ((!existing.brand || existing.brand === "—") && prod?.brand) {
-        existing.brand = prod.brand;
-      }
-      if (!existing.product_name && (prod?.name || prod?.product_name)) {
-        existing.product_name = prod?.name || prod?.product_name;
-      }
-      if (retDisplay.name && (!existing.retailer_name || existing.retailer_name === so.retailer_id)) {
-        existing.retailer_name = retDisplay.name;
-      }
-      map.set(key, existing);
-    });
+      // Optimistic UI updates
+      setRetailersList((prev) =>
+        prev.map((r) => {
+          const retId = r.id || r.retailer_id;
+          if (retId && retailerChannelDrafts[retId]) {
+            return { ...r, sales_channel: retailerChannelDrafts[retId] };
+          }
+          return r;
+        })
+      );
 
-    const items = Array.from(map.values()).map((item) => {
-      item.sell_through = item.sellin_qty > 0 ? (item.sellout_qty / item.sellin_qty) * 100 : 0;
-      return item;
-    }).filter((item) => {
-      if (retailerFilter !== "all" && item.retailer_id !== retailerFilter) return false;
-      if (searchTerm) {
-        const term = searchTerm.toLowerCase();
-        return (
-          item.sku.toLowerCase().includes(term) ||
-          item.retailer_id.toLowerCase().includes(term) ||
-          (item.retailer_name || "").toLowerCase().includes(term) ||
-          item.brand.toLowerCase().includes(term) ||
-          item.product_name.toLowerCase().includes(term)
-        );
-      }
-      return true;
-    });
+      setSalesIn((prev) =>
+        prev.map((si) => {
+          const draftVal = retailerChannelDrafts[si.retailer_id];
+          if (draftVal) {
+            return { ...si, sales_channel: draftVal };
+          }
+          return si;
+        })
+      );
 
-    return items.sort((a, b) => {
-      if (sortBy === "top_sale") {
-        return b.sellout_value - a.sellout_value || b.sellout_qty - a.sellout_qty;
-      }
-      if (sortBy === "bottom_sale") {
-        return a.sellout_value - b.sellout_value || a.sellout_qty - b.sellout_qty;
-      }
-      if (sortBy === "brand") {
-        return (a.brand || "").localeCompare(b.brand || "") || a.sku.localeCompare(b.sku);
-      }
-      return 0;
-    });
-  }, [safeSalesIn, safeSalesOut, productsList, retailerFilter, searchTerm, sortBy, getRetailerDisplay]);
+      showToast(`Saved channel changes for ${changedMappings.length} retailer(s)!`, "success");
+      await Promise.all([
+        fetchBatchDetails(currentPeriod, true),
+        fetchMetadata(),
+      ]);
+    } catch (err: any) {
+      showToast(err.message, "error");
+    } finally {
+      setSavingChannels(false);
+    }
+  };
 
   // Status computation
   const batchStatus = currentBatch?.status || "draft";
   const isLocked = batchStatus === "locked";
   const hasRecords = safeSalesIn.length > 0 || safeSalesOut.length > 0;
-
-  const totalSellInNet = currentBatch?.total_sellin_net || 0;
-  const totalSellOut = currentBatch?.total_sellout || 0;
-
-  const netSellInUnits = React.useMemo(
-    () => safeSalesIn.reduce((acc, r) => acc + Number(r.total_qty || 0), 0),
-    [safeSalesIn]
-  );
-  const cnUnitsDeducted = React.useMemo(
-    () => safeSalesIn.filter((r) => r.doc_type === "CN" || Number(r.total_amount || 0) < 0 || Number(r.total_qty || 0) < 0)
-      .reduce((acc, r) => acc + Math.abs(Number(r.total_qty || 0)), 0),
-    [safeSalesIn]
-  );
-  const sellOutUnits = React.useMemo(
-    () => safeSalesOut.reduce((acc, r) => acc + Number(r.qty_sold || 0), 0),
-    [safeSalesOut]
-  );
-  const sellThroughRate = netSellInUnits > 0 ? ((sellOutUnits / netSellInUnits) * 100).toFixed(1) : "0.0";
 
   // Check if current period is past the 7th of the following month
   const isPeriodOverdue = React.useMemo(() => {
@@ -938,9 +1146,9 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
       {/* 🏛️ Top Header Bar */}
       <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-white">
         <div>
-          <h1 className="text-base font-bold text-zinc-950">Sale In & Sale Out Reconciliation</h1>
+          <h1 className="text-base font-bold text-zinc-950">Sale In & Sale Out</h1>
           <p className="text-xs text-zinc-500 mt-0.5">
-            Reconcile monthly sell-in delivery totals with retailer store sell-out off-take and inventory.
+            Manage and import monthly sell-in delivery statements and retailer sell-out POS records.
           </p>
         </div>
 
@@ -1035,72 +1243,12 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
         </div>
       </div>
 
-      {/* 📊 Sleek Compact Summary Strip */}
-      <div className="px-4 py-2 bg-[#F8F9FA] border-b border-slate-200 grid grid-cols-2 md:grid-cols-4 gap-2.5 shrink-0 text-xs">
-        {/* Metric 1: Net Sell-In */}
-        <div className="bg-white border border-slate-200 rounded-md px-3 py-1.5 flex items-center justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tight block">Net Sell-In</span>
-            <div className="text-sm font-bold text-zinc-950 mt-0.5">
-              ${Number(totalSellInNet).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-          </div>
-          <span className="text-[11px] text-zinc-500 font-medium">{netSellInUnits.toLocaleString()} units</span>
-        </div>
-
-        {/* Metric 2: Sell-Out */}
-        <div className="bg-white border border-slate-200 rounded-md px-3 py-1.5 flex items-center justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tight block">Sell-Out</span>
-            <div className="text-sm font-bold text-zinc-950 mt-0.5">
-              ${Number(totalSellOut).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </div>
-          </div>
-          <span className="text-[11px] text-zinc-500 font-medium">{sellOutUnits.toLocaleString()} units</span>
-        </div>
-
-        {/* Metric 3: Sell-Through Rate */}
-        <div className="bg-white border border-slate-200 rounded-md px-3 py-1.5 flex items-center justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tight block">Sell-Through</span>
-            <div className="text-sm font-bold text-[#0B57D0] mt-0.5">{sellThroughRate}%</div>
-          </div>
-          <span className="text-[10px] text-zinc-400">Rate</span>
-        </div>
-
-        {/* Metric 4: Non-POS Fallback */}
-        <div className="bg-white border border-slate-200 rounded-md px-3 py-1.5 flex items-center justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tight block">Fallback</span>
-            <div className="text-[11px] text-zinc-600 font-medium mt-0.5">Use Sell-In</div>
-          </div>
-          {!isLocked && (
-            <button
-              onClick={handleCalculateSellOutFromSellIn}
-              disabled={safeSalesIn.length === 0}
-              className="h-6 px-2.5 text-[11px] font-semibold text-[#0B57D0] bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded transition-all disabled:opacity-40 flex items-center gap-1"
-            >
-              <Calculator className="w-3 h-3 text-[#0B57D0]" />
-              <span>Calculate</span>
-            </button>
-          )}
-        </div>
-      </div>
-
       {/* 🧭 Sub-Tabs & Filter Toolbar */}
       <div className="px-4 py-2 border-b border-slate-200 bg-white flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-1 bg-[#F0F4F9] p-0.5 rounded-lg border border-slate-200 text-xs font-medium">
           <button
-            onClick={() => setActiveTab("reconciliation")}
-            className={`px-3 py-1.5 rounded-md transition-all ${
-              activeTab === "reconciliation" ? "bg-white text-zinc-950 font-bold shadow-xs" : "text-zinc-600 hover:text-zinc-900"
-            }`}
-          >
-            Reconciliation Overview
-          </button>
-          <button
             onClick={() => setActiveTab("sell_in")}
-            className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
+            className={`px-3.5 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
               activeTab === "sell_in" ? "bg-white text-zinc-950 font-bold shadow-xs" : "text-zinc-600 hover:text-zinc-900"
             }`}
           >
@@ -1109,7 +1257,7 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
           </button>
           <button
             onClick={() => setActiveTab("sell_out")}
-            className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
+            className={`px-3.5 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
               activeTab === "sell_out" ? "bg-white text-zinc-950 font-bold shadow-xs" : "text-zinc-600 hover:text-zinc-900"
             }`}
           >
@@ -1119,39 +1267,6 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
         </div>
 
         <div className="flex items-center gap-2 text-xs">
-          {/* Sort Controls (Reconciliation Tab) */}
-          {activeTab === "reconciliation" && (
-            <div className="flex items-center gap-1 bg-[#F0F4F9] p-0.5 rounded-lg border border-slate-200 text-xs">
-              <button
-                onClick={() => setSortBy("top_sale")}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                  sortBy === "top_sale" ? "bg-white text-[#0B57D0] shadow-xs" : "text-zinc-600 hover:text-zinc-900"
-                }`}
-                title="Sort by highest sell-out value"
-              >
-                Top Sale
-              </button>
-              <button
-                onClick={() => setSortBy("bottom_sale")}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                  sortBy === "bottom_sale" ? "bg-white text-[#0B57D0] shadow-xs" : "text-zinc-600 hover:text-zinc-900"
-                }`}
-                title="Sort by lowest sell-out value"
-              >
-                Bottom Sale
-              </button>
-              <button
-                onClick={() => setSortBy("brand")}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold transition-all ${
-                  sortBy === "brand" ? "bg-white text-[#0B57D0] shadow-xs" : "text-zinc-600 hover:text-zinc-900"
-                }`}
-                title="Sort alphabetically by brand"
-              >
-                By Brand
-              </button>
-            </div>
-          )}
-
           {/* Unresolved Alert Indicator */}
           {totalUnresolvedCount > 0 && (
             <button
@@ -1168,12 +1283,26 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
             <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
-              placeholder="Search SKU, Brand, Retailer..."
+              placeholder="Search SKU, Retailer..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="h-8 pl-8 pr-3 text-xs border border-slate-200 rounded-lg bg-white w-48 focus:outline-none focus:border-[#0B57D0]"
             />
           </div>
+
+          {/* Channel Filter */}
+          <select
+            value={channelFilter}
+            onChange={(e) => setChannelFilter(e.target.value)}
+            className="h-8 px-2.5 text-xs border border-slate-200 rounded-lg bg-white text-zinc-700 focus:outline-none"
+          >
+            <option value="all">All Channels</option>
+            {channelsList.map((ch: any) => (
+              <option key={ch.id} value={ch.name}>
+                {ch.name}
+              </option>
+            ))}
+          </select>
 
           {/* Retailer Filter */}
           <select
@@ -1188,25 +1317,40 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
               </option>
             ))}
           </select>
-          {/* Combine / Merge Retailers Button (Sell-In) */}
+
+          {/* Link & Channels and Export Excel Buttons */}
           {activeTab === "sell_in" && (
-            <button
-              onClick={() => {
-                setSelectedMergeSources([]);
-                setSelectedMergeTarget("");
-                setShowMergeRetailerModal(true);
-              }}
-              className="flex items-center gap-1.5 h-8 px-2.5 text-xs font-semibold bg-white text-zinc-700 border border-slate-200 hover:bg-slate-50 hover:text-zinc-900 rounded-lg shadow-xs transition-all"
-              title="Combine unmapped retailer codes under a registered retailer"
-            >
-              <Layers className="w-3.5 h-3.5 text-[#0B57D0]" />
-              <span>Combine Retailers</span>
-              {unmappedSellInRet.length > 0 && (
-                <span className="px-1.5 py-0.2 text-[10px] bg-amber-100 text-amber-800 rounded font-bold">
-                  {unmappedSellInRet.length}
-                </span>
-              )}
-            </button>
+            <>
+              <button
+                onClick={handleExportExcel}
+                disabled={safeSalesIn.length === 0}
+                className="flex items-center gap-1.5 h-8 px-2.5 text-xs font-semibold bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 hover:text-emerald-800 rounded-lg shadow-xs transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Export Sell-In by Brand & Channel to Excel (.xlsx)"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Export Excel</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setSelectedMergeSources([]);
+                  setSelectedMergeTarget("");
+                  setSelectedUnlinkSources([]);
+                  setLinkModalTab("channels");
+                  setShowMergeRetailerModal(true);
+                }}
+                className="flex items-center gap-1.5 h-8 px-2.5 text-xs font-semibold bg-white text-zinc-700 border border-slate-200 hover:bg-slate-50 hover:text-zinc-900 rounded-lg shadow-xs transition-all cursor-pointer"
+                title="Link channels, groups, and manage sales channels"
+              >
+                <Link2 className="w-3.5 h-3.5 text-[#0B57D0]" />
+                <span>Link &amp; Channels</span>
+                {unmappedSellInRet.length > 0 && (
+                  <span className="px-1.5 py-0.2 text-[10px] bg-amber-100 text-amber-800 rounded font-bold">
+                    {unmappedSellInRet.length}
+                  </span>
+                )}
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -1238,101 +1382,22 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
               <span>Pending upload</span>
             </span>
           </div>
-        ) : activeTab === "reconciliation" ? (
-          /* 1. Reconciliation Matrix Table */
-          <div className="p-4">
-            <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-[#F8F9FA] border-b border-slate-200 text-[11px] font-bold text-zinc-600 uppercase tracking-tight">
-                    <th className="py-2.5 px-3">Retailer</th>
-                    <th className="py-2.5 px-3">Brand</th>
-                    <th className="py-2.5 px-3">Master SKU</th>
-                    <th className="py-2.5 px-3 text-right">Sell-In Qty</th>
-                    <th className="py-2.5 px-3 text-right">Sell-In ($)</th>
-                    <th className="py-2.5 px-3 text-right">Sell-Out Qty</th>
-                    <th className="py-2.5 px-3 text-right">Sell-Out ($)</th>
-                    <th className="py-2.5 px-3 text-right">Sell-Through</th>
-                    <th className="py-2.5 px-3 text-right">Stock Diff (Qty)</th>
-                    <th className="py-2.5 px-3 text-right">Stock Diff ($)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {reconciliationMatrix.map((item, idx) => {
-                    const stockDiffQty = item.sellin_qty - item.sellout_qty;
-                    const stockDiffVal = item.sellin_amount - item.sellout_value;
-
-                    return (
-                      <tr key={`${item.retailer_id}_${item.sku}_${idx}`} className="hover:bg-slate-50 transition-colors">
-                        <td className="py-2.5 px-3">
-                          <div className="font-semibold text-zinc-900 flex items-center gap-1.5">
-                            <span>{item.retailer_name}</span>
-                            {item.is_unregistered_retailer && (
-                              <span className="px-1.5 py-0.2 text-[10px] bg-amber-100 text-amber-800 rounded font-bold">
-                                Unregistered
-                              </span>
-                            )}
-                          </div>
-                          <div className="font-mono text-[10px] text-zinc-400">{item.retailer_id}</div>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <span className="font-medium text-zinc-700">{item.brand || "—"}</span>
-                        </td>
-                        <td className="py-2.5 px-3">
-                          <div className="font-mono font-medium text-zinc-800">{item.sku}</div>
-                          {item.product_name && (
-                            <div className="text-[11px] text-zinc-500 truncate max-w-xs">{item.product_name}</div>
-                          )}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-medium text-zinc-800">{item.sellin_qty.toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-right font-bold text-zinc-900">
-                          ${item.sellin_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-2.5 px-3 text-right font-medium text-zinc-800">{item.sellout_qty.toLocaleString()}</td>
-                        <td className="py-2.5 px-3 text-right font-bold text-zinc-900">
-                          ${item.sellout_value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-2.5 px-3 text-right">
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                            item.sell_through >= 80
-                              ? "bg-emerald-50 text-emerald-700"
-                              : item.sell_through >= 50
-                              ? "bg-blue-50 text-[#0B57D0]"
-                              : "bg-amber-50 text-amber-700"
-                          }`}>
-                            {item.sell_through.toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className={`py-2.5 px-3 text-right font-bold ${stockDiffQty < 0 ? "text-red-600" : "text-zinc-900"}`}>
-                          {stockDiffQty.toLocaleString()}
-                        </td>
-                        <td className={`py-2.5 px-3 text-right font-bold ${stockDiffVal < 0 ? "text-red-600" : "text-zinc-900"}`}>
-                          ${stockDiffVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
         ) : activeTab === "sell_in" ? (
-          /* 2. Sell-In Records (Consolidated Customer Sales Report) */
+          /* 1. Sell-In Records (Consolidated Customer Sales Report) */
           <div className="p-4">
             <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
                   <tr className="bg-[#F8F9FA] border-b border-slate-200 text-[11px] font-bold text-zinc-600 uppercase tracking-tight">
-                    <th className="py-2.5 px-3">Retailer</th>
-                    <th className="py-2.5 px-3">Product / SKU</th>
-                    <th className="py-2.5 px-3 text-right">Gross Qty (SI)</th>
-                    <th className="py-2.5 px-3 text-right">Returns (CN)</th>
-                    <th className="py-2.5 px-3 text-right">Net Qty</th>
-                    <th className="py-2.5 px-3 text-right">Gross SI ($)</th>
-                    <th className="py-2.5 px-3 text-right">Returns CN ($)</th>
-                    <th className="py-2.5 px-3 text-right">Net Amount ($)</th>
-                    <th className="py-2.5 px-3 text-right">Unit Price ($)</th>
-                    <th className="py-2.5 px-3">Payment Terms</th>
+                    <th className="py-2.5 px-3">Buyer Entity</th>
+                    <th className="py-2.5 px-3">Channel</th>
+                    <th className="py-2.5 px-3">Product SKU</th>
+                    <th className="py-2.5 px-3 text-right">Unit Price</th>
+                    <th className="py-2.5 px-3 text-right">Qty SI</th>
+                    <th className="py-2.5 px-3 text-right">Amount SI</th>
+                    <th className="py-2.5 px-3 text-right">Qty CN</th>
+                    <th className="py-2.5 px-3 text-right">Amount CN</th>
+                    <th className="py-2.5 px-3">Payment Term</th>
                     <th className="py-2.5 px-3">Expected Cash Date</th>
                     <th className="py-2.5 px-3 text-right">Actions</th>
                   </tr>
@@ -1340,40 +1405,60 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
                 <tbody className="divide-y divide-slate-100">
                   {safeSalesIn
                     .filter((r) => {
-                      if (retailerFilter !== "all" && r.retailer_id !== retailerFilter) return false;
+                      if (channelFilter !== "all") {
+                        const rChannel = r.sales_channel || "Retailer";
+                        if (rChannel !== channelFilter) return false;
+                      }
+                      if (retailerFilter !== "all") {
+                        if (retailerFilter.startsWith("Group ")) {
+                          if (r.retailer_group !== retailerFilter) return false;
+                        } else if (r.retailer_id !== retailerFilter) {
+                          return false;
+                        }
+                      }
                       if (searchTerm) {
                         const term = searchTerm.toLowerCase();
                         return (
                           (r.sku || "").toLowerCase().includes(term) ||
                           (r.product_name || "").toLowerCase().includes(term) ||
                           (r.retailer_id || "").toLowerCase().includes(term) ||
-                          (r.retailer_name || "").toLowerCase().includes(term)
+                          (r.retailer_name || "").toLowerCase().includes(term) ||
+                          (r.retailer_group || "").toLowerCase().includes(term) ||
+                          (r.sales_channel || "").toLowerCase().includes(term)
                         );
                       }
                       return true;
                     })
                     .map((item) => {
-                      const retDisplay = getRetailerDisplay(item.retailer_id);
+                      const retDisplay = getRetailerDisplay(item.retailer_id, item);
                       const grossQty = Number(item.gross_qty || (Number(item.total_qty || 0) > 0 ? item.total_qty : 0));
                       const returnsQty = Number(item.returns_qty || (Number(item.total_qty || 0) < 0 ? Math.abs(item.total_qty) : 0));
-                      const netQty = Number(item.total_qty || 0);
 
                       const grossAmt = Number(item.gross_amount || (Number(item.total_amount || 0) > 0 ? item.total_amount : 0));
                       const returnsAmt = Number(item.returns_amount || (Number(item.total_amount || 0) < 0 ? Math.abs(item.total_amount) : 0));
-                      const netAmt = Number(item.total_amount || 0);
 
                       return (
                         <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                           <td className="py-2.5 px-3">
-                            <div className="font-semibold text-zinc-900 flex items-center gap-1.5">
+                            <div className="font-semibold text-zinc-900 flex items-center gap-1.5 flex-wrap">
                               <span>{retDisplay.name || item.retailer_name}</span>
-                              {retDisplay.isUnregistered && (
+                              {item.retailer_group && (
+                                <span className="px-1.5 py-0.2 text-[10px] bg-blue-50 text-[#0B57D0] border border-blue-200 rounded font-bold">
+                                  {item.retailer_group}
+                                </span>
+                              )}
+                              {retDisplay.isUnregistered && !item.retailer_group && (
                                 <span className="px-1.5 py-0.2 text-[10px] bg-amber-100 text-amber-800 rounded font-bold">
                                   Unregistered
                                 </span>
                               )}
                             </div>
                             <div className="font-mono text-[10px] text-zinc-400">{item.retailer_id}</div>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className="px-2 py-0.5 text-[10px] font-semibold bg-slate-100 text-zinc-700 border border-slate-200 rounded-md">
+                              {item.sales_channel || "Retailer"}
+                            </span>
                           </td>
                           <td className="py-2.5 px-3">
                             <div className="font-mono font-medium text-zinc-800 flex items-center gap-1.5">
@@ -1388,25 +1473,23 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
                               <div className="text-[11px] text-zinc-500 truncate max-w-xs">{item.product_name}</div>
                             )}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-medium text-zinc-700">{grossQty.toLocaleString()}</td>
-                          <td className="py-2.5 px-3 text-right font-medium text-rose-600">
-                            {returnsQty > 0 ? `-${returnsQty.toLocaleString()}` : "0"}
+                          <td className="py-2.5 px-3 text-right font-medium text-zinc-700">
+                            ${Number(item.unit_price || 0).toFixed(2)}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-bold text-zinc-900">{netQty.toLocaleString()}</td>
+                          <td className="py-2.5 px-3 text-right font-medium text-zinc-700">{grossQty.toLocaleString()}</td>
                           <td className="py-2.5 px-3 text-right font-medium text-zinc-700">
                             ${grossAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-medium text-rose-600">
-                            {returnsAmt > 0 ? `-$${returnsAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$0.00"}
+                          <td className="py-2.5 px-3 text-right font-medium text-zinc-700">
+                            {returnsQty.toLocaleString()}
                           </td>
-                          <td className={`py-2.5 px-3 text-right font-bold ${netAmt < 0 ? "text-rose-600" : "text-zinc-900"}`}>
-                            ${netAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-medium text-zinc-600">
-                            ${Number(item.unit_price || 0).toFixed(2)}
+                          <td className="py-2.5 px-3 text-right font-medium text-zinc-700">
+                            ${returnsAmt.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                           </td>
                           <td className="py-2.5 px-3 font-medium text-zinc-600">{item.payment_terms || "30d"}</td>
-                          <td className="py-2.5 px-3 font-medium text-zinc-800">{item.expected_cash_date || "—"}</td>
+                          <td className="py-2.5 px-3 font-medium text-zinc-800">
+                            {formatExpectedCashMonth(item.expected_cash_date)}
+                          </td>
                           <td className="py-2.5 px-3 text-right">
                             {!isLocked && (
                               <div className="flex items-center justify-end gap-1">
@@ -1460,6 +1543,10 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
                 <tbody className="divide-y divide-slate-100">
                   {safeSalesOut
                     .filter((r) => {
+                      if (channelFilter !== "all") {
+                        const rChannel = r.sales_channel || "Retailer";
+                        if (rChannel !== channelFilter) return false;
+                      }
                       if (retailerFilter !== "all" && r.retailer_id !== retailerFilter) return false;
                       if (searchTerm) {
                         const term = searchTerm.toLowerCase();
@@ -1467,7 +1554,8 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
                           (r.sku || "").toLowerCase().includes(term) ||
                           (r.store_id || "").toLowerCase().includes(term) ||
                           (r.raw_store_name || "").toLowerCase().includes(term) ||
-                          (r.retailer_id || "").toLowerCase().includes(term)
+                          (r.retailer_id || "").toLowerCase().includes(term) ||
+                          (r.sales_channel || "").toLowerCase().includes(term)
                         );
                       }
                       return true;
@@ -1569,7 +1657,7 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
             <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-white">
               <div>
                 <h3 className="text-sm font-bold text-zinc-950">Update Sales Data</h3>
-                <p className="text-xs text-zinc-500 mt-0.5">Reconciliation Period: <strong>{currentPeriod}</strong></p>
+                <p className="text-xs text-zinc-500 mt-0.5">Period: <strong>{currentPeriod}</strong></p>
               </div>
               <button
                 onClick={() => {
@@ -1837,8 +1925,7 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
                                   )}
                                 </td>
                                 <td className="py-2.5 px-3 text-right">
-                                  <div className="flex items-center justify-end gap-1.5">
-                                    {/* Upload Button */}
+                                  <div className="flex items-center justify-end">
                                     <button
                                       type="button"
                                       onClick={() => {
@@ -1849,23 +1936,7 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
                                       title="Upload POS file or paste CSV for this retailer"
                                     >
                                       <Upload className="w-3 h-3 text-zinc-500" />
-                                      <span>Upload</span>
-                                    </button>
-
-                                    {/* Use Sell-In Data Button */}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleUseSellInForRetailer(r.id)}
-                                      disabled={retSellIn.length === 0 || actionLoadingRetailer === r.id}
-                                      className="px-2.5 py-1 text-xs font-semibold text-[#0B57D0] bg-blue-50 border border-blue-200 hover:bg-blue-100 rounded-md transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
-                                      title="Use this month's Sell-In data as estimated Sell-Out"
-                                    >
-                                      {actionLoadingRetailer === r.id ? (
-                                        <RefreshCw className="w-3 h-3 animate-spin" />
-                                      ) : (
-                                        <Calculator className="w-3 h-3 text-[#0B57D0]" />
-                                      )}
-                                      <span>Use Sell In</span>
+                                      <span>Upload POS</span>
                                     </button>
                                   </div>
                                 </td>
@@ -2023,6 +2094,43 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
                   className="w-full border border-slate-300 rounded-lg p-2 text-xs"
                 />
               </div>
+              <div>
+                <label className="font-bold text-zinc-700 block mb-1">Linked Group:</label>
+                <select
+                  value={editingSellIn.retailer_group || ""}
+                  onChange={(e) => setEditingSellIn({ ...editingSellIn, retailer_group: e.target.value || null })}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                >
+                  <option value="">— No Group (Unlinked) —</option>
+                  <option value="Group A">Group A</option>
+                  <option value="Group B">Group B</option>
+                  <option value="Group C">Group C</option>
+                  <option value="Group D">Group D</option>
+                  <option value="Group E">Group E</option>
+                  <option value="Group F">Group F</option>
+                  <option value="Group G">Group G</option>
+                  <option value="Group H">Group H</option>
+                  <option value="Group I">Group I</option>
+                  <option value="Group J">Group J</option>
+                </select>
+                <p className="text-[10px] text-zinc-400 mt-0.5">
+                  Set to &quot;No Group&quot; to unlink this buyer, or pick a Group tag.
+                </p>
+              </div>
+              <div>
+                <label className="font-bold text-zinc-700 block mb-1">Sales Channel:</label>
+                <select
+                  value={editingSellIn.sales_channel || "Retailer"}
+                  onChange={(e) => setEditingSellIn({ ...editingSellIn, sales_channel: e.target.value })}
+                  className="w-full border border-slate-300 rounded-lg p-2 text-xs bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                >
+                  {channelsList.map((ch: any) => (
+                    <option key={ch.id} value={ch.name}>
+                      {ch.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="px-5 py-3 border-t border-slate-200 bg-zinc-50 flex items-center justify-end gap-2">
               <button onClick={() => setEditingSellIn(null)} className="px-3 py-1.5 text-xs text-zinc-600">Cancel</button>
@@ -2037,7 +2145,9 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
                         updates: {
                           total_qty: editingSellIn.total_qty,
                           total_amount: editingSellIn.total_amount,
-                          payment_terms: editingSellIn.payment_terms
+                          payment_terms: editingSellIn.payment_terms,
+                          retailer_group: editingSellIn.retailer_group || null,
+                          sales_channel: editingSellIn.sales_channel || "Retailer"
                         }
                       })
                     });
@@ -2127,164 +2237,544 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
           </div>
         </div>
       )}
-      {/* 11. Combine / Merge Unregistered Retailers Modal */}
+      {/* 11. Link Buyers & Sales Channels Modal */}
       {showMergeRetailerModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-primary">
-          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-lg w-full overflow-hidden flex flex-col max-h-[85vh]">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[85vh]">
             {/* Header */}
-            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-[#F8F9FA]">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
               <div>
                 <h3 className="text-sm font-bold text-zinc-950 flex items-center gap-1.5">
-                  <Layers className="w-4 h-4 text-[#0B57D0]" />
-                  <span>Combine & Merge Retailers</span>
+                  <Link2 className="w-4 h-4 text-[#0B57D0]" />
+                  <span>Link Buyers &amp; Sales Channels</span>
                 </h3>
                 <p className="text-[11px] text-zinc-500 mt-0.5">
-                  Select unregistered customer codes and merge them under a registered master retailer.
+                  Map buyers and groups to sales channels, link unregistered buyer codes into groups, or create new channels.
                 </p>
               </div>
               <button
                 onClick={() => setShowMergeRetailerModal(false)}
-                className="p-1 text-zinc-400 hover:text-zinc-700 rounded-lg hover:bg-slate-200"
+                className="p-1 text-zinc-400 hover:text-zinc-700 rounded-lg hover:bg-slate-100"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            {/* Modal Tabs (2 Symmetrical 50/50 Tabs) */}
+            <div className="border-b border-slate-200 bg-[#F8F9FA] flex w-full shrink-0">
+              <button
+                type="button"
+                onClick={() => setLinkModalTab("channels")}
+                className={`w-1/2 flex-1 h-10 text-xs font-bold text-center border-b-2 transition-all flex items-center justify-center gap-1.5 ${
+                  linkModalTab === "channels"
+                    ? "border-[#0B57D0] text-[#0B57D0] bg-white"
+                    : "border-transparent text-zinc-500 hover:text-zinc-800 hover:bg-slate-100"
+                }`}
+              >
+                <span>1. Link Channels</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLinkModalTab("link")}
+                className={`w-1/2 flex-1 h-10 text-xs font-bold text-center border-b-2 transition-all flex items-center justify-center gap-1.5 ${
+                  linkModalTab === "link"
+                    ? "border-[#0B57D0] text-[#0B57D0] bg-white"
+                    : "border-transparent text-zinc-500 hover:text-zinc-800 hover:bg-slate-100"
+                }`}
+              >
+                <span>2. Link Groups</span>
+                {unmappedSellInRet.length > 0 && (
+                  <span className="px-1.5 py-0.2 text-[10px] bg-amber-100 text-amber-800 rounded-full font-bold">
+                    {unmappedSellInRet.length}
+                  </span>
+                )}
+              </button>
+            </div>
+
             {/* Modal Body */}
             <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
-              {/* Step 1: Select Unmapped Retailer Codes */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="font-bold text-zinc-800 flex items-center gap-1">
-                    <span>1. Select Retailer Codes to Merge:</span>
-                    <span className="text-[10px] text-zinc-400 font-normal">
-                      ({selectedMergeSources.length} of {unmappedSellInRet.length} selected)
-                    </span>
-                  </label>
-                  {unmappedSellInRet.length > 0 && (
-                    <div className="flex items-center gap-2 text-[11px]">
+              {linkModalTab === "channels" ? (
+                /* Tab 1: Link Channels */
+                <div className="space-y-4">
+                  {/* Header Row with Settings Gear Icon */}
+                  <div className="flex items-center justify-between pb-1 border-b border-slate-100">
+                    <div>
+                      <span className="font-bold text-zinc-900">Map Retailers to Sales Channels</span>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        Select channels below and click <strong>Save Changes</strong> to apply.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowManageChannels((prev) => !prev)}
+                      className={`p-1.5 rounded-lg border transition-all flex items-center gap-1 text-xs font-semibold cursor-pointer ${
+                        showManageChannels
+                          ? "bg-blue-50 text-[#0B57D0] border-blue-200"
+                          : "text-zinc-500 hover:text-zinc-800 hover:bg-slate-100 border-slate-200"
+                      }`}
+                      title="Manage Channel List"
+                    >
+                      <Settings className="w-4 h-4" />
+                      <span className="text-[11px]">Manage Channels</span>
+                    </button>
+                  </div>
+
+                  {/* Collapsible Manage Channels Panel */}
+                  {showManageChannels && (
+                    <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-lg space-y-3 animate-in fade-in duration-150">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-zinc-900 text-xs flex items-center gap-1.5">
+                          <Plus className="w-3.5 h-3.5 text-[#0B57D0]" />
+                          <span>Create New Channel</span>
+                        </span>
+                        <span className="text-[10px] text-zinc-400">({channelsList.length} channels configured)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          placeholder="Enter channel name (e.g. Export, Food Service, B2B)..."
+                          value={newChannelName}
+                          onChange={(e) => setNewChannelName(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && handleCreateChannel()}
+                          className="flex-1 h-8 px-3 text-xs border border-slate-300 rounded-lg bg-white focus:outline-none focus:border-[#0B57D0]"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleCreateChannel}
+                          disabled={creatingChannel || !newChannelName.trim()}
+                          className="h-8 px-3 text-xs font-semibold bg-[#0B57D0] text-white hover:bg-[#0842A0] rounded-lg shadow-xs transition-all flex items-center gap-1 disabled:opacity-50 shrink-0 cursor-pointer"
+                        >
+                          {creatingChannel ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Plus className="w-3 h-3" />
+                          )}
+                          <span>Add</span>
+                        </button>
+                      </div>
+
+                      {/* Chips of Active Channels */}
+                      <div className="flex flex-wrap gap-1.5 pt-1">
+                        {channelsList.map((ch: any) => (
+                          <div
+                            key={ch.id}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium bg-white border border-slate-200 text-zinc-800 shadow-2xs"
+                          >
+                            <span>{ch.name}</span>
+                            {!ch.is_default && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteChannel(ch.id, ch.name)}
+                                className="text-rose-400 hover:text-rose-600 transition-colors ml-0.5"
+                                title="Delete channel"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="border border-slate-200 rounded-lg overflow-hidden bg-white shadow-xs max-h-[50vh] overflow-y-auto">
+                    {(() => {
+                      // Collect all unique retailer IDs present in current month Sell-In dataset
+                      const activeSellInRetMap = new Map<string, { id: string; name: string; sales_channel: string }>();
+                      safeSalesIn.forEach((si) => {
+                        const retId = String(si.retailer_id || "").trim();
+                        if (retId && !activeSellInRetMap.has(retId.toLowerCase())) {
+                          const matchedRet = retailersList.find(
+                            (r) =>
+                              String(r.id || "").toLowerCase() === retId.toLowerCase() ||
+                              String(r.retailer_id || "").toLowerCase() === retId.toLowerCase()
+                          );
+                          const displayName = matchedRet?.display_name || matchedRet?.name || si.retailer_name || retId;
+                          const currentCh = matchedRet?.sales_channel || si.sales_channel || "Retailer";
+                          activeSellInRetMap.set(retId.toLowerCase(), {
+                            id: retId,
+                            name: displayName,
+                            sales_channel: currentCh,
+                          });
+                        }
+                      });
+
+                      const activeRetailers = Array.from(activeSellInRetMap.values());
+
+                      if (activeRetailers.length === 0) {
+                        return (
+                          <div className="p-8 text-center text-zinc-500 bg-slate-50">
+                            <Package className="w-8 h-8 text-zinc-400 mx-auto mb-2" />
+                            <p className="font-semibold text-xs">No Sell-In records found for {currentPeriod}</p>
+                            <span className="text-[11px] text-zinc-400">
+                              Upload an Excel or Million file first to configure sales channels for its retailers.
+                            </span>
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="sticky top-0 z-10">
+                            <tr className="bg-[#F8F9FA] border-b border-slate-200 text-[11px] font-bold text-zinc-600 uppercase tracking-tight">
+                              <th className="py-2.5 px-3">Retailer in Sell-In ({activeRetailers.length})</th>
+                              <th className="py-2.5 px-3">Assigned Sales Channel</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {activeRetailers.map((r) => {
+                              const retId = r.id;
+                              const currentCh = retailerChannelDrafts[retId] || r.sales_channel || "Retailer";
+                              const isChanged = retailerChannelDrafts[retId] && retailerChannelDrafts[retId] !== r.sales_channel;
+
+                              return (
+                                <tr key={retId} className={`hover:bg-slate-50 transition-colors ${isChanged ? "bg-amber-50/40" : ""}`}>
+                                  <td className="py-2.5 px-3">
+                                    <div className="font-bold text-zinc-900 flex items-center gap-1.5">
+                                      <span>{r.name}</span>
+                                      {isChanged && (
+                                        <span className="px-1.5 py-0.2 text-[9px] bg-amber-100 text-amber-800 rounded font-bold">
+                                          Modified
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[10px] text-zinc-400 font-mono">{retId}</div>
+                                  </td>
+                                  <td className="py-2.5 px-3">
+                                    <select
+                                      value={currentCh}
+                                      onChange={(e) => {
+                                        const newVal = e.target.value;
+                                        setRetailerChannelDrafts((prev) => ({
+                                          ...prev,
+                                          [retId]: newVal,
+                                        }));
+                                      }}
+                                      className={`w-full max-w-[200px] border rounded-lg p-1.5 text-xs bg-white text-zinc-900 focus:outline-none ${
+                                        isChanged
+                                          ? "border-amber-400 ring-1 ring-amber-300 font-semibold text-amber-900"
+                                          : "border-slate-300 focus:border-[#0B57D0]"
+                                      }`}
+                                    >
+                                      {channelsList.map((ch: any) => (
+                                        <option key={ch.id} value={ch.name}>
+                                          {ch.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      );
+                    })()}
+                  </div>
+                </div>
+              ) : (
+                /* Tab 2: Link Groups */
+                <div className="space-y-4">
+                  {/* Sub-Tabs for Link / Unlink */}
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                    <span className="font-bold text-zinc-900">Link Unregistered Buyers into Groups</span>
+                    {linkedBuyersList.length > 0 && selectedUnlinkSources.length > 0 && (
                       <button
                         type="button"
-                        onClick={() => setSelectedMergeSources(unmappedSellInRet.map((u) => u.retailer_id))}
-                        className="text-[#0B57D0] hover:underline font-semibold"
+                        onClick={() => handleUnlinkRetailers(selectedUnlinkSources)}
+                        disabled={unlinkingRetailers}
+                        className="flex items-center gap-1.5 px-3 py-1 text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all cursor-pointer"
                       >
-                        Select All
+                        <Unlink className="w-3.5 h-3.5" />
+                        <span>Unlink Selected ({selectedUnlinkSources.length})</span>
                       </button>
-                      <span className="text-zinc-300">|</span>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedMergeSources([])}
-                        className="text-zinc-500 hover:underline"
-                      >
-                        Clear
-                      </button>
+                    )}
+                  </div>
+
+                  {/* Step 1: Select Unmapped Retailer Codes */}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="font-bold text-zinc-800 flex items-center gap-1">
+                        <span>1. Select Unregistered Buyers to Link:</span>
+                        <span className="text-[10px] text-zinc-400 font-normal">
+                          ({selectedMergeSources.length} of {unmappedSellInRet.length} selected)
+                        </span>
+                      </label>
+                      {unmappedSellInRet.length > 0 && (
+                        <div className="flex items-center gap-2 text-[11px]">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMergeSources(unmappedSellInRet.map((u) => u.retailer_id))}
+                            className="text-[#0B57D0] hover:underline font-semibold"
+                          >
+                            Select All
+                          </button>
+                          <span className="text-zinc-300">|</span>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMergeSources([])}
+                            className="text-zinc-500 hover:underline"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {unmappedSellInRet.length === 0 ? (
+                      <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-center">
+                        <CheckCircle2 className="w-5 h-5 mx-auto mb-1 text-emerald-600" />
+                        <p className="font-semibold text-xs">All customer codes are currently linked or registered!</p>
+                      </div>
+                    ) : (
+                      <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-48 overflow-y-auto bg-slate-50/50">
+                        {unmappedSellInRet.map((u) => {
+                          const isChecked = selectedMergeSources.includes(u.retailer_id);
+                          return (
+                            <label
+                              key={u.retailer_id}
+                              className={`flex items-center justify-between p-2.5 hover:bg-blue-50/40 cursor-pointer transition-colors ${
+                                isChecked ? "bg-blue-50/60" : ""
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedMergeSources((prev) => [...prev, u.retailer_id]);
+                                    } else {
+                                      setSelectedMergeSources((prev) => prev.filter((id) => id !== u.retailer_id));
+                                    }
+                                  }}
+                                  className="rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] w-4 h-4 cursor-pointer"
+                                />
+                                <div>
+                                  <div className="font-bold text-zinc-900">{u.retailer_name}</div>
+                                  <div className="font-mono text-[10px] text-zinc-500">{u.retailer_id}</div>
+                                </div>
+                              </div>
+                              <span className="px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-800 rounded font-bold">
+                                Unlinked
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Step 2: Select Target Group or Registered Retailer */}
+                  <div>
+                    <label className="font-bold text-zinc-800 block mb-1.5">
+                      2. Select Target Group or Master Retailer:
+                    </label>
+                    <select
+                      value={selectedMergeTarget}
+                      onChange={(e) => setSelectedMergeTarget(e.target.value)}
+                      className="w-full border border-slate-300 rounded-lg p-2.5 text-xs bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                    >
+                      <option value="">— Select Target Group or Master Retailer —</option>
+                      <optgroup label="📦 Link into Group (Keeps Individual Retailer Data)">
+                        <option value="Group A">Group A</option>
+                        <option value="Group B">Group B</option>
+                        <option value="Group C">Group C</option>
+                        <option value="Group D">Group D</option>
+                        <option value="Group E">Group E</option>
+                        <option value="Group F">Group F</option>
+                        <option value="Group G">Group G</option>
+                        <option value="Group H">Group H</option>
+                        <option value="Group I">Group I</option>
+                        <option value="Group J">Group J</option>
+                      </optgroup>
+                      <optgroup label="🏢 Merge into Registered Master Retailer">
+                        {retailersList
+                          .filter((r) => !r.unmapped_retailer && !r.retailer_id?.startsWith("Group "))
+                          .map((r) => (
+                            <option key={r.id || r.retailer_id} value={r.id || r.retailer_id}>
+                              {r.display_name || r.name || r.retailer_id} ({r.id || r.retailer_id})
+                            </option>
+                          ))}
+                      </optgroup>
+                    </select>
+                  </div>
+
+                  {/* Currently Linked Buyers Table */}
+                  {linkedBuyersList.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-slate-200">
+                      <div className="font-bold text-zinc-900 mb-2">
+                        Currently Linked Buyers ({linkedBuyersList.length})
+                      </div>
+                      <div className="border border-slate-200 rounded-lg overflow-hidden bg-white max-h-48 overflow-y-auto">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead>
+                            <tr className="bg-[#F8F9FA] border-b border-slate-200 text-[11px] font-bold text-zinc-600">
+                              <th className="py-2 px-2.5 w-8">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedUnlinkSources.length === linkedBuyersList.length && linkedBuyersList.length > 0}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedUnlinkSources(linkedBuyersList.map((b) => b.retailer_id));
+                                    } else {
+                                      setSelectedUnlinkSources([]);
+                                    }
+                                  }}
+                                  className="rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] w-3.5 h-3.5"
+                                />
+                              </th>
+                              <th className="py-2 px-2.5">Buyer</th>
+                              <th className="py-2 px-2.5">Group</th>
+                              <th className="py-2 px-2.5 text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {linkedBuyersList.map((b) => (
+                              <tr key={b.retailer_id} className="hover:bg-slate-50">
+                                <td className="py-2 px-2.5">
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedUnlinkSources.includes(b.retailer_id)}
+                                    onChange={(e) => {
+                                      if (e.target.checked) {
+                                        setSelectedUnlinkSources((prev) => [...prev, b.retailer_id]);
+                                      } else {
+                                        setSelectedUnlinkSources((prev) => prev.filter((id) => id !== b.retailer_id));
+                                      }
+                                    }}
+                                    className="rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] w-3.5 h-3.5"
+                                  />
+                                </td>
+                                <td className="py-2 px-2.5">
+                                  <span className="font-bold text-zinc-900">{b.retailer_name}</span>
+                                  <span className="text-[10px] text-zinc-400 font-mono ml-1.5">{b.retailer_id}</span>
+                                </td>
+                                <td className="py-2 px-2.5">
+                                  <span className="px-1.5 py-0.2 text-[10px] font-bold bg-blue-50 text-[#0B57D0] border border-blue-200 rounded">
+                                    {b.retailer_group}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-2.5 text-right">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUnlinkRetailers([b.retailer_id])}
+                                    disabled={unlinkingRetailers}
+                                    className="px-2 py-0.5 text-[11px] font-semibold text-rose-600 hover:bg-rose-50 border border-rose-200 rounded transition-all cursor-pointer"
+                                  >
+                                    Unlink
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   )}
                 </div>
-
-                {unmappedSellInRet.length === 0 ? (
-                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-800 text-center">
-                    <CheckCircle2 className="w-5 h-5 mx-auto mb-1 text-emerald-600" />
-                    <p className="font-semibold text-xs">All customer codes are already registered!</p>
-                    <p className="text-[11px] text-emerald-700 mt-0.5">There are no unregistered retailers to merge for this period.</p>
-                  </div>
-                ) : (
-                  <div className="border border-slate-200 rounded-lg divide-y divide-slate-100 max-h-48 overflow-y-auto bg-slate-50/50">
-                    {unmappedSellInRet.map((u) => {
-                      const isChecked = selectedMergeSources.includes(u.retailer_id);
-                      return (
-                        <label
-                          key={u.retailer_id}
-                          className={`flex items-center justify-between p-2.5 hover:bg-blue-50/40 cursor-pointer transition-colors ${
-                            isChecked ? "bg-blue-50/60" : ""
-                          }`}
-                        >
-                          <div className="flex items-center gap-2.5">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedMergeSources((prev) => [...prev, u.retailer_id]);
-                                } else {
-                                  setSelectedMergeSources((prev) => prev.filter((id) => id !== u.retailer_id));
-                                }
-                              }}
-                              className="rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] w-4 h-4 cursor-pointer"
-                            />
-                            <div>
-                              <div className="font-bold text-zinc-900">{u.retailer_name}</div>
-                              <div className="font-mono text-[10px] text-zinc-500">{u.retailer_id}</div>
-                            </div>
-                          </div>
-                          <span className="px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-800 rounded font-bold">
-                            Unregistered
-                          </span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Step 2: Select Target Registered Retailer */}
-              <div>
-                <label className="font-bold text-zinc-800 block mb-1.5">
-                  2. Merge Under Registered Master Retailer:
-                </label>
-                <select
-                  value={selectedMergeTarget}
-                  onChange={(e) => setSelectedMergeTarget(e.target.value)}
-                  className="w-full border border-slate-300 rounded-lg p-2.5 text-xs bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
-                >
-                  <option value="">— Select Registered Retailer —</option>
-                  {retailersList
-                    .filter((r) => !r.unmapped_retailer)
-                    .map((r) => (
-                      <option key={r.id || r.retailer_id} value={r.id || r.retailer_id}>
-                        {r.display_name || r.name || r.retailer_id} ({r.id || r.retailer_id})
-                      </option>
-                    ))}
-                </select>
-                <p className="text-[10px] text-zinc-400 mt-1">
-                  All transactions from the selected codes will be grouped and consolidated under this master retailer.
-                </p>
-              </div>
+              )}
             </div>
 
             {/* Footer */}
             <div className="px-5 py-3 border-t border-slate-200 bg-[#F8F9FA] flex items-center justify-between gap-2 shrink-0">
               <span className="text-[11px] text-zinc-500">
-                {selectedMergeSources.length > 0 && selectedMergeTarget
-                  ? `Ready to merge ${selectedMergeSources.length} code(s)`
-                  : "Select codes and target to proceed"}
+                {linkModalTab === "channels" ? (
+                  (() => {
+                    // Count modified from active Sell-In retailers
+                    const activeIds = Array.from(new Set(safeSalesIn.map((si) => String(si.retailer_id || "").trim()).filter(Boolean)));
+                    const changedCount = activeIds.filter((retId) => {
+                      const matchedRet = retailersList.find(
+                        (r) =>
+                          String(r.id || "").toLowerCase() === retId.toLowerCase() ||
+                          String(r.retailer_id || "").toLowerCase() === retId.toLowerCase()
+                      );
+                      const currentCh = matchedRet?.sales_channel || "Retailer";
+                      return retailerChannelDrafts[retId] && retailerChannelDrafts[retId] !== currentCh;
+                    }).length;
+
+                    return changedCount > 0 ? (
+                      <span className="text-amber-700 font-semibold">{changedCount} retailer channel(s) modified</span>
+                    ) : (
+                      "Change dropdowns and click Save Changes"
+                    );
+                  })()
+                ) : selectedMergeSources.length > 0 && selectedMergeTarget ? (
+                  `Ready to link ${selectedMergeSources.length} buyer code(s) to ${selectedMergeTarget}`
+                ) : (
+                  "Select buyers and target to link"
+                )}
               </span>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowMergeRetailerModal(false)}
-                  className="px-3.5 py-1.5 text-xs font-semibold text-zinc-600 hover:bg-slate-200 rounded-lg transition-colors"
+                  onClick={() => {
+                    // Reset drafts on Cancel / Close
+                    const initialDrafts: Record<string, string> = {};
+                    retailersList.forEach((r) => {
+                      const retId = r.id || r.retailer_id;
+                      if (retId) initialDrafts[retId] = r.sales_channel || "Retailer";
+                    });
+                    setRetailerChannelDrafts(initialDrafts);
+                    setShowMergeRetailerModal(false);
+                  }}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-zinc-600 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
                 >
                   Cancel
                 </button>
-                <button
-                  type="button"
-                  onClick={handleMergeRetailers}
-                  disabled={selectedMergeSources.length === 0 || !selectedMergeTarget || mergingRetailers}
-                  className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold bg-[#0B57D0] text-white hover:bg-[#0842A0] rounded-lg shadow-xs transition-all disabled:opacity-40 cursor-pointer"
-                >
-                  {mergingRetailers ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Merging...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Layers className="w-3.5 h-3.5" />
-                      <span>Merge Retailers</span>
-                    </>
-                  )}
-                </button>
+                {linkModalTab === "channels" ? (
+                  <button
+                    type="button"
+                    onClick={handleSaveAllChannels}
+                    disabled={
+                      savingChannels ||
+                      (() => {
+                        const activeIds = Array.from(new Set(safeSalesIn.map((si) => String(si.retailer_id || "").trim()).filter(Boolean)));
+                        return !activeIds.some((retId) => {
+                          const matchedRet = retailersList.find(
+                            (r) =>
+                              String(r.id || "").toLowerCase() === retId.toLowerCase() ||
+                              String(r.retailer_id || "").toLowerCase() === retId.toLowerCase()
+                          );
+                          const currentCh = matchedRet?.sales_channel || "Retailer";
+                          return retailerChannelDrafts[retId] && retailerChannelDrafts[retId] !== currentCh;
+                        });
+                      })()
+                    }
+                    className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold bg-[#0B57D0] text-white hover:bg-[#0842A0] rounded-lg shadow-xs transition-all disabled:opacity-40 cursor-pointer"
+                  >
+                    {savingChannels ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Saving...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Save Changes</span>
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleMergeRetailers}
+                    disabled={selectedMergeSources.length === 0 || !selectedMergeTarget || mergingRetailers}
+                    className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold bg-[#0B57D0] text-white hover:bg-[#0842A0] rounded-lg shadow-xs transition-all disabled:opacity-40 cursor-pointer"
+                  >
+                    {mergingRetailers ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Linking...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Link2 className="w-3.5 h-3.5" />
+                        <span>Link Selected Buyers</span>
+                      </>
+                    )}
+                  </button>
+                )}
               </div>
             </div>
           </div>

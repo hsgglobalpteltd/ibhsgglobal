@@ -88,7 +88,21 @@ interface TrackOrderDraft {
   latitude?: number | string;
   longitude?: number | string;
   pdfImages?: string[];
+  photo_do_paper?: string;
   link_store?: string;
+}
+
+// Helper to delete files from Cloudflare R2 when drafts are discarded/deleted
+async function deleteR2PhotoUrls(photoJsonOrUrl?: string) {
+  if (!photoJsonOrUrl) return;
+  try {
+    const urls: string[] = parseImageUrlList(photoJsonOrUrl);
+    for (const u of urls) {
+      if (u && (u.includes("/api/files/") || u.startsWith("http"))) {
+        fetch(u, { method: "DELETE" }).catch(() => {});
+      }
+    }
+  } catch (_) {}
 }
 
 interface LogEntry {
@@ -1061,6 +1075,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Fetch drafts, API settings, product SKUs, and driver logs on mount
   React.useEffect(() => {
+    // 1. Load draft orders from localStorage
     const cachedDrafts = localStorage.getItem("track_order_drafts");
     if (cachedDrafts) {
       try {
@@ -2464,10 +2479,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     });
   }, [leafletLoaded, activeTab, activePins, dbOrders, handleOpenLogs]);
 
-  // Save drafts helper
+  // Save drafts helper: persists drafts with Cloudflare R2 URLs directly in localStorage
   const saveDraftsToStorage = (updatedDrafts: TrackOrderDraft[]) => {
     setDrafts(updatedDrafts);
-    localStorage.setItem("track_order_drafts", JSON.stringify(updatedDrafts));
+    try {
+      localStorage.setItem("track_order_drafts", JSON.stringify(updatedDrafts));
+    } catch (e) {
+      console.warn("Could not save drafts to localStorage:", e);
+    }
   };
 
   // Handle Bulk Invoice PDF Upload & Completion
@@ -3889,12 +3908,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     showToast("Reading DO document for batch parsing...", "info");
 
     try {
-      // 1. Render all page thumbnails into pdfImages via pdf.js
-      let pdfImages: string[] = [];
+      // 1. Render all page thumbnails and upload directly to Cloudflare R2
+      let uploadedPageUrls: string[] = [];
       try {
         const pdfjsLib = await loadPdfJs();
         const arrayBuffer = await file.arrayBuffer();
         const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const safeBaseName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_-]/g, "_");
         
         for (let i = 1; i <= pdfDoc.numPages; i++) {
           const page = await pdfDoc.getPage(i);
@@ -3907,17 +3927,38 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           
           if (context) {
             await page.render({ canvasContext: context, viewport }).promise;
-            let quality = 0.8;
-            let dataUrl = canvas.toDataURL("image/jpeg", quality);
-            while (dataUrl.length > 340000 && quality > 0.15) {
-              quality -= 0.1;
-              dataUrl = canvas.toDataURL("image/jpeg", quality);
+            setPdfLoadingText(`Uploading DO page ${i}/${pdfDoc.numPages} to storage...`);
+            
+            const blob = await new Promise<Blob | null>((resolve) => {
+              canvas.toBlob((b) => resolve(b), "image/jpeg", 0.85);
+            });
+
+            if (blob) {
+              const fileName = `Track_Orders/DO_Paper/${safeBaseName}_p${i}_${Date.now()}.jpg`;
+              const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+                method: "POST",
+                headers: { "Content-Type": "image/jpeg" },
+                body: blob
+              });
+              if (uploadRes.ok) {
+                const uploadData = await uploadRes.json() as any;
+                if (uploadData.success && uploadData.url) {
+                  uploadedPageUrls.push(uploadData.url);
+                } else {
+                  uploadedPageUrls.push("");
+                }
+              } else {
+                uploadedPageUrls.push("");
+              }
+            } else {
+              uploadedPageUrls.push("");
             }
-            pdfImages.push(dataUrl);
+          } else {
+            uploadedPageUrls.push("");
           }
         }
       } catch (pdfErr) {
-        console.error("PDF page rendering failed:", pdfErr);
+        console.error("PDF page rendering/uploading failed:", pdfErr);
       }
 
       // 2. Load PDF with pdf-lib for chunk splitting (7 pages per batch)
@@ -4066,11 +4107,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             console.log(`[DO UPLOAD] Processing order ${doNum}. pageNumbers:`, item.pageNumbers);
 
             const itemPageNumbers = Array.isArray(item.pageNumbers) ? item.pageNumbers : [];
-            const orderPdfImages = itemPageNumbers.length > 0
-              ? itemPageNumbers.map((pNum: any) => pdfImages[parseInt(pNum, 10) - 1]).filter(Boolean)
-              : pdfImages;
+            const orderPhotoUrls = itemPageNumbers.length > 0
+              ? itemPageNumbers.map((pNum: any) => uploadedPageUrls[parseInt(pNum, 10) - 1]).filter(Boolean)
+              : uploadedPageUrls.filter(Boolean);
 
-            console.log(`[DO UPLOAD] Order ${doNum} mapped images count: ${orderPdfImages.length}`);
+            console.log(`[DO UPLOAD] Order ${doNum} mapped R2 photo URLs count: ${orderPhotoUrls.length}`);
 
             // Extract store_id from parsed field or regex fallback from deliverTo/poscode
             let extractedStoreId = String(item.store_id || "").trim();
@@ -4123,7 +4164,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               appointmentDate: undefined,
               appointmentTimeWindow: undefined,
               deliverMethod: "Company Delivery",
-              pdfImages: orderPdfImages,
+              photo_do_paper: orderPhotoUrls.length > 0 ? JSON.stringify(orderPhotoUrls) : "",
               link_store: linkStoreVal
             };
 
@@ -4177,6 +4218,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         }
         
         const newDraft = { ...draft, [field]: cleanVal };
+
+        if (field === "link_store") {
+          const cleanStoreId = String(value || "").trim();
+          newDraft.link_store = cleanStoreId;
+          if (cleanStoreId) {
+            const resolved = resolveStoreById(cleanStoreId);
+            if (resolved) {
+              newDraft.deliverTo = resolved.deliverTo;
+              if (resolved.poscode) {
+                newDraft.poscode = resolved.poscode;
+              }
+            }
+          }
+        }
         
         // Dynamically compute/update deadline
         if (newDraft.type === "Urgent") {
@@ -4200,12 +4255,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Delete Draft
   const handleDeleteDraft = (index: number) => {
+    const draftToDelete = drafts[index];
+    if (draftToDelete) {
+      deleteR2PhotoUrls(draftToDelete.photo_do_paper);
+    }
     const updated = drafts.filter((_, idx) => idx !== index);
     saveDraftsToStorage(updated);
     showToast("Draft deleted", "info");
   };
-
-
 
   // Send Order to Database
   const handleSendOrder = async (index: number) => {
@@ -4278,6 +4335,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         action: isReturn ? "Created Return" : "Created & Sent",
         actionBy: currentUser,
         remark: isReturn ? "Initial return creation" : "Initial creation",
+        photoUrl: order.photo_do_paper ? parseImageUrlList(order.photo_do_paper)[0] : undefined,
         timestamp: Date.now()
       }
     ];
@@ -4295,6 +4353,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     const defaultMethod = isReturn ? "Company Vehicle" : "Company Delivery";
     const initialStatus = isReturn ? "Pending" : "Ready to Pick";
+    const photoDoPaperUrl = order.photo_do_paper || "";
 
     // --- INSTANT UPDATE (OPTIMISTIC UI) ---
     // Start with local/temporary coordinates/images and let it instantly display
@@ -4316,7 +4375,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       deliver_method: order.deliverMethod || defaultMethod,
       latitude: order.latitude || "",
       longitude: order.longitude || "",
-      photo_do_paper: "",
+      photo_do_paper: photoDoPaperUrl,
       photo_do_paper_signed: "",
       photo_delivered_proof: "",
       photo_handover_proof: "",
@@ -4351,43 +4410,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           const fallback = getSingaporeLatLng(order.poscode);
           lat = fallback.lat;
           lng = fallback.lng;
-        }
-      }
-
-      // Upload draft's PDF images to R2 under Track_Orders/DO_Paper/ in background
-      let photoDoPaperUrl = "";
-      if (order.pdfImages && order.pdfImages.length > 0) {
-        showToast(`Uploading DO Paper proof (${order.pdfImages.length} page(s))...`, "info");
-        const uploadedUrls: string[] = [];
-        for (let i = 0; i < order.pdfImages.length; i++) {
-          try {
-            const base64Data = order.pdfImages[i].split(",")[1] || order.pdfImages[i];
-            const byteCharacters = atob(base64Data);
-            const byteNumbers = new Array(byteCharacters.length);
-            for (let j = 0; j < byteCharacters.length; j++) {
-              byteNumbers[j] = byteCharacters.charCodeAt(j);
-            }
-            const byteArray = new Uint8Array(byteNumbers);
-            const blob = new Blob([byteArray], { type: "image/jpeg" });
-            
-            const filename = `Track_Orders/DO_Paper/${order.doNumber}_page_${i + 1}_${Date.now()}.jpg`;
-            const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
-              method: "POST",
-              headers: { "Content-Type": "image/jpeg" },
-              body: blob
-            });
-            if (uploadRes.ok) {
-              const uploadResData = await uploadRes.json();
-              if (uploadResData.success) {
-                uploadedUrls.push(uploadResData.url);
-              }
-            }
-          } catch (uploadErr) {
-            console.error("Failed to upload DO Paper page:", uploadErr);
-          }
-        }
-        if (uploadedUrls.length > 0) {
-          photoDoPaperUrl = JSON.stringify(uploadedUrls);
         }
       }
 
@@ -7686,6 +7708,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Mark</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Reference Number</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Type</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Store ID</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Address</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Poscode</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Method</th>
@@ -7772,6 +7795,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               </div>
                             )}
                           </div>
+                        </td>
+                        <td className="p-3 w-28 align-middle border-b border-zinc-200 text-center">
+                          <input
+                            type="text"
+                            list="draft-store-datalist"
+                            value={draft.link_store || ""}
+                            placeholder="Store ID..."
+                            onChange={(e) => handleUpdateDraftCell(idx, "link_store", e.target.value)}
+                            className="w-full h-7 px-2 rounded border border-zinc-300/40 hover:border-zinc-300 bg-transparent text-center font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 text-xs uppercase"
+                          />
                         </td>
                         <td className="p-3 w-40 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={draft.deliverTo}>
                           {draft.deliverTo}
@@ -8837,6 +8870,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               </div>
               <button 
                 onClick={() => {
+                  if (unknownStoreInfo && unknownStoreInfo.allDrafts) {
+                    unknownStoreInfo.allDrafts.forEach((d) => deleteR2PhotoUrls(d.photo_do_paper));
+                  }
                   setIsUnknownStoreModalOpen(false);
                   setUnknownStoreInfo(null);
                   showToast("DO import cancelled.", "info");
@@ -8892,12 +8928,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               <CustomButton 
                 variant="secondary" 
                 onClick={() => {
-                  if (unknownStoreInfo && unknownStoreInfo.validDrafts.length > 0) {
-                    const mergedDrafts = [...drafts, ...unknownStoreInfo.validDrafts];
-                    saveDraftsToStorage(mergedDrafts);
-                    showToast(`Imported ${unknownStoreInfo.validDrafts.length} orders. Skipped ${unknownStoreInfo.unregisteredOrders.length} unregistered order(s).`, "info");
-                  } else {
-                    showToast(`Skipped ${unknownStoreInfo?.unregisteredOrders.length || 0} unregistered order(s). No valid orders to import.`, "info");
+                  if (unknownStoreInfo) {
+                    // Purge R2 files for drafts that are being skipped
+                    const validSet = new Set(unknownStoreInfo.validDrafts.map(vd => vd.id));
+                    const skippedDrafts = unknownStoreInfo.allDrafts.filter(ad => !validSet.has(ad.id));
+                    skippedDrafts.forEach(sd => deleteR2PhotoUrls(sd.photo_do_paper));
+
+                    if (unknownStoreInfo.validDrafts.length > 0) {
+                      const mergedDrafts = [...drafts, ...unknownStoreInfo.validDrafts];
+                      saveDraftsToStorage(mergedDrafts);
+                      showToast(`Imported ${unknownStoreInfo.validDrafts.length} orders. Skipped ${unknownStoreInfo.unregisteredOrders.length} unregistered order(s).`, "info");
+                    } else {
+                      showToast(`Skipped ${unknownStoreInfo.unregisteredOrders.length} unregistered order(s). No valid orders to import.`, "info");
+                    }
                   }
                   setIsUnknownStoreModalOpen(false);
                   setUnknownStoreInfo(null);
@@ -9309,6 +9352,18 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         {productSkus.map((sku) => (
           <option key={sku} value={sku} />
         ))}
+      </datalist>
+
+      <datalist id="draft-store-datalist">
+        {stores.map((s: any) => {
+          const sId = String(s.id || "");
+          const sName = String(s["Display Name"] || s.display_name || "");
+          return (
+            <option key={sId} value={sId}>
+              {sName ? `${sId} - ${sName}` : sId}
+            </option>
+          );
+        })}
       </datalist>
 
       {isInvoiceUploadChoiceOpen && (

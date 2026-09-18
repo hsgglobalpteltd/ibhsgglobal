@@ -7,6 +7,7 @@ import { showToast } from "@/lib/toast";
 
 import { fetchWorkspaceDashboard, prefetchWorkspaceDashboard, getCachedWorkspaceData } from "@/lib/api";
 import { DashboardAiSummary } from "@/components/dashboard-ai-summary";
+import { DashboardAnalysisView } from "@/components/dashboard-analysis-view";
 
 interface DashboardPageProps {
   profile?: any;
@@ -278,8 +279,13 @@ export function DashboardPage({ profile }: DashboardPageProps) {
         </div>
       )}
 
-      {/* Tab Content: Analysis / Forecast (Blank / Empty container) */}
-      {(activeTab === "analysis" || activeTab === "forecast") && (
+      {/* Tab Content: Analysis */}
+      {activeTab === "analysis" && (
+        <DashboardAnalysisView />
+      )}
+
+      {/* Tab Content: Forecast (Blank / Empty container) */}
+      {activeTab === "forecast" && (
         <div className="flex-1 w-full" />
       )}
     </div>
