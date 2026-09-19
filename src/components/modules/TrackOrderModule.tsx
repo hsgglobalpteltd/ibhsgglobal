@@ -2693,16 +2693,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           continue;
         }
 
-        // Allow updating delivered and already completed orders
-        const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
-        const isDelivered = orderStatus === "delivered" || orderStatus === "collected" || orderStatus === "return collected";
-        const isCompleted = matchedOrder.completed === "true" || matchedOrder.completed === true;
-
-        if (!isDelivered && !isCompleted) {
-          notDeliveredCount++;
-          continue;
-        }
-
         matchedCount++;
 
         // Upload matched invoice page photo to Cloudflare R2
@@ -2782,6 +2772,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         const payloadData: any = {
           id: matchedOrder.id,
           ref_number: matchedOrder.ref_number,
+          status: "Delivered",
           completed: "true",
           invoice_number: invoiceNumber || "",
           invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
@@ -2809,6 +2800,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             o.id === matchedOrder.id
               ? {
                   ...o,
+                  status: "Delivered",
                   completed: "true",
                   invoice_number: invoiceNumber || "",
                   invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
@@ -2822,7 +2814,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
 
       showToast(
-        `Bulk completion complete! ${matchedCount} delivered orders updated.${notDeliveredCount > 0 ? ` (${notDeliveredCount} skipped - not delivered yet)` : ""}${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
+        `Bulk completion complete! ${matchedCount} orders updated with invoice.${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
         "success"
       );
 
@@ -2968,16 +2960,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           continue;
         }
 
-        // Allow updating delivered and already completed orders
-        const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
-        const isDelivered = orderStatus === "delivered" || orderStatus === "collected" || orderStatus === "return collected";
-        const isCompleted = matchedOrder.completed === "true" || matchedOrder.completed === true;
-
-        if (!isDelivered && !isCompleted) {
-          notDeliveredCount++;
-          continue;
-        }
-
         matchedCount++;
 
         let finalItemsJson: string | undefined = undefined;
@@ -3005,6 +2987,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
         const payloadData: any = {
           id: matchedOrder.id,
+          status: "Delivered",
           completed: "true",
           invoice_number: invoiceNumber || "",
           invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
@@ -3030,6 +3013,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             o.id === matchedOrder.id
               ? {
                   ...o,
+                  status: "Delivered",
                   completed: "true",
                   invoice_number: invoiceNumber || "",
                   invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
@@ -3042,7 +3026,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
 
       showToast(
-        `Bulk completion complete! ${matchedCount} delivered orders updated.${notDeliveredCount > 0 ? ` (${notDeliveredCount} skipped - not delivered yet)` : ""}${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
+        `Bulk completion complete! ${matchedCount} orders updated with invoice.${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
         "success"
       );
     } catch (err: any) {
@@ -4352,7 +4336,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
 
     const defaultMethod = isReturn ? "Company Vehicle" : "Company Delivery";
-    const initialStatus = isReturn ? "Pending" : "Ready to Pick";
+    const initialStatus = "Pending";
     const photoDoPaperUrl = order.photo_do_paper || "";
 
     // --- INSTANT UPDATE (OPTIMISTIC UI) ---
