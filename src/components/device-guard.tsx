@@ -31,8 +31,8 @@ export function DeviceGuard({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("resize", checkDevice);
   }, []);
 
-  // Exemption: Contract signing route requires mobile phone touch signature
-  if (pathname && pathname.startsWith("/contract/sign")) {
+  // Exemption: Contract signing and Taste Review routes require mobile phone touch / camera access
+  if (pathname && (pathname.startsWith("/contract/sign") || pathname.startsWith("/review"))) {
     return <>{children}</>;
   }
 
