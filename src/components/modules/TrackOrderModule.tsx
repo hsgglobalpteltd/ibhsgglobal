@@ -36,10 +36,13 @@ import {
   Search,
   Download,
   FileDown,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Layers,
+  QrCode
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { PDFDocument } from "pdf-lib";
+import jsPDF from "jspdf";
 
 interface SKUItem {
   sku: string;
@@ -746,6 +749,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     { id: "dashboard", label: "Live Tracking", desc: "Real-time dispatch route visualization and live driver shift monitoring." },
     { id: "delivery", label: "Delivery Order", desc: "Manage pending deliveries, invoices, and complete fulfilled orders." },
     { id: "return", label: "Return Order", desc: "Track return collection pickups, due dates, and credit notes." },
+    { id: "job", label: "Create Job", desc: "Group undelivered orders by zone, generate 5-letter job loading sheets & route breakdown." },
     { id: "create", label: "Create Order", desc: "Import DO orders from PDF/Excel or create manual delivery and return drafts." }
   ];
 
@@ -852,48 +856,229 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [isRevokeCompleteConfirmOpen, setIsRevokeCompleteConfirmOpen] = React.useState<boolean>(false);
   const [pendingRevokeCompleteOrder, setPendingRevokeCompleteOrder] = React.useState<DbOrder | null>(null);
 
+  // Link Store input and dropdown states
+  const [linkStoreInputValues, setLinkStoreInputValues] = React.useState<Record<string, string>>({});
+  const [activeLinkStoreDropdown, setActiveLinkStoreDropdown] = React.useState<string | null>(null);
+
   // Unknown Store ID Confirmation States
   const [isUnknownStoreModalOpen, setIsUnknownStoreModalOpen] = React.useState<boolean>(false);
   const [unknownStoreInfo, setUnknownStoreInfo] = React.useState<{
-    unregisteredOrders: { doNumber: string; refNumber: string; storeId: string }[];
+    unregisteredOrders: any[];
     validDrafts: TrackOrderDraft[];
     allDrafts: TrackOrderDraft[];
   } | null>(null);
 
-  // Inline Link Store editing state for Complete tables
-  const [activeLinkStoreDropdown, setActiveLinkStoreDropdown] = React.useState<string | null>(null);
-  const [linkStoreInputValues, setLinkStoreInputValues] = React.useState<Record<string, string>>({});
+  // Create Job Tab States
+  const [jobZoneFilter, setJobZoneFilter] = React.useState<string>("All");
+  const [jobSearchQuery, setJobSearchQuery] = React.useState<string>("");
+  const [selectedJobOrderIds, setSelectedJobOrderIds] = React.useState<Record<string, boolean>>({});
+  const [jobGenerating, setJobGenerating] = React.useState<boolean>(false);
+  const [lastGeneratedJob, setLastGeneratedJob] = React.useState<{ token: string; orderCount: number; totalQty: number } | null>(null);
 
-  // Helper to resolve store info from store_id or store ID lookup
-  const resolveStoreById = React.useCallback((storeId: string) => {
-    if (!storeId || !stores.length) return null;
-    const cleanId = String(storeId).trim().toLowerCase();
-    const matched = stores.find((s: any) => String(s.id || "").trim().toLowerCase() === cleanId);
-    if (!matched) return null;
+  // Resolve Store ID Helper
+  const resolveStoreById = (cleanStoreId: string): { storeId: string; deliverTo: string; poscode: string } | null => {
+    if (!cleanStoreId) return null;
+    const query = cleanStoreId.trim().toLowerCase();
+    const matchedStore = stores.find(
+      (s) => String(s.id || "").trim().toLowerCase() === query || String(s["Display Name"] || "").trim().toLowerCase() === query
+    );
+    if (!matchedStore) return null;
 
-    const retailerId = matched["Retailers ID"] !== undefined ? matched["Retailers ID"] : (matched["Retailer ID"] || matched.retailers_id || matched.retailer_id);
-    const retailer = retailers.find((r: any) => String(r.id || "").trim().toLowerCase() === String(retailerId || "").trim().toLowerCase());
-    const rawRetailerName = String(retailer ? (retailer["Display Name"] || retailer.display_name || "") : "").trim();
-    const retailerNamePrefix = rawRetailerName ? rawRetailerName.substring(0, 6) : "";
-    const storeDisplayName = String(matched["Display Name"] || matched.display_name || "").trim();
-    const formattedDeliverTo = retailerNamePrefix ? `${retailerNamePrefix} - ${storeDisplayName}` : storeDisplayName;
-
-    let storePoscode = "";
-    const addr = String(matched.Address || matched.address || "");
-    const postcodeMatch = addr.match(/\b\d{6}\b/);
-    if (postcodeMatch && postcodeMatch[0]) {
-      storePoscode = postcodeMatch[0];
-    }
+    const retailerId = matchedStore["Retailers ID"] !== undefined ? matchedStore["Retailers ID"] : matchedStore["Retailer ID"];
+    const retailer = retailers.find((r) => String(r.id) === String(retailerId));
+    const retailerName = retailer ? (retailer["Display Name"] || "") : "";
+    const prefix = retailerName ? (retailerName.substring(0, 5) + " - ") : "";
+    const storeName = matchedStore["Display Name"] || matchedStore.name || "";
+    const deliverTo = storeName ? (prefix + storeName) : "";
+    const poscode = String(matchedStore.poscode || matchedStore["Postal Code"] || "").trim();
 
     return {
-      store: matched,
-      storeId: String(matched.id || storeId),
-      deliverTo: formattedDeliverTo,
-      poscode: storePoscode,
-      address: addr,
-      retailerName: rawRetailerName
+      storeId: String(matchedStore.id || cleanStoreId).trim(),
+      deliverTo,
+      poscode
     };
-  }, [stores, retailers]);
+  };
+
+  // Helper to generate Job Loading Sheet & Route PDF
+  const handleGenerateJobPdf = async (token: string, selectedOrdersList: DbOrder[]) => {
+    try {
+      const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+      const pageWidth = doc.internal.pageSize.getWidth();
+      const pageHeight = doc.internal.pageSize.getHeight();
+
+      // Consolidate all items across selected orders
+      const consolidatedItemsMap: Record<string, number> = {};
+      let totalItemsQty = 0;
+
+      selectedOrdersList.forEach((order) => {
+        let items: SKUItem[] = [];
+        try {
+          items = typeof order.items === "string" ? JSON.parse(order.items) : (order.items || []);
+        } catch (_) {
+          items = [];
+        }
+        items.forEach((it) => {
+          const sku = String(it.sku || "Unknown SKU").trim();
+          const qty = Number(it.qty || 1);
+          consolidatedItemsMap[sku] = (consolidatedItemsMap[sku] || 0) + qty;
+          totalItemsQty += qty;
+        });
+      });
+
+      const consolidatedItems = Object.entries(consolidatedItemsMap).map(([sku, qty]) => ({ sku, qty }));
+
+      // --- PAGE 1: WAREHOUSE LOADING & BATCH LOAD SUMMARY ---
+      doc.setFillColor(11, 87, 208); // Google Blue #0B57D0
+      doc.rect(0, 0, pageWidth, 28, "F");
+
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(16);
+      doc.setFont("helvetica", "bold");
+      doc.text("VEHICLE LOADING SHEET & JOB DISPATCH", 14, 12);
+
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Generated on: ${new Date().toLocaleString("en-SG", { timeZone: "Asia/Singapore" })} | Zone: ${jobZoneFilter}`, 14, 19);
+
+      // Job Token Header Box
+      doc.setFillColor(241, 245, 249);
+      doc.roundedRect(14, 34, pageWidth - 28, 38, 3, 3, "F");
+      doc.setDrawColor(203, 213, 225);
+      doc.roundedRect(14, 34, pageWidth - 28, 38, 3, 3, "D");
+
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.text("JOB CLAIM CODE (ENTER IN DRIVER APP):", 20, 43);
+
+      doc.setFontSize(26);
+      doc.setFont("courier", "bold");
+      doc.setTextColor(11, 87, 208);
+      doc.text(token, 20, 56);
+
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Total Stops / Orders: ${selectedOrdersList.length}   |   Total Goods Qty: ${totalItemsQty} units`, 20, 65);
+
+      // Driver Instructions Box
+      doc.setFillColor(254, 243, 199);
+      doc.setDrawColor(251, 191, 36);
+      doc.roundedRect(14, 76, pageWidth - 28, 20, 2, 2, "FD");
+
+      doc.setTextColor(146, 64, 14);
+      doc.setFontSize(8.5);
+      doc.setFont("helvetica", "bold");
+      doc.text("DRIVER INSTRUCTIONS:", 18, 82);
+      doc.setFont("helvetica", "normal");
+      doc.text("1. Load all goods listed below into vehicle.   2. Scan QR or visit app.hsgglobal.sg/driver", 18, 87);
+      doc.text(`3. Open side menu -> 'Batch Load (Job Code)' -> Enter Token [ ${token} ] to load all orders at once.`, 18, 92);
+
+      // Combined Loading Table Header
+      let yPos = 104;
+      doc.setFillColor(241, 245, 249);
+      doc.rect(14, yPos, pageWidth - 28, 8, "F");
+      doc.setDrawColor(203, 213, 225);
+      doc.rect(14, yPos, pageWidth - 28, 8, "D");
+
+      doc.setTextColor(15, 23, 42);
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.text("CHECK", 18, yPos + 5.5);
+      doc.text("SKU / PRODUCT ITEM DESCRIPTION", 42, yPos + 5.5);
+      doc.text("TOTAL QTY TO LOAD", pageWidth - 55, yPos + 5.5);
+
+      yPos += 8;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+
+      consolidatedItems.forEach((item, idx) => {
+        if (yPos > pageHeight - 20) {
+          doc.addPage();
+          yPos = 20;
+        }
+
+        const bg = idx % 2 === 0 ? 255 : 248;
+        doc.setFillColor(bg, bg, bg);
+        doc.rect(14, yPos, pageWidth - 28, 7.5, "F");
+        doc.setDrawColor(226, 232, 240);
+        doc.rect(14, yPos, pageWidth - 28, 7.5, "D");
+
+        // Checkbox box
+        doc.rect(20, yPos + 1.8, 3.8, 3.8);
+
+        doc.setTextColor(15, 23, 42);
+        doc.text(item.sku, 42, yPos + 5);
+
+        doc.setFont("helvetica", "bold");
+        doc.text(`${item.qty} units`, pageWidth - 55, yPos + 5);
+        doc.setFont("helvetica", "normal");
+
+        yPos += 7.5;
+      });
+
+      // --- PAGE 2+: ROUTE BREAKDOWN & STOP LIST ---
+      doc.addPage();
+      yPos = 20;
+
+      doc.setFillColor(11, 87, 208);
+      doc.rect(0, 0, pageWidth, 16, "F");
+      doc.setTextColor(255, 255, 255);
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text(`DISPATCH ROUTE BREAKDOWN — JOB [ ${token} ] (${selectedOrdersList.length} STOPS)`, 14, 11);
+
+      yPos = 24;
+
+      selectedOrdersList.forEach((order, sIdx) => {
+        let orderItems: SKUItem[] = [];
+        try {
+          orderItems = typeof order.items === "string" ? JSON.parse(order.items) : (order.items || []);
+        } catch (_) {}
+
+        const itemsText = orderItems.map((it) => `${it.sku} (x${it.qty})`).join(", ");
+        const zone = getZoneFromPostcode(order.poscode);
+
+        if (yPos > pageHeight - 32) {
+          doc.addPage();
+          yPos = 20;
+        }
+
+        doc.setFillColor(248, 250, 252);
+        doc.setDrawColor(203, 213, 225);
+        doc.roundedRect(14, yPos, pageWidth - 28, 22, 2, 2, "FD");
+
+        doc.setTextColor(11, 87, 208);
+        doc.setFontSize(9.5);
+        doc.setFont("helvetica", "bold");
+        doc.text(`STOP #${sIdx + 1}: Mark [${order.mark || "-"}] — DO: ${order.do_number || order.ref_number || order.id}`, 18, yPos + 6);
+
+        doc.setTextColor(100, 116, 139);
+        doc.setFontSize(8);
+        doc.text(`Zone: ${zone} | Poscode: ${order.poscode || "-"} | Method: ${order.deliver_method || "Company Delivery"}`, pageWidth - 80, yPos + 6);
+
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(8.5);
+        doc.setFont("helvetica", "bold");
+        const deliverToClean = (order.deliver_to || "Singapore Address").substring(0, 75);
+        doc.text(deliverToClean, 18, yPos + 12);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(71, 85, 105);
+        const itemLine = `Items (${orderItems.reduce((a, b) => a + b.qty, 0)} total): ${itemsText}`;
+        doc.text(itemLine.substring(0, 95), 18, yPos + 17.5);
+
+        yPos += 25;
+      });
+
+      // Output and download
+      doc.save(`Job_Dispatch_${token}_${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (err: any) {
+      console.error("PDF generation failed:", err);
+      showToast("Failed to generate PDF: " + err.message, "error");
+    }
+  };
 
   // Handler to update Link Store on existing orders in Complete tables
   const handleUpdateOrderLinkStore = async (order: DbOrder, newStoreId: string) => {
@@ -905,11 +1090,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     let updatedPoscode = order.poscode;
 
     if (cleanStoreId) {
-      const resolved = resolveStoreById(cleanStoreId);
-      if (resolved) {
-        updatedDeliverTo = resolved.deliverTo;
-        if (resolved.poscode) {
-          updatedPoscode = resolved.poscode;
+      const matchedStore = stores.find(
+        (s) => String(s.id || "").toLowerCase() === cleanStoreId.toLowerCase()
+      );
+      if (matchedStore) {
+        const retailerId = matchedStore["Retailers ID"] !== undefined ? matchedStore["Retailers ID"] : matchedStore["Retailer ID"];
+        const retailer = retailers.find((r) => String(r.id) === String(retailerId));
+        const retailerName = retailer ? (retailer["Display Name"] || "") : "";
+        const prefix = retailerName ? (retailerName.substring(0, 5) + " - ") : "";
+        const storeName = matchedStore["Display Name"] || matchedStore.name || "";
+        if (storeName) {
+          updatedDeliverTo = prefix + storeName;
+        }
+        if (matchedStore.poscode || matchedStore["Postal Code"]) {
+          updatedPoscode = String(matchedStore.poscode || matchedStore["Postal Code"]).trim();
         }
       }
     }
@@ -2309,18 +2503,22 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         }
 
         // Return status colors & labels
-        let color = "#007A87"; // Default Teal Blue (Pending)
+        let color = "#E28B54"; // Soft Orange (Pending Pick Return Paper)
         let textColor = "#FFFFFF";
-        let displayStatus = "Driver Deliver or Collect Goods";
+        let displayStatus = "Goods Ready";
 
         if (o.status === "Collected" || o.status === "Return Collected") {
           color = "#14532D"; // Deep Forest Green
           textColor = "#FFFFFF";
           displayStatus = "Complete Job";
-        } else {
+        } else if (o.status === "Pick Return" || o.status === "Load" || o.status === "Out for Delivery") {
           color = "#007A87"; // Teal Blue
           textColor = "#FFFFFF";
           displayStatus = "Driver Deliver or Collect Goods";
+        } else {
+          color = "#E28B54"; // Soft Orange (Pending return / not picked yet)
+          textColor = "#FFFFFF";
+          displayStatus = "Goods Ready";
         }
 
         return {
@@ -4336,7 +4534,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
 
     const defaultMethod = isReturn ? "Company Vehicle" : "Company Delivery";
-    const initialStatus = "Pending";
+    const initialStatus = isReturn ? "Pending" : "Ready to Pick";
     const photoDoPaperUrl = order.photo_do_paper || "";
 
     // --- INSTANT UPDATE (OPTIMISTIC UI) ---
@@ -5747,6 +5945,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               ? "Deliver Order"
               : activeTab === "return"
               ? "Return Order"
+              : activeTab === "job"
+              ? "Create Job Package"
               : "Create & Import Orders"}
           </h1>
           <p className="text-xs text-zinc-500 mt-0.5">
@@ -5756,11 +5956,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               ? "Manage delivery orders, invoices, and completed deliveries."
               : activeTab === "return"
               ? "Manage return orders, credit notes, and collection status."
+              : activeTab === "job"
+              ? "Group undelivered orders by zone, generate 5-letter job claim tokens and loading sheet PDFs."
               : "Import DO orders from PDF / Excel sheets or draft manual order records."}
           </p>
         </div>
 
-        {/* Top Right Badges for Live Tracking / Delivery / Return tabs */}
+        {/* Top Right Badges for Live Tracking / Delivery / Return / Job tabs */}
         {activeTab === "dashboard" && (
           <div className="flex items-center gap-2 text-xs">
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
@@ -5793,6 +5995,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           <div className="flex items-center gap-2">
             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-zinc-700">
               {sortedReturnOrders.length} {activeReturnTab === "pending" ? "Pending" : "Completed"} Returns
+            </span>
+          </div>
+        )}
+
+        {activeTab === "job" && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-[#0B57D0]">
+              {Object.values(selectedJobOrderIds).filter(Boolean).length} Orders Selected
             </span>
           </div>
         )}
@@ -7643,6 +7853,345 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT: CREATE JOB */}
+      {activeTab === "job" && (
+        <div className="flex-1 flex flex-col gap-3 animate-tableFadeInOnly min-h-0 overflow-hidden">
+          {/* Last Generated Job Alert Banner */}
+          {lastGeneratedJob && (
+            <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-lg flex flex-wrap items-center justify-between gap-3 shrink-0 shadow-2xs">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[#0B57D0] text-white flex items-center justify-center font-bold text-lg shadow-xs">
+                  <QrCode size={20} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-zinc-900">Job Package Created Successfully:</span>
+                    <span className="px-2.5 py-0.5 bg-white border border-blue-300 rounded font-mono font-bold text-[#0B57D0] text-sm tracking-wider">
+                      {lastGeneratedJob.token}
+                    </span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(lastGeneratedJob.token);
+                        showToast(`Copied token "${lastGeneratedJob.token}" to clipboard!`, "success");
+                      }}
+                      className="text-[11px] font-semibold text-[#0B57D0] hover:underline cursor-pointer"
+                    >
+                      Copy Token
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-zinc-600 mt-0.5">
+                    {lastGeneratedJob.orderCount} orders grouped ({lastGeneratedJob.totalQty} items). Driver can open <strong>Driver App &gt; Menu &gt; Batch Load (Job Code)</strong> and enter <strong>{lastGeneratedJob.token}</strong> to load all at once.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setLastGeneratedJob(null)}
+                  className="p-1 rounded text-zinc-400 hover:text-zinc-600 hover:bg-blue-100/50 cursor-pointer"
+                  title="Dismiss banner"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Job Filter & Toolbar */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2.5 shrink-0">
+            {/* Zone Filter Pills */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-semibold text-zinc-500 mr-1">Zone:</span>
+              {["All", "Central", "East", "North", "North-East", "West", "South"].map((zone) => {
+                const isSelected = jobZoneFilter === zone;
+                return (
+                  <button
+                    key={zone}
+                    onClick={() => setJobZoneFilter(zone)}
+                    className={`px-2.5 py-1 text-xs font-semibold rounded-full transition-colors cursor-pointer ${
+                      isSelected
+                        ? "bg-[#0B57D0] text-white shadow-2xs"
+                        : "bg-white border border-slate-200 text-zinc-700 hover:bg-slate-50 hover:text-zinc-900"
+                    }`}
+                  >
+                    {zone}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Search & Actions */}
+            <div className="flex items-center gap-2.5">
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input
+                  type="text"
+                  placeholder="Search DO, address, poscode..."
+                  value={jobSearchQuery}
+                  onChange={(e) => setJobSearchQuery(e.target.value)}
+                  className="pl-8 pr-3 py-1 text-xs border border-slate-200 rounded-lg w-52 md:w-60 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                />
+                {jobSearchQuery && (
+                  <button
+                    onClick={() => setJobSearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+
+              {/* Action Button: Generate Job & PDF */}
+              <CustomButton
+                variant="default"
+                disabled={jobGenerating || Object.values(selectedJobOrderIds).filter(Boolean).length === 0}
+                onClick={async () => {
+                  const selectedIds = Object.keys(selectedJobOrderIds).filter((id) => selectedJobOrderIds[id]);
+                  if (selectedIds.length === 0) {
+                    showToast("Please select at least 1 order to generate a job package.", "error");
+                    return;
+                  }
+
+                  const selectedOrders = dbOrders.filter((o) => selectedIds.includes(o.id));
+                  setJobGenerating(true);
+
+                  try {
+                    // Call backend API to create job package
+                    const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/job", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        action: "create",
+                        order_ids: selectedIds
+                      })
+                    });
+
+                    if (!res.ok) {
+                      throw new Error(`Server returned error status ${res.status}`);
+                    }
+
+                    const json = await res.json();
+                    if (!json.success || !json.token) {
+                      throw new Error(json.error || "Failed to create job");
+                    }
+
+                    const token = json.token;
+
+                    // Calculate total qty
+                    let totalQty = 0;
+                    selectedOrders.forEach((ord) => {
+                      let items: SKUItem[] = [];
+                      try {
+                        items = typeof ord.items === "string" ? JSON.parse(ord.items) : (ord.items || []);
+                      } catch (_) {}
+                      items.forEach((it) => {
+                        totalQty += Number(it.qty || 1);
+                      });
+                    });
+
+                    // Generate PDF Loading Sheet & Route Breakdown
+                    await handleGenerateJobPdf(token, selectedOrders);
+
+                    // Update UI state
+                    setLastGeneratedJob({
+                      token,
+                      orderCount: selectedOrders.length,
+                      totalQty
+                    });
+
+                    // Clear selections
+                    setSelectedJobOrderIds({});
+                    showToast(`Job package created! Claim Token: [ ${token} ]`, "success");
+                  } catch (err: any) {
+                    console.error("Job generation error:", err);
+                    showToast("Failed to create job package: " + err.message, "error");
+                  } finally {
+                    setJobGenerating(false);
+                  }
+                }}
+                className="text-xs font-semibold shrink-0"
+              >
+                {jobGenerating ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin mr-1.5" />
+                    <span>Generating Job...</span>
+                  </>
+                ) : (
+                  <>
+                    <Layers size={14} className="mr-1.5" />
+                    <span>Generate Job Package &amp; PDF ({Object.values(selectedJobOrderIds).filter(Boolean).length})</span>
+                  </>
+                )}
+              </CustomButton>
+            </div>
+          </div>
+
+          {/* Orders Table for Job Selection */}
+          {(() => {
+            // Filter undelivered orders
+            const candidateOrders = dbOrders.filter((o) => {
+              const isDelivered = o.status === "Delivered" || String(o.completed) === "true" || o.completed === true;
+              const isCollectedReturn = o.type === "Return" && (o.status === "Collected" || o.status === "Return Collected");
+              if (isDelivered || isCollectedReturn) return false;
+
+              // Zone filter
+              const orderZone = getZoneFromPostcode(o.poscode);
+              if (jobZoneFilter !== "All" && orderZone !== jobZoneFilter) return false;
+
+              // Search query
+              if (jobSearchQuery.trim()) {
+                const q = jobSearchQuery.toLowerCase().trim();
+                const matchDo = (o.do_number || "").toLowerCase().includes(q);
+                const matchRef = (o.ref_number || "").toLowerCase().includes(q);
+                const matchDeliverTo = (o.deliver_to || "").toLowerCase().includes(q);
+                const matchPoscode = (o.poscode || "").toLowerCase().includes(q);
+                const matchMark = (o.mark || "").toLowerCase().includes(q);
+                const matchZone = orderZone.toLowerCase().includes(q);
+                if (!matchDo && !matchRef && !matchDeliverTo && !matchPoscode && !matchMark && !matchZone) return false;
+              }
+              return true;
+            });
+
+            const allCandidateIds = candidateOrders.map((o) => o.id);
+            const isAllSelected = candidateOrders.length > 0 && candidateOrders.every((o) => selectedJobOrderIds[o.id]);
+
+            return (
+              <div className="flex-1 min-h-0 overflow-auto border border-slate-200 rounded-lg bg-white shadow-2xs">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
+                    <tr className="text-zinc-600 font-bold text-[11px] uppercase tracking-wider">
+                      <th className="py-2.5 px-3 w-10 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isAllSelected}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              const newMap = { ...selectedJobOrderIds };
+                              allCandidateIds.forEach((id) => (newMap[id] = true));
+                              setSelectedJobOrderIds(newMap);
+                            } else {
+                              const newMap = { ...selectedJobOrderIds };
+                              allCandidateIds.forEach((id) => delete newMap[id]);
+                              setSelectedJobOrderIds(newMap);
+                            }
+                          }}
+                          className="rounded text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
+                        />
+                      </th>
+                      <th className="py-2.5 px-3 w-16">Mark</th>
+                      <th className="py-2.5 px-3 w-20">Type</th>
+                      <th className="py-2.5 px-3 w-36">DO / Ref Number</th>
+                      <th className="py-2.5 px-3 min-w-[200px]">Delivery Address</th>
+                      <th className="py-2.5 px-3 w-28">Zone / Postcode</th>
+                      <th className="py-2.5 px-3 min-w-[160px]">Items / Qty</th>
+                      <th className="py-2.5 px-3 w-32">Current Status</th>
+                      <th className="py-2.5 px-3 w-28">Driver</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs font-medium text-zinc-700">
+                    {candidateOrders.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="py-12 text-center text-zinc-400">
+                          <Layers size={28} className="mx-auto mb-2 opacity-30 text-zinc-500" />
+                          <p className="font-semibold text-zinc-500">No undelivered orders found for this zone / filter.</p>
+                          <p className="text-[11px] text-zinc-400 mt-0.5">Try selecting "All" zones or clearing your search term.</p>
+                        </td>
+                      </tr>
+                    ) : (
+                      candidateOrders.map((order) => {
+                        const isSelected = !!selectedJobOrderIds[order.id];
+                        const zone = getZoneFromPostcode(order.poscode);
+
+                        let items: SKUItem[] = [];
+                        try {
+                          items = typeof order.items === "string" ? JSON.parse(order.items) : (order.items || []);
+                        } catch (_) {}
+                        const totalQty = items.reduce((acc, it) => acc + (Number(it.qty) || 0), 0);
+
+                        return (
+                          <tr
+                            key={order.id}
+                            onClick={() => {
+                              setSelectedJobOrderIds((prev) => ({
+                                ...prev,
+                                [order.id]: !prev[order.id]
+                              }));
+                            }}
+                            className={`hover:bg-slate-50 transition-colors cursor-pointer ${
+                              isSelected ? "bg-blue-50/60" : ""
+                            }`}
+                          >
+                            <td className="py-2.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  setSelectedJobOrderIds((prev) => ({
+                                    ...prev,
+                                    [order.id]: e.target.checked
+                                  }));
+                                }}
+                                className="rounded text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 font-bold text-zinc-900">
+                              <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-zinc-800 text-[11px] font-mono">
+                                {order.mark || "-"}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                  order.type === "Urgent"
+                                    ? "bg-red-50 text-red-600 border border-red-200"
+                                    : order.type === "Appointment"
+                                    ? "bg-purple-50 text-purple-600 border border-purple-200"
+                                    : order.type === "Return"
+                                    ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                    : "bg-slate-100 text-zinc-600 border border-slate-200"
+                                }`}
+                              >
+                                {order.type || "Normal"}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-zinc-900">
+                              <div>{order.do_number || "-"}</div>
+                              {order.ref_number && (
+                                <div className="text-[11px] text-zinc-400 font-mono">{order.ref_number}</div>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <div className="font-semibold text-zinc-800 line-clamp-1">{order.deliver_to || "Address not provided"}</div>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-zinc-700 text-[11px] font-medium mr-1">
+                                {zone}
+                              </span>
+                              <span className="text-[11px] text-zinc-400 font-mono">{order.poscode || "-"}</span>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="font-bold text-zinc-900">{totalQty} units</span>
+                              <span className="text-zinc-400 text-[11px] ml-1.5">({items.length} SKUs)</span>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-zinc-700 text-[11px] font-semibold">
+                                {order.status || "Ready to Pick"}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3 text-zinc-600">
+                              {order.driver || <span className="text-zinc-400 italic">Unassigned</span>}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </div>
       )}
 

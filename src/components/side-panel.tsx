@@ -2,11 +2,12 @@
 
 import * as React from "react";
 import { MenuButton } from "./menu-button";
-import { ChevronLeft, ChevronRight, LogOut, Search, X, FolderKanban } from "lucide-react";
+import { ChevronLeft, ChevronRight, LogOut, Search, X, FolderKanban, Settings } from "lucide-react";
 import { menuConfig } from "@/config/menu-config";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canAccessPage, canViewModule } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
+import { UserProfileModal } from "./user-profile-modal";
 
 interface SidePanelProps {
   activeItem: string;
@@ -20,10 +21,14 @@ interface SidePanelProps {
   profile: {
     name?: string;
     role: string;
+    phone_number?: string | null;
+    manager_pin?: string | null;
     pages_access?: string[];
     modules_access?: any;
   } | null;
+  idToken?: string;
   onLogout: () => void;
+  onProfileUpdated?: (updated: any) => void;
 }
 
 export function SidePanel({
@@ -32,9 +37,12 @@ export function SidePanel({
   onSelectSubModule,
   user,
   profile,
+  idToken,
   onLogout,
+  onProfileUpdated,
 }: SidePanelProps) {
   const [isCollapsed, setIsCollapsed] = React.useState(true);
+  const [isProfileModalOpen, setIsProfileModalOpen] = React.useState(false);
   const [searchQuery, setSearchQuery] = React.useState("");
   const searchInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -245,19 +253,26 @@ export function SidePanel({
       <div className="flex flex-col gap-4">
         {/* User Profile Section */}
         <div className="relative flex flex-col border-t border-zinc-300/40 pt-4 px-2 min-h-[64px] justify-center">
-          {/* Collapsed Log Out Button */}
+          {/* Collapsed Actions */}
           <div
             className={cn(
-              "absolute left-1/2 -translate-x-1/2 transition-all duration-300 ease-in-out",
+              "absolute left-1/2 -translate-x-1/2 flex flex-col items-center gap-1 transition-all duration-300 ease-in-out",
               isCollapsed ? "opacity-100 scale-100" : "opacity-0 scale-50 pointer-events-none"
             )}
           >
             <button
+              onClick={() => setIsProfileModalOpen(true)}
+              className="flex w-9 h-9 items-center justify-center rounded-lg text-zinc-600 hover:text-[#0B57D0] hover:bg-[#D3E3FD]/50 transition-all duration-200 shadow-2xs cursor-pointer border-none bg-transparent"
+              title="Edit Profile & 6-Digit Manager PIN"
+            >
+              <Settings size={16} />
+            </button>
+            <button
               onClick={onLogout}
-              className="flex w-10 h-10 items-center justify-center rounded text-zinc-600 hover:text-zinc-950 hover:bg-[#EEEEEE] transition-all duration-200 shadow-sm cursor-pointer border-none bg-transparent"
+              className="flex w-9 h-9 items-center justify-center rounded-lg text-zinc-600 hover:text-zinc-950 hover:bg-[#EEEEEE] transition-all duration-200 shadow-2xs cursor-pointer border-none bg-transparent"
               title="Log Out"
             >
-              <LogOut size={18} />
+              <LogOut size={16} />
             </button>
           </div>
 
@@ -270,20 +285,36 @@ export function SidePanel({
                 : "opacity-100 scale-100 w-full"
             )}
           >
-            <div className="flex flex-col truncate px-2">
-              <span className="font-primary text-sm font-semibold text-zinc-800 truncate">
-                {profile?.name || user?.displayName || "Google User"}
-              </span>
-              <span className="font-primary text-[10px] text-zinc-500 truncate">
-                {user?.email || ""}
-              </span>
+            <div className="flex items-center justify-between px-2 gap-2">
+              <div 
+                onClick={() => setIsProfileModalOpen(true)}
+                className="flex flex-col truncate cursor-pointer group flex-1 min-w-0"
+                title="Click to edit profile & 6-digit Manager PIN"
+              >
+                <span className="font-primary text-sm font-semibold text-zinc-800 group-hover:text-[#0B57D0] transition-colors truncate">
+                  {profile?.name || user?.displayName || "Google User"}
+                </span>
+                <span className="font-primary text-[10px] text-zinc-500 truncate">
+                  {user?.email || ""}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsProfileModalOpen(true)}
+                className="p-1.5 rounded-lg text-zinc-500 hover:text-[#0B57D0] hover:bg-[#D3E3FD]/50 transition-colors cursor-pointer shrink-0"
+                title="Account Settings & Manager PIN"
+              >
+                <Settings size={16} />
+              </button>
             </div>
-            <button
-              onClick={onLogout}
-              className="text-left text-xs text-zinc-600 hover:text-zinc-950 font-primary font-medium hover:underline focus-visible:outline-none w-fit cursor-pointer mt-0.5 border-none bg-transparent px-2"
-            >
-              Log Out
-            </button>
+            <div className="flex items-center px-2 mt-1.5">
+              <button
+                onClick={onLogout}
+                className="text-left text-xs text-zinc-600 hover:text-zinc-950 font-primary font-medium hover:underline focus-visible:outline-none w-fit cursor-pointer border-none bg-transparent p-0"
+              >
+                Log Out
+              </button>
+            </div>
           </div>
         </div>
 
@@ -311,6 +342,21 @@ export function SidePanel({
       >
         {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
       </button>
+
+      {/* User Profile & 6-Digit Manager PIN Modal */}
+      {isProfileModalOpen && (
+        <UserProfileModal
+          user={user}
+          profile={profile as any}
+          idToken={idToken}
+          onClose={() => setIsProfileModalOpen(false)}
+          onProfileUpdated={(updated) => {
+            if (onProfileUpdated) {
+              onProfileUpdated(updated);
+            }
+          }}
+        />
+      )}
     </aside>
   );
 }

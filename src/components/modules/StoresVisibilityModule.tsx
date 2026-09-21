@@ -83,6 +83,39 @@ interface StoreContactItem {
   position?: string;
 }
 
+interface TrackOrder {
+  id?: string;
+  do_number?: string;
+  ref_number?: string;
+  type?: string;
+  status?: string;
+  deliver_to?: string;
+  poscode?: string;
+  items?: any;
+  logs?: any;
+  timestamp?: any;
+  delivered_at?: any;
+  completed?: any;
+  deadline?: any;
+  driver?: string;
+  link_store?: string;
+}
+
+interface TimelineActivity {
+  id?: string | number;
+  kind: "visit" | "order";
+  date: string;
+  timestamp: number;
+  remark?: string;
+  doNumber?: string;
+  refNumber?: string;
+  orderType?: string;
+  status?: string;
+  driver?: string;
+  itemsSummary?: string;
+  itemCount?: number;
+}
+
 interface StoresVisibilityData {
   retailers: Retailer[];
   brands: Brand[];
@@ -91,6 +124,7 @@ interface StoresVisibilityData {
   product_logs: ProductLog[];
   shelf_logs: ShelfLog[];
   contacts?: Contact[];
+  track_orders?: TrackOrder[];
 }
 
 interface ExtractedStoreItem {
@@ -99,8 +133,8 @@ interface ExtractedStoreItem {
   retailerName: string;
   address: string;
   contacts: StoreContactItem[];
-  activities: { date: string; remark: string }[];
-  products: { name: string; qty: number }[];
+  activities: TimelineActivity[];
+  products: { sku?: string; name: string; qty: number; lastOrderQty?: number }[];
   shelfImage: string | null;
   carriesBrand: boolean;
   latestAuditTime: number;
@@ -122,12 +156,21 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   const [productLogs, setProductLogs] = React.useState<ProductLog[]>([]);
   const [shelfLogs, setShelfLogs] = React.useState<ShelfLog[]>([]);
   const [contacts, setContacts] = React.useState<Contact[]>([]);
+  const [trackOrders, setTrackOrders] = React.useState<TrackOrder[]>([]);
 
   // UI state
   const [fetching, setFetching] = React.useState(false);
   const [syncStatus, setSyncStatus] = React.useState<"idle" | "syncing" | "synced">("idle");
   const [extracting, setExtracting] = React.useState(false);
   const [isScrolled, setIsScrolled] = React.useState(false);
+  const [expandedStoreTimelines, setExpandedStoreTimelines] = React.useState<Record<string, boolean>>({});
+
+  const toggleTimelineExpand = (storeId: string | number) => {
+    setExpandedStoreTimelines(prev => ({
+      ...prev,
+      [String(storeId)]: !prev[String(storeId)]
+    }));
+  };
   
   // Selected filter states
   const [selectedRetailer, setSelectedRetailer] = React.useState<string>("all");
@@ -157,6 +200,13 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       item.contacts.some(c => 
         c.name.toLowerCase().includes(q) || 
         c.phone.toLowerCase().includes(q)
+      ) ||
+      item.activities.some(a =>
+        (a.remark && a.remark.toLowerCase().includes(q)) ||
+        (a.doNumber && a.doNumber.toLowerCase().includes(q)) ||
+        (a.refNumber && a.refNumber.toLowerCase().includes(q)) ||
+        (a.driver && a.driver.toLowerCase().includes(q)) ||
+        (a.status && a.status.toLowerCase().includes(q))
       )
     );
   }, [extractedStores, searchQuery]);
@@ -256,6 +306,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         if (cached.product_logs) setProductLogs(cached.product_logs);
         if (cached.shelf_logs) setShelfLogs(cached.shelf_logs);
         if (cached.contacts) setContacts(cached.contacts);
+        if (cached.track_orders) setTrackOrders(cached.track_orders);
         if (cached.brands && cached.brands.length > 0 && !selectedBrand) {
           setSelectedBrand(String(cached.brands[0].id));
         }
@@ -274,6 +325,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         setProductLogs(data.product_logs || []);
         setShelfLogs(data.shelf_logs || []);
         setContacts(data.contacts || []);
+        setTrackOrders(data.track_orders || []);
         setSyncStatus("synced");
 
         if (data.brands && data.brands.length > 0 && !selectedBrand) {
@@ -307,6 +359,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         setProductLogs(data.product_logs || []);
         setShelfLogs(data.shelf_logs || []);
         setContacts(data.contacts || []);
+        setTrackOrders(data.track_orders || []);
         setSyncStatus("synced");
       } catch (err: any) {
         showToast("Failed to refresh database: " + err.message, "error");
@@ -349,7 +402,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
     if (selectedRetailer && selectedBrand && stores.length > 0) {
       handleExtract();
     }
-  }, [selectedRetailer, selectedBrand, startDate, endDate, includeNotCarry, stores, productLogs, shelfLogs, products, retailers, contacts]);
+  }, [selectedRetailer, selectedBrand, startDate, endDate, includeNotCarry, stores, productLogs, shelfLogs, products, retailers, contacts, trackOrders]);
 
   const handleExtract = () => {
     if (!selectedRetailer) {
@@ -448,22 +501,107 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           : 0;
 
         // Deduplicate all-time visits by formatted date string, keeping the latest visit for each unique date
-        const uniqueDateVisitsMap = new Map<string, { date: string; remark: string }>();
+        const uniqueDateVisitsMap = new Map<string, TimelineActivity>();
         sortedShelfLogsAllTime.forEach(log => {
           const formattedDate = formatDate(log.timestamp);
           if (!uniqueDateVisitsMap.has(formattedDate)) {
             const rawRemark = String(log.remark ?? "").trim();
+            const ts = parseTimestamp(log.timestamp).getTime();
             uniqueDateVisitsMap.set(formattedDate, {
+              id: `visit-${log.id || ts}`,
+              kind: "visit",
               date: formattedDate,
+              timestamp: isNaN(ts) ? 0 : ts,
               remark: rawRemark === "No remark" || !rawRemark ? "" : rawRemark
             });
           }
         });
 
-        const latestVisits = Array.from(uniqueDateVisitsMap.values()).slice(0, 3);
+        const visitActivities = Array.from(uniqueDateVisitsMap.values());
+
+        // Map Track Orders by store id (link_store === store.id)
+        const cleanStoreIdStr = String(store.id).trim().toLowerCase();
+        const storeOrders = trackOrders.filter(order => {
+          const orderLink = String(order.link_store || "").trim().toLowerCase();
+          return orderLink && (orderLink === cleanStoreIdStr || orderLink === String(store.id).trim());
+        });
+
+        const orderActivities: TimelineActivity[] = storeOrders.map(order => {
+          const rawTs = order.delivered_at || order.timestamp;
+          const ts = parseTimestamp(rawTs).getTime();
+          const formattedDate = formatDate(rawTs);
+
+          let itemCount = 0;
+          let itemsSummary = "";
+          if (order.items) {
+            try {
+              const parsed = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
+              if (Array.isArray(parsed)) {
+                itemCount = parsed.reduce((sum: number, it: any) => sum + (Number(it.qty || it.quantity || 1) || 0), 0);
+                const names = parsed.map((it: any) => `${it.qty || 1}x ${it.name || it.sku || "item"}`);
+                itemsSummary = names.slice(0, 2).join(", ");
+                if (parsed.length > 2) itemsSummary += ` (+${parsed.length - 2} more)`;
+              }
+            } catch (_) {}
+          }
+
+          return {
+            id: `order-${order.id || ts}`,
+            kind: "order",
+            date: formattedDate,
+            timestamp: isNaN(ts) ? 0 : ts,
+            doNumber: order.do_number || "",
+            refNumber: order.ref_number || "",
+            orderType: order.type || "Normal",
+            status: order.status || "",
+            driver: order.driver || "",
+            itemsSummary,
+            itemCount
+          };
+        });
+
+        // Combine all activities (Visits + Orders) and sort chronologically descending (latest first)
+        const combinedActivities: TimelineActivity[] = [...visitActivities, ...orderActivities].sort((a, b) => {
+          return b.timestamp - a.timestamp;
+        });
+
+        // Map items from the most recent order for this store
+        const sortedStoreOrders = [...storeOrders].sort((a, b) => {
+          const tsA = parseTimestamp(a.delivered_at || a.timestamp).getTime() || 0;
+          const tsB = parseTimestamp(b.delivered_at || b.timestamp).getTime() || 0;
+          return tsB - tsA;
+        });
+
+        const latestOrderWithItems = sortedStoreOrders.find(o => {
+          if (!o.items) return false;
+          try {
+            const parsed = typeof o.items === "string" ? JSON.parse(o.items) : o.items;
+            return Array.isArray(parsed) && parsed.length > 0;
+          } catch (_) {
+            return false;
+          }
+        });
+
+        const lastOrderItemsMap = new Map<string, number>();
+        if (latestOrderWithItems) {
+          try {
+            const parsed = typeof latestOrderWithItems.items === "string" ? JSON.parse(latestOrderWithItems.items) : latestOrderWithItems.items;
+            if (Array.isArray(parsed)) {
+              parsed.forEach((it: any) => {
+                const itemSku = String(it.sku || it.item || "").trim().toLowerCase();
+                const itemName = String(it.name || "").trim().toLowerCase();
+                const itemQty = Number(it.qty || it.quantity || 0) || 0;
+                if (itemQty > 0) {
+                  if (itemSku) lastOrderItemsMap.set(itemSku, (lastOrderItemsMap.get(itemSku) || 0) + itemQty);
+                  if (itemName) lastOrderItemsMap.set(itemName, (lastOrderItemsMap.get(itemName) || 0) + itemQty);
+                }
+              });
+            }
+          } catch (_) {}
+        }
 
         // Latest visit products
-        let carriedProductsList: { name: string; qty: number }[] = [];
+        let carriedProductsList: { sku?: string; name: string; qty: number; lastOrderQty?: number }[] = [];
         let carriesBrand = false;
 
         if (sortedProductLogs.length > 0) {
@@ -486,10 +624,14 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
               if (qty > 0) {
                 const prodDetail = brandProducts.find(p => String(p.sku || "").toLowerCase() === sku);
                 const prodName = prodDetail ? (prodDetail.display_name || prodDetail.sku) : auditItem.sku;
+                const prodNameLower = String(prodName || "").toLowerCase();
+                const lastOrderQty = lastOrderItemsMap.get(sku) || lastOrderItemsMap.get(prodNameLower) || undefined;
                 
                 carriedProductsList.push({
+                  sku: prodDetail ? prodDetail.sku : auditItem.sku,
                   name: prodName,
-                  qty
+                  qty,
+                  lastOrderQty: lastOrderQty && lastOrderQty > 0 ? lastOrderQty : undefined
                 });
                 carriesBrand = true;
               }
@@ -519,7 +661,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           retailerName,
           address: store.address || "No address listed",
           contacts: storeContacts,
-          activities: latestVisits,
+          activities: combinedActivities,
           products: carriedProductsList,
           shelfImage: latestShelfImage,
           carriesBrand,
@@ -779,7 +921,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                   )}
                 </div>
               </div>
-              <div className="px-4 py-2.5 border-r border-slate-200" style={{ width: "40%" }}>Recent Visit</div>
+              <div className="px-4 py-2.5 border-r border-slate-200" style={{ width: "40%" }}>Recent Visit & Activity</div>
               <div className="px-4 py-2.5 border-r border-slate-200" style={{ width: "20%" }}>Products</div>
               <div className="px-4 py-2.5" style={{ width: "20%" }}>Shelf Visibility</div>
             </div>
@@ -826,7 +968,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                   <thead className="hidden print:table-header-group">
                     <tr className="bg-[#F0F4F9] border-b border-slate-200 text-[10px] font-bold text-[#474747] uppercase tracking-wider select-none print:bg-zinc-100 print:border-zinc-400">
                       <th className="px-4 py-3 border-r border-slate-200" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>Store Details</th>
-                      <th className="px-4 py-3 border-r border-slate-200" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>Recent Visit</th>
+                      <th className="px-4 py-3 border-r border-slate-200" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>Recent Visit & Activity</th>
                       <th className="px-4 py-3 border-r border-slate-200" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>Products</th>
                       <th className="px-4 py-3" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>Shelf Visibility</th>
                     </tr>
@@ -882,43 +1024,145 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                             </div>
                           </td>
 
-                          {/* Recent Visit (Fixed 40% width) */}
+                          {/* Recent Visit & Activity Timeline (Fixed 40% width) */}
                           <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>
                             <div className="w-full overflow-hidden">
                               {item.activities.length === 0 ? (
-                                <span className="text-zinc-400 italic">
-                                  No visits recorded
+                                <span className="text-zinc-400 italic text-xs">
+                                  No visits or orders recorded
                                 </span>
                               ) : (
-                                <div className="flex flex-col gap-4 py-0.5">
-                                  {item.activities.map((visit, index) => (
-                                    <div 
-                                      key={index}
-                                      className="relative pl-5 whitespace-normal break-words"
-                                    >
-                                      {/* Timeline connector line */}
-                                      {index < item.activities.length - 1 && (
-                                        <div className="absolute left-1.5 top-3.5 bottom-[-16px] w-[2px] bg-zinc-200 print:bg-zinc-300" />
-                                      )}
-                                      
-                                      {/* Timeline Dot */}
-                                      <div className="absolute left-0.5 top-1.5 h-2.5 w-2.5 rounded-full bg-[#0B57D0] border border-white shadow-3xs" />
-                                      
-                                      {/* Date Badge */}
-                                      <div className="flex items-center select-none">
-                                        <span className="inline-flex items-center bg-[#E8F0FE] border border-[#D2E3FC] text-[#0B57D0] text-[10px] font-extrabold px-1.5 py-0.5 rounded tracking-wide leading-none">
-                                          {visit.date}
-                                        </span>
-                                      </div>
+                                <div className="flex flex-col gap-3 py-0.5">
+                                  {(() => {
+                                    const isExpanded = !!expandedStoreTimelines[String(item.id)];
+                                    const maxPoints = isExpanded ? 10 : 5;
+                                    const visibleActivities = item.activities.slice(0, maxPoints);
+                                    const hasMore = item.activities.length > 5;
 
-                                      {/* Remark */}
-                                      {visit.remark && (
-                                        <div className="text-zinc-600 font-medium mt-1 leading-relaxed">
-                                          {visit.remark}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
+                                    return (
+                                      <>
+                                        {visibleActivities.map((activity, index) => {
+                                          const isLastVisible = index === visibleActivities.length - 1;
+                                          const isVisit = activity.kind === "visit";
+
+                                          return (
+                                            <div 
+                                              key={activity.id || index}
+                                              className="relative pl-5 whitespace-normal break-words"
+                                            >
+                                              {/* Timeline connector line */}
+                                              {!isLastVisible && (
+                                                <div className="absolute left-1.5 top-3.5 bottom-[-14px] w-[2px] bg-zinc-200 print:bg-zinc-300" />
+                                              )}
+                                              
+                                              {/* Timeline Dot */}
+                                              {isVisit ? (
+                                                <div 
+                                                  className="absolute left-0.5 top-1.5 h-2.5 w-2.5 rounded-full bg-[#0B57D0] border-2 border-white shadow-3xs" 
+                                                  title="Merchandiser Visit"
+                                                />
+                                              ) : (
+                                                <div 
+                                                  className="absolute left-0.5 top-1.5 h-2.5 w-2.5 rounded-full bg-emerald-600 border-2 border-white shadow-3xs" 
+                                                  title="Track Order Delivery"
+                                                />
+                                              )}
+                                              
+                                              {/* Header Row: Date & Badges */}
+                                              <div className="flex flex-wrap items-center gap-1.5 select-none leading-none">
+                                                {/* Date Badge */}
+                                                <span className={`inline-flex items-center text-[10px] font-extrabold px-1.5 py-0.5 rounded tracking-wide leading-none border ${
+                                                  isVisit
+                                                    ? "bg-[#E8F0FE] border-[#D2E3FC] text-[#0B57D0]"
+                                                    : "bg-emerald-50 border-emerald-200 text-emerald-700"
+                                                }`}>
+                                                  {activity.date}
+                                                </span>
+
+                                                {/* Kind Badge & Details */}
+                                                {isVisit ? (
+                                                  <span className="inline-flex items-center text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200/80">
+                                                    Merch Visit
+                                                  </span>
+                                                ) : (
+                                                  <div className="flex flex-wrap items-center gap-1">
+                                                    <span className="inline-flex items-center text-[9.5px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                                      Track Order
+                                                    </span>
+                                                    {activity.doNumber && (
+                                                      <span className="inline-flex items-center text-[9.5px] font-mono font-bold px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-800 border border-zinc-200">
+                                                        DO: {activity.doNumber}
+                                                      </span>
+                                                    )}
+                                                    {activity.status && (
+                                                      <span className={`inline-flex items-center text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                                        activity.status.toLowerCase() === "delivered"
+                                                          ? "bg-emerald-100 text-emerald-800"
+                                                          : activity.status.toLowerCase().includes("delivery")
+                                                          ? "bg-amber-100 text-amber-800"
+                                                          : "bg-slate-100 text-slate-700"
+                                                      }`}>
+                                                        {activity.status}
+                                                      </span>
+                                                    )}
+                                                    {activity.orderType && activity.orderType !== "Normal" && (
+                                                      <span className={`inline-flex items-center text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                                        activity.orderType.toLowerCase() === "urgent"
+                                                          ? "bg-red-100 text-red-700"
+                                                          : "bg-purple-100 text-purple-700"
+                                                      }`}>
+                                                        {activity.orderType}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                )}
+                                              </div>
+
+                                              {/* Content / Remark / Order details */}
+                                              {isVisit ? (
+                                                activity.remark ? (
+                                                  <div className="text-zinc-600 font-medium text-[11px] mt-1 leading-relaxed">
+                                                    {activity.remark}
+                                                  </div>
+                                                ) : null
+                                              ) : (
+                                                <div className="text-zinc-600 text-[11px] mt-1 space-y-0.5 leading-relaxed">
+                                                  {activity.itemsSummary && (
+                                                    <div className="text-zinc-700 font-medium truncate" title={activity.itemsSummary}>
+                                                      {activity.itemsSummary}
+                                                    </div>
+                                                  )}
+                                                  {(activity.driver || activity.refNumber) && (
+                                                    <div className="flex items-center gap-2 text-[10px] text-zinc-500">
+                                                      {activity.driver && <span>Driver: <strong className="text-zinc-700 font-semibold">{activity.driver}</strong></span>}
+                                                      {activity.refNumber && <span>Ref: <strong className="text-zinc-700 font-semibold">{activity.refNumber}</strong></span>}
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+
+                                        {/* Expand / Collapse Button (Print hidden) */}
+                                        {hasMore && (
+                                          <div className="pl-5 pt-0.5 print:hidden">
+                                            <button
+                                              type="button"
+                                              onClick={() => toggleTimelineExpand(item.id)}
+                                              className="text-[10.5px] font-bold text-[#0B57D0] hover:text-[#0842A0] hover:underline flex items-center gap-1 cursor-pointer transition-colors"
+                                            >
+                                              {isExpanded ? (
+                                                <span>↑ Show Less (5 points)</span>
+                                              ) : (
+                                                <span>+ View More ({Math.min(item.activities.length, 10)} points)</span>
+                                              )}
+                                            </button>
+                                          </div>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
                                 </div>
                               )}
                             </div>
@@ -932,7 +1176,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                                   No products carry
                                 </span>
                               ) : (
-                                <div className="space-y-1">
+                                <div className="space-y-1.5">
                                   {item.products.map((prod, index) => (
                                     <div 
                                       key={index}
@@ -941,9 +1185,19 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                                       <span className="text-zinc-700 truncate" title={prod.name}>
                                         {prod.name}
                                       </span>
-                                      <span className="font-bold text-zinc-950 tabular-nums flex-shrink-0">
-                                        {prod.qty}
-                                      </span>
+                                      <div className="flex items-center gap-1.5 flex-shrink-0">
+                                        {prod.lastOrderQty !== undefined && prod.lastOrderQty > 0 && (
+                                          <span 
+                                            className="font-bold text-emerald-600 tabular-nums text-[10.5px] bg-emerald-50 border border-emerald-200/80 px-1 py-0.2 rounded"
+                                            title={`Last order: +${prod.lastOrderQty}`}
+                                          >
+                                            +{prod.lastOrderQty}
+                                          </span>
+                                        )}
+                                        <span className="font-bold text-zinc-950 tabular-nums">
+                                          {prod.qty}
+                                        </span>
+                                      </div>
                                     </div>
                                   ))}
                                 </div>

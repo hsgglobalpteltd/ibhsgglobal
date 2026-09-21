@@ -3,6 +3,8 @@
 import * as React from "react";
 import { FeatureCard } from "../feature-card";
 import { SnapDealsModule } from "../modules/SnapDealsModule";
+import { BrandLaunchpadModule } from "../modules/BrandLaunchpadModule";
+import { ProductValidationModule } from "../modules/ProductValidationModule";
 import { StoresVisibilityModule } from "../modules/StoresVisibilityModule";
 import { SponsorshipModule } from "../modules/SponsorshipModule";
 import { DirectOrderModule } from "../modules/DirectOrderModule";
@@ -85,6 +87,9 @@ export function SalesChannelsPage({ profile, breadcrumbPath }: SalesChannelsPage
         return <MarketPricingModule profile={profile} />;
       case "Snap Deals":
         return <SnapDealsModule profile={profile} />;
+      case "Brand Launchpad":
+      case "Product Validation":
+        return <BrandLaunchpadModule profile={profile} />;
       case "Stores Visibility":
         return <StoresVisibilityModule profile={profile} />;
       case "Sponsorship":

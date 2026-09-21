@@ -11,6 +11,7 @@ export interface UserProfile {
   modules_access: any; // parsed JSON object or array
   active: number; // 0 = inactive, 1 = active, 2 = blocked
   employee_id?: string | null;
+  manager_pin?: string | null;
   contract_signature_base64?: string | null;
   contract_pdf_link?: string | null;
   contract_signed_at?: number | null;
@@ -173,7 +174,13 @@ export async function fetchMyProfile(idToken: string, email: string): Promise<Us
 }
 
 // 3. UPDATE PROFILE
-export async function updateOwnProfile(idToken: string, email: string, name: string, phoneNumber: string): Promise<UserProfile> {
+export async function updateOwnProfile(
+  idToken: string, 
+  email: string, 
+  name: string, 
+  phoneNumber: string,
+  managerPin?: string | null
+): Promise<UserProfile> {
   const token = await getFreshToken(idToken);
   const res = await fetch(`${WORKER_URL}/api/users/update-profile`, {
     method: "POST",
@@ -182,7 +189,33 @@ export async function updateOwnProfile(idToken: string, email: string, name: str
       "Authorization": `Bearer ${token}`,
       ...getSessionIdHeader(),
     },
-    body: JSON.stringify({ name, phone_number: phoneNumber }),
+    body: JSON.stringify({ 
+      name, 
+      phone_number: phoneNumber,
+      manager_pin: managerPin !== undefined ? managerPin : undefined
+    }),
+  });
+  const data = await handleResponse(res, "Update profile");
+  return {
+    ...data,
+    pages_access: safeParseAccess(data.pages_access),
+    modules_access: safeParseModulesAccess(data.modules_access),
+  };
+}
+
+export async function updateMyProfile(
+  idToken: string,
+  params: { name?: string; phone_number?: string | null; manager_pin?: string | null }
+): Promise<UserProfile> {
+  const token = await getFreshToken(idToken);
+  const res = await fetch(`${WORKER_URL}/api/users/update-profile`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+      ...getSessionIdHeader(),
+    },
+    body: JSON.stringify(params),
   });
   const data = await handleResponse(res, "Update profile");
   return {
@@ -1059,7 +1092,579 @@ export async function saveQuickDropText(email: string, content: string): Promise
   return handleResponse(res, "Save Quick Drop text");
 }
 
+// -------------------------------------------------------------
+// PRODUCT VALIDATION & REVIEWS (Multi-Review Architecture)
+// -------------------------------------------------------------
+export interface ValidationProduct {
+  id: string;
+  product_name: string;
+  brand_name: string;
+  sku?: string;
+  product_owner?: string;
+  // Distributor Pricing Waterfall
+  cost_price: number;              // 1. Cost Price (Goods Price)
+  landed_cost_rate?: number;       // Land buffer %
+  land_price?: number;             // 2. Land Price ($)
+  landed_cost?: number;            // alias for land_price
+  overhead_rate?: number;          // Overhead %
+  our_price?: number;              // 3. Our Price ($) (Land Price + Overhead)
+  our_margin_rate?: number;        // Distributor Margin %
+  margin_percentage?: number;      // alias for our_margin_rate
+  price_to_retailer?: number;      // 4. Price to Retailer ($) (Trade Price)
+  retailer_margin_rate?: number;   // Retailer Margin %
+  rsp?: number;                    // 5. RSP ($) (Shelf Recommended Selling Price)
+  expected_selling_price?: number; // alias for rsp
+  images: string[];
+  notes?: string;
+  status: "pending" | "Market test" | "Further validation / refinement" | "Pause" | string;
+  created_by?: string;
+  reviews_count?: number;
+  average_score?: number;
+  latest_assessment_date?: string;
+  latest_decision?: string;
+  reviews?: ProductValidationReview[];
+  created_at: number;
+  updated_at: number;
+}
 
+export interface ProductValidationReview {
+  id: string;
+  product_id: string;
+  product_name: string;
+  brand_name: string;
+  sku?: string;
+  buyer_name: string; // Admin Reviewer
+  product_owner?: string;
+  assessment_date: string;
+  total_score: number;
+  score_band: string;
+  buyer_decision: string;
+  status: "completed" | "draft" | string;
+  images?: string[];
+  before_assessment: {
+    sample_available?: boolean;
+    packaging_available?: boolean;
+    selling_price_confirmed?: boolean;
+    consumer_usage_understood?: boolean;
+    owner_responses_recorded?: boolean;
+  };
+  scorecard: {
+    taste_aroma?: number;
+    texture_quality?: number;
+    packaging_appeal?: number;
+    price_believability?: number;
+    usage_occasion?: number;
+    repeat_purchase?: number;
+  };
+  criteria_details: {
+    taste_aroma?: { prompts_checked?: string[]; owner_response?: string; buyer_observations?: string };
+    texture_quality?: { prompts_checked?: string[]; owner_response?: string; buyer_observations?: string };
+    packaging_appeal?: { prompts_checked?: string[]; owner_response?: string; buyer_observations?: string };
+    price_believability?: { prompts_checked?: string[]; owner_response?: string; buyer_observations?: string };
+    usage_occasion?: { prompts_checked?: string[]; owner_response?: string; buyer_observations?: string };
+    repeat_purchase?: { prompts_checked?: string[]; owner_response?: string; buyer_observations?: string };
+  };
+  commercial_terms: {
+    sales_channels?: string;
+    marketing_activities?: string;
+    marketing_support?: string;
+    moq?: string;
+    delivery_timeline?: string;
+    payment_terms?: string;
+    influencer_engagement?: string;
+    existing_sg_sales?: string;
+  };
+  decision_data: {
+    checklist?: {
+      all_criteria_scored?: boolean;
+      owner_responses_reviewed?: boolean;
+      missing_evidence_recorded?: boolean;
+    };
+    key_strengths?: string;
+    concerns?: string;
+    missing_info?: string;
+    next_action?: string;
+    action_owner?: string;
+    due_date?: string;
+    buyer_sign_off?: string;
+    sign_off_date?: string;
+  };
+  created_at: number;
+  updated_at: number;
+  scanned_form_url?: string;
+}
 
+export async function fetchValidationProducts(): Promise<{
+  success: boolean;
+  data: ValidationProduct[];
+  all_reviews: ProductValidationReview[];
+}> {
+  const buster = `t=${Date.now()}`;
+  const res = await fetch(`${WORKER_URL}/api/product-validations/products?${buster}`, {
+    method: "GET",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Fetch Validation Products");
+}
 
+export async function saveValidationProduct(
+  payload: Partial<ValidationProduct>
+): Promise<{ success: boolean; data: ValidationProduct }> {
+  const isUpdate = !!payload.id;
+  const url = isUpdate
+    ? `${WORKER_URL}/api/product-validations/products/${encodeURIComponent(payload.id!)}`
+    : `${WORKER_URL}/api/product-validations/products`;
 
+  const res = await fetch(url, {
+    method: isUpdate ? "PUT" : "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify(payload)
+  });
+  return handleResponse(res, isUpdate ? "Update Validation Product" : "Create Validation Product");
+}
+
+export async function deleteValidationProduct(
+  id: string
+): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${WORKER_URL}/api/product-validations/products/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Delete Validation Product");
+}
+
+export async function fetchProductValidationReviews(
+  productId?: string
+): Promise<{ success: boolean; data: ProductValidationReview[] }> {
+  const buster = `t=${Date.now()}`;
+  const query = productId ? `product_id=${encodeURIComponent(productId)}&${buster}` : buster;
+  const res = await fetch(`${WORKER_URL}/api/product-validations/reviews?${query}`, {
+    method: "GET",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Fetch Product Reviews");
+}
+
+export async function submitProductValidationReview(
+  payload: Partial<ProductValidationReview>
+): Promise<{ success: boolean; data: ProductValidationReview }> {
+  const isUpdate = !!payload.id;
+  const url = isUpdate
+    ? `${WORKER_URL}/api/product-validations/reviews/${encodeURIComponent(payload.id!)}`
+    : `${WORKER_URL}/api/product-validations/reviews`;
+
+  const res = await fetch(url, {
+    method: isUpdate ? "PUT" : "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify(payload)
+  });
+  return handleResponse(res, isUpdate ? "Update Review" : "Submit Review");
+}
+
+export async function deleteProductValidationReview(
+  id: string
+): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${WORKER_URL}/api/product-validations/reviews/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Delete Product Review");
+}
+
+export async function fetchProductValidationMetadata(): Promise<{
+  success: boolean;
+  products: any[];
+  brands: any[];
+}> {
+  const buster = `t=${Date.now()}`;
+  const res = await fetch(`${WORKER_URL}/api/product-validations/products-metadata?${buster}`, {
+    method: "GET",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Fetch Products Metadata");
+}
+
+export async function uploadProductValidationImage(
+  file: File
+): Promise<{ success: boolean; url: string; key: string; name: string }> {
+  const arrayBuffer = await file.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64Data = btoa(binary);
+
+  const res = await fetch(`${WORKER_URL}/api/product-validations/upload-image`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type || "image/jpeg",
+      base64Data
+    })
+  });
+  return handleResponse(res, "Upload Validation Image");
+}
+
+export async function uploadScannedForm(
+  file: File
+): Promise<{ success: boolean; scan_url: string; extracted_data: any; warning?: string }> {
+  const arrayBuffer = await file.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64Data = btoa(binary);
+
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/parse-scanned-form`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type || "image/jpeg",
+      base64Data
+    })
+  });
+  return handleResponse(res, "Process Scanned Form");
+}
+
+// ---------------------------------------------------------------------------
+// BRAND LAUNCHPAD (HSG NEW BRAND PIPELINE)
+// ---------------------------------------------------------------------------
+
+export interface BrandLaunchpadProduct {
+  id: string;
+  brand_id: string;
+  product_name: string;
+  sku: string;
+  category: string;
+  pack_size: string;
+  shelf_life_months: number;
+  storage_condition: "Ambient" | "Chilled" | "Frozen" | string;
+  cost_price: number;
+  landed_cost_rate: number;
+  land_price: number;
+  overhead_rate: number;
+  our_price: number;
+  our_margin_rate: number;
+  price_to_retailer: number;
+  retailer_margin_rate: number;
+  rsp: number;
+  images?: string[];
+  avg_taste_score: number;
+  reviews_count: number;
+  score_status: string;
+  created_at?: number;
+  updated_at?: number;
+  reviews?: BrandLaunchpadReview[];
+}
+
+export interface BrandLaunchpadReview {
+  id: string;
+  product_id: string;
+  reviewer_name: string;
+  reviewer_type: "Admin" | "Staff" | "Guest Taster" | string;
+  assessment_date: string;
+  score_taste_aroma: number;
+  score_texture_quality: number;
+  score_packaging_appeal: number;
+  score_price_believability: number;
+  score_usage_occasion: number;
+  score_repeat_purchase: number;
+  total_score: number;
+  score_band: string;
+  reviewer_decision: "Proceed" | "With Conditions" | "Pause" | "Reject" | string;
+  tasting_notes?: string;
+  scanned_worksheet_url?: string;
+  created_at?: number;
+}
+
+export interface BrandLaunchpadTrial {
+  id?: string;
+  brand_id: string;
+  m1_channels: string[];
+  m1_units_sold: number;
+  m1_sampling_feedback: string;
+  m2_weekly_velocity: string;
+  m2_price_response: "Full Price Accepted" | "Price Sensitive" | "Discounts Needed" | string;
+  m2_repeat_purchase_signs: string;
+  m3_total_units: number;
+  m3_repeat_rate_percent: number;
+  m3_achieved_margin_percent: number;
+  m3_customer_rating: number;
+  m3_reviews_summary: string;
+  trial_status: "In Progress" | "Proof Established" | "Needs Further Testing" | "Trial Paused" | string;
+  updated_at?: number;
+}
+
+export interface BrandLaunchpadRetail {
+  id?: string;
+  brand_id: string;
+  target_retail_channels: string[];
+  buyer_value_proposition: string;
+  buffer_stock_units: number;
+  reorder_lead_time_days: number;
+  post_listing_marketing_budget: string;
+  final_verdict: "Pending" | "Scale" | "Improve" | "Hold" | "Stop" | string;
+  verdict_notes: string;
+  pitch_deck_url: string;
+  signed_retail_agreement_url: string;
+  approved_by: string;
+  approved_at?: number | null;
+  updated_at?: number;
+}
+
+export interface BrandLaunchpadBrand {
+  id: string;
+  brand_name: string;
+  company_name: string;
+  owner_type: "Brand Owner" | "Manufacturer" | "Trader" | "Agent" | string;
+  contact_person: string;
+  contact_email: string;
+  contact_phone: string;
+  country_of_origin: string;
+  payment_terms: string;
+  lead_time_days: number;
+  current_step: number; // 1 to 5
+  status: string; // 'Step 1: Intake', 'Step 2: Taste Scorecard', etc.
+  brand_story: string;
+  target_consumer: string;
+  consumer_need_served: string;
+  tiktok_hooks: string;
+  launch_promo_support: string;
+  retail_ambition: string;
+  alignment_confirmed: boolean;
+  scanned_intake_url?: string;
+  scanned_marketing_url?: string;
+  created_by?: string;
+  created_at: number;
+  updated_at: number;
+  products?: BrandLaunchpadProduct[];
+  trial?: BrandLaunchpadTrial | null;
+  retail?: BrandLaunchpadRetail | null;
+}
+
+export async function fetchBrandLaunchpadBrands(): Promise<{ success: boolean; brands: BrandLaunchpadBrand[] }> {
+  const buster = `t=${Date.now()}`;
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/brands?${buster}`, {
+    method: "GET",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Fetch Brand Launchpad Brands");
+}
+
+export async function fetchBrandLaunchpadBrand(id: string): Promise<{ success: boolean; brand: BrandLaunchpadBrand }> {
+  const buster = `t=${Date.now()}`;
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/brands/${encodeURIComponent(id)}?${buster}`, {
+    method: "GET",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Fetch Single Brand Launchpad");
+}
+
+export async function saveBrandLaunchpadBrand(
+  payload: Partial<BrandLaunchpadBrand> & { products?: Partial<BrandLaunchpadProduct>[] }
+): Promise<{ success: boolean; brand: BrandLaunchpadBrand }> {
+  const isUpdate = !!payload.id;
+  const url = isUpdate
+    ? `${WORKER_URL}/api/brand-launchpad/brands/${encodeURIComponent(payload.id!)}`
+    : `${WORKER_URL}/api/brand-launchpad/brands`;
+
+  const res = await fetch(url, {
+    method: isUpdate ? "PATCH" : "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify(payload)
+  });
+  return handleResponse(res, isUpdate ? "Update Brand Launchpad" : "Create Brand Launchpad");
+}
+
+export async function deleteBrandLaunchpadBrand(id: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/brands/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Delete Brand Launchpad");
+}
+
+export async function saveBrandLaunchpadProduct(
+  payload: Partial<BrandLaunchpadProduct>
+): Promise<{ success: boolean; product: BrandLaunchpadProduct }> {
+  const isUpdate = !!payload.id;
+  const url = isUpdate
+    ? `${WORKER_URL}/api/brand-launchpad/products/${encodeURIComponent(payload.id!)}`
+    : `${WORKER_URL}/api/brand-launchpad/products`;
+
+  const res = await fetch(url, {
+    method: isUpdate ? "PATCH" : "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify(payload)
+  });
+  return handleResponse(res, isUpdate ? "Update SKU" : "Add SKU");
+}
+
+export async function deleteBrandLaunchpadProduct(id: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/products/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Delete SKU");
+}
+
+export async function fetchBrandLaunchpadReviews(productId?: string): Promise<{ success: boolean; reviews: BrandLaunchpadReview[] }> {
+  const buster = `t=${Date.now()}`;
+  const query = productId ? `product_id=${encodeURIComponent(productId)}&${buster}` : buster;
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/reviews?${query}`, {
+    method: "GET",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Fetch Taste Reviews");
+}
+
+export async function submitBrandLaunchpadReview(
+  payload: Partial<BrandLaunchpadReview>
+): Promise<{ success: boolean; review: BrandLaunchpadReview }> {
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/reviews`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify(payload)
+  });
+  return handleResponse(res, "Submit Taste Review");
+}
+
+export async function deleteBrandLaunchpadReview(id: string): Promise<{ success: boolean; message: string }> {
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/reviews/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: { ...getSessionIdHeader() }
+  });
+  return handleResponse(res, "Delete Taste Review");
+}
+
+export async function saveBrandLaunchpadTrial(
+  brandId: string,
+  payload: Partial<BrandLaunchpadTrial>
+): Promise<{ success: boolean; trial: BrandLaunchpadTrial }> {
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/trial/${encodeURIComponent(brandId)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify(payload)
+  });
+  return handleResponse(res, "Update Trial Data");
+}
+
+export async function saveBrandLaunchpadRetail(
+  brandId: string,
+  payload: Partial<BrandLaunchpadRetail>
+): Promise<{ success: boolean; retail: BrandLaunchpadRetail }> {
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/retail/${encodeURIComponent(brandId)}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify(payload)
+  });
+  return handleResponse(res, "Update Retail Readiness");
+}
+
+export async function uploadBrandLaunchpadFile(
+  file: File
+): Promise<{ success: boolean; url: string; key: string; name: string }> {
+  const arrayBuffer = await file.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64Data = btoa(binary);
+
+  const res = await fetch(`${WORKER_URL}/api/brand-launchpad/upload`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getSessionIdHeader()
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type || "application/octet-stream",
+      base64Data
+    })
+  });
+  return handleResponse(res, "Upload Launchpad File");
+}
+
+// ---------------------------------------------------------------------------
+// ACTIVE SESSIONS & CONNECTED DEVICES API
+// ---------------------------------------------------------------------------
+export interface ActiveUserSession {
+  id: string;
+  app: string;
+  device_type: "desktop" | "mobile" | "tablet";
+  platform: string;
+  ip: string;
+  login_at: number;
+  last_active: number;
+  is_current?: boolean;
+}
+
+export async function fetchActiveUserSessions(
+  idToken: string
+): Promise<{ success: boolean; total_devices: number; sessions: ActiveUserSession[] }> {
+  const token = await getFreshToken(idToken);
+  const res = await fetch(`${WORKER_URL}/api/users/active-sessions`, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      ...getSessionIdHeader(),
+    },
+  });
+  return handleResponse(res, "Retrieve active sessions");
+}
+
+export async function revokeUserSession(
+  idToken: string,
+  params: { sessionId?: string; revokeAllOthers?: boolean }
+): Promise<{ success: boolean; total_devices: number; sessions: ActiveUserSession[] }> {
+  const token = await getFreshToken(idToken);
+  const res = await fetch(`${WORKER_URL}/api/users/revoke-session`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+      ...getSessionIdHeader(),
+    },
+    body: JSON.stringify({
+      session_id: params.sessionId,
+      revoke_all_others: params.revokeAllOthers,
+    }),
+  });
+  return handleResponse(res, "Revoke session");
+}

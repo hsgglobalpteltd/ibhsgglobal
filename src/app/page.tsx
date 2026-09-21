@@ -19,6 +19,7 @@ import { canAccessPage } from "@/lib/permissions";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { PwaInstallModal } from "@/components/pwa-install-modal";
 import { WorkspaceView } from "@/components/workspace-view";
+import { safeLocalStorageSet, safeLocalStorageGet, safeLocalStorageRemove } from "@/lib/storage";
 
 // Helper to format remaining lockout time nicely
 function formatLockoutTime(seconds: number): string {
@@ -46,8 +47,8 @@ export default function Home() {
   React.useEffect(() => {
     if (typeof window !== "undefined") {
       try {
-        const cachedProfile = localStorage.getItem("ib_user_profile");
-        const cachedToken = localStorage.getItem("ib_auth_token");
+        const cachedProfile = safeLocalStorageGet("ib_user_profile");
+        const cachedToken = safeLocalStorageGet("ib_auth_token");
         if (cachedProfile && cachedToken) {
           const parsed = JSON.parse(cachedProfile);
           if (parsed && parsed.email) {
@@ -238,10 +239,10 @@ export default function Home() {
           localStorage.removeItem("ib_pin_lockout_until");
 
           // Retrieve or generate unique session ID for this browser tab/session
-          let sid = localStorage.getItem("session_id");
+          let sid = safeLocalStorageGet("session_id");
           if (!sid) {
             sid = "sess_" + Math.random().toString(36).substring(2, 15) + "_" + Date.now();
-            localStorage.setItem("session_id", sid);
+            safeLocalStorageSet("session_id", sid);
           }
 
           // Sync profile from backend
@@ -253,10 +254,8 @@ export default function Home() {
               sid
             );
             setProfile(dbProfile);
-            if (typeof window !== "undefined") {
-              localStorage.setItem("ib_user_profile", JSON.stringify(dbProfile));
-              localStorage.setItem("ib_auth_token", token);
-            }
+            safeLocalStorageSet("ib_user_profile", dbProfile);
+            safeLocalStorageSet("ib_auth_token", token);
           } catch (err: any) {
             if (err.code === "session_conflict") {
               setPendingLogin({
@@ -275,8 +274,8 @@ export default function Home() {
         }
       } else {
         // If not logged in via Firebase Auth, check for stored PIN session
-        const storedToken = typeof window !== "undefined" ? localStorage.getItem("ib_auth_token") : null;
-        const storedProfileStr = typeof window !== "undefined" ? localStorage.getItem("ib_user_profile") : null;
+        const storedToken = safeLocalStorageGet("ib_auth_token");
+        const storedProfileStr = safeLocalStorageGet("ib_user_profile");
 
         if (storedToken && storedProfileStr) {
           try {
@@ -287,7 +286,7 @@ export default function Home() {
                 setFirebaseUser({ email: freshProfile.email, displayName: freshProfile.name });
                 setIdToken(storedToken);
                 setProfile(freshProfile);
-                localStorage.setItem("ib_user_profile", JSON.stringify(freshProfile));
+                safeLocalStorageSet("ib_user_profile", freshProfile);
                 setLoading(false);
                 return;
               }
@@ -297,10 +296,8 @@ export default function Home() {
             if (err.code === "session_superseded" || err.message?.includes("session")) {
               showToast(err.message || "Your session is now active on another device.", "error");
             }
-            if (typeof window !== "undefined") {
-              localStorage.removeItem("ib_auth_token");
-              localStorage.removeItem("ib_user_profile");
-            }
+            safeLocalStorageRemove("ib_auth_token");
+            safeLocalStorageRemove("ib_user_profile");
           }
         }
 
@@ -361,25 +358,23 @@ export default function Home() {
     if (!codeToSubmit || codeToSubmit.length !== 4 || lockoutRemaining > 0) return;
     setPinSubmitting(true);
     try {
-      let sid = localStorage.getItem("session_id");
+      let sid = safeLocalStorageGet("session_id");
       if (!sid) {
         sid = "sess_" + Math.random().toString(36).substring(2, 15) + "_" + Date.now();
-        localStorage.setItem("session_id", sid);
+        safeLocalStorageSet("session_id", sid);
       }
       const res = await loginWithPin(codeToSubmit, sid);
       setFirebaseUser({ email: res.user.email, displayName: res.user.name });
       setIdToken(res.token);
       setProfile(res.user);
-      if (typeof window !== "undefined") {
-        localStorage.setItem("ib_user_profile", JSON.stringify(res.user));
-        localStorage.setItem("ib_auth_token", res.token);
-      }
+      safeLocalStorageSet("ib_user_profile", res.user);
+      safeLocalStorageSet("ib_auth_token", res.token);
       showToast(`Welcome back, ${res.user.name}!`, "success");
       setPinDigits(["", "", "", ""]);
       setFailedAttempts(0);
       setLockoutRemaining(0);
-      localStorage.removeItem("ib_pin_failed_attempts");
-      localStorage.removeItem("ib_pin_lockout_until");
+      safeLocalStorageRemove("ib_pin_failed_attempts");
+      safeLocalStorageRemove("ib_pin_lockout_until");
     } catch (err: any) {
       if (err.code === "session_conflict") {
         setPendingLogin({
@@ -1018,7 +1013,12 @@ export default function Home() {
               onSelectSubModule={handleSelectSubModule}
               user={firebaseUser}
               profile={profile}
+              idToken={idToken}
               onLogout={handleLogout}
+              onProfileUpdated={(updatedProfile) => {
+                setProfile(updatedProfile);
+                safeLocalStorageSet("ib_user_profile", updatedProfile);
+              }}
             />
           )}
           <div className="workspace-wrapper flex flex-col flex-1 h-screen overflow-hidden min-w-0">

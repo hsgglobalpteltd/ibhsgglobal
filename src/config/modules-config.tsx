@@ -112,6 +112,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Snap Deals",
         description: "Calculate deal costs, pricing, profits, and retailer business agreements.",
+      },
+      {
+        title: "Brand Launchpad",
+        description: "5-Step New Brand & Product validation pipeline: Brand Intake & Pricing Waterfall, Taste Scorecard, Marketing Support, Online Trial, and Retail Readiness.",
       }
     ]
   },
