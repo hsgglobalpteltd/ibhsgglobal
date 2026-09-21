@@ -868,6 +868,19 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
       onConfirm: async () => {
         setLoading(true);
         try {
+          const res = await fetch(`${API_BASE}/api/sales-inout/batch-status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              period: currentPeriod,
+              status: "published",
+              action_by: profile?.name || "Admin"
+            })
+          });
+          if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || "Failed to publish report");
+          }
           const updatedBatch = {
             ...(currentBatch || {}),
             status: "published",
@@ -875,6 +888,7 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
             published_by: profile?.name || "Admin",
           };
           persistDataset(currentPeriod, updatedBatch, salesIn, salesOut);
+          await fetchBatchesList();
           showToast("Sales report successfully published to live analytics!", "success");
         } catch (err: any) {
           showToast(err.message, "error");
@@ -895,6 +909,19 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
       onConfirm: async () => {
         setLoading(true);
         try {
+          const res = await fetch(`${API_BASE}/api/sales-inout/batch-status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              period: currentPeriod,
+              status: "locked",
+              action_by: profile?.name || "Admin"
+            })
+          });
+          if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || "Failed to lock month");
+          }
           const updatedBatch = {
             ...(currentBatch || {}),
             status: "locked",
@@ -902,6 +929,7 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
             locked_by: profile?.name || "Admin",
           };
           persistDataset(currentPeriod, updatedBatch, salesIn, salesOut);
+          await fetchBatchesList();
           showToast("Month frozen & locked!", "success");
         } catch (err: any) {
           showToast(err.message, "error");
@@ -922,13 +950,27 @@ export function SaleInOutModule({ profile }: SaleInOutModuleProps) {
       onConfirm: async () => {
         setLoading(true);
         try {
+          const res = await fetch(`${API_BASE}/api/sales-inout/batch-status`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              period: currentPeriod,
+              status: "draft",
+              action_by: profile?.name || "Admin"
+            })
+          });
+          if (!res.ok) {
+            const errData = await res.json();
+            throw new Error(errData.error || "Failed to unlock month");
+          }
           const updatedBatch = {
             ...(currentBatch || {}),
-            status: "published",
+            status: "draft",
             unlocked_at: Date.now(),
             unlocked_by: profile?.name || "Admin",
           };
           persistDataset(currentPeriod, updatedBatch, salesIn, salesOut);
+          await fetchBatchesList();
           showToast("Month unlocked for edits.", "success");
         } catch (err: any) {
           showToast(err.message, "error");

@@ -7,6 +7,8 @@ import { StoresVisibilityModule } from "../modules/StoresVisibilityModule";
 import { SponsorshipModule } from "../modules/SponsorshipModule";
 import { DirectOrderModule } from "../modules/DirectOrderModule";
 import { MarketPricingModule } from "../modules/MarketPricingModule";
+import { SellInModule } from "../modules/SellInModule";
+import { BuyersChannelsModule } from "../modules/BuyersChannelsModule";
 import { SaleInOutModule } from "../modules/SaleInOutModule";
 import { SaleProjectionModule } from "../modules/SaleProjectionModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
@@ -68,8 +70,13 @@ export function SalesChannelsPage({ profile, breadcrumbPath }: SalesChannelsPage
 
   const renderActiveSubModule = () => {
     switch (activeSubModule) {
+      case "Sell-In":
       case "Sale In & Sale Out":
-        return <SaleInOutModule profile={profile} />;
+        return <SellInModule profile={profile} />;
+      case "Buyers & Channels":
+      case "Buyers and Channels":
+      case "Buyers":
+        return <BuyersChannelsModule profile={profile} />;
       case "Sale Projection":
         return <SaleProjectionModule profile={profile} />;
       case "Direct Order":

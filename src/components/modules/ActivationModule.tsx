@@ -62,7 +62,8 @@ import {
   RotateCw,
   ZoomIn,
   ZoomOut,
-  Check
+  Check,
+  ChevronDown
 } from "lucide-react";
 import { NavigationTabs } from "../navigation-tabs";
 
@@ -159,6 +160,9 @@ export interface POSActivation {
   location: string;
   start_date: string;
   end_date: string;
+  start_time?: string;
+  end_time?: string;
+  daily_schedule?: Array<{ date: string; start_time: string; end_time: string; day_number?: number }>;
   foc_description: string;
   participants: Array<{ id: string; name: string; type?: string }>;
   stock_allocated: Array<{ sku: string; qty: number }>;
@@ -167,6 +171,7 @@ export interface POSActivation {
   stock_sales: Array<{ sku: string; qty: number }>;
   stock_foc: Array<{ sku: string; qty: number }>;
   cash_deposit_receipts?: string[];
+  operational_costs?: Array<{ description: string; amount: number; notes?: string }>;
   status: "active" | "closed";
   use_pos?: boolean;
   created_by: string;
@@ -174,6 +179,59 @@ export interface POSActivation {
   closed_by?: string;
   closed_at?: number;
 }
+
+export const computeDailySchedule = (
+  startDate: string,
+  endDate: string,
+  defaultStart: string = "10:00",
+  defaultEnd: string = "22:00",
+  existing: Array<{ date: string; start_time: string; end_time: string; day_number?: number }> = []
+) => {
+  if (!startDate) return [];
+  const start = new Date(startDate);
+  const end = endDate ? new Date(endDate) : new Date(startDate);
+
+  if (isNaN(start.getTime())) return [];
+  if (isNaN(end.getTime()) || end < start) {
+    const existingEntry = existing.find(e => e.date === startDate);
+    return [{
+      date: startDate,
+      start_time: existingEntry?.start_time || defaultStart,
+      end_time: existingEntry?.end_time || defaultEnd,
+      day_number: 1
+    }];
+  }
+
+  const existingMap = new Map<string, { start_time: string; end_time: string }>();
+  existing.forEach(e => {
+    if (e.date) existingMap.set(e.date, { start_time: e.start_time, end_time: e.end_time });
+  });
+
+  const result: Array<{ date: string; start_time: string; end_time: string; day_number: number }> = [];
+  const cur = new Date(start);
+  let dayNum = 1;
+
+  // Max 60 days
+  while (cur <= end && dayNum <= 60) {
+    const yyyy = cur.getFullYear();
+    const mm = String(cur.getMonth() + 1).padStart(2, "0");
+    const dd = String(cur.getDate()).padStart(2, "0");
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+
+    const found = existingMap.get(dateStr);
+    result.push({
+      date: dateStr,
+      start_time: found?.start_time || defaultStart,
+      end_time: found?.end_time || defaultEnd,
+      day_number: dayNum
+    });
+
+    cur.setDate(cur.getDate() + 1);
+    dayNum++;
+  }
+
+  return result;
+};
 
 const mainTabs = [
   { id: "activations", label: "Event Activations", desc: "Manage event roadshows, allocate stocks, track staff & FOC reason, and reconcile returns to Manage Stock." },
@@ -315,10 +373,17 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   const [newActLocation, setNewActLocation] = React.useState("");
   const [newActStartDate, setNewActStartDate] = React.useState(() => new Date().toISOString().split("T")[0]);
   const [newActEndDate, setNewActEndDate] = React.useState(() => new Date().toISOString().split("T")[0]);
+  const [newActStartTime, setNewActStartTime] = React.useState("10:00");
+  const [newActEndTime, setNewActEndTime] = React.useState("22:00");
+  const [newActDailySchedule, setNewActDailySchedule] = React.useState<Array<{ date: string; start_time: string; end_time: string; day_number: number }>>(() => {
+    const todayStr = new Date().toISOString().split("T")[0];
+    return [{ date: todayStr, start_time: "10:00", end_time: "22:00", day_number: 1 }];
+  });
   const [newActFocDesc, setNewActFocDesc] = React.useState("");
   const [newActUsePos, setNewActUsePos] = React.useState(true);
   const [newActParticipants, setNewActParticipants] = React.useState<string[]>([]);
   const [newActAllocatedItems, setNewActAllocatedItems] = React.useState<Array<{ sku: string; qty: number | string }>>([{ sku: "", qty: "" }]);
+  const [newActOperationalCosts, setNewActOperationalCosts] = React.useState<Array<{ description: string; amount: number | string; notes?: string }>>([]);
   const [isSavingAct, setIsSavingAct] = React.useState(false);
 
   // Delete Confirmation Modal (Activation)
@@ -331,11 +396,17 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   const [closingReturns, setClosingReturns] = React.useState<Record<string, number>>({});
   const [closingDamaged, setClosingDamaged] = React.useState<Record<string, number>>({});
   const [closingDamagedReasons, setClosingDamagedReasons] = React.useState<Record<string, string>>({});
+  const [closingOperationalCosts, setClosingOperationalCosts] = React.useState<Array<{ description: string; amount: number | string; notes?: string }>>([]);
   const [isClosingAct, setIsClosingAct] = React.useState(false);
   const [isSavingReturn, setIsSavingReturn] = React.useState(false);
 
+  // Reopen Activation Modal State
+  const [reopeningAct, setReopeningAct] = React.useState<POSActivation | null>(null);
+  const [isReopeningAct, setIsReopeningAct] = React.useState(false);
+
   // Print Activation Report Modal State
   const [printingAct, setPrintingAct] = React.useState<POSActivation | null>(null);
+  const [openReportMenuAct, setOpenReportMenuAct] = React.useState<string | null>(null);
 
   // Order Details Modal
   const [viewingOrder, setViewingOrder] = React.useState<POSOrder | POSVoidOrder | null>(null);
@@ -380,6 +451,69 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   const [manualNotes, setManualNotes] = React.useState<string>("");
   const [manualReceiptPhoto, setManualReceiptPhoto] = React.useState<string | null>(null);
   const [isSavingManualSale, setIsSavingManualSale] = React.useState<boolean>(false);
+
+  // Reset POS Stock & Import from Active Activation State
+  const [isResetStockModalOpen, setIsResetStockModalOpen] = React.useState<boolean>(false);
+  const [isResettingStock, setIsResettingStock] = React.useState<boolean>(false);
+  const [isImportAllocModalOpen, setIsImportAllocModalOpen] = React.useState<boolean>(false);
+  const [selectedImportActId, setSelectedImportActId] = React.useState<string>("");
+  const [importMode, setImportMode] = React.useState<"replace" | "add">("replace");
+  const [isImportingStock, setIsImportingStock] = React.useState<boolean>(false);
+
+  // Handler: Reset POS Stock
+  const handleResetPosStock = async () => {
+    setIsResettingStock(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/pos/products/reset-stock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          updated_by: profile?.full_name || profile?.name || "Admin"
+        })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      showToast(`Successfully cleared POS catalog (${data.count || 0} products removed)!`, "success");
+      setIsResetStockModalOpen(false);
+      await loadAllData();
+    } catch (err: any) {
+      showToast("Failed to reset POS stock: " + err.message, "error");
+    } finally {
+      setIsResettingStock(false);
+    }
+  };
+
+  // Handler: Import Stock from Active Activation
+  const handleImportActivationStock = async () => {
+    if (!selectedImportActId) {
+      showToast("Please select an active activation", "warning");
+      return;
+    }
+    setIsImportingStock(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/pos/products/import-activation-stock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          activation_id: selectedImportActId,
+          mode: importMode,
+          updated_by: profile?.full_name || profile?.name || "Admin"
+        })
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText);
+      }
+      const data = await res.json();
+      showToast(`Successfully imported ${data.count || 0} products from "${data.activation_name || selectedImportActId}"!`, "success");
+      setIsImportAllocModalOpen(false);
+      await loadAllData();
+    } catch (err: any) {
+      showToast("Failed to import allocated stock: " + err.message, "error");
+    } finally {
+      setIsImportingStock(false);
+    }
+  };
 
   // Load Cropper.js scripts on mount
   React.useEffect(() => {
@@ -448,50 +582,55 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
     };
   }, [receiptUploadOrder, receiptRawImage]);
 
-  // Load all data
+  // Load all data (Optimized with Promise.all for fast parallel loading)
   const loadAllData = React.useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Fetch POS Products (only added to POS)
-      const prodRes = await fetch(`${WORKER_URL}/api/pos/products`);
-      if (prodRes.ok) {
+      // Execute all network requests simultaneously in parallel
+      const [
+        prodRes,
+        masterRes,
+        promoRes,
+        orderRes,
+        voidRes,
+        actRes,
+        empRes,
+        settingsRes
+      ] = await Promise.all([
+        fetch(`${WORKER_URL}/api/pos/products`).catch(() => null),
+        fetch(`${WORKER_URL}/api/pos/products?master=true`).catch(() => null),
+        fetch(`${WORKER_URL}/api/pos/brand-promos`).catch(() => null),
+        fetch(`${WORKER_URL}/api/pos/orders`).catch(() => null),
+        fetch(`${WORKER_URL}/api/pos/orders/voided`).catch(() => null),
+        fetch(`${WORKER_URL}/api/pos/activations`).catch(() => null),
+        fetch(`${WORKER_URL}/api/employees`).catch(() => null),
+        fetch(`${WORKER_URL}/api/pos/settings`).catch(() => null),
+      ]);
+
+      if (prodRes && prodRes.ok) {
         const prodData = await prodRes.json();
         setPosProducts(Array.isArray(prodData) ? prodData : []);
       }
 
-      // 2. Fetch Master Products (all products for the "+ Add Product" selector)
-      const masterRes = await fetch(`${WORKER_URL}/api/pos/products?master=true`);
-      if (masterRes.ok) {
+      if (masterRes && masterRes.ok) {
         const masterData = await masterRes.json();
         setMasterProducts(Array.isArray(masterData) ? masterData : []);
       }
 
-      // 3. Fetch Brand Promos
-      const promoRes = await fetch(`${WORKER_URL}/api/pos/brand-promos`);
-      if (promoRes.ok) {
+      if (promoRes && promoRes.ok) {
         const promoData = await promoRes.json();
         setBrandPromos(Array.isArray(promoData) ? promoData : []);
       }
 
-      // 4. Fetch POS Orders
-      const orderRes = await fetch(`${WORKER_URL}/api/pos/orders`);
-      if (orderRes.ok) {
+      if (orderRes && orderRes.ok) {
         const orderData = await orderRes.json();
         setOrders(Array.isArray(orderData) ? orderData : []);
       }
 
-      // 5. Fetch Voided Orders
-      const voidRes = await fetch(`${WORKER_URL}/api/pos/orders/voided`);
-      if (voidRes.ok) {
+      if (voidRes && voidRes.ok) {
         const voidData = await voidRes.json();
         setVoidOrders(Array.isArray(voidData) ? voidData : []);
       }
-
-      // 5b. Fetch Activations & Employees
-      const [actRes, empRes] = await Promise.all([
-        fetch(`${WORKER_URL}/api/pos/activations`).catch(() => null),
-        fetch(`${WORKER_URL}/api/employees`).catch(() => null)
-      ]);
 
       if (actRes && actRes.ok) {
         const actData = await actRes.json();
@@ -503,9 +642,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         setEmployees(Array.isArray(empData) ? empData : []);
       }
 
-      // 6. Fetch POS Payment & QR Settings
-      const settingsRes = await fetch(`${WORKER_URL}/api/pos/settings`);
-      if (settingsRes.ok) {
+      if (settingsRes && settingsRes.ok) {
         const settingsData = await settingsRes.json();
         const s = settingsData.settings || settingsData.data;
         if (s) {
@@ -880,6 +1017,39 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
     }
   };
 
+  // Handlers for Activation Dates & Daily Schedule
+  const handleStartDateChange = (val: string) => {
+    setNewActStartDate(val);
+    const nextEnd = (!newActEndDate || newActEndDate < val) ? val : newActEndDate;
+    if (!newActEndDate || newActEndDate < val) {
+      setNewActEndDate(val);
+    }
+    setNewActDailySchedule(prev => computeDailySchedule(val, nextEnd, newActStartTime, newActEndTime, prev));
+  };
+
+  const handleEndDateChange = (val: string) => {
+    setNewActEndDate(val);
+    const effectiveStart = newActStartDate || val;
+    setNewActDailySchedule(prev => computeDailySchedule(effectiveStart, val, newActStartTime, newActEndTime, prev));
+  };
+
+  const handleApplyTimesToAllDays = () => {
+    setNewActDailySchedule(prev => prev.map(day => ({
+      ...day,
+      start_time: newActStartTime,
+      end_time: newActEndTime
+    })));
+    showToast("Applied operating hours to all event days", "info");
+  };
+
+  const handleDailyTimeChange = (idx: number, field: "start_time" | "end_time", value: string) => {
+    setNewActDailySchedule(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [field]: value };
+      return next;
+    });
+  };
+
   // Handle Create or Edit Activation
   const handleSaveActivation = async () => {
     if (!newActName.trim()) {
@@ -901,6 +1071,14 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         if (brandIdA !== brandIdB) return brandIdA.localeCompare(brandIdB);
         return a.sku.localeCompare(b.sku);
       });
+
+    const validCosts = newActOperationalCosts
+      .map(c => ({
+        description: String(c.description || "").trim(),
+        amount: Number(c.amount) || 0,
+        notes: String(c.notes || "").trim()
+      }))
+      .filter(c => c.description && c.amount > 0);
 
     const participantObjs = newActParticipants.map(id => {
       const emp = employees.find(e => e.id === id);
@@ -924,9 +1102,13 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
             location: newActLocation.trim(),
             start_date: newActStartDate,
             end_date: newActEndDate || newActStartDate,
+            start_time: newActStartTime,
+            end_time: newActEndTime,
+            daily_schedule: newActDailySchedule,
             foc_description: newActFocDesc.trim(),
             participants: participantObjs,
             stock_allocated: validStock,
+            operational_costs: validCosts,
             use_pos: newActUsePos
           })
         });
@@ -946,9 +1128,13 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
             location: newActLocation.trim(),
             start_date: newActStartDate,
             end_date: newActEndDate || newActStartDate,
+            start_time: newActStartTime,
+            end_time: newActEndTime,
+            daily_schedule: newActDailySchedule,
             foc_description: newActFocDesc.trim(),
             participants: participantObjs,
             stock_allocated: validStock,
+            operational_costs: validCosts,
             use_pos: newActUsePos,
             created_by: profile?.name || "Admin"
           })
@@ -969,6 +1155,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       setNewActUsePos(true);
       setNewActParticipants([]);
       setNewActAllocatedItems([{ sku: "", qty: "" }]);
+      setNewActOperationalCosts([]);
       loadAllData();
     } catch (err: any) {
       showToast("Failed to save activation: " + err.message, "error");
@@ -982,11 +1169,30 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
     setEditingAct(act);
     setNewActName(act.name);
     setNewActLocation(act.location || "");
-    setNewActStartDate(act.start_date || new Date().toISOString().split("T")[0]);
-    setNewActEndDate(act.end_date || act.start_date || new Date().toISOString().split("T")[0]);
+    const sDate = act.start_date || new Date().toISOString().split("T")[0];
+    const eDate = act.end_date || sDate;
+    setNewActStartDate(sDate);
+    setNewActEndDate(eDate);
+    const sTime = act.start_time || "10:00";
+    const eTime = act.end_time || "22:00";
+    setNewActStartTime(sTime);
+    setNewActEndTime(eTime);
+    const sched = computeDailySchedule(
+      sDate,
+      eDate,
+      sTime,
+      eTime,
+      Array.isArray(act.daily_schedule) ? act.daily_schedule : []
+    );
+    setNewActDailySchedule(sched);
     setNewActFocDesc(act.foc_description || "");
     setNewActUsePos(act.use_pos !== false);
     setNewActParticipants((act.participants || []).map(p => p.id));
+    setNewActOperationalCosts(
+      Array.isArray(act.operational_costs)
+        ? act.operational_costs.map(c => ({ description: c.description || "", amount: c.amount || 0, notes: c.notes || "" }))
+        : []
+    );
     
     let rawAlloc = Array.isArray(act.stock_allocated) && act.stock_allocated.length > 0
       ? act.stock_allocated.map(it => ({ sku: it.sku, qty: it.qty }))
@@ -1037,9 +1243,9 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   };
 
   // Handle Batch Assign Selected Orders to Activation
-  const handleBatchAssignOrders = async () => {
+  const handleAssignOrdersToActivation = async () => {
     if (selectedOrderIds.size === 0) {
-      showToast("Please select at least 1 order to assign", "warning");
+      showToast("Please select at least one order to assign", "warning");
       return;
     }
 
@@ -1049,7 +1255,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          activation_id: assignTargetActId || "",
+          activation_id: assignTargetActId || null,
           order_ids: Array.from(selectedOrderIds)
         })
       });
@@ -1073,6 +1279,11 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
   const handleOpenCloseModal = (act: POSActivation) => {
     setClosingAct(act);
     setCashDepositPhotos(Array.isArray(act.cash_deposit_receipts) ? [...act.cash_deposit_receipts] : []);
+    setClosingOperationalCosts(
+      Array.isArray(act.operational_costs)
+        ? act.operational_costs.map(c => ({ description: c.description || "", amount: c.amount || 0, notes: c.notes || "" }))
+        : []
+    );
     const initialReturns: Record<string, number> = {};
 
     const assignedOrders = orders.filter(o => o.activation_id === act.id);
@@ -1141,6 +1352,14 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         }
       });
 
+      const validCosts = closingOperationalCosts
+        .map(c => ({
+          description: String(c.description || "").trim(),
+          amount: Number(c.amount) || 0,
+          notes: String(c.notes || "").trim()
+        }))
+        .filter(c => c.description && c.amount > 0);
+
       const res = await fetch(`${WORKER_URL}/api/pos/activations/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1148,6 +1367,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
           id: closingAct.id,
           stock_allocated: allocatedList,
           stock_returned: returnedList,
+          operational_costs: validCosts,
           cash_deposit_receipts: cashDepositPhotos
         })
       });
@@ -1157,10 +1377,10 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       if (!data.success) throw new Error(data.error || "Failed to save stock return");
 
       // Update local state
-      setClosingAct(prev => prev ? { ...prev, stock_allocated: allocatedList, stock_returned: returnedList, cash_deposit_receipts: cashDepositPhotos } : null);
-      setActivations(prev => prev.map(a => a.id === closingAct.id ? { ...a, stock_allocated: allocatedList, stock_returned: returnedList, cash_deposit_receipts: cashDepositPhotos } : a));
+      setClosingAct(prev => prev ? { ...prev, stock_allocated: allocatedList, stock_returned: returnedList, operational_costs: validCosts, cash_deposit_receipts: cashDepositPhotos } : null);
+      setActivations(prev => prev.map(a => a.id === closingAct.id ? { ...a, stock_allocated: allocatedList, stock_returned: returnedList, operational_costs: validCosts, cash_deposit_receipts: cashDepositPhotos } : a));
 
-      showToast("Allocation, Return counts and receipts saved!", "success");
+      showToast("Allocation, Return counts, operational costs, and receipts saved!", "success");
     } catch (err: any) {
       showToast("Save failed: " + err.message, "error");
     } finally {
@@ -1220,6 +1440,14 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         }
       });
 
+      const validCosts = closingOperationalCosts
+        .map(c => ({
+          description: String(c.description || "").trim(),
+          amount: Number(c.amount) || 0,
+          notes: String(c.notes || "").trim()
+        }))
+        .filter(c => c.description && c.amount > 0);
+
       const allSkus = Array.from(new Set([
         ...allocatedList.map(it => it.sku),
         ...(closingAct.stock_allocated || []).map(it => it.sku),
@@ -1250,6 +1478,7 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
           stock_allocated: allocatedList,
           stock_returned: returnedList,
           stock_damaged: damagedList,
+          operational_costs: validCosts,
           cash_deposit_receipts: cashDepositPhotos
         })
       });
@@ -1265,6 +1494,34 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
       showToast("Closing failed: " + err.message, "error");
     } finally {
       setIsClosingAct(false);
+    }
+  };
+
+  // Handle Reopen Activation
+  const handleReopenActivation = async () => {
+    if (!reopeningAct) return;
+    setIsReopeningAct(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/pos/activations/reopen`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: reopeningAct.id,
+          reopened_by: profile?.name || "Admin"
+        })
+      });
+
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      if (!data.success) throw new Error(data.error || "Failed to reopen activation");
+
+      showToast(`Activation ${reopeningAct.name} (${reopeningAct.id}) reopened successfully!`, "success");
+      setReopeningAct(null);
+      loadAllData();
+    } catch (err: any) {
+      showToast("Failed to reopen activation: " + err.message, "error");
+    } finally {
+      setIsReopeningAct(false);
     }
   };
 
@@ -3081,13 +3338,20 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
             <button
               type="button"
               onClick={() => {
+                setEditingAct(null);
                 setNewActName("");
                 setNewActLocation("");
-                setNewActStartDate(new Date().toISOString().split("T")[0]);
-                setNewActEndDate(new Date().toISOString().split("T")[0]);
+                const todayStr = new Date().toISOString().split("T")[0];
+                setNewActStartDate(todayStr);
+                setNewActEndDate(todayStr);
+                setNewActStartTime("10:00");
+                setNewActEndTime("22:00");
+                setNewActDailySchedule([{ date: todayStr, start_time: "10:00", end_time: "22:00", day_number: 1 }]);
                 setNewActFocDesc("");
+                setNewActUsePos(true);
                 setNewActParticipants([]);
                 setNewActAllocatedItems([{ sku: "", qty: "" }]);
+                setNewActOperationalCosts([]);
                 setIsCreateActModalOpen(true);
               }}
               className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
@@ -3113,20 +3377,48 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
           )}
 
           {activeTab === "pos_terminal" && posSubTab === "catalog" && (
-            <button
-              onClick={() => {
-                setSelectedMasterSku("");
-                setAddPrice("0.00");
-                setAddStock("10");
-                setAddReason("Initial POS stock allocation");
-                setMasterSearch("");
-                setIsAddModalOpen(true);
-              }}
-              className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
-            >
-              <PlusCircle className="w-3.5 h-3.5" />
-              Add Product to POS
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => setIsResetStockModalOpen(true)}
+                className="px-3 py-1.5 border border-slate-200 bg-white hover:bg-red-50 text-zinc-700 hover:text-red-600 font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                title="Reset all POS allocated stocks to 0"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-zinc-500 hover:text-red-600" />
+                <span>Reset Stock</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const actives = activations.filter((a) => a.status === "active");
+                  setSelectedImportActId(actives[0]?.id || "");
+                  setImportMode("replace");
+                  setIsImportAllocModalOpen(true);
+                }}
+                className="px-3 py-1.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-800 font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                title="Add / Sync allocated stock from an Active Activation"
+              >
+                <Download className="w-3.5 h-3.5 text-[#0B57D0]" />
+                <span>Add from Allocate</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedMasterSku("");
+                  setAddPrice("0.00");
+                  setAddStock("10");
+                  setAddReason("Initial POS stock allocation");
+                  setMasterSearch("");
+                  setIsAddModalOpen(true);
+                }}
+                className="px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <PlusCircle className="w-3.5 h-3.5" />
+                <span>Add Product to POS</span>
+              </button>
+            </>
           )}
 
           {activeTab === "pos_terminal" && posSubTab === "pricerules" && (
@@ -3239,40 +3531,49 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
         <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
           {/* Activations Table */}
           <div className="flex-1 overflow-auto min-h-0">
-            <table className="min-w-full divide-y divide-slate-100 text-xs">
-              <thead className="bg-[#F0F4F9] sticky top-0 z-10 border-b border-slate-200">
+            <table className="min-w-full divide-y divide-slate-100 text-xs font-primary">
+              <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200">
                 <tr>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px]">Activation Name &amp; Details</th>
-                  <th className="px-3.5 py-2.5 text-left font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-48">Event Date(s)</th>
-                  <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-28">Status</th>
-                  <th className="px-3.5 py-2.5 text-center font-bold text-zinc-700 uppercase tracking-wider text-[11px] w-52">Actions</th>
+                  <th className="px-4 py-2.5 text-left font-semibold text-zinc-600 text-[11px]">Activation &amp; Location</th>
+                  <th className="px-4 py-2.5 text-left font-semibold text-zinc-600 text-[11px] w-56">Stock &amp; Campaign</th>
+                  <th className="px-4 py-2.5 text-left font-semibold text-zinc-600 text-[11px] w-44">Date &amp; Hours</th>
+                  <th className="px-4 py-2.5 text-center font-semibold text-zinc-600 text-[11px] w-24">Mode</th>
+                  <th className="px-4 py-2.5 text-center font-semibold text-zinc-600 text-[11px] w-28">Status</th>
+                  <th className="px-4 py-2.5 text-right font-semibold text-zinc-600 text-[11px] w-64">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {activations.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="px-3 py-16 text-center text-zinc-500">
+                    <td colSpan={6} className="px-3 py-16 text-center text-zinc-500">
                       <div className="flex flex-col items-center justify-center gap-3">
                         <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center text-[#0B57D0]">
                           <Calendar className="w-6 h-6" />
                         </div>
                         <div>
-                          <p className="font-bold text-sm text-zinc-800">No Event Activations created yet</p>
+                          <p className="font-semibold text-sm text-zinc-800">No Event Activations created yet</p>
                           <p className="text-xs text-zinc-400 mt-0.5">Create sessions for roadshows, allocate stocks, track staff &amp; FOC reasons, and reconcile returns.</p>
                         </div>
                         <button
                           type="button"
                           onClick={() => {
+                            setEditingAct(null);
                             setNewActName("");
                             setNewActLocation("");
-                            setNewActStartDate(new Date().toISOString().split("T")[0]);
-                            setNewActEndDate(new Date().toISOString().split("T")[0]);
+                            const todayStr = new Date().toISOString().split("T")[0];
+                            setNewActStartDate(todayStr);
+                            setNewActEndDate(todayStr);
+                            setNewActStartTime("10:00");
+                            setNewActEndTime("22:00");
+                            setNewActDailySchedule([{ date: todayStr, start_time: "10:00", end_time: "22:00", day_number: 1 }]);
                             setNewActFocDesc("");
+                            setNewActUsePos(true);
                             setNewActParticipants([]);
                             setNewActAllocatedItems([{ sku: "", qty: "" }]);
+                            setNewActOperationalCosts([]);
                             setIsCreateActModalOpen(true);
                           }}
-                          className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 cursor-pointer shadow-xs"
                         >
                           <Plus className="w-4 h-4" />
                           <span>Create First Activation</span>
@@ -3292,144 +3593,256 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                       return dateStr;
                     };
                     const staffCount = Array.isArray(act.participants) ? act.participants.length : 0;
+                    const sched = Array.isArray(act.daily_schedule) ? act.daily_schedule : [];
+                    const totalAllocatedUnits = Array.isArray(act.stock_allocated)
+                      ? act.stock_allocated.reduce((sum, item) => sum + (Number(item.qty) || 0), 0)
+                      : 0;
+                    const allocatedSkuCount = Array.isArray(act.stock_allocated)
+                      ? act.stock_allocated.filter((item) => Number(item.qty) > 0).length
+                      : 0;
 
                     return (
-                      <tr key={act.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="px-3.5 py-2.5">
-                          <div className="flex flex-col gap-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-[10px] text-zinc-400 font-semibold tracking-tight">{act.id}</span>
-                              {act.use_pos !== false ? (
-                                <span className="px-1.5 py-0.2 bg-blue-50 text-[#0B57D0] border border-blue-200 rounded text-[9px] font-bold">POS Terminal</span>
-                              ) : (
-                                <span className="px-1.5 py-0.2 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[9px] font-bold">Sampling Only (No POS)</span>
-                              )}
-                            </div>
-                            <span className="font-bold text-sm text-zinc-900 leading-tight">{act.name}</span>
-                            <div className="flex flex-wrap items-center gap-3 mt-0.5">
+                      <tr key={act.id} className="hover:bg-slate-50/70 transition-colors">
+                        {/* 1. Activation Name & Details */}
+                        <td className="px-4 py-3 align-middle">
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-semibold text-xs text-zinc-900 leading-snug">{act.name}</span>
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-500 mt-0.5">
                               {act.location ? (
-                                <span className="text-xs text-zinc-500 flex items-center gap-1">
+                                <span className="flex items-center gap-1 text-zinc-600">
                                   <MapPin className="w-3 h-3 text-zinc-400 shrink-0" />
-                                  <span>{act.location}</span>
+                                  <span className="truncate max-w-xs">{act.location}</span>
                                 </span>
                               ) : null}
 
-                              {/* (qty) Staff Join Button */}
+                              {act.location && <span>•</span>}
+
                               <button
                                 type="button"
                                 onClick={() => setViewingStaffAct(act)}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-slate-200 hover:border-[#0B57D0]/40 bg-slate-50 hover:bg-blue-50 text-[#0B57D0] text-[11px] font-semibold transition-all cursor-pointer shadow-2xs select-none"
-                                title="Click to view joined staff roster"
+                                className="inline-flex items-center gap-1 text-zinc-500 hover:text-[#0B57D0] hover:underline cursor-pointer transition-colors"
+                                title="Click to view staff roster"
                               >
-                                <Users className="w-3 h-3 text-[#0B57D0]" />
-                                <span>({staffCount}) Staff Join</span>
+                                <Users className="w-3 h-3 text-zinc-400" />
+                                <span>{staffCount} Staff</span>
                               </button>
+
+                              <span>•</span>
+                              <span className="font-mono text-[10px] text-zinc-400">{act.id}</span>
                             </div>
                           </div>
                         </td>
-                        <td className="px-3.5 py-2.5 text-zinc-700 font-medium whitespace-nowrap">
-                          {act.start_date === act.end_date || !act.end_date ? (
-                            <span>{formatToDDMMYYYY(act.start_date)}</span>
+
+                        {/* 2. Stock Allocation & Campaign */}
+                        <td className="px-4 py-3 align-middle">
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1.5 text-xs text-zinc-800 font-medium">
+                              <Package className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                              <span>
+                                {totalAllocatedUnits > 0
+                                  ? `${totalAllocatedUnits} units (${allocatedSkuCount} SKUs)`
+                                  : "No stock allocated"}
+                              </span>
+                            </div>
+                            {act.foc_description ? (
+                              <span className="text-[11px] text-zinc-500 truncate max-w-xs" title={act.foc_description}>
+                                {act.foc_description}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-zinc-400 italic">No campaign note</span>
+                            )}
+                          </div>
+                        </td>
+
+                        {/* 3. Date & Operating Hours */}
+                        <td className="px-4 py-3 align-middle whitespace-nowrap">
+                          <div className="flex flex-col">
+                            <span className="text-xs text-zinc-800 font-medium">
+                              {act.start_date === act.end_date || !act.end_date
+                                ? formatToDDMMYYYY(act.start_date)
+                                : `${formatToDDMMYYYY(act.start_date)} → ${formatToDDMMYYYY(act.end_date)}`}
+                            </span>
+                            {(() => {
+                              if (sched.length > 1) {
+                                const allSame = sched.every(s => s.start_time === sched[0].start_time && s.end_time === sched[0].end_time);
+                                return (
+                                  <span className="text-[11px] text-zinc-500 flex items-center gap-1 mt-0.5 font-mono">
+                                    <Clock className="w-3 h-3 text-zinc-400" />
+                                    <span>
+                                      {allSame && sched[0].start_time 
+                                        ? `${sched.length}d (${sched[0].start_time}-${sched[0].end_time})` 
+                                        : `${sched.length} Days Schedule`}
+                                    </span>
+                                  </span>
+                                );
+                              } else if (act.start_time || (sched.length === 1 && sched[0].start_time)) {
+                                const st = act.start_time || sched[0]?.start_time;
+                                const et = act.end_time || sched[0]?.end_time;
+                                return (
+                                  <span className="text-[11px] text-zinc-500 flex items-center gap-1 mt-0.5 font-mono">
+                                    <Clock className="w-3 h-3 text-zinc-400" />
+                                    <span>{st} - {et}</span>
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
+                          </div>
+                        </td>
+
+                        {/* 4. Operational Mode */}
+                        <td className="px-4 py-3 align-middle text-center whitespace-nowrap">
+                          {act.use_pos !== false ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-[#0B57D0] border border-blue-100 rounded text-[11px] font-medium">
+                              <ShoppingBag className="w-3 h-3" />
+                              <span>POS</span>
+                            </span>
                           ) : (
-                            <span>{formatToDDMMYYYY(act.start_date)} → {formatToDDMMYYYY(act.end_date)}</span>
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-slate-100 text-zinc-600 border border-slate-200 rounded text-[11px] font-medium">
+                              <Tag className="w-3 h-3" />
+                              <span>Sampling</span>
+                            </span>
                           )}
                         </td>
-                        <td className="px-3.5 py-2.5 text-center whitespace-nowrap">
+
+                        {/* 5. Status */}
+                        <td className="px-4 py-3 align-middle text-center whitespace-nowrap">
                           {isClosed ? (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold border bg-slate-100 text-zinc-600 border-slate-300">
-                              CLOSED
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium text-zinc-500 bg-slate-100">
+                              <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
+                              <span>Closed</span>
                             </span>
                           ) : isEnded ? (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold border bg-amber-50 text-amber-700 border-amber-200">
-                              PENDING RECONCILIATION
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium text-amber-800 bg-amber-50">
+                              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                              <span>Pending Close</span>
                             </span>
                           ) : (
-                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold border bg-emerald-50 text-emerald-700 border-emerald-200">
-                              ACTIVE
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium text-emerald-700 bg-emerald-50">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                              <span>Active</span>
                             </span>
                           )}
                         </td>
-                        <td className="px-3.5 py-2.5 text-center whitespace-nowrap">
-                          <div className="flex items-center justify-center gap-1.5">
-                            {/* Edit Activation (Active only) */}
+
+                        {/* 6. Row Actions */}
+                        <td className="px-4 py-3 align-middle text-right whitespace-nowrap">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {/* Edit Button (Active / Pending only) */}
                             {!isClosed && (
                               <button
                                 type="button"
                                 onClick={() => handleOpenEditActivation(act)}
-                                className="h-8 px-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all flex items-center gap-1 shadow-xs cursor-pointer whitespace-nowrap shrink-0"
-                                title="Edit Activation Details"
+                                className="h-7.5 w-7.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 hover:text-[#0B57D0] rounded-md transition-all flex items-center justify-center shadow-2xs cursor-pointer shrink-0"
+                                title="Edit Activation"
                               >
-                                <Pencil className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
-                                <span>Edit</span>
+                                <Pencil className="w-3.5 h-3.5" />
                               </button>
                             )}
 
-                            {/* Delete Activation (Active only) */}
+                            {/* Delete Button (Active / Pending only) */}
                             {!isClosed && (
                               <button
                                 type="button"
                                 onClick={() => setDeletingAct(act)}
-                                className="h-8 w-8 border border-slate-200 bg-white hover:bg-red-50 text-zinc-400 hover:text-red-600 font-semibold text-xs rounded-lg transition-all flex items-center justify-center shadow-xs cursor-pointer shrink-0"
+                                className="h-7.5 w-7.5 border border-slate-200 bg-white hover:bg-red-50 text-zinc-400 hover:text-red-600 rounded-md transition-all flex items-center justify-center shadow-2xs cursor-pointer shrink-0"
                                 title="Delete Activation"
                               >
-                                <Trash2 className="w-3.5 h-3.5 shrink-0" />
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             )}
 
-                            {/* Report Buttons - Appear after event date has finished or when closed */}
+                            {/* Compact Reports Dropdown Menu */}
                             {(isEnded || isClosed) && (
-                              <>
+                              <div className="relative">
                                 <button
                                   type="button"
-                                  onClick={() => handlePrintInvoicePDF(act)}
-                                  className="h-8 px-3 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap shrink-0"
-                                  title="Print Sales Report"
+                                  onClick={() => setOpenReportMenuAct(openReportMenuAct === act.id ? null : act.id)}
+                                  className="h-7.5 px-2.5 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-medium text-xs rounded-md transition-all flex items-center gap-1 shadow-2xs cursor-pointer"
+                                  title="View & Print Reports"
                                 >
-                                  <FileText className="w-3.5 h-3.5 text-[#0B57D0] shrink-0" />
-                                  <span>Sales Report</span>
+                                  <FileText className="w-3.5 h-3.5 text-zinc-500" />
+                                  <span>Reports</span>
+                                  <ChevronDown className="w-3 h-3 text-zinc-400" />
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handlePrintSamplePDF(act)}
-                                  className="h-8 px-3 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap shrink-0"
-                                  title="Print Sample Report (Tester & FOC items with Qty)"
-                                >
-                                  <FileSpreadsheet className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-                                  <span>Sample Report</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handlePrintReport(act)}
-                                  className="h-8 px-3 border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap shrink-0"
-                                  title="Print Audit Report"
-                                >
-                                  <Printer className="w-3.5 h-3.5 text-[#0B57D0] shrink-0" />
-                                  <span>Report</span>
-                                </button>
-                              </>
+
+                                {openReportMenuAct === act.id && (
+                                  <>
+                                    <div 
+                                      className="fixed inset-0 z-20" 
+                                      onClick={() => setOpenReportMenuAct(null)} 
+                                    />
+                                    <div className="absolute right-0 top-full mt-1 w-44 bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-30 animate-in fade-in-80 text-left">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenReportMenuAct(null);
+                                          handlePrintInvoicePDF(act);
+                                        }}
+                                        className="w-full px-3 py-1.5 text-xs text-zinc-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors"
+                                      >
+                                        <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
+                                        <span>Sales Report</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenReportMenuAct(null);
+                                          handlePrintSamplePDF(act);
+                                        }}
+                                        className="w-full px-3 py-1.5 text-xs text-zinc-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors"
+                                      >
+                                        <FileSpreadsheet className="w-3.5 h-3.5 text-purple-600" />
+                                        <span>Sample Report</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setOpenReportMenuAct(null);
+                                          handlePrintReport(act);
+                                        }}
+                                        className="w-full px-3 py-1.5 text-xs text-zinc-700 hover:bg-slate-50 flex items-center gap-2 cursor-pointer transition-colors"
+                                      >
+                                        <Printer className="w-3.5 h-3.5 text-zinc-600" />
+                                        <span>Audit Report</span>
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
                             )}
 
-                            {/* Close Activation Button - At very end of row actions */}
-                            {!isClosed && (
+                            {/* Close / Reopen Primary Action Button (Fixed Uniform Width w-[84px]) */}
+                            {!isClosed ? (
                               isEnded ? (
                                 <button
                                   type="button"
                                   onClick={() => handleOpenCloseModal(act)}
-                                  className="h-8 px-3 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer whitespace-nowrap shrink-0"
+                                  className="h-7.5 w-[84px] justify-center bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium text-xs rounded-md transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer shrink-0"
                                   title="Close & Reconcile Activation"
                                 >
-                                  <Lock className="w-3.5 h-3.5 shrink-0" />
-                                  <span>Close Activation</span>
+                                  <Lock className="w-3 h-3" />
+                                  <span>Close</span>
                                 </button>
                               ) : (
                                 <span
-                                  className="h-8 px-2.5 bg-slate-100 border border-slate-200 text-zinc-400 font-semibold text-[11px] rounded-lg flex items-center gap-1 cursor-not-allowed shrink-0 select-none"
-                                  title={`Cannot close until event ends on ${formatToDDMMYYYY(act.end_date)}`}
+                                  className="h-7.5 w-[84px] justify-center bg-slate-50 border border-slate-200 text-zinc-400 font-medium text-[11px] rounded-md flex items-center gap-1 cursor-default shrink-0 select-none"
+                                  title={`Event active until ${formatToDDMMYYYY(act.end_date)}`}
                                 >
-                                  <Clock className="w-3 h-3 shrink-0" />
+                                  <Clock className="w-3 h-3 text-zinc-400" />
                                   <span>In Progress</span>
                                 </span>
                               )
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setReopeningAct(act)}
+                                className="h-7.5 w-[84px] justify-center border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 hover:text-[#0B57D0] font-medium text-xs rounded-md transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer shrink-0"
+                                title="Reopen Closed Activation"
+                              >
+                                <RotateCcw className="w-3 h-3 text-zinc-500" />
+                                <span>Reopen</span>
+                              </button>
                             )}
                           </div>
                         </td>
@@ -5509,25 +5922,116 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                 </div>
               </div>
 
-              {/* Multi-Day Date Range */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-zinc-700">Start Date</label>
-                  <input
-                    type="date"
-                    value={newActStartDate}
-                    onChange={(e) => setNewActStartDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                  />
+              {/* Multi-Day Date Range & Operating Schedule */}
+              <div className="p-3.5 bg-[#F8F9FA] border border-slate-200 rounded-lg flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-zinc-900 flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-[#0B57D0]" />
+                    Event Dates &amp; Operating Hours
+                  </span>
+                  <span className="text-[11px] font-semibold text-[#0B57D0]">
+                    {newActDailySchedule.length} Day{newActDailySchedule.length > 1 ? "s" : ""} Total
+                  </span>
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="text-xs font-semibold text-zinc-700">End Date</label>
-                  <input
-                    type="date"
-                    value={newActEndDate}
-                    onChange={(e) => setNewActEndDate(e.target.value)}
-                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                  />
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-semibold text-zinc-600">Start Date *</label>
+                    <input
+                      type="date"
+                      value={newActStartDate}
+                      onChange={(e) => handleStartDateChange(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-semibold text-zinc-600">End Date *</label>
+                    <input
+                      type="date"
+                      value={newActEndDate}
+                      onChange={(e) => handleEndDateChange(e.target.value)}
+                      className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                    />
+                  </div>
+                </div>
+
+                {/* Default Start & End Time Controls */}
+                <div className="pt-2.5 border-t border-slate-200/80 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs">
+                    <Clock className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                    <span className="font-semibold text-zinc-700">Default Hours:</span>
+                    <input
+                      type="time"
+                      value={newActStartTime}
+                      onChange={(e) => setNewActStartTime(e.target.value)}
+                      className="px-2 py-1 bg-white border border-slate-200 rounded-md text-xs font-mono font-bold text-zinc-900 focus:outline-hidden"
+                    />
+                    <span className="text-zinc-400 font-bold">to</span>
+                    <input
+                      type="time"
+                      value={newActEndTime}
+                      onChange={(e) => setNewActEndTime(e.target.value)}
+                      className="px-2 py-1 bg-white border border-slate-200 rounded-md text-xs font-mono font-bold text-zinc-900 focus:outline-hidden"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleApplyTimesToAllDays}
+                    className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 text-[#0B57D0] font-semibold text-[11px] rounded-md transition-all cursor-pointer shadow-2xs"
+                    title="Apply default hours to all dates in this activation"
+                  >
+                    ⚡ Apply to All Days
+                  </button>
+                </div>
+
+                {/* Daily Schedule List (Per-Day Time Configuration) */}
+                <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-200/80">
+                  <div className="flex items-center justify-between text-[11px] text-zinc-500 font-semibold px-1">
+                    <span>Individual Day Schedule (Saved to JSON for Calendar Event):</span>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                    {newActDailySchedule.map((dayItem, dayIdx) => {
+                      const dateObj = new Date(dayItem.date);
+                      const dayName = isNaN(dateObj.getTime())
+                        ? ""
+                        : dateObj.toLocaleDateString("en-SG", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+
+                      return (
+                        <div
+                          key={dayItem.date || dayIdx}
+                          className="flex items-center justify-between p-2 bg-white border border-slate-200 rounded-lg text-xs gap-2"
+                        >
+                          <div className="flex items-center gap-2 min-w-36">
+                            <span className="px-1.5 py-0.5 bg-blue-50 text-[#0B57D0] border border-blue-200 rounded text-[10px] font-bold shrink-0 font-mono">
+                              Day {dayItem.day_number || (dayIdx + 1)}
+                            </span>
+                            <span className="font-semibold text-zinc-800 text-xs truncate">
+                              {dayName || dayItem.date}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[11px] text-zinc-400 font-medium">From:</span>
+                            <input
+                              type="time"
+                              value={dayItem.start_time}
+                              onChange={(e) => handleDailyTimeChange(dayIdx, "start_time", e.target.value)}
+                              className="px-2 py-1 bg-slate-50 border border-slate-200 rounded text-xs font-mono font-bold text-zinc-900 focus:bg-white focus:outline-hidden focus:border-[#0B57D0]"
+                            />
+                            <span className="text-[11px] text-zinc-400 font-medium">To:</span>
+                            <input
+                              type="time"
+                              value={dayItem.end_time}
+                              onChange={(e) => handleDailyTimeChange(dayIdx, "end_time", e.target.value)}
+                              className="px-2 py-1 bg-slate-50 border border-slate-200 rounded text-xs font-mono font-bold text-zinc-900 focus:bg-white focus:outline-hidden focus:border-[#0B57D0]"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -5640,6 +6144,99 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* Operational & Manual Costs (Transport, Decoration, Allowances, etc.) */}
+              <div className="flex flex-col gap-2 pt-3 border-t border-slate-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs font-bold text-zinc-800">Operational &amp; Manual Costs</label>
+                      {newActOperationalCosts.length > 0 && (
+                        <span className="px-2 py-0.5 bg-blue-50 text-[#0B57D0] border border-blue-200 font-mono font-bold text-[11px] rounded">
+                          Total: ${newActOperationalCosts.reduce((sum, c) => sum + (Number(c.amount) || 0), 0).toFixed(2)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-zinc-500">Add itemized manual expenses (e.g. Transport/Logistics, Booth Decoration, Meals, Allowances)</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNewActOperationalCosts(prev => [...prev, { description: "", amount: "", notes: "" }])}
+                    className="px-2.5 py-1 bg-white border border-slate-200 hover:bg-slate-50 text-zinc-700 rounded-md text-xs font-semibold transition-all flex items-center gap-1 shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-[#0B57D0]" />
+                    <span>Add Cost Item</span>
+                  </button>
+                </div>
+
+                {newActOperationalCosts.length === 0 ? (
+                  <div className="p-3 bg-[#F8F9FA] border border-dashed border-slate-200 rounded-lg text-center">
+                    <p className="text-xs text-zinc-400">No operational costs added yet. Click &quot;Add Cost Item&quot; to record transport, setup, or manual expenses.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {newActOperationalCosts.map((cost, idx) => (
+                      <div key={idx} className="flex items-center gap-2 p-2 bg-[#F8F9FA] border border-slate-200 rounded-lg">
+                        <input
+                          type="text"
+                          placeholder="Cost Description (e.g. Transport / Van Rental)"
+                          value={cost.description}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setNewActOperationalCosts(prev => {
+                              const next = [...prev];
+                              next[idx] = { ...next[idx], description: val };
+                              return next;
+                            });
+                          }}
+                          className="flex-1 px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-[#0B57D0]"
+                        />
+                        <div className="relative w-28">
+                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 font-bold text-xs">$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            value={cost.amount}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setNewActOperationalCosts(prev => {
+                                const next = [...prev];
+                                next[idx] = { ...next[idx], amount: val };
+                                return next;
+                              });
+                            }}
+                            className="w-full pl-6 pr-2 py-1.5 bg-white border border-slate-200 rounded-md text-xs font-mono font-bold text-zinc-900 focus:outline-hidden focus:ring-1 focus:ring-[#0B57D0]"
+                          />
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Notes / Remarks (optional)"
+                          value={cost.notes || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setNewActOperationalCosts(prev => {
+                              const next = [...prev];
+                              next[idx] = { ...next[idx], notes: val };
+                              return next;
+                            });
+                          }}
+                          className="w-44 px-3 py-1.5 bg-white border border-slate-200 rounded-md text-xs text-zinc-700 focus:outline-hidden focus:ring-1 focus:ring-[#0B57D0]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setNewActOperationalCosts(prev => prev.filter((_, i) => i !== idx))}
+                          className="p-1.5 text-zinc-400 hover:text-red-600 rounded-md hover:bg-red-50 transition-colors cursor-pointer shrink-0"
+                          title="Remove cost item"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -5814,6 +6411,111 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                           )}
                         </div>
                       )}
+
+                      {/* Operational & Manual Costs Review/Entry */}
+                      <div className="flex flex-col gap-2 pt-2 border-t border-slate-200">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-bold text-zinc-900">Operational &amp; Manual Costs</span>
+                            {closingOperationalCosts.length > 0 && (
+                              <span className="px-1.5 py-0.5 bg-blue-50 text-[#0B57D0] border border-blue-200 font-mono font-bold text-[10px] rounded">
+                                ${closingOperationalCosts.reduce((sum, c) => sum + (Number(c.amount) || 0), 0).toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setClosingOperationalCosts(prev => [...prev, { description: "", amount: "", notes: "" }])}
+                            className="text-[11px] text-[#0B57D0] hover:underline font-bold cursor-pointer flex items-center gap-0.5"
+                          >
+                            <Plus className="w-3 h-3" />
+                            <span>Add Cost</span>
+                          </button>
+                        </div>
+
+                        {closingOperationalCosts.length === 0 ? (
+                          <div className="p-2.5 bg-white border border-dashed border-slate-200 rounded-lg text-center">
+                            <span className="text-[11px] text-zinc-400">No operational expenses recorded. Click &quot;Add Cost&quot; to add transport, setup, or meal costs.</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-1.5">
+                            {closingOperationalCosts.map((cost, idx) => (
+                              <div key={idx} className="flex items-center gap-1.5 p-1.5 bg-white border border-slate-200 rounded-lg text-xs shadow-2xs">
+                                <input
+                                  type="text"
+                                  placeholder="Description (e.g. Transport)"
+                                  value={cost.description}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setClosingOperationalCosts(prev => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], description: val };
+                                      return next;
+                                    });
+                                  }}
+                                  className="flex-1 px-2 py-1 bg-slate-50 focus:bg-white border border-slate-200 rounded text-xs font-semibold text-zinc-900 focus:outline-hidden focus:border-[#0B57D0]"
+                                />
+                                <div className="relative w-20 shrink-0">
+                                  <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 font-bold text-[11px]">$</span>
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    placeholder="0.00"
+                                    value={cost.amount}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setClosingOperationalCosts(prev => {
+                                        const next = [...prev];
+                                        next[idx] = { ...next[idx], amount: val };
+                                        return next;
+                                      });
+                                    }}
+                                    className="w-full pl-4 pr-1 py-1 bg-slate-50 focus:bg-white border border-slate-200 rounded text-xs font-mono font-bold text-zinc-900 focus:outline-hidden focus:border-[#0B57D0]"
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setClosingOperationalCosts(prev => prev.filter((_, i) => i !== idx))}
+                                  className="p-1 text-zinc-400 hover:text-red-600 rounded hover:bg-red-50 transition-colors cursor-pointer shrink-0"
+                                  title="Remove cost item"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Event Financial Summary (Gross Sales - Costs = Net Return) */}
+                      {(() => {
+                        const grossTotal = assignedOrders.reduce((sum, o) => {
+                          return !o.is_foc && o.payment_method !== "FOC" ? sum + Number(o.total_amount || 0) : sum;
+                        }, 0);
+                        const totalCosts = closingOperationalCosts.reduce((sum, c) => sum + (Number(c.amount) || 0), 0);
+                        const netReturn = grossTotal - totalCosts;
+
+                        return (
+                          <div className="p-3 bg-white border border-slate-200 rounded-lg flex flex-col gap-1.5 text-xs shadow-2xs">
+                            <span className="text-[10px] font-bold uppercase text-zinc-400 tracking-wider">Financial Summary</span>
+                            <div className="flex items-center justify-between text-zinc-600">
+                              <span>Gross Sales Revenue:</span>
+                              <span className="font-mono font-bold text-zinc-900">${grossTotal.toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center justify-between text-zinc-600">
+                              <span>Operational Expenses:</span>
+                              <span className="font-mono font-bold text-red-600">-${totalCosts.toFixed(2)}</span>
+                            </div>
+                            <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+                              <span className="font-bold text-zinc-800">Net Event Return:</span>
+                              <span className={`font-mono font-black text-sm ${netReturn >= 0 ? "text-emerald-700" : "text-red-700"}`}>
+                                ${netReturn.toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* RIGHT COLUMN: STOCK RETURN TABLE */}
@@ -6008,6 +6710,75 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                 </div>
               );
             })()}
+          </div>
+        </div>
+      )}
+
+      {/* 10a-2. REOPEN ACTIVATION CONFIRMATION MODAL */}
+      {reopeningAct && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-2xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 font-primary">
+            <div className="p-5">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0">
+                  <RotateCcw className="w-5 h-5 text-[#0B57D0]" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-zinc-900">Reopen Activation</h3>
+                  <p className="text-xs text-zinc-500 mt-0.5">Restore activation status to active &amp; resume operations</p>
+                </div>
+              </div>
+
+              <div className="mt-4 p-3.5 bg-slate-50 border border-slate-200 rounded-lg text-xs space-y-2 text-zinc-700">
+                <div>
+                  <span className="text-zinc-500 font-medium">Activation:</span>{" "}
+                  <strong className="text-zinc-900 font-bold">{reopeningAct.name}</strong>{" "}
+                  <span className="font-mono text-[11px] text-zinc-400">({reopeningAct.id})</span>
+                </div>
+                {reopeningAct.location && (
+                  <div>
+                    <span className="text-zinc-500 font-medium">Location:</span>{" "}
+                    <span className="font-medium text-zinc-800">{reopeningAct.location}</span>
+                  </div>
+                )}
+                <div>
+                  <span className="text-zinc-500 font-medium">Closed By:</span>{" "}
+                  <span className="font-medium text-zinc-800">{reopeningAct.closed_by || "Operator"}</span>
+                </div>
+                <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 p-2.5 rounded-md mt-2">
+                  ⚠️ Reopening will reset status back to <strong>ACTIVE</strong> / <strong>PENDING RECONCILIATION</strong>, restore allocated POS inventory, and remove auto-generated pending stock movement entries.
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setReopeningAct(null)}
+                disabled={isReopeningAct}
+                className="h-8 px-4 border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 text-xs font-semibold rounded-lg cursor-pointer transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleReopenActivation}
+                disabled={isReopeningAct}
+                className="h-8 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold rounded-lg shadow-xs cursor-pointer transition-all flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isReopeningAct ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Reopening...</span>
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Reopen Activation</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -6243,21 +7014,37 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                 else if (pm === "transfer bank" || pm === "bank transfer" || pm === "card") transferTotal += amt;
               });
 
+              const totalCosts = (Array.isArray(printingAct.operational_costs) ? printingAct.operational_costs : []).reduce(
+                (sum, c) => sum + Number(c.amount || 0),
+                0
+              );
+              const netReturn = totalGross - totalCosts;
+
               return (
-                <div className="grid grid-cols-4 gap-3 p-3 bg-zinc-50 border border-zinc-200 rounded-lg text-xs mb-4 text-center">
-                  <div>
-                    <span className="text-[10px] text-zinc-500 uppercase font-bold block">Total Revenue</span>
-                    <strong className="text-base text-zinc-950 font-bold">${totalGross.toFixed(2)}</strong>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 p-3 bg-zinc-50 border border-zinc-200 rounded-lg text-xs mb-4 text-center">
+                  <div className="p-1.5 bg-white border border-slate-200 rounded">
+                    <span className="text-[10px] text-zinc-500 uppercase font-bold block">Gross Revenue</span>
+                    <strong className="text-sm text-zinc-950 font-bold">${totalGross.toFixed(2)}</strong>
                   </div>
-                  <div>
+                  <div className="p-1.5 bg-white border border-slate-200 rounded">
+                    <span className="text-[10px] text-zinc-500 uppercase font-bold block">Operational Costs</span>
+                    <strong className="text-sm text-red-600 font-bold">-${totalCosts.toFixed(2)}</strong>
+                  </div>
+                  <div className="p-1.5 bg-white border border-slate-200 rounded">
+                    <span className="text-[10px] text-zinc-500 uppercase font-bold block">Net Event Return</span>
+                    <strong className={`text-sm font-black ${netReturn >= 0 ? "text-emerald-700" : "text-red-700"}`}>
+                      ${netReturn.toFixed(2)}
+                    </strong>
+                  </div>
+                  <div className="p-1.5 bg-white border border-slate-200 rounded">
                     <span className="text-[10px] text-zinc-500 uppercase font-bold block">Cash Collected</span>
                     <strong className="text-sm text-zinc-900 font-bold">${cashTotal.toFixed(2)}</strong>
                   </div>
-                  <div>
+                  <div className="p-1.5 bg-white border border-slate-200 rounded">
                     <span className="text-[10px] text-zinc-500 uppercase font-bold block">QR / PayNow</span>
                     <strong className="text-sm text-zinc-900 font-bold">${qrTotal.toFixed(2)}</strong>
                   </div>
-                  <div>
+                  <div className="p-1.5 bg-white border border-slate-200 rounded">
                     <span className="text-[10px] text-zinc-500 uppercase font-bold block">Bank Transfer</span>
                     <strong className="text-sm text-zinc-900 font-bold">${transferTotal.toFixed(2)}</strong>
                   </div>
@@ -6266,73 +7053,122 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
             })()}
 
             {/* Stock Reconciliation Table */}
-            <div className="border border-zinc-300 rounded-lg overflow-hidden mb-6">
-              <table className="min-w-full divide-y divide-zinc-200 text-xs">
-                <thead className="bg-zinc-100">
-                  <tr>
-                    <th className="px-3 py-2 text-left font-bold text-zinc-800 uppercase text-[10px]">Product / SKU</th>
-                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Allocated Float</th>
-                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Sales</th>
-                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">FOC Sampling</th>
-                    <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Returned</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-zinc-200">
-                  {(() => {
-                    const actOrders = orders.filter(o => o.activation_id === printingAct.id);
-                    const salesMap: Record<string, number> = {};
-                    const focMap: Record<string, number> = {};
+            <div className="mb-6">
+              <span className="text-xs font-bold text-zinc-900 uppercase tracking-wider block mb-2">
+                2. Stock Movement &amp; Reconciliation Table
+              </span>
+              <div className="border border-zinc-300 rounded-lg overflow-hidden">
+                <table className="min-w-full divide-y divide-zinc-200 text-xs">
+                  <thead className="bg-zinc-100">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-bold text-zinc-800 uppercase text-[10px]">Product / SKU</th>
+                      <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Allocated Float</th>
+                      <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Sales</th>
+                      <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">FOC Sampling</th>
+                      <th className="px-2.5 py-2 text-center font-bold text-zinc-800 uppercase text-[10px]">Returned</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-zinc-200">
+                    {(() => {
+                      const actOrders = orders.filter(o => o.activation_id === printingAct.id);
+                      const salesMap: Record<string, number> = {};
+                      const focMap: Record<string, number> = {};
 
-                    actOrders.forEach(ord => {
-                      const isOrdFoc = ord.is_foc || ord.payment_method === "FOC" || ord.discount_type === "foc";
-                      (ord.items || []).forEach(it => {
-                        const sku = it.sku;
-                        const qty = Number(it.qty || 1);
-                        if (isOrdFoc || it.is_foc || it.discount_type === "foc") {
-                          focMap[sku] = (focMap[sku] || 0) + qty;
-                        } else {
-                          salesMap[sku] = (salesMap[sku] || 0) + qty;
-                        }
+                      actOrders.forEach(ord => {
+                        const isOrdFoc = ord.is_foc || ord.payment_method === "FOC" || ord.discount_type === "foc";
+                        (ord.items || []).forEach(it => {
+                          const sku = it.sku;
+                          const qty = Number(it.qty || 1);
+                          if (isOrdFoc || it.is_foc || it.discount_type === "foc") {
+                            focMap[sku] = (focMap[sku] || 0) + qty;
+                          } else {
+                            salesMap[sku] = (salesMap[sku] || 0) + qty;
+                          }
+                        });
                       });
-                    });
 
-                    const allSkus = Array.from(new Set([
-                      ...(printingAct.stock_allocated || []).map(it => it.sku),
-                      ...(printingAct.stock_returned || []).map(it => it.sku),
-                      ...Object.keys(salesMap),
-                      ...Object.keys(focMap)
-                    ]));
+                      const allSkus = Array.from(new Set([
+                        ...(printingAct.stock_allocated || []).map(it => it.sku),
+                        ...(printingAct.stock_returned || []).map(it => it.sku),
+                        ...Object.keys(salesMap),
+                        ...Object.keys(focMap)
+                      ]));
 
-                    if (allSkus.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan={5} className="px-3 py-6 text-center text-zinc-400 italic">
-                            No SKU movement records for this activation.
-                          </td>
-                        </tr>
-                      );
-                    }
+                      if (allSkus.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={5} className="px-3 py-6 text-center text-zinc-400 italic">
+                              No SKU movement records for this activation.
+                            </td>
+                          </tr>
+                        );
+                      }
 
-                    return allSkus.map(sku => {
-                      const alloc = (printingAct.stock_allocated || []).find(it => it.sku === sku)?.qty || 0;
-                      const ret = (printingAct.stock_returned || []).find(it => it.sku === sku)?.qty || 0;
-                      const sold = salesMap[sku] || (printingAct.stock_sales || []).find(it => it.sku === sku)?.qty || 0;
-                      const foc = focMap[sku] || (printingAct.stock_foc || []).find(it => it.sku === sku)?.qty || 0;
+                      return allSkus.map(sku => {
+                        const alloc = (printingAct.stock_allocated || []).find(it => it.sku === sku)?.qty || 0;
+                        const ret = (printingAct.stock_returned || []).find(it => it.sku === sku)?.qty || 0;
+                        const sold = salesMap[sku] || (printingAct.stock_sales || []).find(it => it.sku === sku)?.qty || 0;
+                        const foc = focMap[sku] || (printingAct.stock_foc || []).find(it => it.sku === sku)?.qty || 0;
 
-                      return (
-                        <tr key={sku}>
-                          <td className="px-3 py-2 font-mono font-bold text-zinc-900">{sku}</td>
-                          <td className="px-2.5 py-2 text-center font-mono font-bold">{alloc}</td>
-                          <td className="px-2.5 py-2 text-center font-mono font-bold text-emerald-800">{sold}</td>
-                          <td className="px-2.5 py-2 text-center font-mono font-bold text-purple-800">{foc}</td>
-                          <td className="px-2.5 py-2 text-center font-mono font-bold text-zinc-800">{ret}</td>
-                        </tr>
-                      );
-                    });
-                  })()}
-                </tbody>
-              </table>
+                        return (
+                          <tr key={sku}>
+                            <td className="px-3 py-2 font-mono font-bold text-zinc-900">{sku}</td>
+                            <td className="px-2.5 py-2 text-center font-mono font-bold">{alloc}</td>
+                            <td className="px-2.5 py-2 text-center font-mono font-bold text-emerald-800">{sold}</td>
+                            <td className="px-2.5 py-2 text-center font-mono font-bold text-purple-800">{foc}</td>
+                            <td className="px-2.5 py-2 text-center font-mono font-bold text-zinc-800">{ret}</td>
+                          </tr>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
             </div>
+
+            {/* Operational & Manual Expenses Breakdown */}
+            {Array.isArray(printingAct.operational_costs) && printingAct.operational_costs.length > 0 && (
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                    3. Operational &amp; Manual Expenses Breakdown
+                  </span>
+                  <span className="text-xs font-mono font-bold text-red-700">
+                    Total: ${printingAct.operational_costs.reduce((sum, c) => sum + Number(c.amount || 0), 0).toFixed(2)}
+                  </span>
+                </div>
+                <div className="border border-zinc-300 rounded-lg overflow-hidden">
+                  <table className="min-w-full divide-y divide-zinc-200 text-xs">
+                    <thead className="bg-zinc-100">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-bold text-zinc-800 uppercase text-[10px] w-12">#</th>
+                        <th className="px-3 py-2 text-left font-bold text-zinc-800 uppercase text-[10px]">Expense Description</th>
+                        <th className="px-3 py-2 text-left font-bold text-zinc-800 uppercase text-[10px]">Notes / Remarks</th>
+                        <th className="px-3 py-2 text-right font-bold text-zinc-800 uppercase text-[10px] w-28">Amount ($)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-zinc-200">
+                      {printingAct.operational_costs.map((cost, cIdx) => (
+                        <tr key={cIdx}>
+                          <td className="px-3 py-2 font-mono text-zinc-500">{cIdx + 1}</td>
+                          <td className="px-3 py-2 font-bold text-zinc-900">{cost.description}</td>
+                          <td className="px-3 py-2 text-zinc-600 italic">{cost.notes || "—"}</td>
+                          <td className="px-3 py-2 text-right font-mono font-bold text-zinc-900">${Number(cost.amount || 0).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-zinc-50 border-t border-zinc-300 font-bold">
+                      <tr>
+                        <td colSpan={3} className="px-3 py-2 text-right uppercase text-[10px] text-zinc-700">Total Operational Expenses:</td>
+                        <td className="px-3 py-2 text-right font-mono font-black text-xs text-red-700">
+                          ${printingAct.operational_costs.reduce((sum, c) => sum + Number(c.amount || 0), 0).toFixed(2)}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Attached Payment & Cash Deposit Proofs Gallery */}
             {(() => {
@@ -7285,6 +8121,251 @@ export function ActivationModule({ profile }: ActivationModuleProps) {
                   <span>{editingTransactionOrder ? "Save Changes" : "Record Transaction"}</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reset POS Stock Confirmation Modal */}
+      {isResetStockModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden flex flex-col animate-in zoom-in-95">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center text-red-600">
+                  <RotateCcw className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-zinc-900">Clear &amp; Empty POS Catalog</h3>
+                  <p className="text-xs text-zinc-500">Remove all products from the POS terminal catalog list</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsResetStockModalOpen(false)}
+                className="text-zinc-400 hover:text-zinc-600 p-1 rounded-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 flex flex-col gap-3">
+              <div className="p-3.5 bg-red-50/60 border border-red-200 rounded-lg text-xs text-red-800 flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <div className="flex flex-col gap-1">
+                  <span className="font-bold">Are you sure you want to empty the POS catalog list?</span>
+                  <span className="text-red-700 leading-relaxed">
+                    This will remove all products from the current POS terminal list, allowing you to re-allocate or import fresh stock from active activations.
+                  </span>
+                </div>
+              </div>
+
+              <div className="text-xs text-zinc-600 bg-slate-50 p-3 rounded-lg border border-slate-200">
+                <span>Total products currently in POS: <strong>{posProducts.length}</strong></span>
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsResetStockModalOpen(false)}
+                disabled={isResettingStock}
+                className="px-4 py-2 bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 font-semibold text-xs rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleResetPosStock}
+                disabled={isResettingStock}
+                className="px-5 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+              >
+                {isResettingStock ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                <span>Confirm &amp; Empty List</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Stock from Active Activation Modal */}
+      {isImportAllocModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-xl overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95">
+            <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-[#0B57D0]">
+                  <Download className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-sm text-zinc-900">Add Stock from Active Activation</h3>
+                  <p className="text-xs text-zinc-500">Import allocated event roadshow stock directly into POS catalog</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsImportAllocModalOpen(false)}
+                className="text-zinc-400 hover:text-zinc-600 p-1 rounded-md cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 flex-1 overflow-y-auto flex flex-col gap-4">
+              {/* Select Active Activation */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-bold text-zinc-800">
+                  Select Active Activation <span className="text-red-500">*</span>
+                </label>
+                {(() => {
+                  const activeActivations = activations.filter(a => a.status === "active");
+                  if (activeActivations.length === 0) {
+                    return (
+                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>No Active Activations found. Only active roadshow activations can be imported.</span>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <select
+                      value={selectedImportActId}
+                      onChange={(e) => setSelectedImportActId(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                    >
+                      {activeActivations.map(act => {
+                        const totalUnits = Array.isArray(act.stock_allocated) 
+                          ? act.stock_allocated.reduce((s, it) => s + (Number(it.qty) || 0), 0) 
+                          : 0;
+                        const skuCount = Array.isArray(act.stock_allocated) 
+                          ? act.stock_allocated.filter(it => Number(it.qty) > 0).length 
+                          : 0;
+                        return (
+                          <option key={act.id} value={act.id}>
+                            {act.name} ({act.location || "No location"}) — {totalUnits} Units ({skuCount} SKUs) [{act.id}]
+                          </option>
+                        );
+                      })}
+                    </select>
+                  );
+                })()}
+              </div>
+
+              {/* Preview Allocated Stock Items */}
+              {(() => {
+                const selectedAct = activations.find(a => a.id === selectedImportActId);
+                const allocatedList = Array.isArray(selectedAct?.stock_allocated) ? selectedAct.stock_allocated : [];
+
+                if (!selectedAct) return null;
+
+                return (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-zinc-800">Allocated Items in Activation ({allocatedList.length} SKUs):</span>
+                      <span className="text-xs text-zinc-500 font-mono">
+                        Total: {allocatedList.reduce((s, it) => s + (Number(it.qty) || 0), 0)} pcs
+                      </span>
+                    </div>
+
+                    <div className="border border-slate-200 rounded-lg max-h-48 overflow-y-auto divide-y divide-slate-100 bg-slate-50/50 text-xs">
+                      {allocatedList.length === 0 ? (
+                        <div className="p-4 text-center text-zinc-400">No stock allocated in this activation.</div>
+                      ) : (
+                        allocatedList.map((item, idx) => {
+                          const matchedProduct = masterProducts.find(p => p.sku.toLowerCase() === item.sku.toLowerCase()) || 
+                                                posProducts.find(p => p.sku.toLowerCase() === item.sku.toLowerCase());
+                          return (
+                            <div key={idx} className="px-3 py-2 flex items-center justify-between bg-white">
+                              <div className="flex flex-col">
+                                <span className="font-mono font-bold text-zinc-900">{item.sku}</span>
+                                <span className="text-[11px] text-zinc-500 truncate max-w-sm">
+                                  {matchedProduct?.display_name || item.sku}
+                                </span>
+                              </div>
+                              <span className="font-mono font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                                {item.qty} pcs
+                              </span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Import Mode Options */}
+              <div className="flex flex-col gap-1.5 pt-2 border-t border-slate-100">
+                <label className="text-xs font-bold text-zinc-800">Stock Update Mode</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <label
+                    className={`p-3 rounded-lg border text-xs cursor-pointer flex flex-col gap-1 transition-all ${
+                      importMode === "replace"
+                        ? "border-[#0B57D0] bg-blue-50/40 text-zinc-900"
+                        : "border-slate-200 bg-white text-zinc-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="importMode"
+                        value="replace"
+                        checked={importMode === "replace"}
+                        onChange={() => setImportMode("replace")}
+                        className="text-[#0B57D0]"
+                      />
+                      <strong className="font-semibold text-zinc-900">Replace POS Stock</strong>
+                    </div>
+                    <span className="text-[11px] text-zinc-500 pl-5">
+                      Set POS stock to match this activation's exact allocated quantities.
+                    </span>
+                  </label>
+
+                  <label
+                    className={`p-3 rounded-lg border text-xs cursor-pointer flex flex-col gap-1 transition-all ${
+                      importMode === "add"
+                        ? "border-[#0B57D0] bg-blue-50/40 text-zinc-900"
+                        : "border-slate-200 bg-white text-zinc-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="radio"
+                        name="importMode"
+                        value="add"
+                        checked={importMode === "add"}
+                        onChange={() => setImportMode("add")}
+                        className="text-[#0B57D0]"
+                      />
+                      <strong className="font-semibold text-zinc-900">Add to Existing Stock</strong>
+                    </div>
+                    <span className="text-[11px] text-zinc-500 pl-5">
+                      Add this activation's quantities on top of current POS stock.
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setIsImportAllocModalOpen(false)}
+                disabled={isImportingStock}
+                className="px-4 py-2 bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 font-semibold text-xs rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleImportActivationStock}
+                disabled={isImportingStock || !selectedImportActId}
+                className="px-5 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold text-xs rounded-lg transition-all flex items-center gap-1.5 shadow-xs cursor-pointer disabled:opacity-50"
+              >
+                {isImportingStock ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                <span>Import Stock into POS</span>
+              </button>
             </div>
           </div>
         </div>

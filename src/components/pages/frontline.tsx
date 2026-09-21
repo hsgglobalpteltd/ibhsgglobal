@@ -7,6 +7,10 @@ import { PromoterModule } from "../modules/PromoterModule";
 import { MerchandiserModule } from "../modules/MerchandiserModule";
 import { TaskModule } from "../modules/TaskModule";
 import { TrackOrderModule } from "../modules/TrackOrderModule";
+import { CalendarEventModule } from "../modules/CalendarEventModule";
+import { DirectOrderModule } from "../modules/DirectOrderModule";
+import { StoresVisibilityModule } from "../modules/StoresVisibilityModule";
+import { SponsorshipModule } from "../modules/SponsorshipModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canViewModule } from "@/lib/permissions";
 import { UserProfile } from "@/lib/api";
@@ -108,6 +112,8 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
 
   const renderActiveSubModule = () => {
     switch (activeSubModule) {
+      case "Calendar Event":
+        return <CalendarEventModule profile={profile} />;
       case "Activation":
         return <ActivationModule profile={profile} />;
       case "Promoter":
@@ -118,6 +124,12 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
         return <TaskModule profile={profile} />;
       case "Track Order":
         return <TrackOrderModule profile={profile} />;
+      case "Direct Order":
+        return <DirectOrderModule profile={profile} />;
+      case "Stores Visibility":
+        return <StoresVisibilityModule profile={profile} />;
+      case "Sponsorship":
+        return <SponsorshipModule profile={profile} />;
       default:
         return null;
     }

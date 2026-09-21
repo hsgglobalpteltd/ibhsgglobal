@@ -30,6 +30,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     label: "Frontline",
     modules: [
       {
+        title: "Calendar Event",
+        description: "Master calendar combining event activations and promoter field schedules.",
+      },
+      {
         title: "Activation",
         description: "Manage event activations, POS catalog, retail stock float, brand promos, and transactions.",
       },
@@ -48,6 +52,18 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Track Order",
         description: "Monitor and manage delivery orders, vehicle routing tracks, and real-time delivery logs.",
+      },
+      {
+        title: "Direct Order",
+        description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
+      },
+      {
+        title: "Stores Visibility",
+        description: "Monitor product retail presence, store visibility, latest visits, and shelf compliance audits.",
+      },
+      {
+        title: "Sponsorship",
+        description: "Manage brand sponsorships, output distribution tracking, and receiver limit registries.",
       }
     ]
   },
@@ -78,16 +94,16 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     label: "Sales & Channels",
     modules: [
       {
-        title: "Sale In & Sale Out",
-        description: "Reconcile Million sell-in invoices, retailer POS sell-out, payment terms, and cash flow timing.",
+        title: "Sell-In",
+        description: "Pure sales demand engine for stock planning, marketing, and manpower. B2B Million statements & TikTok shop sync.",
+      },
+      {
+        title: "Buyers & Channels",
+        description: "Master directory of B2B retail buyers, modern trade accounts, and sales channels registry.",
       },
       {
         title: "Sale Projection",
         description: "Configure commercial campaigns, 5-stage milestone SKU orders, and multi-entity cost sharing.",
-      },
-      {
-        title: "Direct Order",
-        description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
       },
       {
         title: "Market Price",
@@ -96,14 +112,6 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Snap Deals",
         description: "Calculate deal costs, pricing, profits, and retailer business agreements.",
-      },
-      {
-        title: "Stores Visibility",
-        description: "Monitor product retail presence, store visibility, latest visits, and shelf compliance audits.",
-      },
-      {
-        title: "Sponsorship",
-        description: "Manage brand sponsorships, output distribution tracking, and receiver limit registries.",
       }
     ]
   },

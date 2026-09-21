@@ -125,20 +125,20 @@ export function TagInput({ tags, onChange, placeholder, suggestions, id, disable
 
   return (
     <div className={`flex flex-col gap-1.5 w-full ${disabled ? "opacity-60 cursor-not-allowed" : ""}`}>
-      <div className={`flex flex-wrap gap-1.5 p-2 bg-[#F0F4F9] border border-slate-200 rounded min-h-[38px] items-center focus-within:border-blue-400 ${disabled ? "bg-zinc-100 cursor-not-allowed" : ""}`}>
+      <div className={`flex flex-wrap gap-1.5 p-2 bg-white border border-slate-200 rounded-lg min-h-[38px] items-center focus-within:ring-2 focus-within:ring-[#0B57D0]/20 focus-within:border-[#0B57D0] transition-all ${disabled ? "bg-slate-50 cursor-not-allowed" : ""}`}>
         {tags.map((tag, idx) => (
           <span 
             key={idx} 
-            className="bg-white text-zinc-800 border border-slate-200 text-xs px-2 py-0.5 rounded flex items-center gap-1 font-semibold shadow-2xs"
+            className="bg-slate-100 text-zinc-800 border border-slate-200 text-xs px-2.5 py-0.5 rounded-md flex items-center gap-1 font-semibold shadow-2xs"
           >
             <span>{tag}</span>
             {!disabled && (
               <button 
                 type="button" 
                 onClick={() => removeTag(idx)} 
-                className="text-zinc-400 hover:text-zinc-800 cursor-pointer focus:outline-none"
+                className="text-zinc-400 hover:text-rose-500 cursor-pointer focus:outline-none transition-colors"
               >
-                <X size={12} />
+                <X size={12} strokeWidth={2.5} />
               </button>
             )}
           </span>
@@ -168,13 +168,13 @@ export function TagInput({ tags, onChange, placeholder, suggestions, id, disable
       {/* Suggested Quick Add Pills */}
       {!disabled && unusedSuggestions.length > 0 && (
         <div className="flex flex-wrap gap-1 items-center mt-0.5">
-          <span className="text-[9px] text-zinc-400 font-bold uppercase tracking-wider mr-1">Suggestions:</span>
+          <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider mr-1">Suggestions:</span>
           {unusedSuggestions.slice(0, 10).map((s, idx) => (
             <button
               key={idx}
               type="button"
               onClick={() => addTag(s)}
-              className="text-[10px] bg-zinc-200/60 hover:bg-zinc-300/80 text-zinc-700 font-semibold px-1.5 py-0.5 rounded cursor-pointer transition-colors border border-zinc-300/40"
+              className="text-[11px] bg-slate-50 hover:bg-[#E8F0FE] hover:text-[#0B57D0] hover:border-[#0B57D0]/30 text-zinc-700 font-medium px-2 py-0.5 rounded-md cursor-pointer transition-colors border border-slate-200"
             >
               + {s}
             </button>
@@ -242,7 +242,19 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
   const [selectedImage, setSelectedImage] = React.useState<string | null>(null);
 
   // Graph Hover Tooltip State
-  const [hoveredPoint, setHoveredPoint] = React.useState<{ month: string; val: number; x: number; y: number } | null>(null);
+  const [hoveredPoint, setHoveredPoint] = React.useState<{
+    month: string;
+    val: number;
+    x: number;
+    y: number;
+    isProjected?: boolean;
+    deployTarget?: number;
+    deployTargetDailyPerMerch?: number;
+    perWeek?: number;
+    perDay?: number;
+    perDayPerMerch?: number;
+    activeMerchCount?: number;
+  } | null>(null);
 
   // PDF Print Dialog Modal State
   const [isPrintModalOpen, setIsPrintModalOpen] = React.useState(false);
@@ -252,10 +264,10 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
   // Dynamic Navigation Header tabs
   const tabs = [
-    { id: "performance", label: "Performance" },
-    { id: "tracking", label: "Track Merch" },
-    { id: "setting", label: "Deploy" },
-    { id: "visit_history", label: "Visit History" }
+    { id: "performance", label: "Performance", desc: "Real-time field visit tracking, 12-month historical comparisons, and retailer visit summaries." },
+    { id: "tracking", label: "Track Merch", desc: "Interactive GPS route trails, chronological visit feeds, and store stop sequences for the past 7 days." },
+    { id: "setting", label: "Deploy", desc: "Configure store visit frequencies, focus retailers, and simulate route scheduling impacts." },
+    { id: "visit_history", label: "Visit History", desc: "Manage assigned store tasks, field action logs, and audited product visit archives." }
   ];
 
   // Offset states for Weekly and Monthly counters
@@ -382,14 +394,21 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
   // Retailer Name lookup helper
   const getRetailerName = React.useCallback((store: any): string => {
-    if (!store) return "Unknown";
+    if (!store) return "";
     const retailerId = store.retailers_id || store.retailer_id;
-    if (!retailerId) return store.display_name || "Unknown";
+    if (!retailerId) {
+      const name = String(store.display_name || "").trim();
+      return (name && name.toLowerCase() !== "unknown" && name.toLowerCase() !== "-" && name.toLowerCase() !== "null") ? name : "";
+    }
     const retailer = retailers.find(r => 
       String(r.id).toLowerCase() === String(retailerId).toLowerCase() ||
       String(r.retailers_id || "").toLowerCase() === String(retailerId).toLowerCase()
     );
-    return retailer ? (retailer.display_name || retailer.id) : String(retailerId);
+    const resolved = retailer ? String(retailer.display_name || retailer.id).trim() : String(retailerId).trim();
+    if (!resolved || resolved.toLowerCase() === "unknown" || resolved.toLowerCase() === "-" || resolved.toLowerCase() === "null") {
+      return "";
+    }
+    return resolved;
   }, [retailers]);
 
   // Brand Logo lookup helper
@@ -442,13 +461,22 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
     };
   }, [employees]);
 
+  // Helper to safely cache json in localStorage without throwing QuotaExceededError
+  const safeSetItem = (key: string, value: any) => {
+    try {
+      localStorage.setItem(key, typeof value === "string" ? value : JSON.stringify(value));
+    } catch {
+      // Storage quota exceeded or disabled; safely ignore
+    }
+  };
+
   // Helper to fetch and cache json
   const fetchSheet = async (sheetName: string) => {
     const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/merchandiser?table=${sheetName}`);
     if (!res.ok) throw new Error(`Failed to fetch ${sheetName}`);
     const json = await res.json();
     const items = Array.isArray(json) ? json : (json.value || []);
-    localStorage.setItem(`${sheetName}_data`, JSON.stringify(items));
+    safeSetItem(`${sheetName}_data`, items);
     return items;
   };
 
@@ -987,7 +1015,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         payloadAvoidRet
       ];
       setSettings(newSettings);
-      localStorage.setItem("Merch_Visit_Setting_data", JSON.stringify(newSettings));
+      safeSetItem("Merch_Visit_Setting_data", newSettings);
       
       showToast("Settings deployed successfully to the database!", "success");
       fetchFreshData("Merch_Visit_Setting", false);
@@ -995,6 +1023,122 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       showToast("Deploy failed: " + e.message, "error");
     }
   };
+
+  // Settings calculation for simulated targets and active stores
+  const settingCalculation = React.useMemo(() => {
+    const filtered = stores.filter(store => {
+      const rName = getRetailerName(store);
+      
+      if (settingFocusRet.length > 0) {
+        if (!settingFocusRet.includes(rName)) return false;
+      }
+      if (settingAvoidRet.length > 0) {
+        if (settingAvoidRet.includes(rName)) return false;
+      }
+      if (settingFocusStatus.length > 0) {
+        const storeStatus = String(store.status ?? store.store_status ?? "").trim();
+        if (!settingFocusStatus.includes(storeStatus)) return false;
+      }
+      if (settingFocusRank.length > 0) {
+        const storeRank = String(store.store_rank ?? store.rank ?? "").trim();
+        if (!settingFocusRank.includes(storeRank)) return false;
+      }
+      return true;
+    });
+
+    const frequencyThresholdMs = settingFreq * 24 * 60 * 60 * 1000;
+    const nowTime = Date.now();
+    
+    const latestVisitsMap: Record<string, number> = {};
+    productLogs.forEach(log => {
+      const storeId = String(log.retailer_stores_id);
+      const ts = parseTimestamp(log.timestamp).getTime();
+      if (!latestVisitsMap[storeId] || ts > latestVisitsMap[storeId]) {
+        latestVisitsMap[storeId] = ts;
+      }
+    });
+
+    const normalizeZoneName = (rawZone: any): string => {
+      const z = String(rawZone || "").trim();
+      if (!z || z.toLowerCase() === "unknown" || z === "-" || z.toLowerCase() === "null") return "Unknown";
+      
+      const lower = z.toLowerCase();
+      if (lower === "north-east" || lower === "northeast" || lower === "north east") return "North-East";
+      if (lower === "north-west" || lower === "northwest" || lower === "north west") return "North-West";
+      if (lower === "south-east" || lower === "southeast" || lower === "south east") return "South-East";
+      if (lower === "south-west" || lower === "southwest" || lower === "south west") return "South-West";
+      if (lower === "north") return "North";
+      if (lower === "south") return "South";
+      if (lower === "east") return "East";
+      if (lower === "west") return "West";
+      if (lower === "central") return "Central";
+
+      return z.split(/[-_\s]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("-");
+    };
+
+    const storeStatusList = filtered.map(store => {
+      const storeId = String(store.id);
+      const latestTs = latestVisitsMap[storeId] || 0;
+      const hasVisited = latestTs > 0 && (nowTime - latestTs) <= frequencyThresholdMs;
+      return {
+        store,
+        hasVisited,
+        zone: normalizeZoneName(store.zones),
+        retailer: getRetailerName(store)
+      };
+    });
+
+    const zoneGroup: Record<string, { total: number; visited: number; pending: number }> = {};
+    const retailerGroup: Record<string, { total: number; visited: number; pending: number }> = {};
+
+    let totalActive = storeStatusList.length;
+    let totalVisited = 0;
+    let totalPending = 0;
+
+    storeStatusList.forEach(item => {
+      if (item.hasVisited) {
+        totalVisited++;
+      } else {
+        totalPending++;
+      }
+
+      if (!zoneGroup[item.zone]) {
+        zoneGroup[item.zone] = { total: 0, visited: 0, pending: 0 };
+      }
+      zoneGroup[item.zone].total++;
+      if (item.hasVisited) zoneGroup[item.zone].visited++;
+      else zoneGroup[item.zone].pending++;
+
+      if (item.retailer && item.retailer.toLowerCase() !== "unknown" && item.retailer !== "-") {
+        if (!retailerGroup[item.retailer]) {
+          retailerGroup[item.retailer] = { total: 0, visited: 0, pending: 0 };
+        }
+        retailerGroup[item.retailer].total++;
+        if (item.hasVisited) retailerGroup[item.retailer].visited++;
+        else retailerGroup[item.retailer].pending++;
+      }
+    });
+
+    const zoneOrder = ["Central", "North", "North-East", "East", "South", "West", "North-West", "South-East", "South-West", "Unknown"];
+    const sortedByZone = Object.entries(zoneGroup)
+      .map(([name, counts]) => ({ name, ...counts }))
+      .sort((a, b) => {
+        const idxA = zoneOrder.indexOf(a.name);
+        const idxB = zoneOrder.indexOf(b.name);
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        return a.name.localeCompare(b.name);
+      });
+
+    return {
+      totalActive,
+      totalVisited,
+      totalPending,
+      byZone: sortedByZone,
+      byRetailer: Object.entries(retailerGroup).map(([name, counts]) => ({ name, ...counts }))
+    };
+  }, [stores, productLogs, settingFreq, settingFocusRet, settingFocusStatus, settingFocusRank, settingAvoidRet, getRetailerName, parseTimestamp]);
 
   // Performance Tab calculations
   const performanceStats = React.useMemo(() => {
@@ -1028,7 +1172,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       const store = stores.find(s => String(s.id) === String(log.retailer_stores_id));
       const retName = getRetailerName(store);
 
-      if (retName) {
+      if (retName && retName.toLowerCase() !== "unknown" && retName !== "-") {
         if (!retailerGroup[retName]) {
           retailerGroup[retName] = { today: 0, week: 0, month: 0 };
         }
@@ -1052,29 +1196,35 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       }
     });
 
-    return {
-      totals: { today: todayCount, week: weekCount, month: monthCount },
-      retailers: Object.entries(retailerGroup).map(([name, counts]) => ({
+    const cleanRetailers = Object.entries(retailerGroup)
+      .filter(([name]) => name && name.trim().toLowerCase() !== "unknown" && name.trim().toLowerCase() !== "-" && name.trim() !== "")
+      .map(([name, counts]) => ({
         name,
         ...counts
-      }))
+      }));
+
+    return {
+      totals: { today: todayCount, week: weekCount, month: monthCount },
+      retailers: cleanRetailers
     };
   }, [productLogs, stores, getRetailerName, weekOffset, monthOffset, getWeekRange, getMonthRange, parseTimestamp]);
 
-  // 12-Month Performance Graph Calculations
+  // 12-Month Performance Graph + Next 3-Month Projection Calculations
   const graphData = React.useMemo(() => {
-    const resultMonths: { year: number; month: number; label: string }[] = [];
+    const historicalMonths: { year: number; month: number; label: string }[] = [];
     const now = new Date();
+    
+    // Past 12 historical months
     for (let i = 11; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      resultMonths.push({
+      historicalMonths.push({
         year: d.getFullYear(),
         month: d.getMonth(),
         label: d.toLocaleString("default", { month: "short", year: "2-digit" })
       });
     }
 
-    const data = resultMonths.map((m) => {
+    const historicalData = historicalMonths.map((m) => {
       const monthLogs = productLogs.filter((log) => {
         const logDate = parseTimestamp(log.timestamp);
         return logDate.getFullYear() === m.year && logDate.getMonth() === m.month;
@@ -1082,17 +1232,133 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
       return {
         label: m.label,
-        totalVisits: monthLogs.length
+        totalVisits: monthLogs.length,
+        isProjected: false,
+        deployTarget: 0,
+        perWeek: Math.round(monthLogs.length / 4.33),
+        perDay: Number((monthLogs.length / 26).toFixed(1)),
+        perDayPerMerch: 0,
+        activeMerchCount: 0
       };
     });
 
-    const maxCount = Math.max(...data.map(d => d.totalVisits), 5);
+    // Deploy Configuration Target Monthly Visits: Active Target Stores * (30 / Visit Frequency)
+    const activeTargetStores = Math.max(settingCalculation.totalActive, stores.length > 0 ? stores.length : 1);
+    const visitFreqDays = Math.max(settingFreq, 1);
+    const deployMonthlyTarget = Math.round((activeTargetStores * 30) / visitFreqDays);
+
+    // Count unique active merchandisers in the past 3 months (90 days)
+    const ninetyDaysAgo = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+    const past3MonthsLogs = productLogs.filter(log => {
+      const ts = parseTimestamp(log.timestamp);
+      return ts >= ninetyDaysAgo;
+    });
+
+    const activeMerchIdSet = new Set<string>();
+    past3MonthsLogs.forEach(log => {
+      const mId = String(log.merch_id || log.Merch_ID || log.employee_id || "").trim();
+      if (mId && mId.toLowerCase() !== "unknown" && mId.toLowerCase() !== "null" && mId.toLowerCase() !== "undefined") {
+        activeMerchIdSet.add(mId);
+      }
+    });
+
+    let activeMerchList = Array.from(activeMerchIdSet).map(id => getMerchInfo(id));
+    if (activeMerchList.length === 0) {
+      const empMerchs = employees.filter(e => 
+        String(e.role || "").toLowerCase().includes("merch") || 
+        String(e.department || "").toLowerCase().includes("merch") ||
+        String(e.name || "").includes("(SM)")
+      );
+      if (empMerchs.length > 0) {
+        activeMerchList = empMerchs.map(e => getMerchInfo(String(e.id)));
+      }
+    }
+    const activeMerchCount = Math.max(activeMerchList.length, 1);
+
+    // Recent 3 months trend calculation (momentum from last 3 historical months)
+    const last3 = historicalData.slice(-3);
+    const mPrev2 = last3[0]?.totalVisits || 0;
+    const mPrev1 = last3[1]?.totalVisits || 0;
+    const mCurrent = last3[2]?.totalVisits || 0;
+
+    // Monthly velocity from recent 3 months
+    const recentVelocity = (mCurrent - mPrev2) / 2;
+
+    // Projected next 3 months
+    const projectedData: { 
+      label: string; 
+      totalVisits: number; 
+      isProjected: boolean; 
+      deployTarget: number;
+      deployTargetDailyPerMerch: number;
+      perWeek: number;
+      perDay: number;
+      perDayPerMerch: number;
+      activeMerchCount: number;
+    }[] = [];
+    let runningVal = mCurrent;
+
+    // Working schedule: Monday - Thursday (4 days/week, excluding Fri/Sat/Sun) = 17.33 workdays/month
+    const WORKDAYS_PER_MONTH = 17.33;
+    const WEEKS_PER_MONTH = 4.33;
+
+    for (let j = 1; j <= 3; j++) {
+      const futureDate = new Date(now.getFullYear(), now.getMonth() + j, 1);
+      const label = futureDate.toLocaleString("default", { month: "short", year: "2-digit" }) + "*";
+      
+      const gap = deployMonthlyTarget - runningVal;
+      const stepGrowth = gap * (0.35 + j * 0.08) + recentVelocity * Math.max(0.3 - j * 0.08, 0);
+      runningVal = Math.max(0, Math.round(runningVal + stepGrowth));
+
+      const perWeek = Math.round(runningVal / WEEKS_PER_MONTH);
+      const perDay = Number((runningVal / WORKDAYS_PER_MONTH).toFixed(1));
+      const perDayPerMerch = Number((runningVal / (WORKDAYS_PER_MONTH * activeMerchCount)).toFixed(1));
+
+      projectedData.push({
+        label,
+        totalVisits: runningVal,
+        isProjected: true,
+        deployTarget: deployMonthlyTarget,
+        deployTargetDailyPerMerch: Number((deployMonthlyTarget / (WORKDAYS_PER_MONTH * activeMerchCount)).toFixed(1)),
+        perWeek,
+        perDay,
+        perDayPerMerch,
+        activeMerchCount
+      });
+    }
+
+    const avgProjectedMonthly = projectedData.length > 0 
+      ? Math.round(projectedData.reduce((sum, p) => sum + p.totalVisits, 0) / projectedData.length)
+      : 0;
+    const avgProjectedWeekly = Math.round(avgProjectedMonthly / WEEKS_PER_MONTH);
+    const avgProjectedDaily = Number((avgProjectedMonthly / WORKDAYS_PER_MONTH).toFixed(1));
+    const avgProjectedDailyPerMerch = Number((avgProjectedMonthly / (WORKDAYS_PER_MONTH * activeMerchCount)).toFixed(1));
+
+    const deployTargetDaily = Number((deployMonthlyTarget / WORKDAYS_PER_MONTH).toFixed(1));
+    const deployTargetWeekly = Math.round(deployMonthlyTarget / WEEKS_PER_MONTH);
+    const deployTargetDailyPerMerch = Number((deployMonthlyTarget / (WORKDAYS_PER_MONTH * activeMerchCount)).toFixed(1));
+    const deployTargetWeeklyPerMerch = Number((deployMonthlyTarget / (WEEKS_PER_MONTH * activeMerchCount)).toFixed(1));
+
+    const allData = [...historicalData, ...projectedData];
+    const maxCount = Math.max(...allData.map(d => d.totalVisits), deployMonthlyTarget, 5);
 
     return {
-      data,
-      maxVal: maxCount
+      data: allData,
+      historicalCount: historicalData.length,
+      maxVal: maxCount,
+      deployTarget: deployMonthlyTarget,
+      deployTargetDaily,
+      deployTargetWeekly,
+      deployTargetDailyPerMerch,
+      deployTargetWeeklyPerMerch,
+      activeMerchCount,
+      activeMerchList,
+      avgProjectedMonthly,
+      avgProjectedWeekly,
+      avgProjectedDaily,
+      avgProjectedDailyPerMerch
     };
-  }, [productLogs, parseTimestamp]);
+  }, [productLogs, settingCalculation.totalActive, stores.length, settingFreq, parseTimestamp, employees, getMerchInfo]);
 
   const handlePrintPDF = React.useCallback(() => {
     const doc = new jsPDF();
@@ -1463,7 +1729,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
     );
 
     setTasks(updated);
-    localStorage.setItem("Stores_Task_Assigned_data", JSON.stringify(updated));
+    safeSetItem("Stores_Task_Assigned_data", updated);
 
     try {
       const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/merchandiser", {
@@ -1488,7 +1754,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
     } catch (err: any) {
       showToast("Failed to complete task: " + err.message + ". Reverting...", "error");
       setTasks(previousTasks);
-      localStorage.setItem("Stores_Task_Assigned_data", JSON.stringify(previousTasks));
+      safeSetItem("Stores_Task_Assigned_data", previousTasks);
     }
   };
 
@@ -1525,7 +1791,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
     );
 
     setTasks(updated);
-    localStorage.setItem("Stores_Task_Assigned_data", JSON.stringify(updated));
+    safeSetItem("Stores_Task_Assigned_data", updated);
 
     setIsUpdateLogOpen(false);
     setSelectedTask(null);
@@ -1554,7 +1820,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
     } catch (err: any) {
       showToast("Failed to update task log: " + err.message + ". Reverting...", "error");
       setTasks(previousTasks);
-      localStorage.setItem("Stores_Task_Assigned_data", JSON.stringify(previousTasks));
+      safeSetItem("Stores_Task_Assigned_data", previousTasks);
     }
   };
 
@@ -1682,88 +1948,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
     { id: "actions", header: "Actions", accessor: "actions" }
   ];
 
-  const settingCalculation = React.useMemo(() => {
-    const filtered = stores.filter(store => {
-      const rName = getRetailerName(store);
-      
-      if (settingFocusRet.length > 0) {
-        if (!settingFocusRet.includes(rName)) return false;
-      }
-      if (settingAvoidRet.length > 0) {
-        if (settingAvoidRet.includes(rName)) return false;
-      }
-      if (settingFocusStatus.length > 0) {
-        const storeStatus = String(store.status ?? store.store_status ?? "").trim();
-        if (!settingFocusStatus.includes(storeStatus)) return false;
-      }
-      if (settingFocusRank.length > 0) {
-        const storeRank = String(store.store_rank ?? store.rank ?? "").trim();
-        if (!settingFocusRank.includes(storeRank)) return false;
-      }
-      return true;
-    });
 
-    const frequencyThresholdMs = settingFreq * 24 * 60 * 60 * 1000;
-    const nowTime = Date.now();
-    
-    const latestVisitsMap: Record<string, number> = {};
-    productLogs.forEach(log => {
-      const storeId = String(log.retailer_stores_id);
-      const ts = parseTimestamp(log.timestamp).getTime();
-      if (!latestVisitsMap[storeId] || ts > latestVisitsMap[storeId]) {
-        latestVisitsMap[storeId] = ts;
-      }
-    });
-
-    const storeStatusList = filtered.map(store => {
-      const storeId = String(store.id);
-      const latestTs = latestVisitsMap[storeId] || 0;
-      const hasVisited = latestTs > 0 && (nowTime - latestTs) <= frequencyThresholdMs;
-      return {
-        store,
-        hasVisited,
-        zone: store.zones || "Unknown",
-        retailer: getRetailerName(store)
-      };
-    });
-
-    const zoneGroup: Record<string, { total: number; visited: number; pending: number }> = {};
-    const retailerGroup: Record<string, { total: number; visited: number; pending: number }> = {};
-
-    let totalActive = storeStatusList.length;
-    let totalVisited = 0;
-    let totalPending = 0;
-
-    storeStatusList.forEach(item => {
-      if (item.hasVisited) {
-        totalVisited++;
-      } else {
-        totalPending++;
-      }
-
-      if (!zoneGroup[item.zone]) {
-        zoneGroup[item.zone] = { total: 0, visited: 0, pending: 0 };
-      }
-      zoneGroup[item.zone].total++;
-      if (item.hasVisited) zoneGroup[item.zone].visited++;
-      else zoneGroup[item.zone].pending++;
-
-      if (!retailerGroup[item.retailer]) {
-        retailerGroup[item.retailer] = { total: 0, visited: 0, pending: 0 };
-      }
-      retailerGroup[item.retailer].total++;
-      if (item.hasVisited) retailerGroup[item.retailer].visited++;
-      else retailerGroup[item.retailer].pending++;
-    });
-
-    return {
-      totalActive,
-      totalVisited,
-      totalPending,
-      byZone: Object.entries(zoneGroup).map(([name, counts]) => ({ name, ...counts })),
-      byRetailer: Object.entries(retailerGroup).map(([name, counts]) => ({ name, ...counts }))
-    };
-  }, [stores, productLogs, settingFreq, settingFocusRet, settingFocusStatus, settingFocusRank, settingAvoidRet, getRetailerName, parseTimestamp]);
 
   const reportColumns: Column[] = [
     { id: "date", header: "Visit Date", accessor: "date" },
@@ -1780,36 +1965,78 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] font-primary relative min-w-0">
-      <div className="content-header">
-        <NavigationTabs 
-          tabs={tabs}
-          activeTabId={activeTab}
-          onTabSelect={setActiveTab}
-        />
+    <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
+      {/* 1. TOP NAVIGATION TABS */}
+      <NavigationTabs 
+        tabs={tabs}
+        activeTabId={activeTab}
+        onTabSelect={setActiveTab}
+      />
+
+      {/* 2. TOP HEADER BAR */}
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+        <div>
+          <h1 className="text-base font-bold text-zinc-950">
+            {activeTab === "performance" && "Merchandiser Performance"}
+            {activeTab === "tracking" && "Field Route Live Tracking"}
+            {activeTab === "visit_history" && "Store Visit History & Special Tasks"}
+            {activeTab === "setting" && "Deploy System Configuration"}
+          </h1>
+          <p className="text-xs text-zinc-500 mt-0.5">
+            {activeTab === "performance" && "Real-time field visit tracking, 12-month historical comparisons, and retailer visit summaries."}
+            {activeTab === "tracking" && "Interactive GPS route trails, chronological visit feeds, and store stop sequences for the past 7 days."}
+            {activeTab === "visit_history" && "Manage assigned store tasks, field action logs, and audited product visit archives."}
+            {activeTab === "setting" && "Configure store visit frequencies, focus retailers, and simulate route scheduling impacts."}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {activeTab === "performance" && (
+            <CustomButton
+              variant="default"
+              onClick={() => setIsPrintModalOpen(true)}
+              className="flex items-center gap-1.5"
+            >
+              <Printer size={14} className="stroke-[2.5]" />
+              <span>Print / Export PDF</span>
+            </CustomButton>
+          )}
+
+          {activeTab === "setting" && !isViewer && (
+            <CustomButton
+              variant="dark"
+              onClick={handleDeploySettings}
+              className="flex items-center gap-1.5"
+            >
+              <Settings2 size={14} className="stroke-[2.5]" />
+              <span>Deploy Configuration</span>
+            </CustomButton>
+          )}
+        </div>
       </div>
 
-      <div className="flex-1 overflow-hidden min-h-0">
+      {/* 3. MAIN CONTENT VIEWPORT */}
+      <div className="flex-1 min-h-0 overflow-hidden">
         {/* TAB 1: PERFORMANCE */}
         {activeTab === "performance" && (
-          <div className="flex flex-col h-full gap-6 animate-tableFadeInOnly overflow-y-auto lg:overflow-hidden p-1">
+          <div className="flex flex-col h-full gap-4 overflow-y-auto p-4 animate-tableFadeInOnly">
             {/* Top Stat Counters */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
-              <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs hover:scale-[1.01] hover:shadow-sm transition-all duration-200">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
+              <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
                 <div className="flex flex-col">
                   <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visits Today</span>
-                  <span className="text-3xl font-black text-zinc-950 mt-1">{performanceStats.totals.today}</span>
+                  <span className="text-xl font-bold text-zinc-950 mt-0.5">{performanceStats.totals.today}</span>
                 </div>
-                <div className="h-10 w-10 bg-[#E8F0FE] rounded flex items-center justify-center text-[#1A73E8] border border-transparent">
-                  <Calendar size={18} className="stroke-[2.5]" />
+                <div className="h-8 w-8 bg-[#E8F0FE] rounded-lg flex items-center justify-center text-[#0B57D0] shrink-0">
+                  <Calendar size={16} className="stroke-[2.5]" />
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs hover:scale-[1.01] hover:shadow-sm transition-all duration-200">
-                <div className="flex flex-col gap-1">
+              <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
+                <div className="flex flex-col gap-0.5">
                   <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visits Selected Week</span>
-                  <span className="text-3xl font-black text-zinc-950 mt-0.5">{performanceStats.totals.week}</span>
-                  <div className="flex items-center gap-1 mt-1 bg-slate-100 rounded px-1.5 py-0.5 w-fit">
+                  <span className="text-xl font-bold text-zinc-950">{performanceStats.totals.week}</span>
+                  <div className="flex items-center gap-1 mt-0.5 bg-slate-100 rounded px-1.5 py-0.5 w-fit border border-slate-200">
                     <button 
                       type="button" 
                       onClick={() => setWeekOffset(prev => Math.max(prev - 1, -52))}
@@ -1817,9 +2044,9 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                       className="p-0.5 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
                       title="Previous Week"
                     >
-                      <ChevronLeft size={12} className="stroke-[2.5]" />
+                      <ChevronLeft size={11} className="stroke-[2.5]" />
                     </button>
-                    <span className="text-[9px] font-extrabold text-zinc-700 min-w-[75px] text-center select-none tracking-tight">
+                    <span className="text-[9px] font-bold text-zinc-700 min-w-[70px] text-center select-none tracking-tight">
                       {formatWeekRange(getWeekRange(weekOffset).monday, getWeekRange(weekOffset).sunday)}
                     </span>
                     <button 
@@ -1829,20 +2056,20 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                       className="p-0.5 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
                       title="Next Week"
                     >
-                      <ChevronRight size={12} className="stroke-[2.5]" />
+                      <ChevronRight size={11} className="stroke-[2.5]" />
                     </button>
                   </div>
                 </div>
-                <div className="h-10 w-10 bg-[#E6F4EA] rounded flex items-center justify-center text-[#137333] border border-transparent">
-                  <BarChart3 size={18} className="stroke-[2.5]" />
+                <div className="h-8 w-8 bg-[#E8F0FE] rounded-lg flex items-center justify-center text-[#0B57D0] shrink-0">
+                  <BarChart3 size={16} className="stroke-[2.5]" />
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs hover:scale-[1.01] hover:shadow-sm transition-all duration-200">
-                <div className="flex flex-col gap-1">
+              <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
+                <div className="flex flex-col gap-0.5">
                   <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visits Selected Month</span>
-                  <span className="text-3xl font-black text-zinc-950 mt-0.5">{performanceStats.totals.month}</span>
-                  <div className="flex items-center gap-1 mt-1 bg-slate-100 rounded px-1.5 py-0.5 w-fit">
+                  <span className="text-xl font-bold text-zinc-950">{performanceStats.totals.month}</span>
+                  <div className="flex items-center gap-1 mt-0.5 bg-slate-100 rounded px-1.5 py-0.5 w-fit border border-slate-200">
                     <button 
                       type="button" 
                       onClick={() => setMonthOffset(prev => Math.max(prev - 1, -12))}
@@ -1850,9 +2077,9 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                       className="p-0.5 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
                       title="Previous Month"
                     >
-                      <ChevronLeft size={12} className="stroke-[2.5]" />
+                      <ChevronLeft size={11} className="stroke-[2.5]" />
                     </button>
-                    <span className="text-[9px] font-extrabold text-zinc-700 min-w-[75px] text-center select-none tracking-tight">
+                    <span className="text-[9px] font-bold text-zinc-700 min-w-[70px] text-center select-none tracking-tight">
                       {formatMonthName(getMonthRange(monthOffset).start)}
                     </span>
                     <button 
@@ -1862,45 +2089,50 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                       className="p-0.5 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
                       title="Next Month"
                     >
-                      <ChevronRight size={12} className="stroke-[2.5]" />
+                      <ChevronRight size={11} className="stroke-[2.5]" />
                     </button>
                   </div>
                 </div>
-                <div className="h-10 w-10 bg-[#FEF7E0] rounded flex items-center justify-center text-[#B06000] border border-transparent">
-                  <Calendar size={18} className="stroke-[2.5]" />
+                <div className="h-8 w-8 bg-[#E8F0FE] rounded-lg flex items-center justify-center text-[#0B57D0] shrink-0">
+                  <Calendar size={16} className="stroke-[2.5]" />
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded p-5 flex items-center justify-between shadow-xs hover:scale-[1.01] hover:shadow-sm transition-all duration-200">
+              <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
                 <div className="flex flex-col">
-                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Tasks</span>
-                  <span className="text-3xl font-black text-zinc-950 mt-1">{pendingTaskQty}</span>
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Special Tasks</span>
+                  <span className="text-xl font-bold text-zinc-950 mt-0.5">{pendingTaskQty}</span>
                 </div>
-                <div className="h-10 w-10 bg-[#FCE8E6] rounded flex items-center justify-center text-[#C5221F] border border-transparent">
-                  <ClipboardCheck size={18} className="stroke-[2.5]" />
+                <div className="h-8 w-8 bg-[#E8F0FE] rounded-lg flex items-center justify-center text-[#0B57D0] shrink-0">
+                  <ClipboardCheck size={16} className="stroke-[2.5]" />
                 </div>
               </div>
             </div>
 
             {/* Main breakdown grids */}
-            <div className="flex flex-col lg:flex-row gap-6 items-stretch flex-grow min-h-0">
+            <div className="flex flex-col lg:flex-row gap-4 items-stretch flex-grow min-h-0">
               {/* Retailer Breakdown table */}
-              <div className="w-full lg:w-[40%] bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs flex flex-col h-auto lg:h-full">
-                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2 shrink-0">
-                  <UsersIcon size={14} className="text-zinc-600" />
-                  <span className="font-bold text-xs text-zinc-700 uppercase tracking-wider">Visits per Retailer</span>
+              <div className="w-full lg:w-[38%] bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs flex flex-col h-[380px] lg:h-auto">
+                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between shrink-0">
+                  <div className="flex items-center gap-2">
+                    <UsersIcon size={14} className="text-[#0B57D0]" />
+                    <span className="font-bold text-xs text-zinc-800 uppercase tracking-wider">Visits per Retailer</span>
+                  </div>
+                  <span className="text-[10px] font-bold text-zinc-500 bg-white border border-slate-200 px-2 py-0.5 rounded">
+                    {performanceStats.retailers.length} Retailers
+                  </span>
                 </div>
-                <div className="overflow-auto flex-grow min-h-[300px] lg:min-h-0">
+                <div className="overflow-y-auto flex-1 min-h-0">
                   <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50/50 font-bold text-zinc-600">
-                        <th className="py-2.5 px-4">Retailer</th>
-                        <th className="py-2.5 px-4 text-center">Today</th>
-                        <th className="py-2.5 px-4 text-center">Week</th>
-                        <th className="py-2.5 px-4 text-center">Month</th>
+                    <thead className="sticky top-0 z-10 bg-slate-50 shadow-2xs">
+                      <tr className="border-b border-slate-200 text-zinc-600 font-bold">
+                        <th className="py-2.5 px-4 bg-slate-50">Retailer</th>
+                        <th className="py-2.5 px-4 text-center bg-slate-50">Today</th>
+                        <th className="py-2.5 px-4 text-center bg-slate-50">Week</th>
+                        <th className="py-2.5 px-4 text-center bg-slate-50">Month</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-200">
+                    <tbody className="divide-y divide-slate-100">
                       {performanceStats.retailers.length > 0 ? (
                         performanceStats.retailers.map((r, idx) => (
                           <tr key={idx} className="hover:bg-slate-50 transition-colors">
@@ -1922,72 +2154,131 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                 </div>
               </div>
 
-              {/* Monthly Grouped Bar Chart converted to Line Chart */}
-              <div className="w-full lg:w-[60%] bg-white border border-slate-200 rounded-lg p-4 shadow-xs relative flex flex-col gap-3 h-auto lg:h-full min-h-[360px] lg:min-h-0">
-                <div className="flex items-center justify-between border-b border-slate-200 pb-2 shrink-0">
+              {/* 12-Month Performance + 3-Month Projection Trend SVG Line Chart */}
+              <div className="w-full lg:w-[62%] bg-white border border-slate-200 rounded-lg p-4 shadow-xs relative flex flex-col gap-3 h-auto lg:h-full min-h-[320px] lg:min-h-0">
+                <div className="flex flex-wrap items-center justify-between border-b border-slate-200 pb-2.5 gap-2 shrink-0">
                   <div className="flex items-center gap-2">
-                    <BarChart3 size={14} className="text-zinc-600" />
-                    <span className="font-bold text-xs text-zinc-700 uppercase tracking-wider">12-Month Performance Comparison</span>
+                    <BarChart3 size={14} className="text-[#0B57D0]" />
+                    <span className="font-bold text-xs text-zinc-800 uppercase tracking-wider">Performance Trend & 3-Month Projection</span>
                   </div>
                   {/* Legend */}
-                  <div className="flex flex-wrap gap-2 text-[9px] font-bold text-zinc-600">
+                  <div className="flex flex-wrap items-center gap-3 text-[10px] font-semibold text-zinc-600">
                     <div className="flex items-center gap-1.5">
-                      <span className="h-0.5 w-4 bg-[#6366f1] inline-block" />
-                      <span>Total Store Visits</span>
+                      <span className="h-0.5 w-3.5 bg-[#0B57D0] inline-block rounded-full" />
+                      <span>Actual (12 Mo)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="h-0.5 w-3.5 border-t-2 border-dashed border-[#0B57D0] inline-block" />
+                      <span>Projected (Next 3 Mo*)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="h-0.5 w-3.5 border-t border-dotted border-slate-400 inline-block" />
+                      <span className="text-zinc-500">Deploy Target ({graphData.deployTarget}/mo)</span>
                     </div>
                   </div>
                 </div>
 
                 {/* SVG Render Container */}
-                <div className="flex-1 w-full relative min-h-[280px] lg:min-h-0">
+                <div className="flex-1 w-full relative min-h-[240px] lg:min-h-0">
                   {fetching ? (
                     <div className="absolute inset-0 flex items-center justify-center text-xs text-zinc-400 italic">
                       Loading graph metrics...
                     </div>
                   ) : (
-                    <svg viewBox="0 0 700 280" className="w-full h-full select-none overflow-visible">
+                    <svg viewBox="0 0 700 260" className="w-full h-full select-none overflow-visible">
                       <defs>
                         <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#6366f1" stopOpacity="0.25" />
-                          <stop offset="100%" stopColor="#6366f1" stopOpacity="0.0" />
+                          <stop offset="0%" stopColor="#0B57D0" stopOpacity="0.18" />
+                          <stop offset="100%" stopColor="#0B57D0" stopOpacity="0.0" />
+                        </linearGradient>
+                        <linearGradient id="projGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#0B57D0" stopOpacity="0.08" />
+                          <stop offset="100%" stopColor="#0B57D0" stopOpacity="0.0" />
                         </linearGradient>
                       </defs>
 
                       {/* Grid lines */}
                       {[0, 0.25, 0.5, 0.75, 1].map((p, idx) => {
-                        const y = 40 + (200 * (1 - p));
+                        const y = 30 + (180 * (1 - p));
                         const val = Math.round(graphData.maxVal * p);
                         return (
-                          <g key={idx} className="opacity-45">
-                            <line x1="45" y1={y} x2="680" y2={y} stroke="#d4d4d8" strokeWidth="1" strokeDasharray="3,3" />
+                          <g key={idx} className="opacity-40">
+                            <line x1="45" y1={y} x2="680" y2={y} stroke="#cbd5e1" strokeWidth="1" strokeDasharray="3,3" />
                             <text x="35" y={y + 4} textAnchor="end" className="fill-zinc-500 font-mono text-[9px] font-bold">{val}</text>
                           </g>
                         );
                       })}
 
+                      {/* Deploy Target Reference Line */}
+                      {graphData.deployTarget > 0 && (() => {
+                        const targetY = 210 - (graphData.maxVal > 0 ? (graphData.deployTarget / graphData.maxVal) * 180 : 0);
+                        return (
+                          <g>
+                            <line x1="45" y1={targetY} x2="680" y2={targetY} stroke="#94a3b8" strokeWidth="1" strokeDasharray="2,3" />
+                            <text x="680" y={targetY - 4} textAnchor="end" className="fill-slate-400 font-mono text-[8px] font-bold">
+                              TARGET: {graphData.deployTarget}
+                            </text>
+                          </g>
+                        );
+                      })()}
+
                       {/* Render Line & Area if data exists */}
                       {graphData.data.length > 0 && (() => {
+                        const totalPoints = graphData.data.length;
+                        const colWidth = 635 / (totalPoints - 1);
                         const points = graphData.data.map((d, i) => {
-                          const colWidth = 635 / 11;
                           const px = 45 + (i * colWidth);
-                          const py = 240 - (graphData.maxVal > 0 ? (d.totalVisits / graphData.maxVal) * 200 : 0);
-                          return { px, py, label: d.label, val: d.totalVisits };
+                          const py = 210 - (graphData.maxVal > 0 ? (d.totalVisits / graphData.maxVal) * 180 : 0);
+                          return { 
+                            px, 
+                            py, 
+                            label: d.label, 
+                            val: d.totalVisits, 
+                            isProjected: d.isProjected,
+                            deployTarget: d.deployTarget,
+                            perWeek: (d as any).perWeek,
+                            perDay: (d as any).perDay,
+                            perDayPerMerch: (d as any).perDayPerMerch,
+                            activeMerchCount: (d as any).activeMerchCount
+                          };
                         });
 
-                        const pathD = points.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt.px} ${pt.py}`).join(' ');
-                        const areaD = `${pathD} L 680 240 L 45 240 Z`;
+                        const histCount = graphData.historicalCount || 12;
+                        const histPoints = points.slice(0, histCount);
+                        const projPoints = points.slice(histCount - 1); // includes boundary point for contiguous line
+
+                        const histPathD = histPoints.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt.px} ${pt.py}`).join(' ');
+                        const histAreaD = `${histPathD} L ${histPoints[histPoints.length - 1].px} 210 L 45 210 Z`;
+
+                        const projPathD = projPoints.map((pt, i) => `${i === 0 ? 'M' : 'L'} ${pt.px} ${pt.py}`).join(' ');
+                        const projAreaD = `${projPathD} L ${projPoints[projPoints.length - 1].px} 210 L ${projPoints[0].px} 210 Z`;
 
                         return (
                           <g>
-                            <path d={areaD} fill="url(#chartGradient)" />
+                            {/* Historical Area & Solid Line */}
+                            <path d={histAreaD} fill="url(#chartGradient)" />
                             <path 
-                              d={pathD} 
+                              d={histPathD} 
                               fill="none" 
-                              stroke="#6366f1" 
-                              strokeWidth="3" 
+                              stroke="#0B57D0" 
+                              strokeWidth="2.5" 
                               strokeLinecap="round" 
                               strokeLinejoin="round" 
                             />
+
+                            {/* Projected Area & Dashed Line */}
+                            <path d={projAreaD} fill="url(#projGradient)" />
+                            <path 
+                              d={projPathD} 
+                              fill="none" 
+                              stroke="#0B57D0" 
+                              strokeWidth="2" 
+                              strokeDasharray="5,3.5" 
+                              strokeLinecap="round" 
+                              strokeLinejoin="round" 
+                            />
+
+                            {/* Data points & Interactive Hover targets */}
                             {points.map((pt, i) => (
                               <g key={i}>
                                 <circle
@@ -2002,6 +2293,13 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                                       val: pt.val,
                                       x: pt.px,
                                       y: pt.py - 8,
+                                      isProjected: pt.isProjected,
+                                      deployTarget: pt.deployTarget,
+                                      deployTargetDailyPerMerch: (pt as any).deployTargetDailyPerMerch || graphData.deployTargetDailyPerMerch,
+                                      perWeek: pt.perWeek,
+                                      perDay: pt.perDay,
+                                      perDayPerMerch: pt.perDayPerMerch,
+                                      activeMerchCount: pt.activeMerchCount
                                     });
                                   }}
                                   onMouseLeave={() => setHoveredPoint(null)}
@@ -2009,10 +2307,10 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                                 <circle
                                   cx={pt.px}
                                   cy={pt.py}
-                                  r={4.5}
-                                  fill="#ffffff"
-                                  stroke="#6366f1"
-                                  strokeWidth={2.5}
+                                  r={pt.isProjected ? 3.5 : 4}
+                                  fill={pt.isProjected ? "#D3E3FD" : "#ffffff"}
+                                  stroke="#0B57D0"
+                                  strokeWidth={2}
                                   className="pointer-events-none"
                                 />
                               </g>
@@ -2021,13 +2319,20 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                         );
                       })()}
 
-                      <line x1="45" y1="240" x2="680" y2="240" stroke="#a1a1aa" strokeWidth="1.5" />
+                      <line x1="45" y1="210" x2="680" y2="210" stroke="#94a3b8" strokeWidth="1" />
                       
                       {graphData.data.map((m, mIdx) => {
-                        const colWidth = 635 / 11;
+                        const totalPoints = graphData.data.length;
+                        const colWidth = 635 / (totalPoints - 1);
                         const px = 45 + (mIdx * colWidth);
                         return (
-                          <text key={mIdx} x={px} y="260" textAnchor="middle" className="fill-zinc-500 font-semibold text-[9px]">
+                          <text 
+                            key={mIdx} 
+                            x={px} 
+                            y="235" 
+                            textAnchor="middle" 
+                            className={`text-[8.5px] ${m.isProjected ? "fill-[#0B57D0] font-bold" : "fill-zinc-500 font-medium"}`}
+                          >
                             {m.label}
                           </text>
                         );
@@ -2037,36 +2342,121 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
                   {hoveredPoint && (
                     <div 
-                      className="absolute bg-zinc-950/95 text-white border border-zinc-800 rounded px-2.5 py-1.5 shadow-md text-[10px] font-primary z-30 pointer-events-none flex flex-col gap-0.5 -translate-x-1/2 -translate-y-full"
+                      className="absolute bg-zinc-950/95 text-white border border-zinc-800 rounded-lg px-3 py-2 shadow-xl text-[10px] font-primary z-30 pointer-events-none flex flex-col gap-1 -translate-x-1/2 -translate-y-full min-w-[190px]"
                       style={{ left: hoveredPoint.x, top: hoveredPoint.y }}
                     >
-                      <span className="font-extrabold border-b border-zinc-800 pb-0.5 mb-0.5 text-[9px] uppercase tracking-wider text-zinc-400">
-                        {hoveredPoint.month}
-                      </span>
-                      <span className="font-medium">
-                        Total Visits: <span className="font-bold text-indigo-400">{hoveredPoint.val}</span>
-                      </span>
+                      <div className="font-extrabold border-b border-zinc-800 pb-1 text-[9px] uppercase tracking-wider text-zinc-400 flex items-center justify-between gap-2">
+                        <span>{hoveredPoint.month}</span>
+                        {hoveredPoint.isProjected ? (
+                          <span className="text-[#D3E3FD] bg-blue-900/60 px-1.5 py-0.5 rounded text-[8px] font-bold">PROJECTED</span>
+                        ) : (
+                          <span className="text-zinc-400 text-[8px]">ACTUAL</span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span className="text-zinc-300">Total Visits:</span>
+                        <span className="font-bold text-[#D3E3FD]">{hoveredPoint.val}</span>
+                      </div>
+
+                      {hoveredPoint.isProjected && (
+                        <div className="border-t border-zinc-800 pt-1 flex flex-col gap-0.5 text-[9px]">
+                          <div className="flex items-center justify-between text-zinc-300">
+                            <span>Per Week (Team):</span>
+                            <span className="font-semibold text-white">~{hoveredPoint.perWeek} visits</span>
+                          </div>
+                          <div className="flex items-center justify-between text-zinc-300">
+                            <span>Per Day (Mon-Thu):</span>
+                            <span className="font-semibold text-white">~{hoveredPoint.perDay} visits</span>
+                          </div>
+                          <div className="flex items-center justify-between text-emerald-300 font-semibold pt-0.5">
+                            <span>Projected / Merch:</span>
+                            <span>~{hoveredPoint.perDayPerMerch} visits/day</span>
+                          </div>
+                          <span className="text-[7.5px] text-zinc-400 italic">
+                            ({hoveredPoint.activeMerchCount || 1} active merch • Mon-Thu schedule)
+                          </span>
+                        </div>
+                      )}
+
+                      {hoveredPoint.deployTarget && hoveredPoint.deployTarget > 0 ? (
+                        <div className="border-t border-zinc-800 pt-1 flex flex-col gap-0.5 text-[8.5px]">
+                          <div className="flex items-center justify-between text-zinc-400">
+                            <span>Deploy Target:</span>
+                            <span className="font-bold text-zinc-300">{hoveredPoint.deployTarget}/mo</span>
+                          </div>
+                          {hoveredPoint.deployTargetDailyPerMerch ? (
+                            <div className="flex items-center justify-between text-emerald-400 font-semibold">
+                              <span>Max Must Do / Merch:</span>
+                              <span>~{hoveredPoint.deployTargetDailyPerMerch} visits/day (Mon-Thu)</span>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   )}
+                </div>
+
+                {/* Projection Capacity & Pacing Breakdown Bar */}
+                <div className="pt-2 border-t border-slate-200 grid grid-cols-2 sm:grid-cols-4 gap-2 bg-[#F8F9FA] rounded-lg p-2.5 shrink-0">
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Active Merch (Past 3 Mo)</span>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="text-xs font-bold text-zinc-950">{graphData.activeMerchCount} Merch</span>
+                      {graphData.activeMerchList && graphData.activeMerchList.length > 0 && (
+                        <div className="flex -space-x-1 overflow-hidden">
+                          {graphData.activeMerchList.slice(0, 4).map((m: any, idx: number) => (
+                            <span
+                              key={idx}
+                              style={{ backgroundColor: m.color }}
+                              className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[7.5px] font-black text-white ring-1 ring-white"
+                              title={m.name}
+                            >
+                              {m.initials}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <span className="text-[8px] text-zinc-400 mt-0.5">active in last 90 days</span>
+                  </div>
+
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Projected Rate (Next 3 Mo)</span>
+                    <span className="text-xs font-bold text-[#0B57D0] mt-0.5">~{graphData.avgProjectedDaily} visits/day</span>
+                    <span className="text-[8px] text-zinc-400">~{graphData.avgProjectedWeekly}/wk (team, Mon-Thu)</span>
+                  </div>
+
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Deploy Target Capacity</span>
+                    <span className="text-xs font-bold text-zinc-950 mt-0.5">{graphData.deployTarget} visits/mo</span>
+                    <span className="text-[8px] text-zinc-400">~{graphData.deployTargetDaily}/day (Mon-Thu capacity)</span>
+                  </div>
+
+                  <div className="flex flex-col">
+                    <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider">Max / Day / Merch (Must Do)</span>
+                    <span className="text-xs font-bold text-emerald-700 mt-0.5">~{graphData.deployTargetDailyPerMerch} visits/day</span>
+                    <span className="text-[8px] text-zinc-400">Mon - Thu (excl. Fri/Sat/Sun)</span>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 2: MAP TRACKING (1 WEEK LATEST TRAIL & PINS) */}
+        {/* TAB 2: MAP TRACKING */}
         {activeTab === "tracking" && (
-          <div className="flex flex-col h-full gap-3 animate-tableFadeInOnly overflow-hidden p-0.5">
+          <div className="flex flex-col h-full gap-3 overflow-hidden p-3 animate-tableFadeInOnly">
             {/* Top Controls Toolbar: Date Navigation (< >) and Merchandiser Filter Pills */}
-            <div className="bg-white border border-slate-200 rounded-lg p-3 flex flex-wrap items-center justify-between gap-3 shadow-xs shrink-0">
+            <div className="bg-[#F8F9FA] border border-slate-200 rounded-lg px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-3 shadow-xs shrink-0">
               {/* Date Switcher: Last 7 days only */}
               <div className="flex items-center gap-2">
-                <div className="flex items-center bg-slate-100 rounded-md p-0.5 border border-slate-200">
+                <div className="flex items-center bg-white rounded-md p-0.5 border border-slate-200">
                   <button
                     type="button"
                     onClick={() => setMapDayOffset(prev => Math.max(prev - 1, -6))}
                     disabled={mapDayOffset <= -6}
-                    className="p-1.5 rounded hover:bg-slate-200 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors focus:outline-none"
+                    className="p-1 rounded hover:bg-slate-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors focus:outline-none"
                     title="Previous Day (Up to 1 week latest)"
                   >
                     <ChevronLeft size={16} className="stroke-[2.5]" />
@@ -2081,7 +2471,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                     type="button"
                     onClick={() => setMapDayOffset(prev => Math.min(prev + 1, 0))}
                     disabled={mapDayOffset >= 0}
-                    className="p-1.5 rounded hover:bg-slate-200 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors focus:outline-none"
+                    className="p-1 rounded hover:bg-slate-100 text-zinc-700 disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors focus:outline-none"
                     title="Next Day"
                   >
                     <ChevronRight size={16} className="stroke-[2.5]" />
@@ -2092,7 +2482,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   <button
                     type="button"
                     onClick={() => setMapDayOffset(0)}
-                    className="text-[11px] font-bold text-[#0B57D0] hover:underline px-2 py-1 cursor-pointer"
+                    className="text-xs font-bold text-[#0B57D0] hover:underline px-2 py-1 cursor-pointer"
                   >
                     Back to Today
                   </button>
@@ -2106,10 +2496,10 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                 <button
                   type="button"
                   onClick={() => setSelectedMerchFilter("all")}
-                  className={`px-3 py-1 text-xs font-bold rounded-full transition-all cursor-pointer flex items-center gap-1.5 border ${
+                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer flex items-center gap-1.5 border ${
                     selectedMerchFilter === "all"
                       ? "bg-[#0B57D0] text-white border-[#0B57D0] shadow-xs"
-                      : "bg-slate-50 text-zinc-700 border-slate-200 hover:bg-slate-100"
+                      : "bg-white text-zinc-700 border-slate-200 hover:bg-slate-100"
                   }`}
                 >
                   <Layers size={12} />
@@ -2123,9 +2513,9 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                       key={mId}
                       type="button"
                       onClick={() => setSelectedMerchFilter(isSelected ? "all" : mId)}
-                      className={`px-3 py-1 text-xs font-bold rounded-full transition-all cursor-pointer flex items-center gap-1.5 border ${
+                      className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer flex items-center gap-1.5 border ${
                         isSelected
-                          ? "bg-zinc-900 text-white border-zinc-900 shadow-xs"
+                          ? "bg-[#0B57D0] text-white border-[#0B57D0] shadow-xs"
                           : "bg-white text-zinc-800 border-slate-200 hover:bg-slate-50"
                       }`}
                     >
@@ -2150,98 +2540,66 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                     <Navigation size={14} className="text-[#0B57D0]" />
                     <span className="font-bold text-xs text-zinc-800 uppercase tracking-wider">Visited Route Log</span>
                   </div>
-                  <span className="text-[10px] font-extrabold text-zinc-500 bg-slate-200/70 px-2 py-0.5 rounded">
-                    {Object.values(dayTrailsData).reduce((acc, g) => acc + g.stops.length, 0)} Total Stops
+                  <span className="text-[10px] font-bold text-zinc-500 bg-white border border-slate-200 px-2 py-0.5 rounded">
+                    {Object.values(dayTrailsData).reduce((acc, g) => acc + g.stops.length, 0)} Stops
                   </span>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-4">
+                <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
                   {Object.keys(dayTrailsData).length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full py-12 text-center text-zinc-400 gap-2">
-                      <MapPin size={32} className="stroke-[1.5] text-zinc-300" />
-                      <span className="text-xs font-semibold">No merchandiser visits recorded for {selectedDayRange.label}.</span>
+                      <MapPin size={24} className="text-zinc-300" />
+                      <span className="text-xs font-semibold">No field visits logged for this day.</span>
                     </div>
                   ) : (
                     Object.entries(dayTrailsData)
                       .filter(([mId]) => selectedMerchFilter === "all" || selectedMerchFilter === mId)
-                      .map(([mId, group]) => {
-                        const { merchInfo, stops } = group;
+                      .map(([mId, data]) => {
+                        const { merchInfo, stops } = data;
+                        if (stops.length === 0) return null;
+
                         return (
-                          <div key={mId} className="flex flex-col gap-2 bg-[#F8F9FC] border border-slate-200/80 rounded-lg p-2.5">
-                            {/* Merchandiser Sub-Header */}
-                            <div className="flex items-center justify-between pb-1.5 border-b border-slate-200">
-                              <div className="flex items-center gap-2">
-                                <div 
-                                  className="w-5 h-5 rounded-full text-white text-[9px] font-black flex items-center justify-center shadow-xs"
-                                  style={{ backgroundColor: merchInfo.color }}
-                                >
-                                  {merchInfo.initials}
-                                </div>
-                                <span className="font-bold text-xs text-zinc-900">{merchInfo.name}</span>
-                              </div>
-                              <span className="text-[10px] font-bold text-zinc-600 bg-white px-2 py-0.5 rounded border border-slate-200">
-                                {stops.length} {stops.length === 1 ? "Stop" : "Stops"}
-                              </span>
+                          <div key={mId} className="flex flex-col gap-2">
+                            <div className="flex items-center gap-2 pb-1 border-b border-slate-100">
+                              <span 
+                                className="w-2 h-2 rounded-full"
+                                style={{ backgroundColor: merchInfo.color }}
+                              />
+                              <span className="font-bold text-xs text-zinc-900">{merchInfo.name}</span>
+                              <span className="text-[10px] text-zinc-400 font-mono">({stops.length} stops)</span>
                             </div>
 
-                            {/* Stops Sequence */}
-                            <div className="flex flex-col gap-1.5 relative pl-4 mt-1">
-                              {/* Vertical Line */}
-                              <div className="absolute left-[7px] top-2 bottom-2 w-0.5 bg-slate-300" />
-
+                            <div className="flex flex-col gap-2">
                               {stops.map((stop, idx) => {
                                 const isLast = idx === stops.length - 1;
                                 const isFirst = idx === 0 && stops.length > 1;
 
                                 return (
-                                  <div 
-                                    key={stop.id}
+                                  <div
+                                    key={stop.id || idx}
                                     onClick={() => handleFocusStop(stop)}
-                                    className={`relative flex items-start gap-2 p-2 rounded border transition-all cursor-pointer ${
-                                      isLast 
-                                        ? "bg-slate-50 border-slate-300 hover:bg-slate-100/80" 
-                                        : "bg-white border-slate-200 hover:bg-slate-50"
-                                    }`}
+                                    className="p-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 hover:border-[#0B57D0]/40 transition-all cursor-pointer flex flex-col gap-1 shadow-2xs"
                                   >
-                                    {/* Stop Shape Node */}
-                                    {isLast ? (
-                                      <div 
-                                        className="absolute -left-[13px] top-2.5 w-2.5 h-2.5 rounded-xs border-2 border-white shadow-2xs"
-                                        style={{ backgroundColor: merchInfo.color, filter: "brightness(0.7)" }}
-                                      />
-                                    ) : isFirst ? (
-                                      <div 
-                                        className="absolute -left-[13px] top-2.5 w-0 h-0 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent border-b-[9px]"
-                                        style={{ borderBottomColor: merchInfo.color }}
-                                      />
-                                    ) : (
-                                      <div 
-                                        className="absolute -left-[13px] top-2.5 w-2.5 h-2.5 rounded-full border-2 border-white shadow-2xs"
-                                        style={{ backgroundColor: merchInfo.color }}
-                                      />
-                                    )}
-
-                                    <div className="flex-1 min-w-0 flex flex-col gap-0.5">
-                                      <div className="flex items-center justify-between gap-1">
-                                        <span className="font-bold text-xs text-zinc-900 truncate">
-                                          #{idx + 1}. {stop.storeName}
-                                        </span>
-                                        <span className="text-[9px] font-mono text-zinc-500 font-bold shrink-0">
-                                          {formatTimeStr(stop.timestamp)}
-                                        </span>
-                                      </div>
-                                      
-                                      <span className="text-[10px] text-zinc-500 truncate">
-                                        {stop.retailerName}
+                                    <div className="flex items-center justify-between gap-1">
+                                      <span className="font-bold text-xs text-zinc-900 truncate flex items-center gap-1.5">
+                                        <span className="text-[10px] font-mono text-zinc-400">#{idx + 1}</span>
+                                        <span className="truncate">{stop.storeName}</span>
                                       </span>
-
-                                      {isLast && (
-                                        <div className="inline-flex items-center gap-1 text-[9px] font-extrabold text-zinc-700 mt-0.5">
-                                          <MapPin size={10} className="text-zinc-600" />
-                                          <span>Last Stop ({merchInfo.name})</span>
-                                        </div>
-                                      )}
+                                      <span className="text-[10px] font-mono text-zinc-500 font-bold shrink-0">
+                                        {formatTimeStr(stop.timestamp)}
+                                      </span>
                                     </div>
+                                    
+                                    <span className="text-[11px] text-zinc-500 truncate">
+                                      {stop.retailerName}
+                                    </span>
+
+                                    {isLast && (
+                                      <div className="inline-flex items-center gap-1 text-[10px] font-bold text-[#0B57D0] mt-0.5">
+                                        <MapPin size={11} />
+                                        <span>Last Stop ({merchInfo.name})</span>
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -2255,7 +2613,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
               {/* Right Column: Full Interactive Map Canvas */}
               <div className="flex-1 bg-white border border-slate-200 rounded-lg overflow-hidden relative shadow-xs min-h-[400px]">
-                <div id="merch-leaflet-map" className="w-full h-full z-10 bg-white" />
+                <div id="merch-leaflet-map" className="w-full h-full z-10" />
 
                 {!leafletLoaded && (
                   <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-20">
@@ -2272,8 +2630,8 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
         {/* TAB 3: VISIT HISTORY */}
         {activeTab === "visit_history" && (
-          <div className="w-full flex flex-col h-full animate-tableFadeInOnly overflow-hidden flex-1 min-h-0">
-            <div className="flex border-b border-zinc-200 mb-3 shrink-0">
+          <div className="w-full flex flex-col h-full animate-tableFadeInOnly overflow-hidden flex-1 min-h-0 p-3">
+            <div className="flex border-b border-slate-200 mb-3 shrink-0">
               <button
                 type="button"
                 onClick={() => setHistorySubTab("pending")}
@@ -2304,7 +2662,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   columns={taskColumns}
                   data={merchandiserTasks}
                   userRole="viewer"
-                  title="Pending Special Visit"
+                  title="Pending Special Visit Tasks"
                   fetching={fetching}
                   height="h-full"
                 />
@@ -2328,29 +2686,29 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
         {/* TAB 4: DEPLOY SETTINGS */}
         {activeTab === "setting" && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch h-auto lg:h-full w-full max-w-7xl mx-auto animate-tableFadeInOnly overflow-y-auto lg:overflow-hidden p-1">
-            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-lg p-5 shadow-3xs flex flex-col h-auto lg:h-full justify-between lg:overflow-hidden gap-5">
-              <div className="flex flex-col gap-5 flex-grow lg:overflow-y-auto pr-1">
-                <div className="flex items-center gap-2 border-b border-slate-200 pb-2 shrink-0">
-                  <Settings2 size={16} className="text-zinc-700" />
-                  <h3 className="font-bold text-sm text-zinc-800 uppercase tracking-wider">Deploy System Configuration</h3>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch h-full w-full overflow-y-auto lg:overflow-hidden p-3 animate-tableFadeInOnly">
+            <div className="lg:col-span-5 bg-white border border-slate-200 rounded-lg p-5 shadow-xs flex flex-col h-auto lg:h-full justify-between lg:overflow-hidden gap-4">
+              <div className="flex flex-col gap-4 flex-grow lg:overflow-y-auto pr-1">
+                <div className="flex items-center gap-2 border-b border-slate-200 pb-2.5 shrink-0">
+                  <Settings2 size={16} className="text-[#0B57D0]" />
+                  <h3 className="font-bold text-sm text-zinc-900 uppercase tracking-wider">Deploy System Configuration</h3>
                 </div>
 
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-3.5">
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visit Frequency (Days)</label>
+                    <label className="text-xs font-semibold text-zinc-600">Visit Frequency (Days)</label>
                     <input
                       type="number"
                       disabled={isViewer}
                       value={settingFreq}
                       onChange={(e) => setSettingFreq(Math.max(Number(e.target.value), 1))}
                       placeholder="e.g. 14"
-                      className="w-full text-xs bg-[#F0F4F9] border border-slate-200 rounded px-3 py-2 text-zinc-900 focus:outline-none focus:border-blue-400 font-semibold disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="w-full h-9 bg-white border border-slate-200 rounded-lg px-3 text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-semibold disabled:opacity-60 disabled:cursor-not-allowed transition-all"
                     />
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Focus Retailers</label>
+                    <label className="text-xs font-semibold text-zinc-600">Focus Retailers</label>
                     <TagInput
                       tags={settingFocusRet}
                       onChange={setSettingFocusRet}
@@ -2362,7 +2720,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Focus Status Stores</label>
+                    <label className="text-xs font-semibold text-zinc-600">Focus Status Stores</label>
                     <TagInput
                       tags={settingFocusStatus}
                       onChange={setSettingFocusStatus}
@@ -2374,7 +2732,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Focus Rank Stores</label>
+                    <label className="text-xs font-semibold text-zinc-600">Focus Rank Stores</label>
                     <TagInput
                       tags={settingFocusRank}
                       onChange={setSettingFocusRank}
@@ -2386,7 +2744,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   </div>
 
                   <div className="flex flex-col gap-1.5">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Avoid Retailers</label>
+                    <label className="text-xs font-semibold text-zinc-600">Avoid Retailers</label>
                     <TagInput
                       tags={settingAvoidRet}
                       onChange={setSettingAvoidRet}
@@ -2400,7 +2758,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
               </div>
 
               {!isViewer && (
-                <div className="flex justify-end border-t border-zinc-300 pt-4 shrink-0">
+                <div className="flex justify-end border-t border-slate-200 pt-3 shrink-0">
                   <CustomButton
                     variant="dark"
                     onClick={handleDeploySettings}
@@ -2411,41 +2769,41 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
               )}
             </div>
 
-            <div className="lg:col-span-7 bg-[#F8F9FC] border border-slate-200 rounded-lg p-5 flex flex-col h-auto lg:h-full gap-5 lg:overflow-hidden">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-2 shrink-0">
+            <div className="lg:col-span-7 bg-[#F8F9FA] border border-slate-200 rounded-lg p-5 flex flex-col h-auto lg:h-full gap-4 lg:overflow-hidden">
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2.5 shrink-0">
                 <div className="flex items-center gap-2">
                   <BarChart3 size={16} className="text-[#0B57D0]" strokeWidth={2} />
-                  <h3 className="font-bold text-sm text-zinc-800 uppercase tracking-wider">Live Metrics Preview</h3>
+                  <h3 className="font-bold text-sm text-zinc-900 uppercase tracking-wider">Live Metrics Preview</h3>
                 </div>
-                <span className="text-[10px] font-bold text-[#0B57D0] bg-[#E8F0FE] px-2 py-0.5 rounded select-none">
+                <span className="text-[10px] font-bold text-[#0B57D0] bg-[#E8F0FE] px-2.5 py-0.5 rounded-full select-none">
                   Simulated Impact
                 </span>
               </div>
 
               <div className="grid grid-cols-3 gap-3 shrink-0">
-                <div className="bg-white border border-slate-200 rounded p-3.5 flex flex-col gap-0.5 shadow-3xs">
-                  <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider text-center lg:text-left">Active Stores</span>
-                  <span className="text-xl font-black text-zinc-950 text-center lg:text-left">{settingCalculation.totalActive}</span>
+                <div className="bg-white border border-slate-200 rounded-lg p-3.5 flex flex-col gap-0.5 shadow-xs">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider text-center lg:text-left">Active Stores</span>
+                  <span className="text-2xl font-black text-zinc-950 text-center lg:text-left">{settingCalculation.totalActive}</span>
                 </div>
-                <div className="bg-white border border-slate-200 rounded p-3.5 flex flex-col gap-0.5 shadow-3xs">
-                  <span className="text-[9px] font-bold text-emerald-600 uppercase tracking-wider text-center lg:text-left">Have Visited</span>
-                  <span className="text-xl font-black text-emerald-700 text-center lg:text-left">{settingCalculation.totalVisited}</span>
+                <div className="bg-white border border-slate-200 rounded-lg p-3.5 flex flex-col gap-0.5 shadow-xs">
+                  <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-wider text-center lg:text-left">Have Visited</span>
+                  <span className="text-2xl font-black text-emerald-700 text-center lg:text-left">{settingCalculation.totalVisited}</span>
                 </div>
-                <div className="bg-white border border-slate-200 rounded p-3.5 flex flex-col gap-0.5 shadow-3xs">
-                  <span className="text-[9px] font-bold text-amber-600 uppercase tracking-wider text-center lg:text-left">Pending Visit</span>
-                  <span className="text-xl font-black text-amber-700 text-center lg:text-left">{settingCalculation.totalPending}</span>
+                <div className="bg-white border border-slate-200 rounded-lg p-3.5 flex flex-col gap-0.5 shadow-xs">
+                  <span className="text-[10px] font-bold text-amber-600 uppercase tracking-wider text-center lg:text-left">Pending Visit</span>
+                  <span className="text-2xl font-black text-amber-700 text-center lg:text-left">{settingCalculation.totalPending}</span>
                 </div>
               </div>
 
               <div className="flex flex-col flex-grow min-h-0 gap-3">
                 <div className="flex items-center justify-between shrink-0">
-                  <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">Group breakdown</span>
+                  <span className="text-xs font-semibold text-zinc-600">Group breakdown</span>
                   
-                  <div className="flex bg-slate-100 p-0.5 rounded border border-slate-200">
+                  <div className="flex bg-slate-200/70 p-0.5 rounded-lg border border-slate-200">
                     <button
                       type="button"
                       onClick={() => setCalcGroupBy("zone")}
-                      className={`px-3 py-1 text-[9px] font-bold rounded transition-all cursor-pointer ${
+                      className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
                         calcGroupBy === "zone"
                           ? "bg-white text-zinc-950 shadow-xs"
                           : "text-zinc-500 hover:text-zinc-800"
@@ -2456,7 +2814,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                     <button
                       type="button"
                       onClick={() => setCalcGroupBy("retailer")}
-                      className={`px-3 py-1 text-[9px] font-bold rounded transition-all cursor-pointer ${
+                      className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
                         calcGroupBy === "retailer"
                           ? "bg-white text-zinc-950 shadow-xs"
                           : "text-zinc-500 hover:text-zinc-800"
@@ -2467,30 +2825,30 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   </div>
                 </div>
 
-                <div className="bg-white border border-slate-200 rounded overflow-hidden shadow-3xs flex-grow min-h-[300px] lg:min-h-0 overflow-y-auto">
+                <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs flex-grow min-h-[260px] lg:min-h-0 overflow-y-auto">
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50 font-bold text-zinc-600">
-                        <th className="py-2 px-3">{calcGroupBy === "zone" ? "Store Zone" : "Retailer Name"}</th>
-                        <th className="py-2 px-3 text-center">Total</th>
-                        <th className="py-2 px-3 text-center text-emerald-700 font-bold">Visited</th>
-                        <th className="py-2 px-3 text-center text-amber-700 font-bold">Pending</th>
+                        <th className="py-2.5 px-4">{calcGroupBy === "zone" ? "Store Zone" : "Retailer Name"}</th>
+                        <th className="py-2.5 px-4 text-center">Total</th>
+                        <th className="py-2.5 px-4 text-center text-emerald-700 font-bold">Visited</th>
+                        <th className="py-2.5 px-4 text-center text-amber-700 font-bold">Pending</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-zinc-200">
+                    <tbody className="divide-y divide-slate-100">
                       {calcGroupBy === "zone" ? (
                         settingCalculation.byZone.length > 0 ? (
                           settingCalculation.byZone.map((z, idx) => (
                             <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                              <td className="py-2 px-3 font-semibold text-zinc-800">{z.name}</td>
-                              <td className="py-2 px-3 text-center font-bold text-zinc-700">{z.total}</td>
-                              <td className="py-2 px-3 text-center font-bold text-emerald-600">{z.visited}</td>
-                              <td className="py-2 px-3 text-center font-bold text-amber-600">{z.pending}</td>
+                              <td className="py-2.5 px-4 font-semibold text-zinc-800">{z.name}</td>
+                              <td className="py-2.5 px-4 text-center font-bold text-zinc-700">{z.total}</td>
+                              <td className="py-2.5 px-4 text-center font-bold text-emerald-600">{z.visited}</td>
+                              <td className="py-2.5 px-4 text-center font-bold text-amber-600">{z.pending}</td>
                             </tr>
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={4} className="py-4 px-3 text-center text-zinc-400 italic">
+                            <td colSpan={4} className="py-6 px-4 text-center text-zinc-400 italic">
                               No data matching filters.
                             </td>
                           </tr>
@@ -2499,15 +2857,15 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                         settingCalculation.byRetailer.length > 0 ? (
                           settingCalculation.byRetailer.map((r, idx) => (
                             <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                              <td className="py-2 px-3 font-semibold text-zinc-800">{r.name}</td>
-                              <td className="py-2 px-3 text-center font-bold text-zinc-700">{r.total}</td>
-                              <td className="py-2 px-3 text-center font-bold text-emerald-600">{r.visited}</td>
-                              <td className="py-2 px-3 text-center font-bold text-amber-600">{r.pending}</td>
+                              <td className="py-2.5 px-4 font-semibold text-zinc-800">{r.name}</td>
+                              <td className="py-2.5 px-4 text-center font-bold text-zinc-700">{r.total}</td>
+                              <td className="py-2.5 px-4 text-center font-bold text-emerald-600">{r.visited}</td>
+                              <td className="py-2.5 px-4 text-center font-bold text-amber-600">{r.pending}</td>
                             </tr>
                           ))
                         ) : (
                           <tr>
-                            <td colSpan={4} className="py-4 px-3 text-center text-zinc-400 italic">
+                            <td colSpan={4} className="py-6 px-4 text-center text-zinc-400 italic">
                               No data matching filters.
                             </td>
                           </tr>
@@ -2522,46 +2880,47 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         )}
       </div>
 
+      {/* MODAL 1: Shelf Image Preview */}
       {selectedImage && (
         <div 
-          className="fixed inset-0 bg-zinc-900/60 backdrop-blur-xs flex items-center justify-center z-50 animate-tableFadeInOnly p-4"
+          className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150"
           onClick={() => setSelectedImage(null)}
         >
           <div 
-            className="relative max-w-3xl max-h-[85vh] bg-[#EEEEEE] border border-zinc-300 rounded-lg shadow-xl overflow-hidden flex flex-col animate-modalSlideUp"
+            className="relative max-w-3xl max-h-[85vh] bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="h-10 flex items-center justify-between px-4 bg-[#E5E5E5] border-b border-zinc-300 select-none">
-              <span className="font-bold text-xs text-zinc-700 uppercase tracking-wider select-none">
+            <div className="h-11 flex items-center justify-between px-5 bg-slate-50 border-b border-slate-200 select-none">
+              <span className="font-bold text-xs text-zinc-800 uppercase tracking-wider select-none">
                 Shelf Image Preview
               </span>
               <button
                 onClick={() => setSelectedImage(null)}
-                className="p-1 rounded-full hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-colors cursor-pointer focus:outline-none"
+                className="p-1 rounded-lg hover:bg-slate-200/70 text-zinc-400 hover:text-zinc-700 transition-colors cursor-pointer focus:outline-none"
                 title="Close"
               >
-                <X size={14} />
+                <X size={16} />
               </button>
             </div>
 
-            <div className="p-6 flex items-center justify-center bg-white overflow-auto max-h-[calc(85vh-40px)]">
+            <div className="p-6 flex items-center justify-center bg-slate-100 overflow-auto max-h-[calc(85vh-90px)]">
               <img 
                 src={selectedImage} 
                 alt="Shelf Preview" 
-                className="max-w-full max-h-[65vh] object-contain rounded border border-zinc-200 shadow-sm"
+                className="max-w-full max-h-[60vh] object-contain rounded-lg border border-slate-200 shadow-sm"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src = "https://placehold.co/400x300?text=Failed+to+Load+Image";
                 }}
               />
             </div>
             
-            <div className="bg-[#E5E5E5] border-t border-zinc-300 px-4 py-2 flex justify-between items-center text-[10px] text-zinc-500 font-mono select-none">
+            <div className="bg-slate-50 border-t border-slate-200 px-5 py-2.5 flex justify-between items-center text-xs text-zinc-500 font-mono select-none">
               <span className="truncate max-w-[70%]">{selectedImage}</span>
               <a 
                 href={selectedImage} 
                 target="_blank" 
                 rel="noreferrer" 
-                className="text-zinc-600 hover:text-zinc-950 font-bold hover:underline cursor-pointer"
+                className="text-[#0B57D0] hover:underline font-bold cursor-pointer"
               >
                 Open Original ↗
               </a>
@@ -2570,16 +2929,17 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         </div>
       )}
 
+      {/* MODAL 2: Append Action Log Form */}
       {isUpdateLogOpen && selectedTask && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-tableFadeInOnly">
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150">
           <form
             onSubmit={handleUpdateLogSubmit}
-            className="bg-[#EEEEEE] border border-zinc-300 rounded-lg shadow-lg max-w-md w-full p-6 animate-modalSlideUp flex flex-col gap-4"
+            className="bg-white border border-slate-200 rounded-xl shadow-2xl max-w-md w-full overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col"
           >
-            <div className="flex items-center justify-between border-b border-zinc-300 pb-2">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50">
               <div className="flex items-center gap-2">
-                <Clock size={16} className="text-zinc-700" />
-                <h3 className="font-bold text-sm text-zinc-800 uppercase tracking-wider">Append Action Log</h3>
+                <Clock size={16} className="text-[#0B57D0]" />
+                <h3 className="font-bold text-sm text-zinc-900 uppercase tracking-wider">Append Action Log</h3>
               </div>
               <button
                 type="button"
@@ -2587,29 +2947,29 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   setIsUpdateLogOpen(false);
                   setSelectedTask(null);
                 }}
-                className="p-1 rounded hover:bg-zinc-200 text-zinc-500 hover:text-zinc-800 focus:outline-none"
+                className="p-1 rounded-lg hover:bg-slate-200/70 text-zinc-400 hover:text-zinc-700 focus:outline-none"
               >
                 <X size={16} className="stroke-[2.5]" />
               </button>
             </div>
 
-            <div className="flex flex-col gap-3.5">
-              <div className="flex flex-col gap-1">
-                <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-wide">Target Store</span>
-                <span className="text-xs font-extrabold text-zinc-800">
+            <div className="p-6 flex flex-col gap-4">
+              <div className="flex flex-col gap-1 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide">Target Store</span>
+                <span className="text-xs font-bold text-zinc-900">
                   {stores.find(s => String(s.id) === String(selectedTask.stores_id))?.display_name || `Store #${selectedTask.stores_id}`}
                 </span>
-                <span className="text-[10px] text-zinc-500 italic mt-0.5">
+                <span className="text-xs text-zinc-500 italic mt-0.5">
                   &ldquo;{selectedTask.task_description}&rdquo;
                 </span>
               </div>
 
-              <div className="flex flex-col gap-1.5 border-t border-zinc-300/60 pt-3">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Perform Action</label>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Perform Action</label>
                 <select
                   value={newAction}
                   onChange={(e) => setNewAction(e.target.value as any)}
-                  className="w-full bg-[#E5E5E5] border border-zinc-300 rounded px-3 py-2 text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 cursor-pointer"
+                  className="w-full h-9 bg-white border border-slate-200 rounded-lg px-3 text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] cursor-pointer"
                   required
                 >
                   <option value="Visit">Visit</option>
@@ -2619,11 +2979,11 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Next Action Required</label>
+                <label className="text-xs font-semibold text-zinc-600">Next Action Required</label>
                 <select
                   value={nextAction}
                   onChange={(e) => setNextAction(e.target.value as any)}
-                  className="w-full bg-[#E5E5E5] border border-zinc-300 rounded px-3 py-2 text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 cursor-pointer"
+                  className="w-full h-9 bg-white border border-slate-200 rounded-lg px-3 text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] cursor-pointer"
                   required
                 >
                   <option value="Visit">Visit</option>
@@ -2633,38 +2993,38 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Action Remark</label>
+                <label className="text-xs font-semibold text-zinc-600">Action Remark</label>
                 <textarea
                   value={newRemark}
                   onChange={(e) => setNewRemark(e.target.value)}
                   placeholder="E.g., Visit made to verify inventory. Checked displays and stock."
                   rows={3}
-                  className="w-full bg-[#E5E5E5] border border-zinc-300 rounded px-3 py-2 text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 resize-none font-medium"
+                  className="w-full bg-white border border-slate-200 rounded-lg p-3 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] resize-none font-medium"
                   required
                 />
               </div>
 
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Action Logged By</label>
+                <label className="text-xs font-semibold text-zinc-600">Action Logged By</label>
                 <input
                   type="text"
                   value={newActionBy}
                   onChange={(e) => setNewActionBy(e.target.value)}
-                  className="w-full bg-[#E5E5E5] border border-zinc-300 rounded px-3 py-2 text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+                  className="w-full h-9 bg-white border border-slate-200 rounded-lg px-3 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-semibold"
                   placeholder="Your Name"
                   required
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-2 border-t border-zinc-300 pt-3 mt-1">
+            <div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-3 bg-slate-50">
               <CustomButton
                 type="button"
                 onClick={() => {
                   setIsUpdateLogOpen(false);
                   setSelectedTask(null);
                 }}
-                className="bg-zinc-200 border-zinc-300 text-zinc-700 hover:bg-zinc-300 text-xs font-bold font-primary rounded"
+                variant="default"
               >
                 Cancel
               </CustomButton>
@@ -2679,41 +3039,25 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         </div>
       )}
 
+      {/* MODAL 3: Log History Timeline Sidebar */}
       {isHistoryOpen && selectedTask && (
         <div className="fixed inset-0 z-50 flex justify-end overflow-hidden">
-          <style dangerouslySetInnerHTML={{ __html: `
-            @keyframes sidebarSlideIn {
-              from { transform: translateX(100%); }
-              to { transform: translateX(0); }
-            }
-            @keyframes backdropFadeIn {
-              from { opacity: 0; }
-              to { opacity: 1; }
-            }
-            .animate-sidebarSlideIn {
-              animation: sidebarSlideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-            }
-            .animate-backdropFadeIn {
-              animation: backdropFadeIn 0.25s ease-out forwards;
-            }
-          `}} />
-          
           <div 
             onClick={() => {
               setIsHistoryOpen(false);
               setSelectedTask(null);
             }}
-            className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-backdropFadeIn"
+            className="absolute inset-0 bg-black/40 backdrop-blur-xs animate-in fade-in duration-200"
           />
 
           <div 
-            className="relative w-full max-w-md h-full bg-[#EEEEEE] border-l border-zinc-300 shadow-2xl flex flex-col z-10 animate-sidebarSlideIn"
+            className="relative w-full max-w-md h-full bg-white border-l border-slate-200 shadow-2xl flex flex-col z-10 animate-in slide-in-from-right duration-300"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-zinc-300 p-6 flex-shrink-0">
+            <div className="flex items-center justify-between border-b border-slate-200 p-5 bg-slate-50 flex-shrink-0">
               <div className="flex items-center gap-2">
-                <History size={16} className="text-zinc-700" />
-                <h3 className="font-bold text-sm text-zinc-800 uppercase tracking-wider">Log History Timeline</h3>
+                <History size={16} className="text-[#0B57D0]" />
+                <h3 className="font-bold text-sm text-zinc-900 uppercase tracking-wider">Log History Timeline</h3>
               </div>
               <button
                 type="button"
@@ -2721,14 +3065,14 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   setIsHistoryOpen(false);
                   setSelectedTask(null);
                 }}
-                className="p-1 rounded hover:bg-zinc-200 text-zinc-500 hover:text-zinc-800 focus:outline-none"
+                className="p-1 rounded-lg hover:bg-slate-200/70 text-zinc-400 hover:text-zinc-700 focus:outline-none"
               >
                 <X size={16} className="stroke-[2.5]" />
               </button>
             </div>
 
-            <div className="mx-6 my-4 flex flex-col gap-1 bg-zinc-200/50 border border-zinc-300/50 rounded p-3 text-xs text-zinc-700 flex-shrink-0 font-primary">
-              <span className="font-bold text-zinc-800">
+            <div className="mx-5 my-3 flex flex-col gap-1 bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-zinc-700 flex-shrink-0 font-primary">
+              <span className="font-bold text-zinc-900">
                 Store: {stores.find(s => String(s.id) === String(selectedTask.stores_id))?.display_name || `Store #${selectedTask.stores_id}`}
               </span>
               <p className="text-zinc-500 italic mt-0.5">&ldquo;{selectedTask.task_description}&rdquo;</p>
@@ -2737,8 +3081,8 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
               </span>
             </div>
 
-            <div className="flex-1 overflow-y-auto px-6 pr-4 pb-6 flex flex-col gap-5 relative pl-10">
-              <div className="absolute left-[33px] top-2 bottom-6 w-0.5 bg-zinc-300" />
+            <div className="flex-1 overflow-y-auto px-5 pr-4 pb-5 flex flex-col gap-4 relative pl-9">
+              <div className="absolute left-[29px] top-2 bottom-6 w-0.5 bg-slate-200" />
 
               {selectedTaskLogs.length > 0 ? (
                 selectedTaskLogs.map((log: any, idx: number) => {
@@ -2748,31 +3092,31 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   const ts = log.timestamp || log.Timestamp;
 
                   const actionColor =
-                    act === "Check Last Order" ? "bg-indigo-500 text-white border-indigo-600" :
-                    act === "Visit" ? "bg-emerald-500 text-white border-emerald-600" :
-                    "bg-amber-500 text-white border-amber-600";
+                    act === "Check Last Order" ? "bg-indigo-50 text-indigo-700 border-indigo-200" :
+                    act === "Visit" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                    "bg-amber-50 text-amber-700 border-amber-200";
 
                   return (
-                    <div key={idx} className="relative flex gap-4 text-xs font-primary">
-                      <div className={`relative z-10 w-5 h-5 rounded-full flex items-center justify-center border font-black text-[8px] flex-shrink-0 shadow-2xs ${actionColor}`}>
-                        {act.substring(0, 1).toUpperCase()}
+                    <div key={idx} className="relative flex gap-3.5 text-xs font-primary">
+                      <div className="relative z-10 w-4 h-4 rounded-full flex items-center justify-center bg-[#0B57D0] text-white font-bold text-[8px] flex-shrink-0 mt-0.5 shadow-2xs">
+                        {idx + 1}
                       </div>
 
-                      <div className="flex flex-col gap-1 bg-[#E5E5E5]/40 border border-zinc-300/30 rounded-lg p-3 w-full shadow-2xs hover:bg-[#E5E5E5]/60 transition-colors">
+                      <div className="flex flex-col gap-1.5 bg-white border border-slate-200 rounded-lg p-3 w-full shadow-xs">
                         <div className="flex items-center justify-between flex-wrap gap-1">
-                          <span className="font-extrabold text-zinc-800 uppercase tracking-wide text-[10px]">
+                          <span className={`font-bold px-2 py-0.5 rounded text-[10px] border ${actionColor}`}>
                             {act}
                           </span>
-                          <span className="text-[9px] text-zinc-400 font-mono">
+                          <span className="text-[10px] text-zinc-400 font-mono">
                             {String(formatDateTime(ts))}
                           </span>
                         </div>
-                        <p className="text-zinc-600 text-xs italic font-medium leading-relaxed">
+                        <p className="text-zinc-700 text-xs italic font-medium leading-relaxed">
                           &ldquo;{rem}&rdquo;
                         </p>
-                        <div className="flex items-center gap-1 text-[9px] text-zinc-500 font-bold border-t border-zinc-300/20 pt-1.5 mt-1">
-                          <UserCheck size={10} className="text-zinc-400" />
-                          <span>Action by: <span className="text-zinc-700 underline decoration-zinc-400/80">{actBy}</span></span>
+                        <div className="flex items-center gap-1 text-[10px] text-zinc-500 font-bold border-t border-slate-100 pt-1.5 mt-1">
+                          <UserCheck size={11} className="text-zinc-400" />
+                          <span>Action by: <span className="text-zinc-800 underline decoration-slate-300">{actBy}</span></span>
                         </div>
                       </div>
                     </div>
@@ -2785,14 +3129,15 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
               )}
             </div>
 
-            <div className="border-t border-zinc-300 p-6 bg-zinc-100/50 flex items-center justify-between gap-3 flex-shrink-0">
+            <div className="border-t border-slate-200 p-4 bg-slate-50 flex items-center justify-between gap-3 flex-shrink-0">
               <CustomButton
                 type="button"
                 onClick={() => {
                   setIsHistoryOpen(false);
                   setSelectedTask(null);
                 }}
-                className="bg-zinc-200 border border-zinc-300 text-zinc-700 hover:bg-zinc-300 text-xs font-bold w-1/2 flex justify-center py-2 rounded"
+                variant="default"
+                className="w-1/2 flex justify-center"
               >
                 Close
               </CustomButton>
@@ -2806,8 +3151,8 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   setIsUpdateLogOpen(true);
                   setIsHistoryOpen(false);
                 }}
-                className="bg-zinc-800 text-white hover:bg-zinc-950 text-xs font-bold w-1/2 flex justify-center py-2 rounded"
                 variant="dark"
+                className="w-1/2 flex justify-center"
               >
                 Update Task
               </CustomButton>
@@ -2816,39 +3161,40 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         </div>
       )}
 
+      {/* MODAL 4: Print Performance Report */}
       {isPrintModalOpen && (
         <div 
-          className="fixed inset-0 bg-zinc-900/60 backdrop-blur-xs flex items-center justify-center z-50 animate-fadeIn"
+          className="fixed inset-0 bg-black/40 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150"
           onClick={() => setIsPrintModalOpen(false)}
         >
           <div 
-            className="w-full max-w-md bg-[#EEEEEE] border border-zinc-300 rounded-lg shadow-xl overflow-hidden animate-modalSlideUp font-primary"
+            className="w-full max-w-md bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 font-primary"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="h-10 flex items-center justify-between px-4 bg-[#E5E5E5] border-b border-zinc-300 select-none">
-              <span className="font-bold text-xs text-zinc-700 uppercase tracking-wider flex items-center gap-1.5">
-                <Printer size={13} className="text-zinc-600" />
+            <div className="px-5 py-3.5 flex items-center justify-between bg-slate-50 border-b border-slate-200 select-none">
+              <span className="font-bold text-xs text-zinc-800 uppercase tracking-wider flex items-center gap-1.5">
+                <Printer size={14} className="text-[#0B57D0]" />
                 Print Performance Report
               </span>
               <button
                 onClick={() => setIsPrintModalOpen(false)}
-                className="p-1 rounded-full hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-colors cursor-pointer"
+                className="p-1 rounded-lg hover:bg-slate-200/70 text-zinc-400 hover:text-zinc-700 transition-colors cursor-pointer"
                 title="Close"
               >
-                <X size={14} />
+                <X size={16} />
               </button>
             </div>
 
             <div className="p-5 flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Report Frequency Type</label>
-                <div className="flex bg-zinc-200 p-0.5 rounded border border-zinc-300/60">
+                <label className="text-xs font-semibold text-zinc-600">Report Frequency Type</label>
+                <div className="flex bg-slate-200/70 p-0.5 rounded-lg border border-slate-200">
                   <button
                     type="button"
                     onClick={() => setPrintReportType("weekly")}
-                    className={`flex-1 py-2 text-xs font-bold rounded transition-all cursor-pointer ${
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${
                       printReportType === "weekly"
-                        ? "bg-[#EEEEEE] text-zinc-950 shadow-3xs"
+                        ? "bg-white text-zinc-950 shadow-xs"
                         : "text-zinc-500 hover:text-zinc-800"
                     }`}
                   >
@@ -2857,9 +3203,9 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                   <button
                     type="button"
                     onClick={() => setPrintReportType("monthly")}
-                    className={`flex-1 py-2 text-xs font-bold rounded transition-all cursor-pointer ${
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer ${
                       printReportType === "monthly"
-                        ? "bg-[#EEEEEE] text-zinc-950 shadow-3xs"
+                        ? "bg-white text-zinc-950 shadow-xs"
                         : "text-zinc-500 hover:text-zinc-800"
                     }`}
                   >
@@ -2870,11 +3216,11 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
               {printReportType === "weekly" ? (
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Select Week Range</label>
+                  <label className="text-xs font-semibold text-zinc-600">Select Week Range</label>
                   <select
                     value={selectedPrintWeekIndex}
                     onChange={(e) => setSelectedPrintWeekIndex(Number(e.target.value))}
-                    className="w-full text-xs bg-[#EEEEEE] border border-zinc-300 rounded-lg px-3 py-2 text-zinc-900 focus:outline-none focus:border-zinc-400 font-semibold cursor-pointer"
+                    className="w-full h-9 bg-white border border-slate-200 rounded-lg px-3 text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-semibold cursor-pointer"
                   >
                     {weekOptions.map((opt, index) => (
                       <option key={index} value={index}>
@@ -2885,11 +3231,11 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                 </div>
               ) : (
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Select Month</label>
+                  <label className="text-xs font-semibold text-zinc-600">Select Month</label>
                   <select
                     value={selectedPrintMonthIndex}
                     onChange={(e) => setSelectedPrintMonthIndex(Number(e.target.value))}
-                    className="w-full text-xs bg-[#EEEEEE] border border-zinc-300 rounded-lg px-3 py-2 text-zinc-900 focus:outline-none focus:border-zinc-400 font-semibold cursor-pointer"
+                    className="w-full h-9 bg-white border border-slate-200 rounded-lg px-3 text-xs text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-semibold cursor-pointer"
                   >
                     {monthOptions.map((opt, index) => (
                       <option key={index} value={index}>
@@ -2901,7 +3247,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
               )}
             </div>
 
-            <div className="bg-[#E5E5E5] border-t border-zinc-300 px-4 py-3 flex justify-end gap-2.5">
+            <div className="bg-slate-50 border-t border-slate-200 px-5 py-3 flex justify-end gap-2.5">
               <CustomButton
                 variant="default"
                 onClick={() => setIsPrintModalOpen(false)}

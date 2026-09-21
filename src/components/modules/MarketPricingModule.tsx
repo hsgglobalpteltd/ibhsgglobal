@@ -219,25 +219,35 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         const parsed = JSON.parse(cachedBrands);
         if (Array.isArray(parsed) && parsed.length > 0) setBrands(parsed);
       }
-      const cachedRets = localStorage.getItem("retailers_DB_data") || localStorage.getItem("retailers_db_data");
-      if (cachedRets) {
-        const parsed = JSON.parse(cachedRets);
+      const cachedBuyers = localStorage.getItem("buyers_db_data");
+      if (cachedBuyers) {
+        const parsed = JSON.parse(cachedBuyers);
         if (Array.isArray(parsed) && parsed.length > 0) setRetailers(parsed);
       }
     } catch {}
 
     try {
-      const [retRes, prodRes, brandRes] = await Promise.all([
-        fetch(`${API_BASE}/api/admin/db?table=retailers_DB`),
+      const [buyerRes, prodRes, brandRes] = await Promise.all([
+        fetch(`${API_BASE}/api/buyers`),
         fetch(`${API_BASE}/api/products`),
         fetch(`${API_BASE}/api/brands`)
       ]);
-      if (retRes.ok) {
-        const retData = await retRes.json();
-        const retList = Array.isArray(retData) ? retData : retData.value || [];
-        setRetailers(retList);
-        if (retList.length > 0 && !selectedRetailerId) {
-          setSelectedRetailerId(String(retList[0].id || retList[0].ID || ""));
+      if (buyerRes.ok) {
+        const buyerData = await buyerRes.json();
+        const buyerList = Array.isArray(buyerData) ? buyerData : buyerData.value || [];
+        const formatted = buyerList.map((b: any) => ({
+          ...b,
+          id: String(b.id || b.buyer_code || b.ID || ""),
+          buyer_code: b.buyer_code || "",
+          buyer_name: b.buyer_name || b.display_name || b.name || `Buyer #${b.id || b.buyer_code}`,
+          display_name: b.buyer_name || b.display_name || b["Display Name"] || b.name || `Buyer #${b.id || b.buyer_code}`,
+          name: b.buyer_name || b.display_name || b.name || `Buyer #${b.id || b.buyer_code}`,
+          channel: b.channel || "Retailer"
+        }));
+        setRetailers(formatted);
+        try { localStorage.setItem("buyers_db_data", JSON.stringify(formatted)); } catch {}
+        if (formatted.length > 0 && !selectedRetailerId) {
+          setSelectedRetailerId(String(formatted[0].id || formatted[0].ID || formatted[0].buyer_code || ""));
         }
       }
       if (prodRes.ok) {
@@ -317,11 +327,12 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
     }
   }, [selectedSheetId]);
 
-  // Find Retailer Name Helper
-  const getRetailerName = (id: string) => {
-    const found = retailers.find((r) => String(r.id || r.ID) === String(id));
-    return found ? found.display_name || found["Display Name"] || found.name || `Retailer #${id}` : `Retailer #${id}`;
+  // Find Buyer Name Helper
+  const getBuyerName = (id: string) => {
+    const found = retailers.find((r) => String(r.id || r.ID || r.buyer_code) === String(id));
+    return found ? found.buyer_name || found.display_name || found.name || `Buyer #${id}` : `Buyer #${id}`;
   };
+  const getRetailerName = getBuyerName;
 
   // Helper: Get Brand Name for a product SKU or PriceItem
   const getProductBrandName = React.useCallback((itemOrSku: PriceItem | string): string => {
@@ -1051,7 +1062,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       const retNames = activeSheetRetailerIds.map((rid) => getRetailerName(rid)).filter(Boolean).join(", ");
       let currentHeaderY = 26;
       if (retNames) {
-        doc.text(`Assigned Retailers: ${retNames}`, 14, currentHeaderY);
+        doc.text(`Assigned Buyers: ${retNames}`, 14, currentHeaderY);
         currentHeaderY += 5;
       }
       doc.text(`Generated Date: ${new Date().toLocaleString("en-SG")}`, 14, currentHeaderY);
@@ -1403,7 +1414,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           <div>
             <h1 className="text-base font-bold text-zinc-950">Market Price & RSP Registry</h1>
             <p className="text-xs text-zinc-500 mt-0.5">
-              Organize listing sheets, assign retailer clusters, manage Cost Price (Our Cost), Cost to Retailer (Buyer Cost), Market Price (RSP), and Margin Gain.
+              Organize listing sheets, assign buyer clusters, manage Cost Price (Our Cost), Cost to Buyer (Wholesale), Market Price (RSP), and Margin Gain.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1448,10 +1459,10 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         {/* Two-Panel Layout */}
         <div className="flex flex-1 min-h-0 overflow-hidden divide-x divide-slate-200">
           
-          {/* ================= LEFT PANEL: SHEETS & RETAILERS LIST ================= */}
+          {/* ================= LEFT PANEL: SHEETS & BUYERS LIST ================= */}
           <div className="w-80 shrink-0 flex flex-col bg-[#F8F9FA] overflow-hidden">
             
-            {/* View Mode Toggle: View by Retailer vs View by Sheet */}
+            {/* View Mode Toggle: View by Buyer vs View by Sheet */}
             <div className="p-2.5 border-b border-slate-200 bg-white">
               <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200">
                 <button
@@ -1464,7 +1475,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   }`}
                 >
                   <Store size={13} />
-                  <span>By Retailer</span>
+                  <span>By Buyer</span>
                 </button>
                 <button
                   type="button"
@@ -1485,7 +1496,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
                 <input
                   type="text"
-                  placeholder={sidebarViewMode === "retailer" ? "Search retailers or sheets..." : "Search listing sheets..."}
+                  placeholder={sidebarViewMode === "retailer" ? "Search buyers or sheets..." : "Search listing sheets..."}
                   value={sheetSearch}
                   onChange={(e) => setSheetSearch(e.target.value)}
                   className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] transition-all"
@@ -1498,9 +1509,9 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               {loadingSheets ? (
                 <div className="p-4 text-center text-xs text-zinc-400">Loading catalog...</div>
               ) : sidebarViewMode === "retailer" ? (
-                // ========== VIEW BY RETAILER (Retailer -> Listing Sheets) ==========
+                // ========== VIEW BY BUYER (Buyer -> Listing Sheets) ==========
                 filteredRetailersWithSheets.length === 0 ? (
-                  <div className="p-6 text-center text-xs text-zinc-400">No retailers found.</div>
+                  <div className="p-6 text-center text-xs text-zinc-400">No buyers found.</div>
                 ) : (
                   filteredRetailersWithSheets.map((item) => {
                     const isRetailerActive = item.retailerId === selectedRetailerId;
@@ -1515,7 +1526,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                             : "bg-white border-slate-200 hover:border-slate-300"
                         }`}
                       >
-                        {/* Retailer Header Card */}
+                        {/* Buyer Header Card */}
                         <div
                           onClick={() => {
                             setSelectedRetailerId(item.retailerId);
@@ -1532,9 +1543,16 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                               <Building2 size={13} />
                             </div>
                             <div className="min-w-0">
-                              <h3 className="text-xs font-bold text-zinc-900 truncate">
-                                {item.retailerName}
-                              </h3>
+                              <div className="flex items-center gap-1.5">
+                                <h3 className="text-xs font-bold text-zinc-900 truncate">
+                                  {item.retailerName}
+                                </h3>
+                                {item.retailer?.channel && (
+                                  <span className="text-[9px] font-medium bg-slate-100 text-zinc-600 px-1 py-0.2 rounded shrink-0">
+                                    {item.retailer.channel}
+                                  </span>
+                                )}
+                              </div>
                               <p className="text-[10px] text-zinc-500">
                                 {item.sheets.length} {item.sheets.length === 1 ? "Listing Sheet" : "Listing Sheets"}
                               </p>
@@ -1798,10 +1816,10 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                         </th>
                         <th className="px-3 py-2 min-w-[150px]">Product / Brand</th>
                         <th className="px-3 py-2 min-w-[160px]">Product Name</th>
-                        <th className="px-3 py-2 min-w-[120px]">Retailer SKU</th>
+                        <th className="px-3 py-2 min-w-[120px]">Buyer SKU</th>
                         <th className="px-3 py-2 min-w-[100px]">Listing Type</th>
                         <th className="px-3 py-2 text-right min-w-[115px]">Cost Price</th>
-                        <th className="px-3 py-2 text-right min-w-[115px]">Cost to Retailer</th>
+                        <th className="px-3 py-2 text-right min-w-[115px]">Cost to Buyer</th>
                         <th className="px-3 py-2 text-right min-w-[115px]">Market Price (RSP)</th>
                         <th className="px-3 py-2 text-right min-w-[100px]">Margin</th>
                         <th className="w-24 px-3 py-2 text-center">Actions</th>
@@ -1915,7 +1933,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                       {bg.items.length} {bg.items.length === 1 ? "SKU" : "SKUs"}
                                     </td>
 
-                                    {/* Retailer SKU col (Brand placeholder) */}
+                                    {/* Buyer SKU col (Brand placeholder) */}
                                     <td className="px-3 py-2 align-middle text-zinc-300 text-xs font-normal">
                                       -
                                     </td>
@@ -1950,7 +1968,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                       )}
                                     </td>
 
-                                    {/* Brand Cost to Retailer (Cascade Edit) */}
+                                    {/* Brand Cost to Buyer (Cascade Edit) */}
                                     <td className="px-3 py-2 text-right align-middle font-mono text-xs">
                                       {isEditMode ? (
                                         <div className="relative">
@@ -1965,7 +1983,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                               handleBrandPriceChange(bg.items, "retailer_price", val);
                                             }}
                                             className="w-20 pl-4 pr-1 py-1 text-right border border-blue-300 rounded bg-blue-50/40 text-xs font-mono font-medium text-[#0B57D0] focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                                            title="Edit Cost to Retailer for ALL products in this brand"
+                                            title="Edit Cost to Buyer for ALL products in this brand"
                                           />
                                         </div>
                                       ) : (
@@ -2105,7 +2123,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                           )}
                                         </td>
 
-                                        {/* Retailer SKU (Editable) */}
+                                        {/* Buyer SKU (Editable) */}
                                         <td className="px-3 py-2 align-middle">
                                           {isEditMode ? (
                                             <input
@@ -2182,7 +2200,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                           )}
                                         </td>
 
-                                        {/* Cost to Retailer */}
+                                        {/* Cost to Buyer */}
                                         <td className="px-3 py-2 text-right align-middle font-mono text-xs">
                                           {isEditMode ? (
                                             <div className="relative">
@@ -2353,19 +2371,19 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 />
               </div>
 
-              {/* Retailers Multi-Selector */}
+              {/* Buyers Multi-Selector */}
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  Select Retailers in this Sheet
+                  Assign Buyers to this Sheet
                 </label>
                 <p className="text-[11px] text-zinc-500 mb-2">
-                  Select one or more retailers to associate with this listing sheet.
+                  Select one or more buyers from the buyers directory to associate with this listing sheet.
                 </p>
 
                 <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-lg p-2 divide-y divide-slate-100 bg-slate-50/50">
                   {retailers.map((ret) => {
-                    const retId = String(ret.id || ret.ID);
-                    const retName = ret.display_name || ret["Display Name"] || ret.name || `Retailer #${retId}`;
+                    const retId = String(ret.id || ret.ID || ret.buyer_code);
+                    const retName = ret.buyer_name || ret.display_name || ret.name || `Buyer #${retId}`;
                     
                     let currentSheetRetailers: string[] = [];
                     try {
@@ -2395,6 +2413,11 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                           />
                           <span className="font-semibold text-zinc-800">{retName}</span>
                         </div>
+                        {ret.channel && (
+                          <span className="text-[10px] text-zinc-500 bg-white border border-slate-200 px-1.5 py-0.2 rounded">
+                            {ret.channel}
+                          </span>
+                        )}
                       </label>
                     );
                   })}
@@ -2947,7 +2970,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        Retailer SKU
+                        Buyer SKU
                       </label>
                       <input
                         type="text"
@@ -2990,7 +3013,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                        Buyer Cost
+                        Cost to Buyer
                       </label>
                       <input
                         type="number"
@@ -3113,11 +3136,11 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 />
               </div>
 
-              {/* Retailer SKU & Tier */}
+              {/* Buyer SKU & Tier */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                    Retailer SKU
+                    Buyer SKU
                   </label>
                   <input
                     type="text"
@@ -3173,10 +3196,10 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 </div>
               </div>
 
-              {/* Cost to Retailer (Wholesale Price) */}
+              {/* Cost to Buyer (Wholesale Price) */}
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  Cost to Retailer (What Retailer Pays Us)
+                  Cost to Buyer (What Buyer Pays Us)
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">$</span>
@@ -3297,7 +3320,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  New Cost to Retailer [Optional]
+                  New Cost to Buyer [Optional]
                 </label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 text-xs">$</span>
