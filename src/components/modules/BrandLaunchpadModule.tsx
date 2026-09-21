@@ -31,7 +31,8 @@ import {
   Check, 
   X, 
   FileCheck,
-  ChevronDown
+  ChevronDown,
+  Copy
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -379,30 +380,45 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
   // PDF GENERATION FUNCTIONS (Clean Direct Download - No Window.Print)
   // --------------------------------------------------------------------------
 
-  // 1. Download Blank Intake Form PDF
+  // --------------------------------------------------------------------------
+  // PDF GENERATION FUNCTIONS (Clean Direct Download - Unified Header Banners)
+  // --------------------------------------------------------------------------
+
+  // Shared Helper: Draw Standardized Full-Width Blue Top Banner (Same as Retailer Pitch Deck)
+  const drawPdfHeaderBanner = (doc: jsPDF, title: string, subtitle: string) => {
+    doc.setFillColor(11, 87, 208); // Google Blue #0B57D0
+    doc.rect(0, 0, 210, 26, "F");
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(15);
+    doc.setTextColor(255, 255, 255);
+    doc.text(title, 14, 12);
+
+    doc.setFontSize(8.5);
+    doc.setFont("helvetica", "normal");
+    doc.text(subtitle, 14, 19);
+  };
+
+  // 1. Download Intake & Commercial Pricing Worksheet (Step 1 - No Signatures)
   const downloadIntakeFormPDF = (brand?: BrandLaunchpadBrand) => {
     const doc = new jsPDF("p", "mm", "a4");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(18);
-    doc.setTextColor(11, 87, 208); // Google Blue #0B57D0
-    doc.text("HSG GLOBAL - BRAND & PRODUCT INTAKE WORKSHEET", 14, 20);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.setTextColor(100, 116, 139);
-    doc.text("Step 1: New Brand Pipeline Master Registration & Compliance Assessment", 14, 26);
-    doc.line(14, 30, 196, 30);
+    const brandTitle = brand?.brand_name ? `${brand.brand_name.toUpperCase()} - ` : "";
+    drawPdfHeaderBanner(
+      doc,
+      `${brandTitle}BRAND & PRODUCT INTAKE WORKSHEET`,
+      "Step 1: New Brand Pipeline Master Registration, Commercial Waterfall & Compliance Assessment"
+    );
 
     // Brand Profile Section
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
-    doc.text("1. Brand & Company Profile", 14, 38);
+    doc.text("1. Brand & Company Profile", 14, 34);
 
     autoTable(doc, {
-      startY: 42,
+      startY: 38,
       theme: "grid",
-      styles: { fontSize: 9, cellPadding: 3, textColor: [30, 41, 59] },
+      styles: { fontSize: 8.5, cellPadding: 2.8, textColor: [30, 41, 59] },
       headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
       head: [["Field", "Details / Specifications"]],
       body: [
@@ -418,13 +434,13 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
       ]
     });
 
-    const finalY1 = (doc as any).lastAutoTable.finalY || 100;
+    const finalY1 = (doc as any).lastAutoTable.finalY || 95;
 
     // SKUs & Pricing Section
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
-    doc.text("2. Product Range & Commercial Pricing Waterfall", 14, finalY1 + 10);
+    doc.text("2. Product Range & Commercial Pricing Waterfall", 14, finalY1 + 8);
 
     const skuRows = (brand?.products && brand.products.length > 0)
       ? brand.products.map(p => [
@@ -439,12 +455,12 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
           `$${Number(p.rsp).toFixed(2)}`
         ])
       : [
-          ["Sample Product 1", "", "", "12 Mos", "Ambient", "$", "$", "$", "$"],
-          ["Sample Product 2", "", "", "12 Mos", "Ambient", "$", "$", "$", "$"]
+          ["Sample Product 1", "-", "-", "12 Mos", "Ambient", "$0.00", "$0.00", "$0.00", "$0.00"],
+          ["Sample Product 2", "-", "-", "12 Mos", "Ambient", "$0.00", "$0.00", "$0.00", "$0.00"]
         ];
 
     autoTable(doc, {
-      startY: finalY1 + 14,
+      startY: finalY1 + 12,
       theme: "grid",
       styles: { fontSize: 8, cellPadding: 2.5, textColor: [30, 41, 59] },
       headStyles: { fillColor: [11, 87, 208], textColor: [255, 255, 255], fontStyle: "bold" },
@@ -452,18 +468,18 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
       body: skuRows
     });
 
-    const finalY2 = (doc as any).lastAutoTable.finalY || 180;
+    const finalY2 = (doc as any).lastAutoTable.finalY || 170;
 
     // Compliance Checklist
     doc.setFont("helvetica", "bold");
-    doc.setFontSize(12);
+    doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
-    doc.text("3. Initial Compliance & Import Readiness Checklist", 14, finalY2 + 10);
+    doc.text("3. Initial Compliance & Import Readiness Checklist", 14, finalY2 + 8);
 
     autoTable(doc, {
-      startY: finalY2 + 14,
+      startY: finalY2 + 12,
       theme: "plain",
-      styles: { fontSize: 9, cellPadding: 2, textColor: [51, 65, 85] },
+      styles: { fontSize: 8.5, cellPadding: 2, textColor: [51, 65, 85] },
       body: [
         ["[  ] English Ingredients & Nutritional Labeling verified compliant for Singapore SFA regulations."],
         ["[  ] Certificate of Analysis (COA) / Food Hygiene & Halal/HACCP certifications available."],
@@ -473,42 +489,91 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
       ]
     });
 
-    // Signature Block
-    const finalY3 = (doc as any).lastAutoTable.finalY || 240;
-    doc.line(14, finalY3 + 12, 90, finalY3 + 12);
-    doc.line(120, finalY3 + 12, 196, finalY3 + 12);
-    doc.setFontSize(8);
-    doc.setTextColor(100, 116, 139);
-    doc.text("Brand Owner / Authorized Representative Signature & Date", 14, finalY3 + 16);
-    doc.text("HSG Global Sales Lead Sign-off & Date", 120, finalY3 + 16);
-
-    doc.save(`HSG_Brand_Intake_${(brand?.brand_name || "Form").replace(/\s+/g, "_")}.pdf`);
-    toast.success("Intake Worksheet PDF generated & downloaded");
+    const blob = doc.output("blob");
+    const blobUrl = URL.createObjectURL(blob);
+    window.open(blobUrl, "_blank");
+    toast.success("Intake Worksheet opened in new tab");
   };
 
-  // 2. Download Individual 1-Page Paper Scorecard PDF per SKU (with QR Code)
+  // Helper to load image as base64 for PDF embedding
+  const getImageBase64 = async (url: string): Promise<string | null> => {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  // 2. Open Individual 1-Page Paper Scorecard PDF per SKU (with Top 4 1:1 Photo Strip & Bottom QR)
   const downloadSkuPaperScorecardPDF = async (product: BrandLaunchpadProduct, brandName: string) => {
     try {
       const doc = new jsPDF("p", "mm", "a4");
 
-      // Header Banner
-      doc.setFillColor(11, 87, 208); // Google Blue
-      doc.rect(0, 0, 210, 24, "F");
+      // Header Banner (Same Pitch Deck style)
+      drawPdfHeaderBanner(
+        doc,
+        "HSG GLOBAL - PRODUCT TASTE EVALUATION SCORECARD",
+        "Step 2: Sensory & Commercial Product Tasting Worksheet"
+      );
 
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(15);
-      doc.setTextColor(255, 255, 255);
-      doc.text("HSG GLOBAL - PRODUCT TASTE EVALUATION SCORECARD", 14, 12);
+      // ----------------------------------------------------------------------
+      // TOP 4-COLUMN PHOTO GALLERY (1:1 Ratio: 38mm x 38mm each, x=14 to 196)
+      // ----------------------------------------------------------------------
+      const photoStartY = 30;
+      const photoW = 38;
+      const photoH = 38; // 1:1 square aspect ratio
+      const photoGap = 10; // (182 - 4*38) / 3 = 10mm gap
+      const slotLabels = ["1. Front Pack", "2. Back / Ingredients", "3. Nutritional Info", "4. Product Sample"];
 
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
-      doc.text("Step 2: Sensory & Commercial Product Assessment Worksheet", 14, 18);
+      const imagesList = Array.isArray(product.images) ? product.images : [];
 
-      // SKU Metadata Grid
+      for (let i = 0; i < 4; i++) {
+        const slotX = 14 + i * (photoW + photoGap);
+        const imgUrl = imagesList[i];
+        let imgLoaded = false;
+
+        if (imgUrl) {
+          const base64Img = await getImageBase64(imgUrl);
+          if (base64Img) {
+            try {
+              doc.addImage(base64Img, "JPEG", slotX, photoStartY, photoW, photoH);
+              doc.setDrawColor(203, 213, 225);
+              doc.rect(slotX, photoStartY, photoW, photoH);
+              imgLoaded = true;
+            } catch (err) {
+              console.warn(`Error drawing image ${i}:`, err);
+            }
+          }
+        }
+
+        if (!imgLoaded) {
+          doc.setFillColor(248, 250, 252);
+          doc.setDrawColor(226, 232, 240);
+          doc.rect(slotX, photoStartY, photoW, photoH, "FD");
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(7.5);
+          doc.setTextColor(148, 163, 184);
+          doc.text(slotLabels[i] || `Photo ${i + 1}`, slotX + 6, photoStartY + 18);
+          doc.setFontSize(6.5);
+          doc.text("(1:1 Square)", slotX + 11, photoStartY + 23);
+        }
+      }
+
+      // ----------------------------------------------------------------------
+      // PRODUCT DETAILS & REVIEWER INFO (Gap of 4mm below photos)
+      // ----------------------------------------------------------------------
       autoTable(doc, {
-        startY: 28,
+        startY: photoStartY + photoH + 4,
         theme: "plain",
-        styles: { fontSize: 9, cellPadding: 2, textColor: [15, 23, 42] },
+        styles: { fontSize: 8, cellPadding: 1.2, textColor: [15, 23, 42] },
         body: [
           [
             `Brand: ${brandName || "-"}`,
@@ -523,35 +588,45 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
           [
             `Storage: ${product.storage_condition || "Ambient"}`,
             `Shelf Life: ${product.shelf_life_months || 12} Months`,
-            `Date: ____________________`
+            ""
           ],
           [
-            `Reviewer Name: ________________________________`,
-            `Reviewer Role: [ ] Admin  [ ] Staff  [ ] Guest Taster`,
-            ``
+            {
+              content: `Reviewer Name: ____________________________________________________________________________________`,
+              colSpan: 3,
+              styles: { fontStyle: "bold", textColor: [15, 23, 42], cellPadding: { top: 3.5, bottom: 1.5, left: 1.5, right: 1.5 } }
+            }
           ]
         ]
       });
 
-      const finalY1 = (doc as any).lastAutoTable.finalY || 55;
+      const finalY1 = (doc as any).lastAutoTable.finalY || 92;
 
-      // 6 Criteria Scoring Table (NO Total Score or Score Bands on Paper)
+      // ----------------------------------------------------------------------
+      // 6 CRITERIA SCORING TABLE
+      // ----------------------------------------------------------------------
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(11);
+      doc.setFontSize(9);
       doc.setTextColor(15, 23, 42);
-      doc.text("Sensory & Commercial Evaluation (Score each criterion from 1 to 5 points)", 14, finalY1 + 6);
+      doc.text("Sensory & Commercial Evaluation (Score each criterion from 1 to 5 points)", 14, finalY1 + 5);
 
       autoTable(doc, {
-        startY: finalY1 + 10,
+        startY: finalY1 + 7,
         theme: "grid",
-        styles: { fontSize: 8.5, cellPadding: 3, textColor: [30, 41, 59] },
+        styles: { fontSize: 7.5, cellPadding: 1.8, textColor: [30, 41, 59] },
         headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
+        columnStyles: {
+          0: { cellWidth: 8, halign: "center", fontStyle: "bold" },
+          1: { cellWidth: 42, fontStyle: "bold", textColor: [15, 23, 42] },
+          2: { cellWidth: 104, fontSize: 7.2, textColor: [71, 85, 105] },
+          3: { cellWidth: 28, halign: "center", fontStyle: "bold", textColor: [11, 87, 208] }
+        },
         head: [["#", "Evaluation Criteria", "Key Considerations & Prompts", "Score (1 - 5)"]],
         body: [
           [
             "1",
             "Taste & Aroma",
-            "Flavor profile, balance of sweetness/saltiness, aroma authentic to expectation, aftertaste.",
+            "Flavor balance, sweetness/saltiness, authentic aroma, aftertaste freshness.",
             "[   ] / 5"
           ],
           [
@@ -563,55 +638,85 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
           [
             "3",
             "Packaging Appeal",
-            "Shelf stand-out, clarity of labeling, ease of opening, material quality & durability.",
+            "Visual shelf stand-out, clarity of labeling, ease of opening, barrier quality.",
             "[   ] / 5"
           ],
           [
             "4",
             "Price Believability",
-            "Perceived value vs RSP ($" + Number(product.rsp).toFixed(2) + "), competitive advantage in retail.",
+            `Perceived value vs Target RSP ($${Number(product.rsp).toFixed(2)}), competitive category edge.`,
             "[   ] / 5"
           ],
           [
             "5",
             "Usage Occasion",
-            "Clear consumer consumption moment (daily snack, gift, cooking, health/wellness).",
+            "Clear consumption moment (daily snack, cooking, family, gifting, health/wellness).",
             "[   ] / 5"
           ],
           [
             "6",
             "Repeat Purchase",
-            "Likelihood of buying again, customer stickiness, household staple potential.",
+            "Likelihood of buying again, household staple stickiness, consumer loyalty.",
             "[   ] / 5"
           ]
         ]
       });
 
-      const finalY2 = (doc as any).lastAutoTable.finalY || 135;
+      const finalY2 = (doc as any).lastAutoTable.finalY || 145;
 
-      // Tasting Notes Area
+      // ----------------------------------------------------------------------
+      // TASTING NOTES AREA
+      // ----------------------------------------------------------------------
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
+      doc.setFontSize(8.5);
       doc.setTextColor(15, 23, 42);
-      doc.text("Tasting Notes, Feedback & Observations:", 14, finalY2 + 8);
+      doc.text("Tasting Notes, Feedback & Observations:", 14, finalY2 + 5);
 
-      doc.rect(14, finalY2 + 11, 182, 32);
-      doc.line(14, finalY2 + 19, 196, finalY2 + 19);
-      doc.line(14, finalY2 + 27, 196, finalY2 + 27);
-      doc.line(14, finalY2 + 35, 196, finalY2 + 35);
+      doc.setDrawColor(203, 213, 225);
+      doc.rect(14, finalY2 + 7.5, 182, 18);
+      doc.line(14, finalY2 + 13.5, 196, finalY2 + 13.5);
 
-      // Recommendation & Sign-off
+      // ----------------------------------------------------------------------
+      // COMMERCIAL RECOMMENDATION
+      // ----------------------------------------------------------------------
+      const recY = finalY2 + 30;
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
+      doc.setFontSize(8.5);
       doc.setTextColor(15, 23, 42);
-      doc.text("Reviewer Commercial Verdict:", 14, finalY2 + 50);
+      doc.text("Reviewer Commercial Recommendation:", 14, recY);
 
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(9);
-      doc.text("[  ] Proceed to Online Trial      [  ] Proceed with Conditions      [  ] Pause / Need Refinement      [  ] Reject", 14, finalY2 + 56);
+      doc.setFontSize(8);
+      doc.text("[  ] Proceed to Online Trial      [  ] Proceed with Conditions      [  ] Pause / Need Refinement      [  ] Reject", 14, recY + 5.5);
 
-      // Embedded Dynamic QR Code Box
-      const qrTargetUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/review?pid=${encodeURIComponent(product.id)}`;
+      // ----------------------------------------------------------------------
+      // REVIEWER SIGN-OFF
+      // ----------------------------------------------------------------------
+      const signY = recY + 15;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.setTextColor(15, 23, 42);
+      doc.text("Reviewer Sign-off & Clearance:", 14, signY);
+
+      doc.setDrawColor(148, 163, 184);
+      doc.line(14, signY + 10, 100, signY + 10);
+      doc.line(120, signY + 10, 196, signY + 10);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 116, 139);
+      doc.text("Reviewer Signature", 14, signY + 14);
+      doc.text("Date", 120, signY + 14);
+
+      // ----------------------------------------------------------------------
+      // QR CODE FOOTER
+      // ----------------------------------------------------------------------
+      const footerY = 250;
+      doc.setDrawColor(226, 232, 240);
+      doc.line(14, footerY - 3, 196, footerY - 3);
+
+      const originHost = typeof window !== "undefined" ? window.location.origin : "https://ib.hsgglobal.sg";
+      const qrTargetUrl = `${originHost}/review?pid=${encodeURIComponent(product.id)}`;
       const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrTargetUrl)}`;
 
       try {
@@ -623,65 +728,58 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
           await new Promise((resolve) => {
             reader.onloadend = () => {
               const base64data = reader.result as string;
-              doc.addImage(base64data, "PNG", 14, finalY2 + 65, 28, 28);
+              doc.addImage(base64data, "PNG", 14, footerY, 25, 25);
               resolve(true);
             };
           });
         }
       } catch (qrErr) {
         console.warn("Could not embed dynamic QR image, drawing placeholder box:", qrErr);
-        doc.rect(14, finalY2 + 65, 28, 28);
+        doc.rect(14, footerY, 25, 25);
       }
 
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setTextColor(11, 87, 208);
-      doc.text("Scan QR to Score Online (Mobile)", 46, finalY2 + 74);
+      doc.text("Option to Score Online (Mobile)", 44, footerY + 6);
+
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
+      doc.setFontSize(7.5);
       doc.setTextColor(100, 116, 139);
-      doc.text("Guest tasters & staff can scan this code with a smartphone camera to submit ratings instantly.", 46, finalY2 + 79);
-      doc.text(`Link: ${qrTargetUrl}`, 46, finalY2 + 84);
+      doc.text("Scan this QR code with any smartphone camera to open and submit your evaluation digitally.", 44, footerY + 12);
+      doc.text(`Direct Link: ${qrTargetUrl}`, 44, footerY + 17);
 
-      // Signature line
-      doc.line(130, finalY2 + 90, 196, finalY2 + 90);
-      doc.setFontSize(8);
-      doc.text("Reviewer Signature", 145, finalY2 + 94);
-
-      doc.save(`Taste_Scorecard_${product.product_name.replace(/\s+/g, "_")}.pdf`);
-      toast.success(`Scorecard PDF for ${product.product_name} downloaded`);
+      const blob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank");
+      toast.success(`Scorecard for ${product.product_name} opened in new tab`);
     } catch (err: any) {
       toast.error(err.message || "Failed to generate scorecard PDF");
     }
   };
 
-  // 3. Download Marketing Support Agreement PDF
+  // 3. Download Marketing Support Worksheet PDF (Step 3 - No Signatures)
   const downloadMarketingAgreementPDF = (brand: BrandLaunchpadBrand) => {
     const doc = new jsPDF("p", "mm", "a4");
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(11, 87, 208);
-    doc.text("HSG GLOBAL - MARKETING SUPPORT & COMMERCIAL AGREEMENT", 14, 20);
-
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(100, 116, 139);
-    doc.text("Step 3: Brand Story, Creator Angles, Promotional Funding & Retail Goals", 14, 26);
-    doc.line(14, 30, 196, 30);
+    drawPdfHeaderBanner(
+      doc,
+      `${brand.brand_name.toUpperCase()} - MARKETING & CREATOR STRATEGY`,
+      "Step 3: Brand Story, Creator Angles, Promotional Funding & Retail Goals"
+    );
 
     autoTable(doc, {
-      startY: 36,
+      startY: 34,
       theme: "grid",
-      styles: { fontSize: 9, cellPadding: 3.5, textColor: [30, 41, 59] },
+      styles: { fontSize: 8.5, cellPadding: 3.5, textColor: [30, 41, 59] },
       headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
       head: [["Category", "Marketing Commitment / Strategic Plan"]],
       body: [
         ["Brand / Company", `${brand.brand_name} (${brand.company_name || "-"})`],
-        ["Brand Story & Origin", brand.brand_story || "Not provided"],
-        ["Target Consumer & Need", `${brand.target_consumer || "-"} | ${brand.consumer_need_served || "-"}`],
-        ["TikTok & Video Angles", brand.tiktok_hooks || "Not provided"],
-        ["Launch Promo & Sampling Budget", brand.launch_promo_support || "Not provided"],
-        ["Retail Ambition & Channel Fit", brand.retail_ambition || "Supermarkets, Modern Trade, Convenience"]
+        ["Brand Story & Origin", brand.brand_story || ""],
+        ["Target Consumer & Need", `${brand.target_consumer || ""} ${brand.consumer_need_served ? `| ${brand.consumer_need_served}` : ""}`.trim()],
+        ["TikTok & Video Angles", brand.tiktok_hooks || ""],
+        ["Launch Promo & Sampling Budget", brand.launch_promo_support || ""],
+        ["Retail Ambition & Channel Fit", brand.retail_ambition || ""]
       ]
     });
 
@@ -690,44 +788,376 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
     doc.setFont("helvetica", "bold");
     doc.setFontSize(11);
     doc.setTextColor(15, 23, 42);
-    doc.text("Commitment Acknowledgment", 14, finalY + 14);
+    doc.text("Strategic Launch Summary", 14, finalY + 12);
 
     doc.setFont("helvetica", "normal");
-    doc.setFontSize(9);
+    doc.setFontSize(8.5);
     doc.setTextColor(71, 85, 105);
     doc.text(
-      "The Brand Owner confirms the provision of agreed promotional discounts, marketing samples for creator gifting,\n" +
+      "The Brand and HSG Global will coordinate promotional discounts, marketing samples for creator gifting,\n" +
       "and active co-branding support throughout the 3-Month Online Trial and subsequent Modern Trade retail listing.",
       14,
-      finalY + 20
+      finalY + 18
     );
 
-    doc.line(14, finalY + 60, 90, finalY + 60);
-    doc.line(120, finalY + 60, 196, finalY + 60);
-    doc.setFontSize(8);
-    doc.text("Authorized Brand Principal Signature", 14, finalY + 65);
-    doc.text("HSG Global Commercial Director Sign-off", 120, finalY + 65);
-
-    doc.save(`Marketing_Agreement_${brand.brand_name.replace(/\s+/g, "_")}.pdf`);
-    toast.success("Marketing Agreement PDF downloaded");
+    const blob = doc.output("blob");
+    const blobUrl = URL.createObjectURL(blob);
+    window.open(blobUrl, "_blank");
+    toast.success("Marketing Worksheet opened in new tab");
   };
 
-  // 4. Download 1-Page Retail Pitch Deck PDF (Step 5)
+  // 4. Download Full Brand Dossier PDF (3 Pages: Page 1 Intake & Pricing, Page 2 Marketing Support, Page 3 Scorecard)
+  const downloadFullBrandDossierPDF = async (brand: BrandLaunchpadBrand) => {
+    try {
+      const doc = new jsPDF("p", "mm", "a4");
+
+      // ==========================================
+      // PAGE 1: BRAND DETAILS & COMMERCIAL PRICING
+      // ==========================================
+      drawPdfHeaderBanner(
+        doc,
+        `${brand.brand_name.toUpperCase()} - BRAND & COMMERCIAL DOSSIER`,
+        "Page 1: Brand Profile, SKU Portfolio, Commercial Pricing Waterfall & Compliance"
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("1. Brand & Company Profile", 14, 34);
+
+      autoTable(doc, {
+        startY: 38,
+        theme: "grid",
+        styles: { fontSize: 8.5, cellPadding: 2.5, textColor: [30, 41, 59] },
+        headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
+        head: [["Field", "Details / Specifications"]],
+        body: [
+          ["Brand Name", brand.brand_name || ""],
+          ["Company / Manufacturer Name", brand.company_name || ""],
+          ["Owner Entity Type", brand.owner_type || "Brand Owner"],
+          ["Contact Person & Title", brand.contact_person || ""],
+          ["Email Address", brand.contact_email || ""],
+          ["Phone / WhatsApp", brand.contact_phone || ""],
+          ["Country of Origin", brand.country_of_origin || ""],
+          ["Standard Payment Terms", brand.payment_terms || "30 Days Net"],
+          ["Order-to-Delivery Lead Time", `${brand.lead_time_days || 14} Days`]
+        ]
+      });
+
+      const finalY1 = (doc as any).lastAutoTable.finalY || 95;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("2. SKU Commercial Pricing Waterfall", 14, finalY1 + 8);
+
+      const skuRows = (brand.products && brand.products.length > 0)
+        ? brand.products.map(p => {
+            const cost = Number(p.cost_price) || 0;
+            const land = Number(p.land_price) || Number((cost * (1 + (Number(p.landed_cost_rate) || 10) / 100)).toFixed(2));
+            const ourP = Number(p.our_price) || Number((land * (1 + (Number(p.overhead_rate) || 5) / 100)).toFixed(2));
+            const tradeP = Number(p.price_to_retailer) || Number((ourP / (1 - (Number(p.our_margin_rate) || 25) / 100)).toFixed(2));
+            const rspP = Number(p.rsp) || Number((tradeP / (1 - (Number(p.retailer_margin_rate) || 35) / 100)).toFixed(2));
+            return [
+              p.product_name,
+              p.sku || "-",
+              p.pack_size || "-",
+              `${p.shelf_life_months || 12}M`,
+              p.storage_condition || "Ambient",
+              `$${cost.toFixed(2)}`,
+              `$${ourP.toFixed(2)}`,
+              `$${tradeP.toFixed(2)}`,
+              `$${rspP.toFixed(2)}`
+            ];
+          })
+        : [["Sample Product 1", "-", "-", "12M", "Ambient", "$0.00", "$0.00", "$0.00", "$0.00"]];
+
+      autoTable(doc, {
+        startY: finalY1 + 12,
+        theme: "grid",
+        styles: { fontSize: 8, cellPadding: 2.5, textColor: [30, 41, 59] },
+        headStyles: { fillColor: [11, 87, 208], textColor: [255, 255, 255], fontStyle: "bold" },
+        head: [["Product Name", "SKU", "Pack Size", "Shelf Life", "Storage", "Cost", "Our Price", "Trade Price", "Shelf RSP"]],
+        body: skuRows
+      });
+
+      const finalY2 = (doc as any).lastAutoTable.finalY || 170;
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("3. Initial Compliance & Import Readiness", 14, finalY2 + 8);
+
+      autoTable(doc, {
+        startY: finalY2 + 12,
+        theme: "plain",
+        styles: { fontSize: 8.5, cellPadding: 2, textColor: [51, 65, 85] },
+        body: [
+          ["[  ] English Ingredients & Nutritional Labeling verified compliant for Singapore SFA regulations."],
+          ["[  ] Certificate of Analysis (COA) / Food Hygiene & Halal/HACCP certifications available."],
+          ["[  ] Minimum 80% remaining shelf life guaranteed upon warehouse receipt."],
+          ["[  ] Product barcodes registered (EAN-13 / UPC single and carton barcodes)."]
+        ]
+      });
+
+      // ==========================================
+      // PAGE 2: MARKETING SUPPORT & CREATOR PLAN (Section 4 continuing from Page 1)
+      // ==========================================
+      doc.addPage();
+
+      drawPdfHeaderBanner(
+        doc,
+        `${brand.brand_name.toUpperCase()} - MARKETING & CREATOR STRATEGY`,
+        "Page 2: Brand Story, Consumer Demographics, Content Hooks & Promotional Commitment"
+      );
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("4. Marketing & Creator Strategy", 14, 34);
+
+      const make5Lines = (text?: string) => {
+        if (text && text.trim()) return text;
+        return "\n\n\n\n";
+      };
+
+      autoTable(doc, {
+        startY: 38,
+        theme: "grid",
+        styles: { fontSize: 8.5, cellPadding: 3.5, textColor: [30, 41, 59], minCellHeight: 22 },
+        headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold", cellPadding: 2.5 },
+        columnStyles: {
+          0: { cellWidth: 50, fontStyle: "bold", textColor: [15, 23, 42] },
+          1: { cellWidth: 132, textColor: [51, 65, 85] }
+        },
+        head: [["Strategic Category", "Marketing Commitment & Strategic Plan"]],
+        body: [
+          ["1. Brand Story & Origin", make5Lines(brand.brand_story)],
+          ["2. Target Consumer Profile", make5Lines(brand.target_consumer)],
+          ["3. Key Consumer Need Served", make5Lines(brand.consumer_need_served)],
+          ["4. TikTok & Video Angles", make5Lines(brand.tiktok_hooks)],
+          ["5. Sampling & Promo Budget", make5Lines(brand.launch_promo_support)],
+          ["6. Retail Channel Ambition", make5Lines(brand.retail_ambition)]
+        ]
+      });
+
+      // ==========================================
+      // PAGE 3+: PRODUCT SENSORY SCORECARD(S)
+      // ==========================================
+      const productsToScore = (brand.products && brand.products.length > 0)
+        ? brand.products
+        : [{ id: "sample", product_name: "Master Product Sample", sku: "SAMPLE-01", category: "Food & Beverage", pack_size: "Standard", rsp: 0, storage_condition: "Ambient", shelf_life_months: 12, images: [] } as any];
+
+      for (let pIdx = 0; pIdx < productsToScore.length; pIdx++) {
+        const product = productsToScore[pIdx];
+        doc.addPage();
+
+        drawPdfHeaderBanner(
+          doc,
+          `${brand.brand_name.toUpperCase()} - PRODUCT TASTE SCORECARD`,
+          `Page ${3 + pIdx}: Sensory & Commercial Taste Evaluation (${product.product_name})`
+        );
+
+        // Photo strip
+        const photoStartY = 30;
+        const photoW = 38;
+        const photoH = 38;
+        const photoGap = 10;
+        const slotLabels = ["1. Front Pack", "2. Back / Ingredients", "3. Nutritional Info", "4. Product Sample"];
+        const imagesList = Array.isArray(product.images) ? product.images : [];
+
+        for (let i = 0; i < 4; i++) {
+          const slotX = 14 + i * (photoW + photoGap);
+          const imgUrl = imagesList[i];
+          let imgLoaded = false;
+
+          if (imgUrl) {
+            const base64Img = await getImageBase64(imgUrl);
+            if (base64Img) {
+              try {
+                doc.addImage(base64Img, "JPEG", slotX, photoStartY, photoW, photoH);
+                doc.setDrawColor(203, 213, 225);
+                doc.rect(slotX, photoStartY, photoW, photoH);
+                imgLoaded = true;
+              } catch (err) {
+                console.warn(`Error drawing image ${i}:`, err);
+              }
+            }
+          }
+
+          if (!imgLoaded) {
+            doc.setFillColor(248, 250, 252);
+            doc.setDrawColor(226, 232, 240);
+            doc.rect(slotX, photoStartY, photoW, photoH, "FD");
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(7.5);
+            doc.setTextColor(148, 163, 184);
+            doc.text(slotLabels[i] || `Photo ${i + 1}`, slotX + 6, photoStartY + 18);
+            doc.setFontSize(6.5);
+            doc.text("(1:1 Square)", slotX + 11, photoStartY + 23);
+          }
+        }
+
+        // Product Details
+        autoTable(doc, {
+          startY: photoStartY + photoH + 4,
+          theme: "plain",
+          styles: { fontSize: 8, cellPadding: 1.2, textColor: [15, 23, 42] },
+          body: [
+            [
+              `Brand: ${brand.brand_name || "-"}`,
+              `Product Name: ${product.product_name}`,
+              `SKU: ${product.sku || "-"}`
+            ],
+            [
+              `Category: ${product.category || "-"}`,
+              `Pack Size: ${product.pack_size || "-"}`,
+              `Target Shelf RSP: $${Number(product.rsp).toFixed(2)}`
+            ],
+            [
+              `Storage: ${product.storage_condition || "Ambient"}`,
+              `Shelf Life: ${product.shelf_life_months || 12} Months`,
+              ""
+            ],
+            [
+              {
+                content: `Reviewer Name: ____________________________________________________________________________________`,
+                colSpan: 3,
+                styles: { fontStyle: "bold", textColor: [15, 23, 42], cellPadding: { top: 3.5, bottom: 1.5, left: 1.5, right: 1.5 } }
+              }
+            ]
+          ]
+        });
+
+        const finalYScore1 = (doc as any).lastAutoTable.finalY || 92;
+
+        // 6 Criteria Table
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Sensory & Commercial Evaluation (Score each criterion from 1 to 5 points)", 14, finalYScore1 + 5);
+
+        autoTable(doc, {
+          startY: finalYScore1 + 7,
+          theme: "grid",
+          styles: { fontSize: 7.5, cellPadding: 1.8, textColor: [30, 41, 59] },
+          headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
+          columnStyles: {
+            0: { cellWidth: 8, halign: "center", fontStyle: "bold" },
+            1: { cellWidth: 42, fontStyle: "bold", textColor: [15, 23, 42] },
+            2: { cellWidth: 104, fontSize: 7.2, textColor: [71, 85, 105] },
+            3: { cellWidth: 28, halign: "center", fontStyle: "bold", textColor: [11, 87, 208] }
+          },
+          head: [["#", "Evaluation Criteria", "Key Considerations & Prompts", "Score (1 - 5)"]],
+          body: [
+            ["1", "Taste & Aroma", "Flavor balance, sweetness/saltiness, authentic aroma, aftertaste freshness.", "[   ] / 5"],
+            ["2", "Texture & Quality", "Mouthfeel, crunchiness/smoothness, ingredient consistency, visual premiumness.", "[   ] / 5"],
+            ["3", "Packaging Appeal", "Visual shelf stand-out, clarity of labeling, ease of opening, barrier quality.", "[   ] / 5"],
+            ["4", "Price Believability", `Perceived value vs Target RSP ($${Number(product.rsp).toFixed(2)}), competitive category edge.`, "[   ] / 5"],
+            ["5", "Usage Occasion", "Clear consumption moment (daily snack, cooking, family, gifting, health/wellness).", "[   ] / 5"],
+            ["6", "Repeat Purchase", "Likelihood of buying again, household staple stickiness, consumer loyalty.", "[   ] / 5"]
+          ]
+        });
+
+        const finalYScore2 = (doc as any).lastAutoTable.finalY || 145;
+
+        // Tasting Notes
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Tasting Notes, Feedback & Observations:", 14, finalYScore2 + 5);
+
+        doc.setDrawColor(203, 213, 225);
+        doc.rect(14, finalYScore2 + 7.5, 182, 18);
+        doc.line(14, finalYScore2 + 13.5, 196, finalYScore2 + 13.5);
+
+        // Commercial Recommendation
+        const recY = finalYScore2 + 30;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Reviewer Commercial Recommendation:", 14, recY);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.text("[  ] Proceed to Online Trial      [  ] Proceed with Conditions      [  ] Pause / Need Refinement      [  ] Reject", 14, recY + 5.5);
+
+        // Reviewer Sign-off
+        const signY = recY + 15;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(15, 23, 42);
+        doc.text("Reviewer Sign-off & Clearance:", 14, signY);
+
+        doc.setDrawColor(148, 163, 184);
+        doc.line(14, signY + 10, 100, signY + 10);
+        doc.line(120, signY + 10, 196, signY + 10);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text("Reviewer Signature", 14, signY + 14);
+        doc.text("Date", 120, signY + 14);
+
+        // QR Code Footer
+        const footerY = 250;
+        doc.setDrawColor(226, 232, 240);
+        doc.line(14, footerY - 3, 196, footerY - 3);
+
+        const originHost = typeof window !== "undefined" ? window.location.origin : "https://ib.hsgglobal.sg";
+        const qrTargetUrl = `${originHost}/review?pid=${encodeURIComponent(product.id)}`;
+        const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrTargetUrl)}`;
+
+        try {
+          const qrImgRes = await fetch(qrApiUrl);
+          if (qrImgRes.ok) {
+            const blob = await qrImgRes.blob();
+            const reader = new FileReader();
+            reader.readAsDataURL(blob);
+            await new Promise((resolve) => {
+              reader.onloadend = () => {
+                const base64data = reader.result as string;
+                doc.addImage(base64data, "PNG", 14, footerY, 25, 25);
+                resolve(true);
+              };
+            });
+          }
+        } catch (qrErr) {
+          console.warn("Could not embed dynamic QR image, drawing placeholder box:", qrErr);
+          doc.rect(14, footerY, 25, 25);
+        }
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(11, 87, 208);
+        doc.text("Option to Score Online (Mobile)", 44, footerY + 6);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        doc.text("Scan this QR code with any smartphone camera to open and submit your evaluation digitally.", 44, footerY + 12);
+        doc.text(`Direct Link: ${qrTargetUrl}`, 44, footerY + 17);
+      }
+
+      const blob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank");
+      toast.success("Full Brand Dossier opened in new tab");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to generate Full Brand Dossier");
+    }
+  };
+
+  // 5. Download 1-Page Retail Pitch Deck PDF (Step 5)
   const downloadRetailPitchDeckPDF = (brand: BrandLaunchpadBrand) => {
     const doc = new jsPDF("p", "mm", "a4");
 
-    // Top Header Banner
-    doc.setFillColor(11, 87, 208); // Google Blue
-    doc.rect(0, 0, 210, 26, "F");
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(255, 255, 255);
-    doc.text(`${brand.brand_name.toUpperCase()} - RETAIL BUYER PITCH DECK`, 14, 12);
-
-    doc.setFontSize(9);
-    doc.setFont("helvetica", "normal");
-    doc.text("HSG Global Modern Trade Listing Proposal & Product Validation Proof", 14, 19);
+    // Top Header Banner (Unified styling)
+    drawPdfHeaderBanner(
+      doc,
+      `${brand.brand_name.toUpperCase()} - RETAIL BUYER PITCH DECK`,
+      "HSG Global Modern Trade Listing Proposal & Product Validation Proof"
+    );
 
     // Section 1: Executive Summary & Value Prop
     doc.setFont("helvetica", "bold");
@@ -835,8 +1265,10 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
     doc.setTextColor(71, 85, 105);
     doc.text(`Approved by: ${retail?.approved_by || "HSG Global Commercial Team"} | Date: ${new Date().toLocaleDateString("en-SG")}`, 20, finalY4 + 26);
 
-    doc.save(`Retail_Pitch_Deck_${brand.brand_name.replace(/\s+/g, "_")}.pdf`);
-    toast.success("1-Page Retail Pitch Deck PDF downloaded");
+    const blob = doc.output("blob");
+    const blobUrl = URL.createObjectURL(blob);
+    window.open(blobUrl, "_blank");
+    toast.success("1-Page Retail Pitch Deck opened in new tab");
   };
 
   // --------------------------------------------------------------------------
@@ -1139,11 +1571,11 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                         <td className="py-3 px-4 text-right" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-1.5">
                             <button
-                              onClick={() => downloadIntakeFormPDF(brand)}
+                              onClick={() => downloadFullBrandDossierPDF(brand)}
                               className="p-1.5 rounded-md hover:bg-slate-100 text-zinc-600 hover:text-[#0B57D0] transition-colors"
-                              title="Download Intake PDF"
+                              title="Download Full Brand Dossier"
                             >
-                              <Download className="w-3.5 h-3.5" />
+                              <FileText className="w-3.5 h-3.5" />
                             </button>
 
                             <button
@@ -1225,6 +1657,14 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
               </button>
 
               <button
+                onClick={() => downloadFullBrandDossierPDF(activeBrand)}
+                className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                title="Download 2-Page Combined Brand & Marketing Dossier"
+              >
+                <FileText className="w-3.5 h-3.5 text-[#0B57D0]" /> Full Dossier
+              </button>
+
+              <button
                 onClick={() => downloadRetailPitchDeckPDF(activeBrand)}
                 className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
               >
@@ -1297,22 +1737,11 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => downloadIntakeFormPDF(activeBrand)}
+                      onClick={() => downloadFullBrandDossierPDF(activeBrand)}
                       className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer"
+                      title="Download combined Page 1 (Details) and Page 2 (Marketing)"
                     >
-                      <Download className="w-3.5 h-3.5" /> Download Blank Worksheet
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        if (!checkEditPermission()) return;
-                        setScanTargetType("intake");
-                        setShowScanModal(true);
-                      }}
-                      disabled={!perm.edit}
-                      className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
-                    >
-                      <Upload className="w-3.5 h-3.5" /> Upload Signed Scan
+                      <FileText className="w-3.5 h-3.5 text-[#0B57D0]" /> Full Dossier
                     </button>
 
                     <button
@@ -1366,16 +1795,28 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                   ) : (
                     <div className="divide-y divide-slate-100">
                       {activeBrand.products.map((sku, index) => {
+                        const firstImg = sku.images && sku.images.length > 0 ? sku.images[0] : null;
                         return (
                           <div key={sku.id} className="p-4 flex flex-col gap-3 hover:bg-slate-50/50 transition-colors">
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-2.5">
-                                <span className="w-6 h-6 rounded-md bg-slate-100 text-slate-700 flex items-center justify-center text-xs font-bold">
-                                  {index + 1}
-                                </span>
+                              <div className="flex items-center gap-3">
+                                {/* 1:1 Square Product Thumbnail */}
+                                <div className="w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 shrink-0 overflow-hidden flex items-center justify-center">
+                                  {firstImg ? (
+                                    <img src={firstImg} alt={sku.product_name} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <Package className="w-5 h-5 text-slate-400" />
+                                  )}
+                                </div>
+
                                 <div>
-                                  <h4 className="text-sm font-bold text-zinc-950">{sku.product_name}</h4>
-                                  <span className="text-xs text-zinc-500">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="w-4 h-4 rounded bg-slate-100 text-slate-600 flex items-center justify-center text-[10px] font-bold">
+                                      {index + 1}
+                                    </span>
+                                    <h4 className="text-sm font-bold text-zinc-950">{sku.product_name}</h4>
+                                  </div>
+                                  <span className="text-xs text-zinc-500 mt-0.5 block">
                                     SKU: {sku.sku || "N/A"} • {sku.category || "General"} • {sku.pack_size || "Standard"} • {sku.shelf_life_months} Mos • {sku.storage_condition}
                                   </span>
                                 </div>
@@ -1383,11 +1824,24 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
 
                               <div className="flex items-center gap-1.5">
                                 <button
+                                  onClick={() => {
+                                    const origin = typeof window !== "undefined" ? window.location.origin : "https://ib.hsgglobal.sg";
+                                    const link = `${origin}/review?pid=${encodeURIComponent(sku.id)}`;
+                                    navigator.clipboard.writeText(link);
+                                    toast.success("Online scorecard link copied!");
+                                  }}
+                                  className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer"
+                                  title="Copy Online Scorecard Link"
+                                >
+                                  <Copy className="w-3 h-3" /> Copy Link
+                                </button>
+
+                                <button
                                   onClick={() => downloadSkuPaperScorecardPDF(sku, activeBrand.brand_name)}
                                   className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer"
                                   title="Download Printable Scorecard for this SKU"
                                 >
-                                  <Download className="w-3 h-3" /> Scorecard PDF
+                                  <Download className="w-3 h-3" /> Scorecard Review
                                 </button>
 
                                 <button
@@ -1416,28 +1870,38 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                             </div>
 
                             {/* Pricing Waterfall Metrics Ribbon */}
-                            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-[#F8F9FA] p-3 rounded-lg border border-slate-200 text-xs">
-                              <div>
-                                <span className="text-[10px] text-zinc-500 block">1. Cost Price</span>
-                                <span className="font-bold text-zinc-900">${Number(sku.cost_price).toFixed(2)}</span>
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-zinc-500 block">2. Land Price (+{sku.landed_cost_rate || 10}%)</span>
-                                <span className="font-bold text-zinc-900">${Number(sku.land_price).toFixed(2)}</span>
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-zinc-500 block">3. Our Price (+{sku.overhead_rate || 5}%)</span>
-                                <span className="font-bold text-zinc-900">${Number(sku.our_price).toFixed(2)}</span>
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-zinc-500 block">4. Trade Price ({sku.our_margin_rate || 25}% Mgn)</span>
-                                <span className="font-bold text-[#0B57D0]">${Number(sku.price_to_retailer).toFixed(2)}</span>
-                              </div>
-                              <div>
-                                <span className="text-[10px] text-zinc-500 block">5. Shelf RSP ({sku.retailer_margin_rate || 35}% Mgn)</span>
-                                <span className="font-bold text-emerald-700">${Number(sku.rsp).toFixed(2)}</span>
-                              </div>
-                            </div>
+                            {(() => {
+                              const cost = Number(sku.cost_price) || 0;
+                              const land = Number(sku.land_price) || Number((cost * (1 + (Number(sku.landed_cost_rate) || 10) / 100)).toFixed(2));
+                              const ourP = Number(sku.our_price) || Number((land * (1 + (Number(sku.overhead_rate) || 5) / 100)).toFixed(2));
+                              const tradeP = Number(sku.price_to_retailer) || Number((ourP / (1 - (Number(sku.our_margin_rate) || 25) / 100)).toFixed(2));
+                              const rspP = Number(sku.rsp) || Number((tradeP / (1 - (Number(sku.retailer_margin_rate) || 35) / 100)).toFixed(2));
+
+                              return (
+                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-[#F8F9FA] p-3 rounded-lg border border-slate-200 text-xs">
+                                  <div>
+                                    <span className="text-[10px] text-zinc-500 block">1. Cost Price</span>
+                                    <span className="font-bold text-zinc-900">${cost.toFixed(2)}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-zinc-500 block">2. Land Price (+{sku.landed_cost_rate || 10}%)</span>
+                                    <span className="font-bold text-zinc-900">${land.toFixed(2)}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-zinc-500 block">3. Our Price (+{sku.overhead_rate || 5}%)</span>
+                                    <span className="font-bold text-zinc-900">${ourP.toFixed(2)}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-zinc-500 block">4. Trade Price ({sku.our_margin_rate || 25}% Mgn)</span>
+                                    <span className="font-bold text-[#0B57D0]">${tradeP.toFixed(2)}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] text-zinc-500 block">5. Shelf RSP ({sku.retailer_margin_rate || 35}% Mgn)</span>
+                                    <span className="font-bold text-emerald-700">${rspP.toFixed(2)}</span>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </div>
                         );
                       })}
@@ -1467,13 +1931,25 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                   ) : (
                     activeBrand.products.map((sku) => {
                       const reviews = sku.reviews || [];
+                      const firstImg = sku.images && sku.images.length > 0 ? sku.images[0] : null;
                       return (
                         <div key={sku.id} className="bg-white rounded-lg border border-slate-200 shadow-xs overflow-hidden">
                           {/* SKU Header */}
                           <div className="px-4 py-3 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                            <div>
-                              <h4 className="text-sm font-bold text-zinc-950">{sku.product_name}</h4>
-                              <span className="text-xs text-zinc-500">SKU: {sku.sku || "-"} • RSP: ${Number(sku.rsp).toFixed(2)}</span>
+                            <div className="flex items-center gap-3">
+                              {/* 1:1 Square Product Thumbnail */}
+                              <div className="w-10 h-10 rounded-lg bg-white border border-slate-200 shrink-0 overflow-hidden flex items-center justify-center shadow-2xs">
+                                {firstImg ? (
+                                  <img src={firstImg} alt={sku.product_name} className="w-full h-full object-cover" />
+                                ) : (
+                                  <Package className="w-4 h-4 text-slate-400" />
+                                )}
+                              </div>
+
+                              <div>
+                                <h4 className="text-sm font-bold text-zinc-950">{sku.product_name}</h4>
+                                <span className="text-xs text-zinc-500">SKU: {sku.sku || "-"} • RSP: ${Number(sku.rsp).toFixed(2)}</span>
+                              </div>
                             </div>
 
                             <div className="flex items-center gap-2">
@@ -1486,10 +1962,23 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                               </div>
 
                               <button
+                                onClick={() => {
+                                  const origin = typeof window !== "undefined" ? window.location.origin : "https://ib.hsgglobal.sg";
+                                  const link = `${origin}/review?pid=${encodeURIComponent(sku.id)}`;
+                                  navigator.clipboard.writeText(link);
+                                  toast.success("Online scorecard link copied!");
+                                }}
+                                className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer"
+                                title="Copy Online Scorecard Link"
+                              >
+                                <Copy className="w-3 h-3" /> Copy Link
+                              </button>
+
+                              <button
                                 onClick={() => downloadSkuPaperScorecardPDF(sku, activeBrand.brand_name)}
                                 className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer"
                               >
-                                <Download className="w-3 h-3" /> Paper Sheet PDF
+                                <Download className="w-3 h-3" /> Scorecard Review
                               </button>
 
                               <button
@@ -1502,7 +1991,7 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                                 disabled={!perm.edit}
                                 className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer disabled:opacity-40"
                               >
-                                <Upload className="w-3 h-3" /> AI Scan OCR
+                                <Upload className="w-3 h-3" /> Upload Scorecard
                               </button>
 
                               <button
@@ -1527,7 +2016,7 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                                 disabled={!perm.edit}
                                 className="h-7 px-3 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
                               >
-                                <Plus className="w-3 h-3" /> Add Taste Review
+                                <Plus className="w-3 h-3" /> Add Review
                               </button>
                             </div>
                           </div>
@@ -1606,22 +2095,11 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => downloadMarketingAgreementPDF(activeBrand)}
+                      onClick={() => downloadFullBrandDossierPDF(activeBrand)}
                       className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer"
+                      title="Download combined Page 1 (Details) and Page 2 (Marketing)"
                     >
-                      <Download className="w-3.5 h-3.5" /> Download Agreement PDF
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        if (!checkEditPermission()) return;
-                        setScanTargetType("marketing");
-                        setShowScanModal(true);
-                      }}
-                      disabled={!perm.edit}
-                      className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
-                    >
-                      <Upload className="w-3.5 h-3.5" /> Upload Signed Scan
+                      <FileText className="w-3.5 h-3.5 text-[#0B57D0]" /> Full Dossier
                     </button>
                   </div>
                 </div>
@@ -2173,6 +2651,77 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                 </div>
               </div>
 
+              {/* Product Photos Upload (1 to 4 photos - 1:1 Square Ratio) */}
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="font-bold text-zinc-950 block">Product Photos (Min 1, Max 4)</label>
+                    <span className="text-[10px] text-zinc-500">1:1 Square Ratio for Scorecards & Catalog</span>
+                  </div>
+                  <span className="text-[10px] font-semibold text-zinc-600 bg-white px-2 py-0.5 rounded border border-slate-200">
+                    {(editingSku.images || []).length} / 4 Uploaded
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2.5">
+                  {[0, 1, 2, 3].map((idx) => {
+                    const imgUrl = (editingSku.images || [])[idx];
+                    const slotLabels = ["1. Front", "2. Back", "3. Nutrition", "4. Sample"];
+                    return (
+                      <div
+                        key={idx}
+                        className="relative aspect-square w-full rounded-lg border-2 border-dashed border-slate-200 bg-white flex flex-col items-center justify-center overflow-hidden group hover:border-[#0B57D0] transition-colors"
+                      >
+                        {imgUrl ? (
+                          <>
+                            <img src={imgUrl} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const newImgs = [...(editingSku.images || [])];
+                                newImgs.splice(idx, 1);
+                                setEditingSku({ ...editingSku, images: newImgs });
+                              }}
+                              className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white hover:bg-rose-600 transition-colors cursor-pointer"
+                              title="Remove Photo"
+                            >
+                              <X className="w-2.5 h-2.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <label className="w-full h-full flex flex-col items-center justify-center cursor-pointer p-1.5 text-center">
+                            <Upload className="w-4 h-4 text-slate-400 mb-1" />
+                            <span className="text-[9px] font-bold text-zinc-700 leading-tight">{slotLabels[idx]}</span>
+                            <span className="text-[8px] text-zinc-400 mt-0.5">1:1 Square</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={async (e) => {
+                                if (e.target.files && e.target.files[0]) {
+                                  try {
+                                    toast.info("Uploading photo...");
+                                    const uploadRes = await uploadBrandLaunchpadFile(e.target.files[0]);
+                                    if (uploadRes.success && uploadRes.url) {
+                                      const currentImgs = [...(editingSku.images || [])];
+                                      currentImgs[idx] = uploadRes.url;
+                                      setEditingSku({ ...editingSku, images: currentImgs });
+                                      toast.success("Photo uploaded successfully");
+                                    }
+                                  } catch (err: any) {
+                                    toast.error(err.message || "Failed to upload photo");
+                                  }
+                                }
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Pricing Waterfall Breakdown Box */}
               <div className="p-3.5 bg-slate-50 rounded-lg border border-slate-200 space-y-3">
                 <h4 className="font-bold text-zinc-950">Pricing Waterfall Calculator</h4>
@@ -2292,29 +2841,16 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
             </div>
 
             <form onSubmit={handleSubmitReview} className="p-5 overflow-y-auto space-y-3.5 text-xs flex-1">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-zinc-800 block mb-1">Reviewer Name *</label>
-                  <input
-                    type="text"
-                    required
-                    value={editingReview.reviewer_name || ""}
-                    onChange={(e) => setEditingReview({ ...editingReview, reviewer_name: e.target.value })}
-                    className="w-full p-2 border border-slate-200 rounded-lg"
-                  />
-                </div>
-                <div>
-                  <label className="font-bold text-zinc-800 block mb-1">Reviewer Role</label>
-                  <select
-                    value={editingReview.reviewer_type || "Admin"}
-                    onChange={(e) => setEditingReview({ ...editingReview, reviewer_type: e.target.value })}
-                    className="w-full p-2 border border-slate-200 rounded-lg bg-white"
-                  >
-                    <option value="Admin">Admin</option>
-                    <option value="Staff">Staff</option>
-                    <option value="Guest Taster">Guest Taster</option>
-                  </select>
-                </div>
+              <div>
+                <label className="font-bold text-zinc-800 block mb-1">Reviewer Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={editingReview.reviewer_name || ""}
+                  onChange={(e) => setEditingReview({ ...editingReview, reviewer_name: e.target.value })}
+                  placeholder="e.g. Sarah Lim / Alex Tan"
+                  className="w-full p-2 border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                />
               </div>
 
               {/* 6 Criteria Sliders */}
