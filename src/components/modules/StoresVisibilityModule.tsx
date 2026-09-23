@@ -101,6 +101,12 @@ interface TrackOrder {
   link_store?: string;
 }
 
+interface OrderItemDetail {
+  sku?: string;
+  name: string;
+  qty: number;
+}
+
 interface TimelineActivity {
   id?: string | number;
   kind: "visit" | "order";
@@ -113,6 +119,7 @@ interface TimelineActivity {
   status?: string;
   driver?: string;
   itemsSummary?: string;
+  itemsList?: OrderItemDetail[];
   itemCount?: number;
 }
 
@@ -127,6 +134,13 @@ interface StoresVisibilityData {
   track_orders?: TrackOrder[];
 }
 
+interface ShelfImageItem {
+  imageUrl: string;
+  brandName?: string;
+  brandId?: string | number;
+  date?: string;
+}
+
 interface ExtractedStoreItem {
   id: string | number;
   storeName: string;
@@ -134,8 +148,9 @@ interface ExtractedStoreItem {
   address: string;
   contacts: StoreContactItem[];
   activities: TimelineActivity[];
-  products: { sku?: string; name: string; qty: number; lastOrderQty?: number }[];
+  products: { sku?: string; name: string; brandName?: string; qty: number; lastOrderQty?: number }[];
   shelfImage: string | null;
+  shelfImages: ShelfImageItem[];
   carriesBrand: boolean;
   latestAuditTime: number;
 }
@@ -174,7 +189,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   
   // Selected filter states
   const [selectedRetailer, setSelectedRetailer] = React.useState<string>("all");
-  const [selectedBrand, setSelectedBrand] = React.useState<string>("");
+  const [selectedBrand, setSelectedBrand] = React.useState<string>("all");
   const [includeNotCarry, setIncludeNotCarry] = React.useState<boolean>(false);
   
   const [startDate, setStartDate] = React.useState<string>(() => {
@@ -210,7 +225,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       )
     );
   }, [extractedStores, searchQuery]);
-  const [selectedImage, setSelectedImage] = React.useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = React.useState<ShelfImageItem | null>(null);
 
   // Parser helper to safely handle Unix Epoch milliseconds, seconds, and ISO date strings
   const parseTimestamp = React.useCallback((timestamp: any): Date => {
@@ -433,13 +448,25 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             return String(retId) === String(selectedRetailer);
           });
 
-      // Filter products belonging to the selected Brand (pure snake_case)
-      const brandProducts = products.filter(p => {
-        const brandId = p.brands_id !== undefined ? p.brands_id : p.brand_id;
-        return String(brandId) === String(selectedBrand);
-      });
+      // Filter products belonging to the selected Brand (or all brands if 'all' selected)
+      const brandProducts = selectedBrand === "all"
+        ? products
+        : products.filter(p => {
+            const brandId = p.brands_id !== undefined ? p.brands_id : p.brand_id;
+            return String(brandId) === String(selectedBrand);
+          });
 
       const brandSkus = brandProducts.map(p => String(p.sku || "").toLowerCase());
+
+      // Pre-map SKU to product display name for fast lookup
+      const skuToNameMap = new Map<string, string>();
+      products.forEach(p => {
+        const name = String(p.display_name || "").trim();
+        const sku = String(p.sku || "").trim();
+        if (sku && name) {
+          skuToNameMap.set(sku.toLowerCase(), name);
+        }
+      });
 
       const results: ExtractedStoreItem[] = filteredStores.map(store => {
         const storeRetailerId = store.retailers_id !== undefined ? store.retailers_id : store.retailer_id;
@@ -483,11 +510,13 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           return parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime();
         });
 
-        // Find all shelf logs for this store and brand (ignoring date range for full visit history)
+        // Find all shelf logs for this store and brand (or all brands if 'all' selected)
         const storeShelfLogsAllTime = shelfLogs.filter(sl => {
           const storeId = sl.retailer_stores_id !== undefined ? sl.retailer_stores_id : sl.store_id;
+          if (String(storeId) !== String(store.id)) return false;
+          if (selectedBrand === "all") return true;
           const brandId = sl.brands_id !== undefined ? sl.brands_id : sl.brand_id;
-          return String(storeId) === String(store.id) && String(brandId) === String(selectedBrand);
+          return String(brandId) === String(selectedBrand);
         });
 
         // Sort descending to get latest shelf logs
@@ -533,14 +562,40 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
 
           let itemCount = 0;
           let itemsSummary = "";
+          let itemsList: OrderItemDetail[] = [];
+
           if (order.items) {
             try {
               const parsed = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
               if (Array.isArray(parsed)) {
-                itemCount = parsed.reduce((sum: number, it: any) => sum + (Number(it.qty || it.quantity || 1) || 0), 0);
-                const names = parsed.map((it: any) => `${it.qty || 1}x ${it.name || it.sku || "item"}`);
+                itemsList = parsed.map((it: any) => {
+                  const itemSku = String(it.sku || it.item || it.code || "").trim();
+                  const rawName = String(it.name || it.product_name || it.description || "").trim();
+
+                  // Resolve display name using master products map first
+                  let displayName = "";
+                  if (itemSku && skuToNameMap.has(itemSku.toLowerCase())) {
+                    displayName = skuToNameMap.get(itemSku.toLowerCase())!;
+                  } else if (rawName && (!itemSku || rawName.toLowerCase() !== itemSku.toLowerCase())) {
+                    displayName = rawName;
+                  } else if (rawName) {
+                    displayName = rawName;
+                  } else if (itemSku) {
+                    displayName = itemSku;
+                  } else {
+                    displayName = "Item";
+                  }
+
+                  return {
+                    sku: itemSku,
+                    name: displayName,
+                    qty: Number(it.qty || it.quantity || 1) || 1
+                  };
+                });
+                itemCount = itemsList.reduce((sum: number, it: any) => sum + (Number(it.qty || it.quantity || 1) || 0), 0);
+                const names = itemsList.map((it: any) => `${it.qty || 1}x ${it.name}`);
                 itemsSummary = names.slice(0, 2).join(", ");
-                if (parsed.length > 2) itemsSummary += ` (+${parsed.length - 2} more)`;
+                if (itemsList.length > 2) itemsSummary += ` (+${itemsList.length - 2} more)`;
               }
             } catch (_) {}
           }
@@ -556,6 +611,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             status: order.status || "",
             driver: order.driver || "",
             itemsSummary,
+            itemsList,
             itemCount
           };
         });
@@ -565,7 +621,10 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           return b.timestamp - a.timestamp;
         });
 
-        // Map items from the most recent order for this store
+        // Check if the most recent activity is an order (i.e. no visit occurred after the order)
+        const isOrderLatestActivity = combinedActivities.length > 0 && combinedActivities[0].kind === "order";
+
+        // Map items from the most recent order for this store ONLY if order is the latest activity
         const sortedStoreOrders = [...storeOrders].sort((a, b) => {
           const tsA = parseTimestamp(a.delivered_at || a.timestamp).getTime() || 0;
           const tsB = parseTimestamp(b.delivered_at || b.timestamp).getTime() || 0;
@@ -583,7 +642,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         });
 
         const lastOrderItemsMap = new Map<string, number>();
-        if (latestOrderWithItems) {
+        if (isOrderLatestActivity && latestOrderWithItems) {
           try {
             const parsed = typeof latestOrderWithItems.items === "string" ? JSON.parse(latestOrderWithItems.items) : latestOrderWithItems.items;
             if (Array.isArray(parsed)) {
@@ -601,7 +660,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         }
 
         // Latest visit products
-        let carriedProductsList: { sku?: string; name: string; qty: number; lastOrderQty?: number }[] = [];
+        let carriedProductsList: { sku?: string; name: string; brandName?: string; qty: number; lastOrderQty?: number }[] = [];
         let carriesBrand = false;
 
         if (sortedProductLogs.length > 0) {
@@ -627,9 +686,17 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                 const prodNameLower = String(prodName || "").toLowerCase();
                 const lastOrderQty = lastOrderItemsMap.get(sku) || lastOrderItemsMap.get(prodNameLower) || undefined;
                 
+                let brandName: string | undefined = undefined;
+                if (prodDetail) {
+                  const bId = prodDetail.brands_id !== undefined ? prodDetail.brands_id : prodDetail.brand_id;
+                  const matchedBrand = brands.find(b => String(b.id) === String(bId));
+                  if (matchedBrand) brandName = matchedBrand.display_name;
+                }
+
                 carriedProductsList.push({
                   sku: prodDetail ? prodDetail.sku : auditItem.sku,
                   name: prodName,
+                  brandName,
                   qty,
                   lastOrderQty: lastOrderQty && lastOrderQty > 0 ? lastOrderQty : undefined
                 });
@@ -639,12 +706,14 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           });
         }
 
-        // Shelf visibility image for selected store and brand in date range
+        // Shelf visibility images for selected store and brand in date range
         const storeShelfLogs = shelfLogs.filter(sl => {
           const storeId = sl.retailer_stores_id !== undefined ? sl.retailer_stores_id : sl.store_id;
-          const brandId = sl.brands_id !== undefined ? sl.brands_id : sl.brand_id;
           if (String(storeId) !== String(store.id)) return false;
-          if (String(brandId) !== String(selectedBrand)) return false;
+          if (selectedBrand !== "all") {
+            const brandId = sl.brands_id !== undefined ? sl.brands_id : sl.brand_id;
+            if (String(brandId) !== String(selectedBrand)) return false;
+          }
           const timestamp = parseTimestamp(sl.timestamp).getTime();
           return timestamp >= startMs && timestamp <= endMs;
         });
@@ -653,7 +722,28 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           return parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime();
         });
 
-        const latestShelfImage = sortedShelfLogs.length > 0 ? (sortedShelfLogs[0].image_link || null) : null;
+        const seenBrandKeys = new Set<string>();
+        const shelfImageItems: ShelfImageItem[] = [];
+
+        sortedShelfLogs.forEach(sl => {
+          const url = String(sl.image_link || "").trim();
+          if (!url) return;
+          const bId = sl.brands_id !== undefined ? sl.brands_id : sl.brand_id;
+          const brandKey = String(bId ?? "unknown");
+          
+          if (!seenBrandKeys.has(brandKey)) {
+            seenBrandKeys.add(brandKey);
+            const foundBrand = brands.find(b => String(b.id) === String(bId));
+            shelfImageItems.push({
+              imageUrl: url,
+              brandName: foundBrand ? foundBrand.display_name : undefined,
+              brandId: bId,
+              date: formatDate(sl.timestamp)
+            });
+          }
+        });
+
+        const latestShelfImage = shelfImageItems.length > 0 ? shelfImageItems[0].imageUrl : null;
 
         return {
           id: store.id,
@@ -664,6 +754,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           activities: combinedActivities,
           products: carriedProductsList,
           shelfImage: latestShelfImage,
+          shelfImages: shelfImageItems,
           carriesBrand,
           latestAuditTime
         };
@@ -698,6 +789,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   }, [retailers, selectedRetailer]);
 
   const activeBrandName = React.useMemo(() => {
+    if (selectedBrand === "all") return "All Brands";
     const found = brands.find(b => String(b.id) === String(selectedBrand));
     return found ? found.display_name : "";
   }, [brands, selectedBrand]);
@@ -785,7 +877,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                   onChange={(e) => setSelectedBrand(e.target.value)}
                   className="w-full bg-white border border-zinc-300 rounded px-2 py-1 text-xs font-semibold text-zinc-900 focus:outline-none focus:border-zinc-400 select-none cursor-pointer"
                 >
-                  <option value="" disabled>Select Brand...</option>
+                  <option value="all">All Brands</option>
                   {brands.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.display_name}
@@ -984,7 +1076,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                       displayedStores.map((item) => (
                         <tr 
                           key={item.id} 
-                          className="hover:bg-zinc-100/50 transition-colors align-top print:hover:bg-transparent"
+                          className="hover:bg-zinc-100/50 transition-colors align-top print:hover:bg-transparent relative hover:z-30"
                         >
                           {/* Store Details (Fixed 20% width) */}
                           <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
@@ -1025,8 +1117,8 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                           </td>
 
                           {/* Recent Visit & Activity Timeline (Fixed 40% width) */}
-                          <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>
-                            <div className="w-full overflow-hidden">
+                          <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs relative" style={{ minWidth: "40%", maxWidth: "40%", width: "40%", verticalAlign: "top" }}>
+                            <div className="w-full">
                               {item.activities.length === 0 ? (
                                 <span className="text-zinc-400 italic text-xs">
                                   No visits or orders recorded
@@ -1128,8 +1220,39 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                                               ) : (
                                                 <div className="text-zinc-600 text-[11px] mt-1 space-y-0.5 leading-relaxed">
                                                   {activity.itemsSummary && (
-                                                    <div className="text-zinc-700 font-medium truncate" title={activity.itemsSummary}>
-                                                      {activity.itemsSummary}
+                                                    <div className="relative group/items inline-block max-w-full hover:z-[9999]">
+                                                      <div className="text-zinc-700 font-medium truncate cursor-pointer hover:text-[#0B57D0] transition-colors">
+                                                        {activity.itemsSummary}
+                                                      </div>
+
+                                                      {activity.itemsList && activity.itemsList.length > 0 && (
+                                                        <div className={`absolute left-0 ${index === 0 ? "top-full mt-1.5" : "bottom-full mb-1.5"} z-[9999] hidden group-hover/items:flex flex-col bg-white border border-slate-300 shadow-2xl rounded-lg p-2.5 min-w-[240px] max-w-[320px] pointer-events-none drop-shadow-xl`}>
+                                                          <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 mb-1.5">
+                                                            <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Order Items</span>
+                                                            <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                                                              {activity.itemsList.reduce((sum, it) => sum + (it.qty || 0), 0)} pcs total
+                                                            </span>
+                                                          </div>
+                                                          <div className="max-h-[180px] overflow-y-auto space-y-1.5">
+                                                            {activity.itemsList.map((item, i) => (
+                                                              <div key={i} className="flex items-start justify-between gap-2 text-[10.5px]">
+                                                                <span className="text-zinc-800 font-medium leading-snug line-clamp-2">
+                                                                  {item.name || item.sku || "Item"}
+                                                                </span>
+                                                                <span className="font-bold text-emerald-600 shrink-0 bg-emerald-50 px-1 rounded border border-emerald-100 text-[10px]">
+                                                                  +{item.qty}
+                                                                </span>
+                                                              </div>
+                                                            ))}
+                                                          </div>
+                                                          {(activity.refNumber || activity.doNumber) && (
+                                                            <div className="mt-2 pt-1.5 border-t border-slate-100 text-[9.5px] text-zinc-400 flex flex-wrap gap-1.5">
+                                                              {activity.doNumber && <span>DO: <strong className="text-zinc-600 font-semibold">{activity.doNumber}</strong></span>}
+                                                              {activity.refNumber && <span>Ref: <strong className="text-zinc-600 font-semibold">{activity.refNumber}</strong></span>}
+                                                            </div>
+                                                          )}
+                                                        </div>
+                                                      )}
                                                     </div>
                                                   )}
                                                   {(activity.driver || activity.refNumber) && (
@@ -1182,9 +1305,16 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                                       key={index}
                                       className="flex justify-between items-baseline gap-2 w-full overflow-hidden"
                                     >
-                                      <span className="text-zinc-700 truncate" title={prod.name}>
-                                        {prod.name}
-                                      </span>
+                                      <div className="flex flex-col min-w-0 flex-1">
+                                        <span className="text-zinc-700 truncate font-medium" title={prod.name}>
+                                          {prod.name}
+                                        </span>
+                                        {selectedBrand === "all" && prod.brandName && (
+                                          <span className="text-[9.5px] text-zinc-400 truncate leading-tight font-medium">
+                                            {prod.brandName}
+                                          </span>
+                                        )}
+                                      </div>
                                       <div className="flex items-center gap-1.5 flex-shrink-0">
                                         {prod.lastOrderQty !== undefined && prod.lastOrderQty > 0 && (
                                           <span 
@@ -1208,10 +1338,36 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                           {/* Shelf Visibility (Fixed 20% width) */}
                           <td className="px-4 py-3.5 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
                             <div className="w-full overflow-hidden">
-                              {item.shelfImage ? (
+                              {item.shelfImages && item.shelfImages.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                  {item.shelfImages.map((imgItem, imgIdx) => (
+                                    <div 
+                                      key={imgIdx}
+                                      onClick={() => setSelectedImage(imgItem)}
+                                      className="relative aspect-[4/5] w-[70px] sm:w-[78px] border border-slate-200 rounded overflow-hidden bg-zinc-100 cursor-zoom-in group shadow-3xs hover:shadow-2xs select-none shrink-0"
+                                      title={`${imgItem.brandName ? `${imgItem.brandName} - ` : ""}View Photo ${imgIdx + 1}`}
+                                    >
+                                      <img 
+                                        src={imgItem.imageUrl} 
+                                        alt={imgItem.brandName || `Shelf compliance photo ${imgIdx + 1}`} 
+                                        className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
+                                        onError={(e) => {
+                                          (e.target as HTMLImageElement).src = "https://placehold.co/400x500?text=Load+Error";
+                                        }}
+                                      />
+                                      {/* Brand badge overlay */}
+                                      {imgItem.brandName && (
+                                        <div className="absolute bottom-0 inset-x-0 bg-zinc-950/80 backdrop-blur-xs text-white text-[8px] font-bold px-1 py-0.5 truncate text-center leading-tight">
+                                          {imgItem.brandName}
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : item.shelfImage ? (
                                 <div 
-                                  onClick={() => setSelectedImage(item.shelfImage)}
-                                  className="relative aspect-[4/5] w-24 border border-slate-200 rounded overflow-hidden bg-zinc-100 cursor-zoom-in group shadow-3xs hover:shadow-2xs select-none"
+                                  onClick={() => setSelectedImage({ imageUrl: item.shelfImage! })}
+                                  className="relative aspect-[4/5] w-20 border border-slate-200 rounded overflow-hidden bg-zinc-100 cursor-zoom-in group shadow-3xs hover:shadow-2xs select-none"
                                 >
                                   <img 
                                     src={item.shelfImage} 
@@ -1223,7 +1379,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                                   />
                                 </div>
                               ) : (
-                                <span className="text-zinc-400 italic">No Photo</span>
+                                <span className="text-zinc-400 italic">No Photos</span>
                               )}
                             </div>
                           </td>
@@ -1250,9 +1406,21 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           >
             {/* Modal Header */}
             <div className="h-10 flex items-center justify-between px-4 bg-[#E5E5E5] border-b border-zinc-300">
-              <span className="font-bold text-xs text-zinc-700 uppercase tracking-wider select-none">
-                Shelf Visibility Photo Preview
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="font-bold text-xs text-zinc-700 uppercase tracking-wider select-none">
+                  Shelf Visibility Photo Preview
+                </span>
+                {selectedImage.brandName && (
+                  <span className="bg-[#0B57D0] text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-3xs">
+                    {selectedImage.brandName}
+                  </span>
+                )}
+                {selectedImage.date && (
+                  <span className="text-zinc-500 text-[10px] font-mono">
+                    ({selectedImage.date})
+                  </span>
+                )}
+              </div>
               <button
                 onClick={() => setSelectedImage(null)}
                 className="p-1 rounded-full hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-colors cursor-pointer focus:outline-none"
@@ -1265,7 +1433,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             {/* Image Container */}
             <div className="p-6 flex items-center justify-center bg-white overflow-auto max-h-[70vh]">
               <img 
-                src={selectedImage} 
+                src={selectedImage.imageUrl} 
                 alt="Shelf Compliance Detail" 
                 className="max-w-full max-h-[60vh] object-contain rounded border border-zinc-200 shadow-sm"
                 onError={(e) => {
@@ -1276,9 +1444,9 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             
             {/* Modal Footer with URL link */}
             <div className="bg-[#E5E5E5] border-t border-zinc-300 px-4 py-2 flex justify-between items-center text-[10px] text-zinc-500 font-mono select-none">
-              <span className="truncate max-w-[70%]">{selectedImage}</span>
+              <span className="truncate max-w-[70%]">{selectedImage.imageUrl}</span>
               <a 
-                href={selectedImage} 
+                href={selectedImage.imageUrl} 
                 target="_blank" 
                 rel="noreferrer" 
                 className="text-zinc-600 hover:text-zinc-950 font-bold hover:underline cursor-pointer"
