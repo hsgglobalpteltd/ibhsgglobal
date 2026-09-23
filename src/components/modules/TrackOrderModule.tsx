@@ -752,11 +752,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     { id: "dashboard", label: "Live Tracking", desc: "Real-time dispatch route visualization and live driver shift monitoring." },
     { id: "delivery", label: "Delivery Order", desc: "Manage pending deliveries, invoices, and complete fulfilled orders." },
     { id: "return", label: "Return Order", desc: "Track return collection pickups, due dates, and credit notes." },
-    { id: "job", label: "Create Job", desc: "Group undelivered orders by zone, generate 5-letter job loading sheets & route breakdown." },
-    { id: "create", label: "Create Order", desc: "Import DO orders from PDF/Excel or create manual delivery and return drafts." }
+    { id: "create", label: "Create Order", desc: "Import DO orders, create drafts, or dispatch grouped job packages." }
   ];
 
   const [activeTab, setActiveTab] = React.useState<string>("dashboard");
+  const [createOrderSubView, setCreateOrderSubView] = React.useState<"drafts" | "dispatch">("drafts");
   const [activeDeliveryTab, setActiveDeliveryTab] = React.useState<"pending" | "complete">("pending");
   const [deliveryStatusFilter, setDeliveryStatusFilter] = React.useState<string>("all");
   const [deliverySearchQuery, setDeliverySearchQuery] = React.useState<string>("");
@@ -6165,9 +6165,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               ? "Deliver Order"
               : activeTab === "return"
               ? "Return Order"
-              : activeTab === "job"
-              ? "Create Job Package"
-              : "Create & Import Orders"}
+              : "Create Order"}
           </h1>
           <p className="text-xs text-zinc-500 mt-0.5">
             {activeTab === "dashboard"
@@ -6176,13 +6174,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               ? "Manage delivery orders, invoices, and completed deliveries."
               : activeTab === "return"
               ? "Manage return orders, credit notes, and collection status."
-              : activeTab === "job"
-              ? "Group undelivered orders by zone, generate 5-letter job claim tokens and loading sheet PDFs."
+              : createOrderSubView === "dispatch"
+              ? "Group undelivered orders by zone, generate 5-letter job claim tokens and loading sheet paperwork."
               : "Import DO orders from PDF / Excel sheets or draft manual order records."}
           </p>
         </div>
 
-        {/* Top Right Badges for Live Tracking / Delivery / Return / Job tabs */}
+        {/* Top Right Badges for Live Tracking / Delivery / Return */}
         {activeTab === "dashboard" && (
           <div className="flex items-center gap-2 text-xs">
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded text-zinc-700 shadow-2xs font-semibold">
@@ -6219,64 +6217,137 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
         )}
 
-        {activeTab === "job" && (
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-blue-50 border border-blue-200 text-[#0B57D0]">
-              {Object.values(selectedJobOrderIds).filter(Boolean).length} Orders Selected
-            </span>
-          </div>
-        )}
-
-        {/* Header Action Buttons for Create Tab */}
+        {/* Header Action Buttons & Sub-view Switcher for Create Tab */}
         {activeTab === "create" && (
-          <div className="flex items-center gap-2">
-            <CustomButton 
-              variant="default"
-              onClick={() => {
-                if (!pdfLoading) setIsDoUploadChoiceOpen(true);
-              }}
-              disabled={pdfLoading}
-              className="text-xs font-semibold"
-            >
-              {pdfLoading ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  <span>{pdfLoadingText}</span>
-                </>
-              ) : (
-                <>
-                  <Upload size={14} />
-                  <span>Import Order</span>
-                </>
-              )}
-            </CustomButton>
+          <div className="flex items-center gap-3">
+            {/* Context Actions for Drafts / Job Dispatch on the left */}
+            {createOrderSubView === "drafts" ? (
+              <div className="flex items-center gap-2">
+                <CustomButton 
+                  variant="default"
+                  onClick={() => {
+                    if (!pdfLoading) setIsDoUploadChoiceOpen(true);
+                  }}
+                  disabled={pdfLoading}
+                  className="text-xs font-semibold"
+                >
+                  {pdfLoading ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>{pdfLoadingText}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={14} />
+                      <span>Import Order</span>
+                    </>
+                  )}
+                </CustomButton>
 
-            <CustomButton 
-              variant="dark"
-              onClick={() => {
-                setCreateDoNumber(`DO-${Date.now()}`);
-                setCreateRefNumber("");
-                setCreateMark(getNextAvailableMark(drafts, pendingOrders));
-                setCreateType("Normal");
-                setCreateDeliverTo("");
-                setCreatePoscode("");
-                setCreateItems([]);
-                setIsCreatePanelOpen(true);
-              }}
-              className="text-xs font-semibold"
-            >
-              <Plus size={14} />
-              <span>Create Order</span>
-            </CustomButton>
+                <CustomButton 
+                  variant="dark"
+                  onClick={() => {
+                    setCreateDoNumber(`DO-${Date.now()}`);
+                    setCreateRefNumber("");
+                    setCreateMark(getNextAvailableMark(drafts, pendingOrders));
+                    setCreateType("Normal");
+                    setCreateDeliverTo("");
+                    setCreatePoscode("");
+                    setCreateItems([]);
+                    setIsCreatePanelOpen(true);
+                  }}
+                  className="text-xs font-semibold"
+                >
+                  <Plus size={14} />
+                  <span>Create Order</span>
+                </CustomButton>
 
-            <CustomButton 
-              variant="default"
-              onClick={openCreateReturnPanel}
-              className="text-xs font-semibold"
-            >
-              <Plus size={14} />
-              <span>Create Return</span>
-            </CustomButton>
+                <CustomButton 
+                  variant="default"
+                  onClick={openCreateReturnPanel}
+                  className="text-xs font-semibold"
+                >
+                  <Plus size={14} />
+                  <span>Create Return</span>
+                </CustomButton>
+              </div>
+            ) : (
+              /* Context Controls for Job Dispatch */
+              <div className="flex items-center gap-2">
+                {jobSubView === "create" && (
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-[#0B57D0]">
+                    {Object.values(selectedJobOrderIds).filter(Boolean).length} Orders Selected
+                  </span>
+                )}
+                <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg border border-slate-200">
+                  <button
+                    type="button"
+                    onClick={() => setJobSubView("create")}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                      jobSubView === "create"
+                        ? "bg-[#0B57D0] text-white shadow-2xs"
+                        : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-200/60"
+                    }`}
+                  >
+                    <Layers size={13} />
+                    <span>Dispatch</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setJobSubView("history");
+                      fetchJobHistory();
+                    }}
+                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                      jobSubView === "history"
+                        ? "bg-[#0B57D0] text-white shadow-2xs"
+                        : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-200/60"
+                    }`}
+                  >
+                    <History size={13} />
+                    <span>Job History</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Hairline Divider */}
+            <div className="h-5 w-px bg-slate-200" />
+
+            {/* Sub-view switcher at the VERY END RIGHT */}
+            <div className="inline-flex items-center p-1 bg-slate-50 border border-slate-200 rounded-lg shadow-2xs">
+              <button
+                type="button"
+                onClick={() => setCreateOrderSubView("drafts")}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                  createOrderSubView === "drafts"
+                    ? "bg-white text-zinc-950 font-bold border border-slate-200/90 shadow-xs"
+                    : "text-zinc-500 hover:text-zinc-800 hover:bg-slate-100"
+                }`}
+              >
+                <FileText size={13} className={createOrderSubView === "drafts" ? "text-[#0B57D0]" : "text-zinc-400"} />
+                <span>Draft Orders</span>
+                {drafts.length > 0 && (
+                  <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                    createOrderSubView === "drafts" ? "bg-blue-50 text-[#0B57D0] border border-blue-200" : "bg-slate-200 text-zinc-600"
+                  }`}>
+                    {drafts.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setCreateOrderSubView("dispatch")}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
+                  createOrderSubView === "dispatch"
+                    ? "bg-white text-zinc-950 font-bold border border-slate-200/90 shadow-xs"
+                    : "text-zinc-500 hover:text-zinc-800 hover:bg-slate-100"
+                }`}
+              >
+                <Layers size={13} className={createOrderSubView === "dispatch" ? "text-[#0B57D0]" : "text-zinc-400"} />
+                <span>Job Dispatch</span>
+              </button>
+            </div>
           </div>
         )}
       </div>

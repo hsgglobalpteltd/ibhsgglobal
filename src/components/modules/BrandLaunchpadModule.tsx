@@ -32,7 +32,8 @@ import {
   X, 
   FileCheck,
   ChevronDown,
-  Copy
+  Copy,
+  Loader2
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -73,6 +74,9 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
   const [searchQuery, setSearchQuery] = React.useState("");
   const [selectedStepFilter, setSelectedStepFilter] = React.useState<number | "all">("all");
   const [selectedStatusFilter, setSelectedStatusFilter] = React.useState<string>("all");
+
+  // PDF Generation Loading State (Tracks active download ID for spinner feedback)
+  const [downloadingPdfId, setDownloadingPdfId] = React.useState<string | null>(null);
 
   // Selected Brand for Active Pipeline Management
   const [activeBrand, setActiveBrand] = React.useState<BrandLaunchpadBrand | null>(null);
@@ -193,6 +197,70 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
     const priceToRetailer = Number((ourPrice / (1 - ourMarginRate / 100)).toFixed(2));
     const rsp = Number((priceToRetailer / (1 - retailerMarginRate / 100)).toFixed(2));
     return { landPrice, ourPrice, priceToRetailer, rsp };
+  };
+
+  // Image Compression Helper: 1:1 Square & strictly under 200KB
+  const compressImageToSquareUnder200KB = async (
+    file: File
+  ): Promise<File> => {
+    let objectUrl: string | null = null;
+    try {
+      objectUrl = URL.createObjectURL(file);
+      const imgElement = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error("Failed to load image for processing"));
+        img.src = objectUrl!;
+      });
+
+      const srcWidth = imgElement.naturalWidth || imgElement.width || 1080;
+      const srcHeight = imgElement.naturalHeight || imgElement.height || 1080;
+      const minDim = Math.min(srcWidth, srcHeight);
+      const sx = (srcWidth - minDim) / 2;
+      const sy = (srcHeight - minDim) / 2;
+
+      const targetSizes = [1080, 960, 800, 720, 640];
+      const targetQualities = [0.82, 0.75, 0.65, 0.55, 0.45, 0.35];
+      const MAX_BYTES = 195 * 1024; // strictly under 200KB
+
+      let finalBlob: Blob | null = null;
+
+      for (const size of targetSizes) {
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) continue;
+
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillRect(0, 0, size, size);
+        ctx.drawImage(imgElement, sx, sy, minDim, minDim, 0, 0, size, size);
+
+        for (const quality of targetQualities) {
+          const blob: Blob | null = await new Promise((res) => canvas.toBlob(res, "image/jpeg", quality));
+          if (blob) {
+            finalBlob = blob;
+            if (blob.size <= MAX_BYTES) {
+              break;
+            }
+          }
+        }
+
+        if (finalBlob && finalBlob.size <= MAX_BYTES) {
+          break;
+        }
+      }
+
+      if (finalBlob) {
+        const outputName = file.name.replace(/\.[^/.]+$/, ".jpg");
+        return new File([finalBlob], outputName, { type: "image/jpeg" });
+      }
+      return file;
+    } catch {
+      return file;
+    } finally {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
   };
 
   // Save Brand Details
@@ -401,111 +469,161 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
 
   // 1. Download Intake & Commercial Pricing Worksheet (Step 1 - No Signatures)
   const downloadIntakeFormPDF = (brand?: BrandLaunchpadBrand) => {
-    const doc = new jsPDF("p", "mm", "a4");
-    const brandTitle = brand?.brand_name ? `${brand.brand_name.toUpperCase()} - ` : "";
-    drawPdfHeaderBanner(
-      doc,
-      `${brandTitle}BRAND & PRODUCT INTAKE WORKSHEET`,
-      "Step 1: New Brand Pipeline Master Registration, Commercial Waterfall & Compliance Assessment"
-    );
+    const downloadKey = `intake-${brand?.id || "general"}`;
+    if (downloadingPdfId) return;
+    setDownloadingPdfId(downloadKey);
+    toast.info("Generating Intake Worksheet PDF...");
 
-    // Brand Profile Section
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text("1. Brand & Company Profile", 14, 34);
+    try {
+      const doc = new jsPDF("p", "mm", "a4");
+      const brandTitle = brand?.brand_name ? `${brand.brand_name.toUpperCase()} - ` : "";
+      drawPdfHeaderBanner(
+        doc,
+        `${brandTitle}BRAND & PRODUCT INTAKE WORKSHEET`,
+        "Step 1: New Brand Pipeline Master Registration, Commercial Waterfall & Compliance Assessment"
+      );
 
-    autoTable(doc, {
-      startY: 38,
-      theme: "grid",
-      styles: { fontSize: 8.5, cellPadding: 2.8, textColor: [30, 41, 59] },
-      headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
-      head: [["Field", "Details / Specifications"]],
-      body: [
-        ["Brand Name", brand?.brand_name || ""],
-        ["Company / Manufacturer Name", brand?.company_name || ""],
-        ["Owner Entity Type", brand?.owner_type || "Brand Owner / Manufacturer / Trader / Agent"],
-        ["Contact Person & Title", brand?.contact_person || ""],
-        ["Email Address", brand?.contact_email || ""],
-        ["Phone / WhatsApp", brand?.contact_phone || ""],
-        ["Country of Origin", brand?.country_of_origin || ""],
-        ["Standard Payment Terms", brand?.payment_terms || "30 Days Net"],
-        ["Order-to-Delivery Lead Time", `${brand?.lead_time_days || 14} Days`]
-      ]
-    });
+      // Brand Profile Section
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("1. Brand & Company Profile", 14, 34);
 
-    const finalY1 = (doc as any).lastAutoTable.finalY || 95;
+      autoTable(doc, {
+        startY: 38,
+        theme: "grid",
+        styles: { fontSize: 8.5, cellPadding: 2.8, textColor: [30, 41, 59] },
+        headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
+        head: [["Field", "Details / Specifications"]],
+        body: [
+          ["Brand Name", brand?.brand_name || ""],
+          ["Company / Manufacturer Name", brand?.company_name || ""],
+          ["Owner Entity Type", brand?.owner_type || "Brand Owner / Manufacturer / Trader / Agent"],
+          ["Contact Person & Title", brand?.contact_person || ""],
+          ["Email Address", brand?.contact_email || ""],
+          ["Phone / WhatsApp", brand?.contact_phone || ""],
+          ["Country of Origin", brand?.country_of_origin || ""],
+          ["Standard Payment Terms", brand?.payment_terms || "30 Days Net"],
+          ["Order-to-Delivery Lead Time", `${brand?.lead_time_days || 14} Days`]
+        ]
+      });
 
-    // SKUs & Pricing Section
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text("2. Product Range & Commercial Pricing Waterfall", 14, finalY1 + 8);
+      const finalY1 = (doc as any).lastAutoTable.finalY || 95;
 
-    const skuRows = (brand?.products && brand.products.length > 0)
-      ? brand.products.map(p => [
-          p.product_name,
-          p.sku || "-",
-          p.pack_size || "-",
-          `${p.shelf_life_months || 12} Mos`,
-          p.storage_condition || "Ambient",
-          `$${Number(p.cost_price).toFixed(2)}`,
-          `$${Number(p.our_price).toFixed(2)}`,
-          `$${Number(p.price_to_retailer).toFixed(2)}`,
-          `$${Number(p.rsp).toFixed(2)}`
-        ])
-      : [
-          ["Sample Product 1", "-", "-", "12 Mos", "Ambient", "$0.00", "$0.00", "$0.00", "$0.00"],
-          ["Sample Product 2", "-", "-", "12 Mos", "Ambient", "$0.00", "$0.00", "$0.00", "$0.00"]
-        ];
+      // SKUs & Pricing Section
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("2. Product Range & Commercial Pricing Waterfall", 14, finalY1 + 8);
 
-    autoTable(doc, {
-      startY: finalY1 + 12,
-      theme: "grid",
-      styles: { fontSize: 8, cellPadding: 2.5, textColor: [30, 41, 59] },
-      headStyles: { fillColor: [11, 87, 208], textColor: [255, 255, 255], fontStyle: "bold" },
-      head: [["Product Name", "SKU", "Pack Size", "Shelf Life", "Storage", "Cost", "Our Price", "Trade Price", "Shelf RSP"]],
-      body: skuRows
-    });
+      const skuRows = (brand?.products && brand.products.length > 0)
+        ? brand.products.map(p => [
+            p.product_name,
+            p.sku || "-",
+            p.pack_size || "-",
+            `${p.shelf_life_months || 12} Mos`,
+            p.storage_condition || "Ambient",
+            `$${Number(p.cost_price).toFixed(2)}`,
+            `$${Number(p.our_price).toFixed(2)}`,
+            `$${Number(p.price_to_retailer).toFixed(2)}`,
+            `$${Number(p.rsp).toFixed(2)}`
+          ])
+        : [
+            ["Sample Product 1", "-", "-", "12 Mos", "Ambient", "$0.00", "$0.00", "$0.00", "$0.00"],
+            ["Sample Product 2", "-", "-", "12 Mos", "Ambient", "$0.00", "$0.00", "$0.00", "$0.00"]
+          ];
 
-    const finalY2 = (doc as any).lastAutoTable.finalY || 170;
+      autoTable(doc, {
+        startY: finalY1 + 12,
+        theme: "grid",
+        styles: { fontSize: 8, cellPadding: 2.5, textColor: [30, 41, 59] },
+        headStyles: { fillColor: [11, 87, 208], textColor: [255, 255, 255], fontStyle: "bold" },
+        head: [["Product Name", "SKU", "Pack Size", "Shelf Life", "Storage", "Cost", "Our Price", "Trade Price", "Shelf RSP"]],
+        body: skuRows
+      });
 
-    // Compliance Checklist
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text("3. Initial Compliance & Import Readiness Checklist", 14, finalY2 + 8);
+      const finalY2 = (doc as any).lastAutoTable.finalY || 170;
 
-    autoTable(doc, {
-      startY: finalY2 + 12,
-      theme: "plain",
-      styles: { fontSize: 8.5, cellPadding: 2, textColor: [51, 65, 85] },
-      body: [
-        ["[  ] English Ingredients & Nutritional Labeling verified compliant for Singapore SFA regulations."],
-        ["[  ] Certificate of Analysis (COA) / Food Hygiene & Halal/HACCP certifications available."],
-        ["[  ] Minimum 80% remaining shelf life guaranteed upon warehouse receipt."],
-        ["[  ] Product barcodes registered (EAN-13 / UPC single and carton barcodes)."],
-        ["[  ] Marketing and sample support commitment acknowledged."]
-      ]
-    });
+      // Compliance Checklist
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("3. Initial Compliance & Import Readiness Checklist", 14, finalY2 + 8);
 
-    const blob = doc.output("blob");
-    const blobUrl = URL.createObjectURL(blob);
-    window.open(blobUrl, "_blank");
-    toast.success("Intake Worksheet opened in new tab");
+      autoTable(doc, {
+        startY: finalY2 + 12,
+        theme: "plain",
+        styles: { fontSize: 8.5, cellPadding: 2, textColor: [51, 65, 85] },
+        body: [
+          ["[  ] English Ingredients & Nutritional Labeling verified compliant for Singapore SFA regulations."],
+          ["[  ] Certificate of Analysis (COA) / Food Hygiene & Halal/HACCP certifications available."],
+          ["[  ] Minimum 80% remaining shelf life guaranteed upon warehouse receipt."],
+          ["[  ] Product barcodes registered (EAN-13 / UPC single and carton barcodes)."],
+          ["[  ] Marketing and sample support commitment acknowledged."]
+        ]
+      });
+
+      const blob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank");
+      toast.success("Intake Worksheet opened in new tab");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to generate Intake Worksheet");
+    } finally {
+      setDownloadingPdfId(null);
+    }
   };
 
-  // Helper to load image as base64 for PDF embedding
+  // Helper to load image as base64 for PDF embedding with automatic EXIF orientation normalization & 1:1 cover crop
   const getImageBase64 = async (url: string): Promise<string | null> => {
     try {
       const res = await fetch(url);
       if (!res.ok) return null;
       const blob = await res.blob();
+      
+      // Use HTMLImageElement + Canvas (which natively respects EXIF orientation in modern browsers)
+      // to draw a crisp, upright 1:1 square image
       return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(blob);
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        const objectUrl = URL.createObjectURL(blob);
+        img.onload = () => {
+          try {
+            const canvas = document.createElement("canvas");
+            const size = 600; // high-resolution 600x600 for PDF print crispness
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              URL.revokeObjectURL(objectUrl);
+              resolve(null);
+              return;
+            }
+
+            // Calculate center-crop 1:1 square
+            const nw = img.naturalWidth || img.width;
+            const nh = img.naturalHeight || img.height;
+            const minDim = Math.min(nw, nh);
+            const sx = (nw - minDim) / 2;
+            const sy = (nh - minDim) / 2;
+
+            ctx.fillStyle = "#FFFFFF";
+            ctx.fillRect(0, 0, size, size);
+            ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
+
+            const base64 = canvas.toDataURL("image/jpeg", 0.92);
+            URL.revokeObjectURL(objectUrl);
+            resolve(base64);
+          } catch {
+            URL.revokeObjectURL(objectUrl);
+            resolve(null);
+          }
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          resolve(null);
+        };
+        img.src = objectUrl;
       });
     } catch {
       return null;
@@ -514,6 +632,11 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
 
   // 2. Open Individual 1-Page Paper Scorecard PDF per SKU (with Top 4 1:1 Photo Strip & Bottom QR)
   const downloadSkuPaperScorecardPDF = async (product: BrandLaunchpadProduct, brandName: string) => {
+    const downloadKey = `scorecard-${product.id}`;
+    if (downloadingPdfId) return;
+    setDownloadingPdfId(downloadKey);
+    toast.info(`Preparing scorecard for ${product.product_name}...`);
+
     try {
       const doc = new jsPDF("p", "mm", "a4");
 
@@ -755,59 +878,77 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
       toast.success(`Scorecard for ${product.product_name} opened in new tab`);
     } catch (err: any) {
       toast.error(err.message || "Failed to generate scorecard PDF");
+    } finally {
+      setDownloadingPdfId(null);
     }
   };
 
   // 3. Download Marketing Support Worksheet PDF (Step 3 - No Signatures)
   const downloadMarketingAgreementPDF = (brand: BrandLaunchpadBrand) => {
-    const doc = new jsPDF("p", "mm", "a4");
-    drawPdfHeaderBanner(
-      doc,
-      `${brand.brand_name.toUpperCase()} - MARKETING & CREATOR STRATEGY`,
-      "Step 3: Brand Story, Creator Angles, Promotional Funding & Retail Goals"
-    );
+    const downloadKey = `marketing-${brand.id}`;
+    if (downloadingPdfId) return;
+    setDownloadingPdfId(downloadKey);
+    toast.info("Generating Marketing Worksheet PDF...");
 
-    autoTable(doc, {
-      startY: 34,
-      theme: "grid",
-      styles: { fontSize: 8.5, cellPadding: 3.5, textColor: [30, 41, 59] },
-      headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
-      head: [["Category", "Marketing Commitment / Strategic Plan"]],
-      body: [
-        ["Brand / Company", `${brand.brand_name} (${brand.company_name || "-"})`],
-        ["Brand Story & Origin", brand.brand_story || ""],
-        ["Target Consumer & Need", `${brand.target_consumer || ""} ${brand.consumer_need_served ? `| ${brand.consumer_need_served}` : ""}`.trim()],
-        ["TikTok & Video Angles", brand.tiktok_hooks || ""],
-        ["Launch Promo & Sampling Budget", brand.launch_promo_support || ""],
-        ["Retail Ambition & Channel Fit", brand.retail_ambition || ""]
-      ]
-    });
+    try {
+      const doc = new jsPDF("p", "mm", "a4");
+      drawPdfHeaderBanner(
+        doc,
+        `${brand.brand_name.toUpperCase()} - MARKETING & CREATOR STRATEGY`,
+        "Step 3: Brand Story, Creator Angles, Promotional Funding & Retail Goals"
+      );
 
-    const finalY = (doc as any).lastAutoTable.finalY || 140;
+      autoTable(doc, {
+        startY: 34,
+        theme: "grid",
+        styles: { fontSize: 8.5, cellPadding: 3.5, textColor: [30, 41, 59] },
+        headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
+        head: [["Category", "Marketing Commitment / Strategic Plan"]],
+        body: [
+          ["Brand / Company", `${brand.brand_name} (${brand.company_name || "-"})`],
+          ["Brand Story & Origin", brand.brand_story || ""],
+          ["Target Consumer & Need", `${brand.target_consumer || ""} ${brand.consumer_need_served ? `| ${brand.consumer_need_served}` : ""}`.trim()],
+          ["TikTok & Video Angles", brand.tiktok_hooks || ""],
+          ["Launch Promo & Sampling Budget", brand.launch_promo_support || ""],
+          ["Retail Ambition & Channel Fit", brand.retail_ambition || ""]
+        ]
+      });
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text("Strategic Launch Summary", 14, finalY + 12);
+      const finalY = (doc as any).lastAutoTable.finalY || 140;
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.setTextColor(71, 85, 105);
-    doc.text(
-      "The Brand and HSG Global will coordinate promotional discounts, marketing samples for creator gifting,\n" +
-      "and active co-branding support throughout the 3-Month Online Trial and subsequent Modern Trade retail listing.",
-      14,
-      finalY + 18
-    );
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("Strategic Launch Summary", 14, finalY + 12);
 
-    const blob = doc.output("blob");
-    const blobUrl = URL.createObjectURL(blob);
-    window.open(blobUrl, "_blank");
-    toast.success("Marketing Worksheet opened in new tab");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(71, 85, 105);
+      doc.text(
+        "The Brand and HSG Global will coordinate promotional discounts, marketing samples for creator gifting,\n" +
+        "and active co-branding support throughout the 3-Month Online Trial and subsequent Modern Trade retail listing.",
+        14,
+        finalY + 18
+      );
+
+      const blob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank");
+      toast.success("Marketing Worksheet opened in new tab");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to generate marketing PDF");
+    } finally {
+      setDownloadingPdfId(null);
+    }
   };
 
   // 4. Download Full Brand Dossier PDF (3 Pages: Page 1 Intake & Pricing, Page 2 Marketing Support, Page 3 Scorecard)
   const downloadFullBrandDossierPDF = async (brand: BrandLaunchpadBrand) => {
+    const downloadKey = `dossier-${brand.id}`;
+    if (downloadingPdfId) return;
+    setDownloadingPdfId(downloadKey);
+    toast.info("Generating Full Brand Dossier PDF...");
+
     try {
       const doc = new jsPDF("p", "mm", "a4");
 
@@ -924,8 +1065,9 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
       autoTable(doc, {
         startY: 38,
         theme: "grid",
-        styles: { fontSize: 8.5, cellPadding: 3.5, textColor: [30, 41, 59], minCellHeight: 22 },
-        headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold", cellPadding: 2.5 },
+        styles: { fontSize: 8.5, textColor: [30, 41, 59] },
+        headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold", cellPadding: 2.5, minCellHeight: 7 },
+        bodyStyles: { cellPadding: 3, minCellHeight: 22 },
         columnStyles: {
           0: { cellWidth: 50, fontStyle: "bold", textColor: [15, 23, 42] },
           1: { cellWidth: 132, textColor: [51, 65, 85] }
@@ -1145,130 +1287,143 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
       toast.success("Full Brand Dossier opened in new tab");
     } catch (err: any) {
       toast.error(err.message || "Failed to generate Full Brand Dossier");
+    } finally {
+      setDownloadingPdfId(null);
     }
   };
 
   // 5. Download 1-Page Retail Pitch Deck PDF (Step 5)
   const downloadRetailPitchDeckPDF = (brand: BrandLaunchpadBrand) => {
-    const doc = new jsPDF("p", "mm", "a4");
+    const downloadKey = `deck-${brand.id}`;
+    if (downloadingPdfId) return;
+    setDownloadingPdfId(downloadKey);
+    toast.info("Generating Retail Pitch Deck PDF...");
 
-    // Top Header Banner (Unified styling)
-    drawPdfHeaderBanner(
-      doc,
-      `${brand.brand_name.toUpperCase()} - RETAIL BUYER PITCH DECK`,
-      "HSG Global Modern Trade Listing Proposal & Product Validation Proof"
-    );
+    try {
+      const doc = new jsPDF("p", "mm", "a4");
 
-    // Section 1: Executive Summary & Value Prop
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text("1. Executive Summary & Category Value Proposition", 14, 34);
+      // Top Header Banner (Unified styling)
+      drawPdfHeaderBanner(
+        doc,
+        `${brand.brand_name.toUpperCase()} - RETAIL BUYER PITCH DECK`,
+        "HSG Global Modern Trade Listing Proposal & Product Validation Proof"
+      );
 
-    autoTable(doc, {
-      startY: 38,
-      theme: "plain",
-      styles: { fontSize: 8.5, cellPadding: 2, textColor: [30, 41, 59] },
-      body: [
-        [`Brand: ${brand.brand_name}`, `Origin: ${brand.country_of_origin || "Singapore"}`, `Lead Time: ${brand.lead_time_days || 14} Days`],
-        [`Company: ${brand.company_name || "-"}`, `Payment Terms: ${brand.payment_terms || "30 Days Net"}`, `Status: Verified & Validated`],
-        [`Buyer Value Prop: ${brand.retail?.buyer_value_proposition || brand.consumer_need_served || "Delivers high-velocity premium category growth."}`, "", ""]
-      ]
-    });
+      // Section 1: Executive Summary & Value Prop
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("1. Executive Summary & Category Value Proposition", 14, 34);
 
-    const finalY1 = (doc as any).lastAutoTable.finalY || 60;
+      autoTable(doc, {
+        startY: 38,
+        theme: "plain",
+        styles: { fontSize: 8.5, cellPadding: 2, textColor: [30, 41, 59] },
+        body: [
+          [`Brand: ${brand.brand_name}`, `Origin: ${brand.country_of_origin || "Singapore"}`, `Lead Time: ${brand.lead_time_days || 14} Days`],
+          [`Company: ${brand.company_name || "-"}`, `Payment Terms: ${brand.payment_terms || "30 Days Net"}`, `Status: Verified & Validated`],
+          [`Buyer Value Prop: ${brand.retail?.buyer_value_proposition || brand.consumer_need_served || "Delivers high-velocity premium category growth."}`, "", ""]
+        ]
+      });
 
-    // Section 2: Validated Products & Margin Waterfall
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text("2. SKU Line-up & Commercial Profitability", 14, finalY1 + 8);
+      const finalY1 = (doc as any).lastAutoTable.finalY || 60;
 
-    const skuRows = (brand.products || []).map(p => [
-      p.product_name,
-      p.sku || "-",
-      p.pack_size || "-",
-      `${p.shelf_life_months || 12}M`,
-      p.avg_taste_score ? `${Number(p.avg_taste_score).toFixed(1)}/30` : "Validated",
-      `$${Number(p.price_to_retailer).toFixed(2)}`,
-      `$${Number(p.rsp).toFixed(2)}`,
-      `${Number(p.retailer_margin_rate || 35).toFixed(0)}%`
-    ]);
+      // Section 2: Validated Products & Margin Waterfall
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("2. SKU Line-up & Commercial Profitability", 14, finalY1 + 8);
 
-    autoTable(doc, {
-      startY: finalY1 + 12,
-      theme: "grid",
-      styles: { fontSize: 8, cellPadding: 2.5, textColor: [30, 41, 59] },
-      headStyles: { fillColor: [11, 87, 208], textColor: [255, 255, 255], fontStyle: "bold" },
-      head: [["Product Name", "SKU", "Pack Size", "Shelf Life", "Taste Score", "Trade Cost", "Shelf RSP", "Retail Margin"]],
-      body: skuRows.length > 0 ? skuRows : [["Sample SKU", "-", "-", "12M", "28.0/30", "$3.50", "$5.50", "36%"]]
-    });
+      const skuRows = (brand.products || []).map(p => [
+        p.product_name,
+        p.sku || "-",
+        p.pack_size || "-",
+        `${p.shelf_life_months || 12}M`,
+        p.avg_taste_score ? `${Number(p.avg_taste_score).toFixed(1)}/30` : "Validated",
+        `$${Number(p.price_to_retailer).toFixed(2)}`,
+        `$${Number(p.rsp).toFixed(2)}`,
+        `${Number(p.retailer_margin_rate || 35).toFixed(0)}%`
+      ]);
 
-    const finalY2 = (doc as any).lastAutoTable.finalY || 110;
+      autoTable(doc, {
+        startY: finalY1 + 12,
+        theme: "grid",
+        styles: { fontSize: 8, cellPadding: 2.5, textColor: [30, 41, 59] },
+        headStyles: { fillColor: [11, 87, 208], textColor: [255, 255, 255], fontStyle: "bold" },
+        head: [["Product Name", "SKU", "Pack Size", "Shelf Life", "Taste Score", "Trade Cost", "Shelf RSP", "Retail Margin"]],
+        body: skuRows.length > 0 ? skuRows : [["Sample SKU", "-", "-", "12M", "28.0/30", "$3.50", "$5.50", "36%"]]
+      });
 
-    // Section 3: 3-Month Online Trial Proof Metrics
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text("3. Online Traction & Velocity Proof (3-Month Pilot)", 14, finalY2 + 8);
+      const finalY2 = (doc as any).lastAutoTable.finalY || 110;
 
-    const trial = brand.trial;
-    autoTable(doc, {
-      startY: finalY2 + 12,
-      theme: "grid",
-      styles: { fontSize: 8.5, cellPadding: 3, textColor: [30, 41, 59] },
-      headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
-      head: [["Online Metric", "Result / Observation"]],
-      body: [
-        ["Total Online Units Sold (Month 1-3)", `${trial?.m3_total_units || trial?.m1_units_sold || 0} Units`],
-        ["Repeat Customer Rate", `${trial?.m3_repeat_rate_percent || 0}%`],
-        ["Customer Satisfaction Rating", `${trial?.m3_customer_rating || "4.8"}/5.0`],
-        ["Price Sensitivity Response", trial?.m2_price_response || "Full Price Accepted"],
-        ["Customer Feedback Highlights", trial?.m3_reviews_summary || trial?.m1_sampling_feedback || "Strong organic repeat orders."]
-      ]
-    });
+      // Section 3: 3-Month Online Trial Proof Metrics
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("3. Online Traction & Velocity Proof (3-Month Pilot)", 14, finalY2 + 8);
 
-    const finalY3 = (doc as any).lastAutoTable.finalY || 170;
+      const trial = brand.trial;
+      autoTable(doc, {
+        startY: finalY2 + 12,
+        theme: "grid",
+        styles: { fontSize: 8.5, cellPadding: 3, textColor: [30, 41, 59] },
+        headStyles: { fillColor: [241, 245, 249], textColor: [15, 23, 42], fontStyle: "bold" },
+        head: [["Online Metric", "Result / Observation"]],
+        body: [
+          ["Total Online Units Sold (Month 1-3)", `${trial?.m3_total_units || trial?.m1_units_sold || 0} Units`],
+          ["Repeat Customer Rate", `${trial?.m3_repeat_rate_percent || 0}%`],
+          ["Customer Satisfaction Rating", `${trial?.m3_customer_rating || "4.8"}/5.0`],
+          ["Price Sensitivity Response", trial?.m2_price_response || "Full Price Accepted"],
+          ["Customer Feedback Highlights", trial?.m3_reviews_summary || trial?.m1_sampling_feedback || "Strong organic repeat orders."]
+        ]
+      });
 
-    // Section 4: Operational Readiness
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(11);
-    doc.setTextColor(15, 23, 42);
-    doc.text("4. Supply Chain & Listing Support", 14, finalY3 + 8);
+      const finalY3 = (doc as any).lastAutoTable.finalY || 170;
 
-    const retail = brand.retail;
-    autoTable(doc, {
-      startY: finalY3 + 12,
-      theme: "plain",
-      styles: { fontSize: 8.5, cellPadding: 2, textColor: [30, 41, 59] },
-      body: [
-        [`Target Channels: ${(retail?.target_retail_channels || ["Supermarkets"]).join(", ")}`],
-        [`Local Buffer Stock in SG Warehouse: ${retail?.buffer_stock_units || 500} Units`],
-        [`Reorder Lead Time: ${retail?.reorder_lead_time_days || 14} Days`],
-        [`Post-Listing Promo Budget: ${retail?.post_listing_marketing_budget || "In-store sampling & promotional end-cap support committed."}`]
-      ]
-    });
+      // Section 4: Operational Readiness
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(15, 23, 42);
+      doc.text("4. Supply Chain & Listing Support", 14, finalY3 + 8);
 
-    const finalY4 = (doc as any).lastAutoTable.finalY || 220;
+      const retail = brand.retail;
+      autoTable(doc, {
+        startY: finalY3 + 12,
+        theme: "plain",
+        styles: { fontSize: 8.5, cellPadding: 2, textColor: [30, 41, 59] },
+        body: [
+          [`Target Channels: ${(retail?.target_retail_channels || ["Supermarkets"]).join(", ")}`],
+          [`Local Buffer Stock in SG Warehouse: ${retail?.buffer_stock_units || 500} Units`],
+          [`Reorder Lead Time: ${retail?.reorder_lead_time_days || 14} Days`],
+          [`Post-Listing Promo Budget: ${retail?.post_listing_marketing_budget || "In-store sampling & promotional end-cap support committed."}`]
+        ]
+      });
 
-    // Decision Stamp
-    doc.setFillColor(241, 245, 249);
-    doc.roundedRect(14, finalY4 + 8, 182, 28, 2, 2, "F");
+      const finalY4 = (doc as any).lastAutoTable.finalY || 220;
 
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(10);
-    doc.setTextColor(11, 87, 208);
-    doc.text(`Commercial Decision: ${retail?.final_verdict || "Scale Listing"}`, 20, finalY4 + 18);
+      // Decision Stamp
+      doc.setFillColor(241, 245, 249);
+      doc.roundedRect(14, finalY4 + 8, 182, 28, 2, 2, "F");
 
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(8.5);
-    doc.setTextColor(71, 85, 105);
-    doc.text(`Approved by: ${retail?.approved_by || "HSG Global Commercial Team"} | Date: ${new Date().toLocaleDateString("en-SG")}`, 20, finalY4 + 26);
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(11, 87, 208);
+      doc.text(`Commercial Decision: ${retail?.final_verdict || "Scale Listing"}`, 20, finalY4 + 18);
 
-    const blob = doc.output("blob");
-    const blobUrl = URL.createObjectURL(blob);
-    window.open(blobUrl, "_blank");
-    toast.success("1-Page Retail Pitch Deck opened in new tab");
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8.5);
+      doc.setTextColor(71, 85, 105);
+      doc.text(`Approved by: ${retail?.approved_by || "HSG Global Commercial Team"} | Date: ${new Date().toLocaleDateString("en-SG")}`, 20, finalY4 + 26);
+
+      const blob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank");
+      toast.success("1-Page Retail Pitch Deck opened in new tab");
+    } catch (err: any) {
+      toast.error(err.message || "Failed to generate Retail Pitch Deck");
+    } finally {
+      setDownloadingPdfId(null);
+    }
   };
 
   // --------------------------------------------------------------------------
@@ -1572,10 +1727,15 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => downloadFullBrandDossierPDF(brand)}
-                              className="p-1.5 rounded-md hover:bg-slate-100 text-zinc-600 hover:text-[#0B57D0] transition-colors"
+                              disabled={Boolean(downloadingPdfId)}
+                              className="p-1.5 rounded-md hover:bg-slate-100 text-zinc-600 hover:text-[#0B57D0] transition-colors disabled:opacity-50 cursor-pointer"
                               title="Download Full Brand Dossier"
                             >
-                              <FileText className="w-3.5 h-3.5" />
+                              {downloadingPdfId === `dossier-${brand.id}` ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                              ) : (
+                                <FileText className="w-3.5 h-3.5" />
+                              )}
                             </button>
 
                             <button
@@ -1658,17 +1818,29 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
 
               <button
                 onClick={() => downloadFullBrandDossierPDF(activeBrand)}
-                className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                disabled={Boolean(downloadingPdfId)}
+                className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs disabled:opacity-50"
                 title="Download 2-Page Combined Brand & Marketing Dossier"
               >
-                <FileText className="w-3.5 h-3.5 text-[#0B57D0]" /> Full Dossier
+                {downloadingPdfId === `dossier-${activeBrand.id}` ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
+                )}
+                Full Dossier
               </button>
 
               <button
                 onClick={() => downloadRetailPitchDeckPDF(activeBrand)}
-                className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
+                disabled={Boolean(downloadingPdfId)}
+                className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs disabled:opacity-50"
               >
-                <Download className="w-3.5 h-3.5" /> 1-Page Retail Pitch Deck
+                {downloadingPdfId === `deck-${activeBrand.id}` ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                1-Page Retail Pitch Deck
               </button>
             </div>
           </div>
@@ -1738,10 +1910,16 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => downloadFullBrandDossierPDF(activeBrand)}
-                      className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer"
+                      disabled={Boolean(downloadingPdfId)}
+                      className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                       title="Download combined Page 1 (Details) and Page 2 (Marketing)"
                     >
-                      <FileText className="w-3.5 h-3.5 text-[#0B57D0]" /> Full Dossier
+                      {downloadingPdfId === `dossier-${activeBrand.id}` ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                      ) : (
+                        <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
+                      )}
+                      Full Dossier
                     </button>
 
                     <button
@@ -1838,10 +2016,16 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
 
                                 <button
                                   onClick={() => downloadSkuPaperScorecardPDF(sku, activeBrand.brand_name)}
-                                  className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer"
+                                  disabled={Boolean(downloadingPdfId)}
+                                  className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer disabled:opacity-50"
                                   title="Download Printable Scorecard for this SKU"
                                 >
-                                  <Download className="w-3 h-3" /> Scorecard Review
+                                  {downloadingPdfId === `scorecard-${sku.id}` ? (
+                                    <Loader2 className="w-3 h-3 animate-spin text-[#0B57D0]" />
+                                  ) : (
+                                    <Download className="w-3 h-3" />
+                                  )}
+                                  Scorecard Review
                                 </button>
 
                                 <button
@@ -1976,9 +2160,15 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
 
                               <button
                                 onClick={() => downloadSkuPaperScorecardPDF(sku, activeBrand.brand_name)}
-                                className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer"
+                                disabled={Boolean(downloadingPdfId)}
+                                className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer disabled:opacity-50"
                               >
-                                <Download className="w-3 h-3" /> Scorecard Review
+                                {downloadingPdfId === `scorecard-${sku.id}` ? (
+                                  <Loader2 className="w-3 h-3 animate-spin text-[#0B57D0]" />
+                                ) : (
+                                  <Download className="w-3 h-3" />
+                                )}
+                                Scorecard Review
                               </button>
 
                               <button
@@ -2028,50 +2218,88 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                                 No evaluations submitted yet for this product. Use the button above or scan QR code on the paper worksheet.
                               </div>
                             ) : (
-                              <div className="space-y-2">
-                                {reviews.map((rev) => (
-                                  <div
-                                    key={rev.id}
-                                    className="p-3 bg-slate-50 rounded-lg border border-slate-200/80 flex flex-wrap items-center justify-between gap-2 text-xs"
-                                  >
-                                    <div className="flex flex-col gap-1">
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-bold text-zinc-900">{rev.reviewer_name}</span>
-                                        <span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-200 text-slate-700">
-                                          {rev.reviewer_type}
-                                        </span>
-                                        <span className="text-[11px] text-zinc-500">{rev.assessment_date}</span>
-                                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                          rev.total_score >= 24 ? "bg-emerald-100 text-emerald-800" :
-                                          rev.total_score >= 18 ? "bg-amber-100 text-amber-800" :
-                                          "bg-rose-100 text-rose-800"
-                                        }`}>
-                                          {rev.total_score} / 30 ({rev.score_band})
-                                        </span>
-                                      </div>
-                                      {rev.tasting_notes && (
-                                        <p className="text-zinc-600 italic mt-0.5">&quot;{rev.tasting_notes}&quot;</p>
-                                      )}
-                                    </div>
+                                <div className="space-y-2.5">
+                                  {reviews.map((rev) => (
+                                    <div
+                                      key={rev.id}
+                                      className="p-3.5 bg-slate-50 rounded-lg border border-slate-200/80 flex flex-col gap-2.5 text-xs"
+                                    >
+                                      {/* Reviewer Header Row */}
+                                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200/60 pb-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-bold text-zinc-950 text-sm">{rev.reviewer_name}</span>
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-200 text-slate-700">
+                                            {rev.reviewer_type || "Taster"}
+                                          </span>
+                                          <span className="text-[11px] text-zinc-400 font-medium">{rev.assessment_date}</span>
+                                        </div>
 
-                                    <div className="flex items-center gap-2">
-                                      <span className="font-semibold text-zinc-700">Decision: {rev.reviewer_decision}</span>
-                                      {perm.delete && (
-                                        <button
-                                          onClick={() => {
-                                            if (!checkDeletePermission()) return;
-                                            setDeleteConfirm({ type: "review", id: rev.id, name: `Review by ${rev.reviewer_name}` });
-                                          }}
-                                          className="p-1 text-zinc-400 hover:text-rose-600 transition-colors"
-                                          title="Delete Review"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                          <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold ${
+                                            rev.total_score >= 24 ? "bg-emerald-100 text-emerald-800 border border-emerald-200" :
+                                            rev.total_score >= 18 ? "bg-amber-100 text-amber-800 border border-amber-200" :
+                                            "bg-rose-100 text-rose-800 border border-rose-200"
+                                          }`}>
+                                            ★ {rev.total_score} / 30 ({rev.score_band || (rev.total_score >= 24 ? "Proceed" : rev.total_score >= 18 ? "Conditional" : "Reject")})
+                                          </span>
+
+                                          <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-white border border-slate-200 text-zinc-700">
+                                            Verdict: <strong className="text-zinc-900">{rev.reviewer_decision}</strong>
+                                          </span>
+
+                                          {perm.delete && (
+                                            <button
+                                              onClick={() => {
+                                                if (!checkDeletePermission()) return;
+                                                setDeleteConfirm({ type: "review", id: rev.id, name: `Review by ${rev.reviewer_name}` });
+                                              }}
+                                              className="p-1 text-zinc-400 hover:text-rose-600 transition-colors cursor-pointer"
+                                              title="Delete Review"
+                                            >
+                                              <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* 6 Sensory & Commercial Score Criteria Breakdown */}
+                                      <div className="grid grid-cols-2 sm:grid-cols-6 gap-1.5 bg-white p-2 rounded-md border border-slate-200/60 text-[11px]">
+                                        <div className="flex flex-col">
+                                          <span className="text-[10px] text-zinc-400">1. Taste/Aroma</span>
+                                          <span className="font-bold text-zinc-800">{rev.score_taste_aroma || "-"}/5</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                          <span className="text-[10px] text-zinc-400">2. Texture/Quality</span>
+                                          <span className="font-bold text-zinc-800">{rev.score_texture_quality || "-"}/5</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                          <span className="text-[10px] text-zinc-400">3. Packaging</span>
+                                          <span className="font-bold text-zinc-800">{rev.score_packaging_appeal || "-"}/5</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                          <span className="text-[10px] text-zinc-400">4. Price Believability</span>
+                                          <span className="font-bold text-zinc-800">{rev.score_price_believability || "-"}/5</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                          <span className="text-[10px] text-zinc-400">5. Usage Occasion</span>
+                                          <span className="font-bold text-zinc-800">{rev.score_usage_occasion || "-"}/5</span>
+                                        </div>
+                                        <div className="flex flex-col">
+                                          <span className="text-[10px] text-zinc-400">6. Repeat Purchase</span>
+                                          <span className="font-bold text-zinc-800">{rev.score_repeat_purchase || "-"}/5</span>
+                                        </div>
+                                      </div>
+
+                                      {/* Tasting Notes / Feedback */}
+                                      {rev.tasting_notes && (
+                                        <div className="text-zinc-600 bg-white/60 p-2 rounded border border-slate-200/40 text-xs">
+                                          <span className="font-semibold text-zinc-700">Tasting Notes & Feedback: </span>
+                                          <span className="italic">&quot;{rev.tasting_notes}&quot;</span>
+                                        </div>
                                       )}
                                     </div>
-                                  </div>
-                                ))}
-                              </div>
+                                  ))}
+                                </div>
                             )}
                           </div>
                         </div>
@@ -2096,10 +2324,16 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => downloadFullBrandDossierPDF(activeBrand)}
-                      className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer"
+                      disabled={Boolean(downloadingPdfId)}
+                      className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                       title="Download combined Page 1 (Details) and Page 2 (Marketing)"
                     >
-                      <FileText className="w-3.5 h-3.5 text-[#0B57D0]" /> Full Dossier
+                      {downloadingPdfId === `dossier-${activeBrand.id}` ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                      ) : (
+                        <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
+                      )}
+                      Full Dossier
                     </button>
                   </div>
                 </div>
@@ -2334,9 +2568,15 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                   </div>
                   <button
                     onClick={() => downloadRetailPitchDeckPDF(activeBrand)}
-                    className="h-8 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                    disabled={Boolean(downloadingPdfId)}
+                    className="h-8 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-xs disabled:opacity-50"
                   >
-                    <Download className="w-3.5 h-3.5" /> Download Pitch Deck PDF
+                    {downloadingPdfId === `deck-${activeBrand.id}` ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                    Download Pitch Deck PDF
                   </button>
                 </div>
 
@@ -2700,13 +2940,14 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                               onChange={async (e) => {
                                 if (e.target.files && e.target.files[0]) {
                                   try {
-                                    toast.info("Uploading photo...");
-                                    const uploadRes = await uploadBrandLaunchpadFile(e.target.files[0]);
+                                    toast.info("Formatting 1:1 & compressing under 200KB...");
+                                    const compressedFile = await compressImageToSquareUnder200KB(e.target.files[0]);
+                                    const uploadRes = await uploadBrandLaunchpadFile(compressedFile);
                                     if (uploadRes.success && uploadRes.url) {
                                       const currentImgs = [...(editingSku.images || [])];
                                       currentImgs[idx] = uploadRes.url;
                                       setEditingSku({ ...editingSku, images: currentImgs });
-                                      toast.success("Photo uploaded successfully");
+                                      toast.success(`Photo uploaded (${(compressedFile.size / 1024).toFixed(1)} KB)`);
                                     }
                                   } catch (err: any) {
                                     toast.error(err.message || "Failed to upload photo");
