@@ -38,7 +38,10 @@ import {
   FileDown,
   Image as ImageIcon,
   Layers,
-  QrCode
+  QrCode,
+  RefreshCw,
+  Printer,
+  Ban
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { PDFDocument } from "pdf-lib";
@@ -869,11 +872,104 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   } | null>(null);
 
   // Create Job Tab States
+  const [jobSubView, setJobSubView] = React.useState<"create" | "history">("create");
   const [jobZoneFilter, setJobZoneFilter] = React.useState<string>("All");
   const [jobSearchQuery, setJobSearchQuery] = React.useState<string>("");
   const [selectedJobOrderIds, setSelectedJobOrderIds] = React.useState<Record<string, boolean>>({});
   const [jobGenerating, setJobGenerating] = React.useState<boolean>(false);
   const [lastGeneratedJob, setLastGeneratedJob] = React.useState<{ token: string; orderCount: number; totalQty: number } | null>(null);
+
+  // Job History & Management States
+  const [jobHistoryList, setJobHistoryList] = React.useState<any[]>([]);
+  const [jobHistoryLoading, setJobHistoryLoading] = React.useState<boolean>(false);
+
+  const fetchJobHistory = React.useCallback(async () => {
+    setJobHistoryLoading(true);
+    try {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "list" })
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.jobs)) {
+          setJobHistoryList(json.jobs);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load job history:", err);
+    } finally {
+      setJobHistoryLoading(false);
+    }
+  }, []);
+
+  // Map order IDs to active/open job tokens
+  const activeJobOrderByOrderId = React.useMemo(() => {
+    const map: Record<string, { token: string; status: string; id: string }> = {};
+    jobHistoryList.forEach((job) => {
+      if (job.status === "OPEN") {
+        let ids: string[] = [];
+        try {
+          ids = typeof job.order_ids === "string" ? JSON.parse(job.order_ids) : (job.order_ids || []);
+        } catch (_) {
+          ids = [];
+        }
+        if (Array.isArray(ids)) {
+          ids.forEach((id) => {
+            map[String(id).trim()] = { token: job.token, status: job.status, id: job.id };
+          });
+        }
+      }
+    });
+    return map;
+  }, [jobHistoryList]);
+
+  React.useEffect(() => {
+    if (activeTab === "job") {
+      fetchJobHistory();
+    }
+  }, [activeTab, fetchJobHistory]);
+
+  const handleCancelJob = async (job: any) => {
+    if (!job || !job.id) return;
+    try {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", id: job.id })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(`Job token [${job.token}] has been voided/cancelled.`, "success");
+        fetchJobHistory();
+      } else {
+        showToast(json.error || "Failed to cancel job", "error");
+      }
+    } catch (err: any) {
+      showToast("Error cancelling job: " + err.message, "error");
+    }
+  };
+
+  const handleDeleteJob = async (job: any) => {
+    if (!job || !job.id) return;
+    try {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", id: job.id })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(`Job package [${job.token}] deleted.`, "success");
+        fetchJobHistory();
+      } else {
+        showToast(json.error || "Failed to delete job", "error");
+      }
+    } catch (err: any) {
+      showToast("Error deleting job: " + err.message, "error");
+    }
+  };
 
   // Resolve Store ID Helper
   const resolveStoreById = (cleanStoreId: string): { storeId: string; deliverTo: string; poscode: string } | null => {
@@ -927,52 +1023,87 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       const consolidatedItems = Object.entries(consolidatedItemsMap).map(([sku, qty]) => ({ sku, qty }));
 
+      // Fetch QR Code for Outsource/Driver Login
+      let qrBase64 = "";
+      try {
+        const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent('https://app.hsgglobal.sg/driver/login')}`;
+        qrBase64 = await loadImageBase64(qrUrl);
+      } catch (_) {}
+
+      // Check if this is a Warehouse Pickup job
+      const isWarehousePickupJob = jobZoneFilter === "Warehouse Pickup" || jobZoneFilter === "Self-Collect" || (selectedOrdersList.length > 0 && selectedOrdersList.every(o => {
+        const m = String(o.deliver_method || "").toLowerCase();
+        const p = String(o.poscode || "").toLowerCase();
+        return m.includes("self") || m.includes("collect") || m.includes("pickup") || m.includes("warehouse") || p.includes("self") || p.includes("pickup");
+      }));
+
       // --- PAGE 1: WAREHOUSE LOADING & BATCH LOAD SUMMARY ---
       doc.setFillColor(11, 87, 208); // Google Blue #0B57D0
-      doc.rect(0, 0, pageWidth, 28, "F");
+      doc.rect(0, 0, pageWidth, 26, "F");
 
       doc.setTextColor(255, 255, 255);
-      doc.setFontSize(16);
+      doc.setFontSize(15);
       doc.setFont("helvetica", "bold");
-      doc.text("VEHICLE LOADING SHEET & JOB DISPATCH", 14, 12);
+      doc.text(isWarehousePickupJob ? "WAREHOUSE PICKUP SHEET & STAGING" : "VEHICLE LOADING SHEET & JOB DISPATCH", 14, 11);
 
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setFont("helvetica", "normal");
-      doc.text(`Generated on: ${new Date().toLocaleString("en-SG", { timeZone: "Asia/Singapore" })} | Zone: ${jobZoneFilter}`, 14, 19);
+      doc.text(`Generated on: ${new Date().toLocaleString("en-SG", { timeZone: "Asia/Singapore" })}`, 14, 18);
 
       // Job Token Header Box
       doc.setFillColor(241, 245, 249);
-      doc.roundedRect(14, 34, pageWidth - 28, 38, 3, 3, "F");
+      doc.roundedRect(14, 32, pageWidth - 28, 38, 3, 3, "F");
       doc.setDrawColor(203, 213, 225);
-      doc.roundedRect(14, 34, pageWidth - 28, 38, 3, 3, "D");
+      doc.roundedRect(14, 32, pageWidth - 28, 38, 3, 3, "D");
 
       doc.setTextColor(15, 23, 42);
-      doc.setFontSize(10);
+      doc.setFontSize(9.5);
       doc.setFont("helvetica", "bold");
-      doc.text("JOB CLAIM CODE (ENTER IN DRIVER APP):", 20, 43);
+      doc.text(isWarehousePickupJob ? "WAREHOUSE PICKUP CLAIM CODE:" : "JOB CLAIM CODE (ENTER IN DRIVER APP):", 20, 41);
 
       doc.setFontSize(26);
       doc.setFont("courier", "bold");
       doc.setTextColor(11, 87, 208);
-      doc.text(token, 20, 56);
+      doc.text(token, 20, 54);
 
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(71, 85, 105);
-      doc.text(`Total Stops / Orders: ${selectedOrdersList.length}   |   Total Goods Qty: ${totalItemsQty} units`, 20, 65);
+      doc.text(`Total Orders: ${selectedOrdersList.length}   |   Total Goods Qty: ${totalItemsQty} units`, 20, 63);
 
-      // Driver Instructions Box
+      // Instructions Box
+      const instrBoxY = 74;
+      const instrBoxH = 26;
       doc.setFillColor(254, 243, 199);
       doc.setDrawColor(251, 191, 36);
-      doc.roundedRect(14, 76, pageWidth - 28, 20, 2, 2, "FD");
+      doc.roundedRect(14, instrBoxY, pageWidth - 28, instrBoxH, 2, 2, "FD");
 
       doc.setTextColor(146, 64, 14);
       doc.setFontSize(8.5);
       doc.setFont("helvetica", "bold");
-      doc.text("DRIVER INSTRUCTIONS:", 18, 82);
-      doc.setFont("helvetica", "normal");
-      doc.text("1. Load all goods listed below into vehicle.   2. Scan QR or visit app.hsgglobal.sg/driver", 18, 87);
-      doc.text(`3. Open side menu -> 'Batch Load (Job Code)' -> Enter Token [ ${token} ] to load all orders at once.`, 18, 92);
+      if (isWarehousePickupJob) {
+        doc.text("WAREHOUSE PICKUP INSTRUCTIONS:", 18, instrBoxY + 6);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.text("1. Stage all goods listed below at warehouse collection area.", 18, instrBoxY + 11.5);
+        doc.text("2. Check off order items on Page 2 when customer arrives to collect.", 18, instrBoxY + 16.5);
+        doc.text("3. Have customer/driver sign with pen under SIGNATURE on Page 2.", 18, instrBoxY + 21.5);
+      } else {
+        doc.text("DRIVER INSTRUCTIONS:", 18, instrBoxY + 6);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.text("1. Load all goods listed below into vehicle.", 18, instrBoxY + 11.5);
+        doc.text("2. Open app.hsgglobal.sg/driver/login or scan QR Code on the right.", 18, instrBoxY + 16.5);
+        doc.text(`3. Side Menu -> 'Batch Load' -> Enter Token [ ${token} ] to load all orders.`, 18, instrBoxY + 21.5);
+
+        // Render QR Code on right side of Instructions Box
+        if (qrBase64) {
+          try {
+            const qrSize = 22;
+            doc.addImage(qrBase64, "PNG", pageWidth - 14 - qrSize - 3, instrBoxY + 2, qrSize, qrSize);
+          } catch (_) {}
+        }
+      }
 
       // Combined Loading Table Header
       let yPos = 104;
@@ -982,7 +1113,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       doc.rect(14, yPos, pageWidth - 28, 8, "D");
 
       doc.setTextColor(15, 23, 42);
-      doc.setFontSize(9);
+      doc.setFontSize(8.5);
       doc.setFont("helvetica", "bold");
       doc.text("CHECK", 18, yPos + 5.5);
       doc.text("SKU / PRODUCT ITEM DESCRIPTION", 42, yPos + 5.5);
@@ -990,7 +1121,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
       yPos += 8;
       doc.setFont("helvetica", "normal");
-      doc.setFontSize(8.5);
+      doc.setFontSize(8);
 
       consolidatedItems.forEach((item, idx) => {
         if (yPos > pageHeight - 20) {
@@ -1017,18 +1148,51 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         yPos += 7.5;
       });
 
-      // --- PAGE 2+: ROUTE BREAKDOWN & STOP LIST ---
+      // --- PAGE 2+: SIMPLIFIED ROUTE / COLLECTION TABLE ---
       doc.addPage();
-      yPos = 20;
 
-      doc.setFillColor(11, 87, 208);
-      doc.rect(0, 0, pageWidth, 16, "F");
-      doc.setTextColor(255, 255, 255);
-      doc.setFontSize(12);
-      doc.setFont("helvetica", "bold");
-      doc.text(`DISPATCH ROUTE BREAKDOWN — JOB [ ${token} ] (${selectedOrdersList.length} STOPS)`, 14, 11);
+      const renderRouteTableHeader = (startY: number): number => {
+        doc.setFillColor(11, 87, 208); // Google Blue
+        doc.rect(0, 0, pageWidth, 16, "F");
+        doc.setTextColor(255, 255, 255);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.text(isWarehousePickupJob ? `WAREHOUSE COLLECTION CHECKLIST — JOB [ ${token} ] (${selectedOrdersList.length} ORDERS)` : `DISPATCH ROUTE BREAKDOWN — JOB [ ${token} ] (${selectedOrdersList.length} STOPS)`, 14, 11);
 
-      yPos = 24;
+        const thY = startY;
+        const totalW = 182; // 12 + 14 + 56 + 44 + 28 + 28
+        doc.setFillColor(241, 245, 249);
+        doc.rect(14, thY, totalW, 8, "F");
+        doc.setDrawColor(203, 213, 225);
+        doc.rect(14, thY, totalW, 8, "D");
+
+        doc.setTextColor(15, 23, 42);
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+
+        let curX = 14;
+        // Col 1: Stop / No
+        doc.text(isWarehousePickupJob ? "NO" : "STOP", curX + 6, thY + 5.5, { align: "center" });
+        curX += 12;
+        // Col 2: Mark
+        doc.text("MARK", curX + 7, thY + 5.5, { align: "center" });
+        curX += 14;
+        // Col 3: Customer / DO
+        doc.text("CUSTOMER / DO", curX + 3, thY + 5.5);
+        curX += 56;
+        // Col 4: Items
+        doc.text("ITEMS", curX + 3, thY + 5.5);
+        curX += 44;
+        // Col 5: Signature
+        doc.text("SIGNATURE", curX + 3, thY + 5.5);
+        curX += 28;
+        // Col 6: Note
+        doc.text("NOTE", curX + 3, thY + 5.5);
+
+        return thY + 8;
+      };
+
+      let tableY = renderRouteTableHeader(22);
 
       selectedOrdersList.forEach((order, sIdx) => {
         let orderItems: SKUItem[] = [];
@@ -1037,39 +1201,77 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         } catch (_) {}
 
         const itemsText = orderItems.map((it) => `${it.sku} (x${it.qty})`).join(", ");
-        const zone = getZoneFromPostcode(order.poscode);
+        const refPrefix = order.ref_number ? `${order.ref_number} | ` : "";
+        const refAddressText = `${refPrefix}${order.deliver_to || "Address not specified"}`;
+        const doSubline = `DO: ${order.do_number || "-"}  |  S(${order.poscode || "-"})`;
 
-        if (yPos > pageHeight - 32) {
+        // Calculate heights for text wrapping
+        doc.setFontSize(7.5);
+        const addressLines = doc.splitTextToSize(refAddressText, 52);
+        const itemsLines = doc.splitTextToSize(itemsText || "-", 40);
+
+        const textLinesCount = Math.max(4, addressLines.length + 1, itemsLines.length);
+        const rowHeight = Math.max(20, textLinesCount * 3.8 + 4.5);
+
+        if (tableY + rowHeight > pageHeight - 14) {
           doc.addPage();
-          yPos = 20;
+          tableY = renderRouteTableHeader(22);
         }
 
-        doc.setFillColor(248, 250, 252);
-        doc.setDrawColor(203, 213, 225);
-        doc.roundedRect(14, yPos, pageWidth - 28, 22, 2, 2, "FD");
+        const totalW = 182;
+        const bg = sIdx % 2 === 0 ? 255 : 249;
+        doc.setFillColor(bg, bg, bg);
+        doc.rect(14, tableY, totalW, rowHeight, "F");
+        doc.setDrawColor(226, 232, 240);
+        doc.rect(14, tableY, totalW, rowHeight, "D");
 
-        doc.setTextColor(11, 87, 208);
-        doc.setFontSize(9.5);
-        doc.setFont("helvetica", "bold");
-        doc.text(`STOP #${sIdx + 1}: Mark [${order.mark || "-"}] — DO: ${order.do_number || order.ref_number || order.id}`, 18, yPos + 6);
+        // Vertical divider lines
+        let divX = 14;
+        const colWidths = [12, 14, 56, 44, 28, 28];
+        colWidths.forEach((w) => {
+          divX += w;
+          doc.line(divX, tableY, divX, tableY + rowHeight);
+        });
 
-        doc.setTextColor(100, 116, 139);
-        doc.setFontSize(8);
-        doc.text(`Zone: ${zone} | Poscode: ${order.poscode || "-"} | Method: ${order.deliver_method || "Company Delivery"}`, pageWidth - 80, yPos + 6);
-
+        // Col 1: Stop #
         doc.setTextColor(15, 23, 42);
-        doc.setFontSize(8.5);
         doc.setFont("helvetica", "bold");
-        const deliverToClean = (order.deliver_to || "Singapore Address").substring(0, 75);
-        doc.text(deliverToClean, 18, yPos + 12);
+        doc.setFontSize(8.5);
+        doc.text(String(sIdx + 1), 14 + 6, tableY + rowHeight / 2 + 1.5, { align: "center" });
 
+        // Col 2: Mark
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8.5);
+        doc.setTextColor(11, 87, 208); // Google Blue
+        doc.text(order.mark || "-", 14 + 12 + 7, tableY + rowHeight / 2 + 1.5, { align: "center" });
+
+        // Col 3: Customer / DO (Ref | Address & DO: | S(poscode))
+        doc.setTextColor(15, 23, 42);
         doc.setFont("helvetica", "normal");
         doc.setFontSize(7.5);
-        doc.setTextColor(71, 85, 105);
-        const itemLine = `Items (${orderItems.reduce((a, b) => a + b.qty, 0)} total): ${itemsText}`;
-        doc.text(itemLine.substring(0, 95), 18, yPos + 17.5);
+        let addrY = tableY + 4;
+        addressLines.forEach((line: string) => {
+          doc.text(line, 14 + 12 + 14 + 2, addrY);
+          addrY += 3.4;
+        });
+        doc.setTextColor(100, 116, 139);
+        doc.setFontSize(6.5);
+        doc.setFont("helvetica", "bold");
+        doc.text(doSubline, 14 + 12 + 14 + 2, addrY + 0.5);
 
-        yPos += 25;
+        // Col 4: Items
+        doc.setTextColor(51, 65, 85);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        let itemY = tableY + 4;
+        itemsLines.forEach((line: string) => {
+          doc.text(line, 14 + 12 + 14 + 56 + 2, itemY);
+          itemY += 3.4;
+        });
+
+        // Col 5 & 6: Signature & Note are intentionally blank for writing with pen
+
+        tableY += rowHeight;
       });
 
       // Output and download
@@ -1078,6 +1280,24 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       console.error("PDF generation failed:", err);
       showToast("Failed to generate PDF: " + err.message, "error");
     }
+  };
+
+  const handleReprintJobPdf = async (job: any) => {
+    let orderIds: string[] = [];
+    try {
+      orderIds = typeof job.order_ids === "string" ? JSON.parse(job.order_ids) : (job.order_ids || []);
+    } catch (_) {
+      orderIds = [];
+    }
+
+    const matchedOrders = dbOrders.filter((o) => orderIds.includes(o.id));
+    if (matchedOrders.length === 0) {
+      showToast("Could not find order records for this job in current database.", "warning");
+      return;
+    }
+
+    await handleGenerateJobPdf(job.token, matchedOrders);
+    showToast(`Generating PDF for Job [${job.token}]...`, "success");
   };
 
   // Handler to update Link Store on existing orders in Complete tables
@@ -7859,7 +8079,60 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       {/* TAB CONTENT: CREATE JOB */}
       {activeTab === "job" && (
         <div className="flex-1 flex flex-col gap-3 animate-tableFadeInOnly min-h-0 overflow-hidden">
-          {/* Last Generated Job Alert Banner */}
+          {/* Sub-view Switcher Toolbar */}
+          <div className="flex items-center justify-between px-1 shrink-0 pb-1.5 border-b border-slate-200">
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setJobSubView("create")}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                  jobSubView === "create"
+                    ? "bg-[#0B57D0] text-white shadow-xs"
+                    : "bg-slate-100 text-zinc-600 hover:bg-slate-200 hover:text-zinc-900"
+                }`}
+              >
+                <Layers size={14} />
+                <span>Dispatch Job</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setJobSubView("history");
+                  fetchJobHistory();
+                }}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                  jobSubView === "history"
+                    ? "bg-[#0B57D0] text-white shadow-xs"
+                    : "bg-slate-100 text-zinc-600 hover:bg-slate-200 hover:text-zinc-900"
+                }`}
+              >
+                <History size={14} />
+                <span>Job History</span>
+                {jobHistoryList.filter((j) => j.status === "OPEN").length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold shrink-0">
+                    {jobHistoryList.filter((j) => j.status === "OPEN").length} Active
+                  </span>
+                )}
+              </button>
+            </div>
+            {jobSubView === "history" && (
+              <button
+                type="button"
+                onClick={fetchJobHistory}
+                disabled={jobHistoryLoading}
+                className="px-2.5 py-1 rounded-lg border border-slate-200 text-zinc-600 hover:bg-slate-100 text-xs flex items-center gap-1 cursor-pointer font-semibold whitespace-nowrap shrink-0"
+                title="Refresh Job History"
+              >
+                <RefreshCw size={13} className={jobHistoryLoading ? "animate-spin" : ""} />
+                <span>Refresh</span>
+              </button>
+            )}
+          </div>
+
+          {/* SUBVIEW 1: CREATE / DISPATCH NEW JOB */}
+          {jobSubView === "create" && (
+            <>
+              {/* Last Generated Job Alert Banner */}
           {lastGeneratedJob && (
             <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-lg flex flex-wrap items-center justify-between gap-3 shrink-0 shadow-2xs">
               <div className="flex items-center gap-3">
@@ -7901,10 +8174,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
           {/* Job Filter & Toolbar */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2.5 shrink-0">
-            {/* Zone Filter Pills */}
+            {/* Zone & Method Filter Pills */}
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-semibold text-zinc-500 mr-1">Zone:</span>
-              {["All", "Central", "East", "North", "North-East", "West", "South"].map((zone) => {
+              <span className="text-xs font-semibold text-zinc-500 mr-1">Zone / Type:</span>
+              {["All", "Central", "East", "North", "North-East", "West", "South", "Warehouse Pickup"].map((zone) => {
                 const isSelected = jobZoneFilter === zone;
                 return (
                   <button
@@ -8016,12 +8289,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 {jobGenerating ? (
                   <>
                     <Loader2 size={14} className="animate-spin mr-1.5" />
-                    <span>Generating Job...</span>
+                    <span>Generating PDF...</span>
                   </>
                 ) : (
                   <>
                     <Layers size={14} className="mr-1.5" />
-                    <span>Generate Job Package &amp; PDF ({Object.values(selectedJobOrderIds).filter(Boolean).length})</span>
+                    <span>
+                      {jobZoneFilter === "Warehouse Pickup" || jobZoneFilter === "Self-Collect"
+                        ? `Generate Pickup Sheet & PDF (${Object.values(selectedJobOrderIds).filter(Boolean).length})`
+                        : `Generate Job Package & PDF (${Object.values(selectedJobOrderIds).filter(Boolean).length})`}
+                    </span>
                   </>
                 )}
               </CustomButton>
@@ -8036,9 +8313,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               const isCollectedReturn = o.type === "Return" && (o.status === "Collected" || o.status === "Return Collected");
               if (isDelivered || isCollectedReturn) return false;
 
-              // Zone filter
+              // Zone & Warehouse Pickup / Self-Collect filter
+              const m = String(o.deliver_method || "").toLowerCase();
+              const p = String(o.poscode || "").toLowerCase();
+              const isSelfCollect = m.includes("self") || m.includes("collect") || m.includes("pickup") || m.includes("warehouse") || p.includes("self") || p.includes("pickup");
               const orderZone = getZoneFromPostcode(o.poscode);
-              if (jobZoneFilter !== "All" && orderZone !== jobZoneFilter) return false;
+
+              if (jobZoneFilter === "Warehouse Pickup" || jobZoneFilter === "Self-Collect") {
+                if (!isSelfCollect) return false;
+              } else if (jobZoneFilter !== "All") {
+                if (isSelfCollect || orderZone !== jobZoneFilter) return false;
+              }
 
               // Search query
               if (jobSearchQuery.trim()) {
@@ -8049,7 +8334,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 const matchPoscode = (o.poscode || "").toLowerCase().includes(q);
                 const matchMark = (o.mark || "").toLowerCase().includes(q);
                 const matchZone = orderZone.toLowerCase().includes(q);
-                if (!matchDo && !matchRef && !matchDeliverTo && !matchPoscode && !matchMark && !matchZone) return false;
+                const matchMethod = String(o.deliver_method || "").toLowerCase().includes(q);
+                if (!matchDo && !matchRef && !matchDeliverTo && !matchPoscode && !matchMark && !matchZone && !matchMethod) return false;
               }
               return true;
             });
@@ -8103,6 +8389,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       candidateOrders.map((order) => {
                         const isSelected = !!selectedJobOrderIds[order.id];
                         const zone = getZoneFromPostcode(order.poscode);
+                        const activeJob = activeJobOrderByOrderId[String(order.id).trim()];
 
                         let items: SKUItem[] = [];
                         try {
@@ -8157,7 +8444,18 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               </span>
                             </td>
                             <td className="py-2.5 px-3 font-semibold text-zinc-900">
-                              <div>{order.do_number || "-"}</div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span>{order.do_number || "-"}</span>
+                                {activeJob && (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded bg-blue-50 text-[#0B57D0] border border-blue-200 text-[10px] font-mono font-bold shrink-0 inline-flex items-center gap-1 shadow-2xs"
+                                    title={`Already assigned in Active Job Package [${activeJob.token}]`}
+                                  >
+                                    <Layers size={10} />
+                                    {activeJob.token}
+                                  </span>
+                                )}
+                              </div>
                               {order.ref_number && (
                                 <div className="text-[11px] text-zinc-400 font-mono">{order.ref_number}</div>
                               )}
@@ -8176,9 +8474,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               <span className="text-zinc-400 text-[11px] ml-1.5">({items.length} SKUs)</span>
                             </td>
                             <td className="py-2.5 px-3">
-                              <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-zinc-700 text-[11px] font-semibold">
-                                {order.status || "Ready to Pick"}
-                              </span>
+                              <div className="flex flex-col gap-0.5 items-start">
+                                <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-zinc-700 text-[11px] font-semibold">
+                                  {order.status || "Ready to Pick"}
+                                </span>
+                                {activeJob && (
+                                  <span className="text-[10px] font-semibold text-[#0B57D0]">
+                                    In Job [{activeJob.token}]
+                                  </span>
+                                )}
+                              </div>
                             </td>
                             <td className="py-2.5 px-3 text-zinc-600">
                               {order.driver || <span className="text-zinc-400 italic">Unassigned</span>}
@@ -8192,6 +8497,202 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               </div>
             );
           })()}
+            </>
+          )}
+
+          {/* SUBVIEW 2: JOB HISTORY & TOKEN MANAGEMENT */}
+          {jobSubView === "history" && (
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-white border border-slate-200 rounded-lg shadow-2xs">
+              <div className="flex-1 min-h-0 overflow-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
+                    <tr className="text-zinc-600 font-bold text-[11px] uppercase tracking-wider">
+                      <th className="py-2.5 px-3 w-32">Claim Token</th>
+                      <th className="py-2.5 px-3 w-36">Status</th>
+                      <th className="py-2.5 px-3 w-28">Zone / Type</th>
+                      <th className="py-2.5 px-3 w-36">Orders Grouped</th>
+                      <th className="py-2.5 px-3 w-40">Created At</th>
+                      <th className="py-2.5 px-3 w-40">Claimed By</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-xs">
+                    {jobHistoryLoading ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-zinc-500">
+                          <Loader2 size={24} className="animate-spin text-[#0B57D0] mx-auto mb-2" />
+                          <span>Loading Job Packages...</span>
+                        </td>
+                      </tr>
+                    ) : jobHistoryList.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-zinc-400">
+                          <Layers size={32} className="mx-auto mb-2 text-zinc-300" />
+                          <p className="font-semibold text-zinc-600">No Job Packages Found</p>
+                          <p className="text-[11px] text-zinc-400 mt-1">
+                            Create a job package from the Dispatch tab to generate tokens and staging sheets.
+                          </p>
+                        </td>
+                      </tr>
+                    ) : (
+                      jobHistoryList.map((job) => {
+                        const isOpen = job.status === "OPEN";
+                        const isClaimed = job.status === "CLAIMED";
+                        const isCancelled = job.status === "CANCELLED";
+
+                        let orderIdsCount = 0;
+                        try {
+                          const ids = typeof job.order_ids === "string" ? JSON.parse(job.order_ids) : (job.order_ids || []);
+                          orderIdsCount = Array.isArray(ids) ? ids.length : (job.total_orders || 0);
+                        } catch (_) {
+                          orderIdsCount = job.total_orders || 0;
+                        }
+
+                        const createdDateStr = job.created_at
+                          ? new Date(Number(job.created_at)).toLocaleString("en-SG", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: true
+                            })
+                          : "-";
+
+                        const claimedDateStr = job.claimed_at
+                          ? new Date(Number(job.claimed_at)).toLocaleString("en-SG", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: true
+                            })
+                          : null;
+
+                        return (
+                          <tr key={job.id || job.token} className="hover:bg-slate-50/80 transition-colors">
+                            {/* Token */}
+                            <td className="py-2.5 px-3">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono font-bold text-sm text-[#0B57D0] px-2 py-0.5 bg-blue-50 border border-blue-200 rounded">
+                                  {job.token}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(job.token);
+                                    showToast(`Copied token "${job.token}" to clipboard!`, "success");
+                                  }}
+                                  className="text-[11px] text-zinc-400 hover:text-zinc-700 cursor-pointer p-0.5"
+                                  title="Copy Token"
+                                >
+                                  Copy
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* Status */}
+                            <td className="py-2.5 px-3">
+                              {isOpen && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold inline-flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                  Active / Open
+                                </span>
+                              )}
+                              {isClaimed && (
+                                <span className="px-2 py-0.5 rounded-full bg-blue-50 text-[#0B57D0] border border-blue-200 text-[11px] font-bold inline-flex items-center gap-1">
+                                  <CheckCircle2 size={12} />
+                                  Claimed & Loaded
+                                </span>
+                              )}
+                              {isCancelled && (
+                                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-zinc-500 border border-slate-200 text-[11px] font-medium inline-flex items-center gap-1">
+                                  <Ban size={12} />
+                                  Voided / Cancelled
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Zone / Type */}
+                            <td className="py-2.5 px-3">
+                              <span className="px-2 py-0.5 rounded bg-slate-100 text-zinc-700 font-semibold text-[11px]">
+                                {job.zone || "All"}
+                              </span>
+                            </td>
+
+                            {/* Orders Count */}
+                            <td className="py-2.5 px-3">
+                              <span className="font-bold text-zinc-900">{orderIdsCount} Orders</span>
+                              {job.total_qty > 0 && (
+                                <span className="text-zinc-500 text-[11px] ml-1">({job.total_qty} units)</span>
+                              )}
+                            </td>
+
+                            {/* Created At */}
+                            <td className="py-2.5 px-3 text-zinc-600 font-medium text-[11px]">
+                              {createdDateStr}
+                            </td>
+
+                            {/* Claimed By */}
+                            <td className="py-2.5 px-3 text-zinc-700 text-[11px]">
+                              {job.driver ? (
+                                <div>
+                                  <span className="font-bold text-zinc-900">{job.driver}</span>
+                                  {claimedDateStr && (
+                                    <div className="text-[10px] text-zinc-400">{claimedDateStr}</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-zinc-400 italic">Not claimed yet</span>
+                              )}
+                            </td>
+
+                            {/* Actions */}
+                            <td className="py-2.5 px-3 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleReprintJobPdf(job)}
+                                  className="px-2.5 py-1 rounded bg-white border border-slate-200 text-zinc-700 hover:bg-slate-50 hover:text-zinc-900 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                                  title="Re-generate and download PDF"
+                                >
+                                  <Printer size={13} className="text-zinc-600" />
+                                  <span>Print PDF</span>
+                                </button>
+                                {isOpen && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleCancelJob(job)}
+                                    className="px-2.5 py-1 rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                                    title="Cancel / Void this job token"
+                                  >
+                                    <Ban size={13} />
+                                    <span>Void</span>
+                                  </button>
+                                )}
+                                {(isCancelled || isClaimed) && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteJob(job)}
+                                    className="px-2.5 py-1 rounded bg-white border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                                    title="Permanently delete this job package record"
+                                  >
+                                    <Trash2 size={13} />
+                                    <span>Delete</span>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -8241,7 +8742,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Mark</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Reference Number</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Type</th>
-                      <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Store ID</th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Store ID</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Address</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Poscode</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Method</th>
@@ -8329,14 +8830,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             )}
                           </div>
                         </td>
-                        <td className="p-3 w-28 align-middle border-b border-zinc-200 text-center">
+                        <td className="p-3 w-20 align-middle border-b border-zinc-200 text-center">
                           <input
                             type="text"
                             list="draft-store-datalist"
                             value={draft.link_store || ""}
-                            placeholder="Store ID..."
                             onChange={(e) => handleUpdateDraftCell(idx, "link_store", e.target.value)}
-                            className="w-full h-7 px-2 rounded border border-zinc-300/40 hover:border-zinc-300 bg-transparent text-center font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 text-xs uppercase"
+                            className="w-14 h-7 px-1 rounded border border-zinc-300/40 hover:border-zinc-300 bg-transparent text-center font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-zinc-400 text-xs uppercase mx-auto block"
                           />
                         </td>
                         <td className="p-3 w-40 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={draft.deliverTo}>
