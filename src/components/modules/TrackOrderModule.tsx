@@ -41,7 +41,12 @@ import {
   QrCode,
   RefreshCw,
   Printer,
-  Ban
+  Ban,
+  ScanLine,
+  Maximize2,
+  Sliders,
+  Sparkles,
+  Move
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { PDFDocument } from "pdf-lib";
@@ -875,6 +880,76 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [selectedPendingOrderIds, setSelectedPendingOrderIds] = React.useState<Record<string, boolean>>({});
   const [bulkDeliveryMethod, setBulkDeliveryMethod] = React.useState<string>("Company Delivery");
   const [isBulkUpdatingMethod, setIsBulkUpdatingMethod] = React.useState<boolean>(false);
+  const [bulkStatus, setBulkStatus] = React.useState<string>("Ready to Pick");
+  const [isBulkUpdatingStatus, setIsBulkUpdatingStatus] = React.useState<boolean>(false);
+
+  // Visual Return Mapper States
+  interface ReturnBoundingBox {
+    x: number; // %
+    y: number; // %
+    w: number; // %
+    h: number; // %
+  }
+  interface ReturnTemplatePreset {
+    id: string;
+    name: string;
+    boxRef: ReturnBoundingBox;
+    boxLoc: ReturnBoundingBox;
+    boxPos: ReturnBoundingBox;
+  }
+  const [isReturnVisualMapperOpen, setIsReturnVisualMapperOpen] = React.useState<boolean>(false);
+  const [returnMapperPdfFile, setReturnMapperPdfFile] = React.useState<File | null>(null);
+  const [returnMapperPage1Img, setReturnMapperPage1Img] = React.useState<string>("");
+  const [returnMapperTotalPages, setReturnMapperTotalPages] = React.useState<number>(1);
+  const [returnMapperPageNaturalWidth, setReturnMapperPageNaturalWidth] = React.useState<number>(800);
+  const [returnMapperPageNaturalHeight, setReturnMapperPageNaturalHeight] = React.useState<number>(565);
+  const [returnMapperCollectDate, setReturnMapperCollectDate] = React.useState<string>(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const yyyy = tomorrow.getFullYear();
+    const mm = String(tomorrow.getMonth() + 1).padStart(2, "0");
+    const dd = String(tomorrow.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  });
+  const [returnMapperMethod, setReturnMapperMethod] = React.useState<string>("Company Vehicle");
+  const [returnBoxRef, setReturnBoxRef] = React.useState<ReturnBoundingBox>({ x: 55, y: 35, w: 32, h: 14 });
+  const [returnBoxLoc, setReturnBoxLoc] = React.useState<ReturnBoundingBox>({ x: 6, y: 30, w: 42, h: 18 });
+  const [returnBoxPos, setReturnBoxPos] = React.useState<ReturnBoundingBox>({ x: 6, y: 52, w: 30, h: 12 });
+  const [activeBoxType, setActiveBoxType] = React.useState<"ref" | "loc" | "pos">("ref");
+  const [returnTemplates, setReturnTemplates] = React.useState<ReturnTemplatePreset[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = React.useState<string>("");
+  const [newTemplateNameInput, setNewTemplateNameInput] = React.useState<string>("");
+  const [showSaveTemplateForm, setShowSaveTemplateForm] = React.useState<boolean>(false);
+  const [isReturnParsing, setIsReturnParsing] = React.useState<boolean>(false);
+  const [returnParseProgress, setReturnParseProgress] = React.useState<{ current: number; total: number; message: string }>({
+    current: 0,
+    total: 0,
+    message: ""
+  });
+  const returnPdfInputRef = React.useRef<HTMLInputElement>(null);
+  const visualMapperCanvasWrapperRef = React.useRef<HTMLDivElement>(null);
+  const page1CanvasRef = React.useRef<HTMLCanvasElement | null>(null);
+  const [dragState, setDragState] = React.useState<{
+    mode: "move" | "resize";
+    boxType: "ref" | "loc" | "pos";
+    startX: number;
+    startY: number;
+    initialBox: ReturnBoundingBox;
+  } | null>(null);
+
+  // Live Crop Preview & Extraction Log States
+  const [cropPreviewRef, setCropPreviewRef] = React.useState<string>("");
+  const [cropPreviewLoc, setCropPreviewLoc] = React.useState<string>("");
+  const [cropPreviewPos, setCropPreviewPos] = React.useState<string>("");
+  const [extractedPagesLog, setExtractedPagesLog] = React.useState<Array<{
+    page: number;
+    refNumber: string;
+    location: string;
+    poscode: string;
+  }>>([]);
+  const cancelExtractionRef = React.useRef<boolean>(false);
+
+
 
   // Create Job Tab States
   const [jobSubView, setJobSubView] = React.useState<"create" | "history">("create");
@@ -931,10 +1006,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   }, [jobHistoryList]);
 
   React.useEffect(() => {
-    if (activeTab === "job") {
+    if (activeTab === "job" || (activeTab === "create" && createOrderSubView === "dispatch")) {
       fetchJobHistory();
     }
-  }, [activeTab, fetchJobHistory]);
+  }, [activeTab, createOrderSubView, fetchJobHistory]);
 
   const handleCancelJob = async (job: any) => {
     if (!job || !job.id) return;
@@ -4610,6 +4685,397 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   };
 
+  // Load Saved Return Mapper Templates from localStorage on mount
+  React.useEffect(() => {
+    try {
+      const saved = localStorage.getItem("ib_return_mapper_templates");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setReturnTemplates(parsed);
+        }
+      }
+    } catch (_) {}
+  }, []);
+
+  // Slices crop previews directly from the visible Page 1 canvas
+  const updateCropPreviews = React.useCallback((boxes?: { ref?: ReturnBoundingBox; loc?: ReturnBoundingBox; pos?: ReturnBoundingBox }) => {
+    const canvas = page1CanvasRef.current;
+    if (!canvas || canvas.width === 0 || canvas.height === 0) return;
+
+    const bRef = boxes?.ref || returnBoxRef;
+    const bLoc = boxes?.loc || returnBoxLoc;
+    const bPos = boxes?.pos || returnBoxPos;
+
+    const getSlice = (box: ReturnBoundingBox) => {
+      const cx = Math.max(0, Math.floor(canvas.width * (box.x / 100)));
+      const cy = Math.max(0, Math.floor(canvas.height * (box.y / 100)));
+      const cw = Math.max(10, Math.min(canvas.width - cx, Math.floor(canvas.width * (box.w / 100))));
+      const ch = Math.max(10, Math.min(canvas.height - cy, Math.floor(canvas.height * (box.h / 100))));
+
+      const c = document.createElement("canvas");
+      c.width = cw;
+      c.height = ch;
+      const ctx = c.getContext("2d");
+      if (!ctx) return "";
+      // CRITICAL: Fill crisp solid white background so transparent PDF areas do not become pitch black in JPEG
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, cw, ch);
+      ctx.drawImage(canvas, cx, cy, cw, ch, 0, 0, cw, ch);
+      return c.toDataURL("image/jpeg", 0.95);
+    };
+
+    setCropPreviewRef(getSlice(bRef));
+    setCropPreviewLoc(getSlice(bLoc));
+    setCropPreviewPos(getSlice(bPos));
+  }, [returnBoxRef, returnBoxLoc, returnBoxPos]);
+
+  // Handle Return PDF Upload & trigger modal
+  const handleReturnPdfSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      showToast("Please upload a valid PDF document.", "error");
+      return;
+    }
+
+    setReturnMapperPdfFile(file);
+    setIsReturnVisualMapperOpen(true);
+    setReturnParseProgress({ current: 0, total: 0, message: "Rendering Page 1..." });
+    if (returnPdfInputRef.current) returnPdfInputRef.current.value = "";
+  };
+
+  // Render Page 1 directly onto the interactive canvas when modal opens
+  React.useEffect(() => {
+    if (!isReturnVisualMapperOpen || !returnMapperPdfFile) return;
+
+    let isMounted = true;
+    (async () => {
+      try {
+        const pdfjsLib = await loadPdfJs();
+        const arrayBuffer = await returnMapperPdfFile.arrayBuffer();
+        const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const total = pdfDoc.numPages || 1;
+        setReturnMapperTotalPages(total);
+
+        const page1 = await pdfDoc.getPage(1);
+        const viewport = page1.getViewport({ scale: 1.5 });
+        const canvas = page1CanvasRef.current;
+        if (!canvas || !isMounted) return;
+
+        // Render full page to offscreen buffer
+        const fullCanvas = document.createElement("canvas");
+        fullCanvas.width = viewport.width;
+        fullCanvas.height = viewport.height;
+        const fullCtx = fullCanvas.getContext("2d");
+        if (!fullCtx) return;
+        fullCtx.fillStyle = "#ffffff";
+        fullCtx.fillRect(0, 0, fullCanvas.width, fullCanvas.height);
+        await page1.render({ canvasContext: fullCtx, viewport }).promise;
+
+        if (!isMounted) return;
+
+        // Cut to top half (top 50% of document where header, ref, and location reside)
+        const topHalfHeight = Math.floor(viewport.height * 0.5);
+        canvas.width = viewport.width;
+        canvas.height = topHalfHeight;
+        setReturnMapperPageNaturalWidth(viewport.width);
+        setReturnMapperPageNaturalHeight(topHalfHeight);
+
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(fullCanvas, 0, 0, viewport.width, topHalfHeight, 0, 0, viewport.width, topHalfHeight);
+          updateCropPreviews();
+        }
+      } catch (err: any) {
+        console.error("Failed to render Page 1 to canvas:", err);
+        showToast("Failed to preview PDF: " + (err?.message || "Invalid PDF"), "error");
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isReturnVisualMapperOpen, returnMapperPdfFile, updateCropPreviews]);
+
+  // Update crop previews whenever bounding boxes change (when not actively dragging)
+  React.useEffect(() => {
+    if (isReturnVisualMapperOpen && !dragState) {
+      updateCropPreviews();
+    }
+  }, [isReturnVisualMapperOpen, returnBoxRef, returnBoxLoc, returnBoxPos, dragState, updateCropPreviews]);
+
+
+  // Save current bounding box configuration as a named template
+  const handleSaveReturnTemplate = () => {
+    const name = newTemplateNameInput.trim();
+    if (!name) {
+      showToast("Please enter a template name (e.g. FairPrice Return).", "warning");
+      return;
+    }
+    const newPreset: ReturnTemplatePreset = {
+      id: Date.now().toString(),
+      name,
+      boxRef: { ...returnBoxRef },
+      boxLoc: { ...returnBoxLoc },
+      boxPos: { ...returnBoxPos }
+    };
+    const updated = [...returnTemplates.filter(t => t.name.toLowerCase() !== name.toLowerCase()), newPreset];
+    setReturnTemplates(updated);
+    setSelectedTemplateId(newPreset.id);
+    setNewTemplateNameInput("");
+    setShowSaveTemplateForm(false);
+    try {
+      localStorage.setItem("ib_return_mapper_templates", JSON.stringify(updated));
+      showToast(`Template "${name}" saved.`, "success");
+    } catch (_) {}
+  };
+
+  // Apply a saved template preset
+  const handleApplyReturnTemplate = (templateId: string) => {
+    setSelectedTemplateId(templateId);
+    if (!templateId) return;
+    const found = returnTemplates.find(t => t.id === templateId);
+    if (found) {
+      setReturnBoxRef({ ...found.boxRef });
+      setReturnBoxLoc({ ...found.boxLoc });
+      setReturnBoxPos({ ...found.boxPos });
+      showToast(`Applied "${found.name}" mapping template.`, "info");
+    }
+  };
+
+  // Delete a saved template preset
+  const handleDeleteReturnTemplate = (templateId: string) => {
+    const updated = returnTemplates.filter(t => t.id !== templateId);
+    setReturnTemplates(updated);
+    if (selectedTemplateId === templateId) {
+      setSelectedTemplateId("");
+    }
+    try {
+      localStorage.setItem("ib_return_mapper_templates", JSON.stringify(updated));
+      showToast("Template deleted.", "info");
+    } catch (_) {}
+  };
+
+  // Run Batch Gemini OCR Extraction across all pages using mapped bounding boxes
+  const handleRunReturnBatchExtraction = async () => {
+    if (!returnMapperPdfFile) {
+      showToast("No PDF document selected.", "error");
+      return;
+    }
+
+    cancelExtractionRef.current = false;
+    setExtractedPagesLog([]);
+    setIsReturnParsing(true);
+    setReturnParseProgress({
+      current: 0,
+      total: returnMapperTotalPages,
+      message: `Starting extraction of ${returnMapperTotalPages} page(s)...`
+    });
+
+    try {
+      const pdfjsLib = await loadPdfJs();
+      const arrayBuffer = await returnMapperPdfFile.arrayBuffer();
+      const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const totalPages = pdfDoc.numPages;
+
+      const extractedDrafts: TrackOrderDraft[] = [];
+      const tempAssignedMarks: string[] = [];
+
+      // Calculate epoch deadline from returnMapperCollectDate
+      let epochDeadline = 0;
+      if (returnMapperCollectDate) {
+        const [y, m, d] = returnMapperCollectDate.split("-").map(Number);
+        if (y && m && d) {
+          const dateObj = new Date(y, m - 1, d, 18, 0, 0, 0); // 6:00 PM
+          epochDeadline = dateObj.getTime();
+        }
+      }
+      if (!epochDeadline) {
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        tomorrow.setHours(18, 0, 0, 0);
+        epochDeadline = tomorrow.getTime();
+      }
+
+      for (let p = 1; p <= totalPages; p++) {
+        if (cancelExtractionRef.current) {
+          showToast("Batch extraction stopped by user.", "info");
+          break;
+        }
+
+        setReturnParseProgress({
+          current: p,
+          total: totalPages,
+          message: `Reading & extracting Page ${p} of ${totalPages}...`
+        });
+
+        const page = await pdfDoc.getPage(p);
+        // Render at high resolution (scale: 2.0) for crisp OCR reading
+        const viewport = page.getViewport({ scale: 2.0 });
+        const fullCanvas = document.createElement("canvas");
+        fullCanvas.width = viewport.width;
+        fullCanvas.height = viewport.height;
+        const fullCtx = fullCanvas.getContext("2d");
+        if (!fullCtx) continue;
+
+        // Pre-fill solid white background
+        fullCtx.fillStyle = "#ffffff";
+        fullCtx.fillRect(0, 0, fullCanvas.width, fullCanvas.height);
+        await page.render({ canvasContext: fullCtx, viewport }).promise;
+
+        // Cut to top half (top 50%)
+        const topHalfHeight = Math.floor(viewport.height * 0.5);
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = topHalfHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) continue;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(fullCanvas, 0, 0, viewport.width, topHalfHeight, 0, 0, viewport.width, topHalfHeight);
+
+        // Crop helper function
+        const getCropBase64 = (box: ReturnBoundingBox) => {
+          const cropX = Math.max(0, Math.floor(canvas.width * (box.x / 100)));
+          const cropY = Math.max(0, Math.floor(canvas.height * (box.y / 100)));
+          const cropW = Math.max(10, Math.min(canvas.width - cropX, Math.floor(canvas.width * (box.w / 100))));
+          const cropH = Math.max(10, Math.min(canvas.height - cropY, Math.floor(canvas.height * (box.h / 100))));
+
+          const cropCanvas = document.createElement("canvas");
+          cropCanvas.width = cropW;
+          cropCanvas.height = cropH;
+          const cropCtx = cropCanvas.getContext("2d");
+          if (!cropCtx) return "";
+          // CRITICAL: Fill crisp solid white background before drawing
+          cropCtx.fillStyle = "#ffffff";
+          cropCtx.fillRect(0, 0, cropW, cropH);
+          cropCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+          return cropCanvas.toDataURL("image/jpeg", 0.92);
+        };
+
+        const refCropBase64 = getCropBase64(returnBoxRef);
+        const locCropBase64 = getCropBase64(returnBoxLoc);
+        const posCropBase64 = getCropBase64(returnBoxPos);
+
+        // Call backend API
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/admin/parse-return-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            crops: {
+              refCropBase64,
+              locationCropBase64: locCropBase64,
+              poscodeCropBase64: posCropBase64
+            },
+            pageIndex: p
+          })
+        });
+
+        if (cancelExtractionRef.current) {
+          showToast("Batch extraction stopped by user.", "info");
+          break;
+        }
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          console.warn(`Page ${p} OCR extraction error:`, errData);
+          setExtractedPagesLog(prev => [
+            ...prev,
+            {
+              page: p,
+              refNumber: "Failed",
+              location: "Server Error",
+              poscode: ""
+            }
+          ]);
+          continue;
+        }
+
+        const json = await res.json();
+        if (json.success && json.data) {
+          const { refNumber, location, poscode } = json.data;
+          const cleanRef = String(refNumber || "").trim() || `RET-P${p}-${Date.now().toString().slice(-4)}`;
+          const cleanLocation = String(location || "").trim() || "Retailer Return Location";
+          let cleanPoscode = String(poscode || "").trim().replace(/[^0-9]/g, "");
+          if (cleanPoscode.length > 0 && cleanPoscode.length < 6) {
+            cleanPoscode = cleanPoscode.padStart(6, "0");
+          } else if (cleanPoscode.length > 6) {
+            cleanPoscode = cleanPoscode.slice(0, 6);
+          }
+
+          // Real-time record update so user sees what was fetched
+          setExtractedPagesLog(prev => [
+            ...prev,
+            {
+              page: p,
+              refNumber: cleanRef,
+              location: cleanLocation,
+              poscode: cleanPoscode
+            }
+          ]);
+
+          // Geocode coordinates for Singapore postal code
+          let lat: number | string = "";
+          let lng: number | string = "";
+          if (cleanPoscode && cleanPoscode.length === 6) {
+            try {
+              const coords = await fetchPostcodeCoordinates(cleanPoscode);
+              if (coords) {
+                lat = coords.lat;
+                lng = coords.lng;
+              }
+            } catch (_) {}
+          }
+
+          // Compute next available Return Mark (e.g. RA, RB, RC...)
+          const baseMark = getNextAvailableReturnMark(
+            [...drafts, ...extractedDrafts],
+            dbOrders
+          );
+          const finalMark = `R${baseMark}`;
+          tempAssignedMarks.push(finalMark);
+
+          const newDraft: TrackOrderDraft = {
+            id: `${cleanRef}_${Date.now()}_${p}`,
+            doNumber: cleanRef,
+            refNumber: cleanRef,
+            mark: finalMark,
+            type: "Return",
+            deliverTo: cleanLocation,
+            poscode: cleanPoscode,
+            items: [],
+            deadline: epochDeadline,
+            deliverMethod: returnMapperMethod || "Company Vehicle",
+            latitude: lat,
+            longitude: lng
+          };
+
+          extractedDrafts.push(newDraft);
+        }
+      }
+
+      if (extractedDrafts.length > 0) {
+        const mergedDrafts = [...drafts, ...extractedDrafts];
+        saveDraftsToStorage(mergedDrafts);
+        showToast(`Added ${extractedDrafts.length} extracted return orders to Drafts!`, "success");
+        if (!cancelExtractionRef.current) {
+          setIsReturnVisualMapperOpen(false);
+        }
+      } else {
+        showToast("No return orders were extracted. Please adjust the bounding boxes and try again.", "error");
+      }
+    } catch (err: any) {
+      console.error("Return batch extraction error:", err);
+      showToast("Return extraction failed: " + (err?.message || "Unknown error"), "error");
+    } finally {
+      setIsReturnParsing(false);
+    }
+  };
+
   // Draft Cell edits
   const handleUpdateDraftCell = (index: number, field: keyof TrackOrderDraft, value: any) => {
     const updated = drafts.map((draft, idx) => {
@@ -6031,6 +6497,119 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   };
 
+  const handleBulkUpdateStatus = async (newStatusToSet: string) => {
+    const selectedIds = Object.keys(selectedPendingOrderIds).filter((id) => selectedPendingOrderIds[id]);
+    if (selectedIds.length === 0) {
+      showToast("Please select at least one pending order.", "error");
+      return;
+    }
+    if (!newStatusToSet) {
+      showToast("Please select a status to overwrite.", "error");
+      return;
+    }
+
+    setIsBulkUpdatingStatus(true);
+    showToast(`Overwriting status for ${selectedIds.length} orders to "${newStatusToSet}"...`, "info");
+
+    const previousDbOrders = [...dbOrders];
+    const now = Date.now();
+
+    // Optimistic UI Update
+    setDbOrders((prev) =>
+      prev.map((order) => {
+        if (selectedIds.includes(order.id)) {
+          let currentLogs: LogEntry[] = [];
+          try {
+            currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs || "[]") : order.logs || [];
+          } catch (_) {}
+          if (!Array.isArray(currentLogs)) currentLogs = [];
+
+          const updatedLogs: LogEntry[] = [
+            ...currentLogs,
+            {
+              action: `Status Overwritten: ${newStatusToSet}`,
+              actionBy: currentUser,
+              remark: `Status overwritten to "${newStatusToSet}" (Bulk overwrite by Admin)`,
+              timestamp: now
+            }
+          ];
+
+          const updatedOrder: DbOrder = {
+            ...order,
+            status: newStatusToSet,
+            logs: JSON.stringify(updatedLogs)
+          };
+
+          if (newStatusToSet === "Delivered" || newStatusToSet === "Collected" || newStatusToSet === "Return Collected") {
+            updatedOrder.delivered_at = now;
+          }
+
+          return updatedOrder;
+        }
+        return order;
+      })
+    );
+
+    setSelectedPendingOrderIds({});
+
+    try {
+      const updatePromises = selectedIds.map(async (id) => {
+        const order = previousDbOrders.find((o) => o.id === id);
+        let currentLogs: LogEntry[] = [];
+        try {
+          currentLogs = typeof order?.logs === "string" ? JSON.parse(order.logs || "[]") : order?.logs || [];
+        } catch (_) {}
+        if (!Array.isArray(currentLogs)) currentLogs = [];
+
+        const updatedLogs: LogEntry[] = [
+          ...currentLogs,
+          {
+            action: `Status Overwritten: ${newStatusToSet}`,
+            actionBy: currentUser,
+            remark: `Status overwritten to "${newStatusToSet}" (Bulk overwrite by Admin)`,
+            timestamp: now
+          }
+        ];
+
+        const payloadData: Partial<DbOrder> = {
+          id: id,
+          status: newStatusToSet,
+          logs: JSON.stringify(updatedLogs)
+        };
+
+        if (newStatusToSet === "Delivered" || newStatusToSet === "Collected" || newStatusToSet === "Return Collected") {
+          payloadData.delivered_at = now;
+        }
+
+        const payload = {
+          table: "Track_Orders",
+          action: "update",
+          id: id,
+          data: payloadData
+        };
+
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        const json = (await res.json()) as any;
+        if (!json.success) throw new Error(json.error || "Update failed");
+      });
+
+      await Promise.all(updatePromises);
+      showToast(`Successfully overwritten status to "${newStatusToSet}" for ${selectedIds.length} orders.`, "success");
+      fetchDatabaseOrders(true);
+    } catch (err: any) {
+      console.error("Bulk update status error:", err);
+      setDbOrders(previousDbOrders);
+      showToast(`Failed to overwrite status: ${err.message}`, "error");
+    } finally {
+      setIsBulkUpdatingStatus(false);
+    }
+  };
+
   // Filter & Sort Completed Delivery Orders
   const sortedCompletedOrders = React.useMemo(() => {
     return completedOrders
@@ -6357,6 +6936,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             {/* Context Actions for Drafts / Job Dispatch on the left */}
             {createOrderSubView === "drafts" ? (
               <div className="flex items-center gap-2">
+                {/* 1. Import Order */}
                 <CustomButton 
                   variant="default"
                   onClick={() => {
@@ -6378,6 +6958,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   )}
                 </CustomButton>
 
+                {/* 2. Create Order */}
                 <CustomButton 
                   variant="dark"
                   onClick={() => {
@@ -6396,6 +6977,29 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   <span>Create Order</span>
                 </CustomButton>
 
+                {/* 3. Import Return */}
+                <CustomButton 
+                  variant="default"
+                  onClick={() => {
+                    returnPdfInputRef.current?.click();
+                  }}
+                  disabled={isReturnParsing}
+                  className="text-xs font-semibold"
+                >
+                  {isReturnParsing ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>{returnParseProgress.message || "Importing Return..."}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={14} />
+                      <span>Import Return</span>
+                    </>
+                  )}
+                </CustomButton>
+
+                {/* 4. Create Return */}
                 <CustomButton 
                   variant="default"
                   onClick={openCreateReturnPanel}
@@ -6440,8 +7044,24 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   >
                     <History size={13} />
                     <span>Job History</span>
+                    {jobHistoryList.filter((j) => j.status === "OPEN").length > 0 && (
+                      <span className="ml-1 px-1.5 py-0.2 rounded-full bg-emerald-500 text-white text-[10px] font-bold">
+                        {jobHistoryList.filter((j) => j.status === "OPEN").length}
+                      </span>
+                    )}
                   </button>
                 </div>
+                {jobSubView === "history" && (
+                  <button
+                    type="button"
+                    onClick={fetchJobHistory}
+                    disabled={jobHistoryLoading}
+                    className="p-1 rounded-md border border-slate-200 text-zinc-600 hover:bg-slate-100 text-xs flex items-center gap-1 cursor-pointer font-semibold shadow-2xs"
+                    title="Refresh Job History"
+                  >
+                    <RefreshCw size={13} className={jobHistoryLoading ? "animate-spin" : ""} />
+                  </button>
+                )}
               </div>
             )}
 
@@ -6471,7 +7091,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               </button>
               <button
                 type="button"
-                onClick={() => setCreateOrderSubView("dispatch")}
+                onClick={() => {
+                  setCreateOrderSubView("dispatch");
+                  fetchJobHistory();
+                }}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
                   createOrderSubView === "dispatch"
                     ? "bg-white text-zinc-950 font-bold border border-slate-200/90 shadow-xs"
@@ -7303,7 +7926,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             <div className="flex-1 w-full min-h-0 relative overflow-hidden flex flex-col gap-2">
               {/* Bulk Actions Bar for Selected Pending Orders */}
               {selectedPendingCount > 0 && (
-                <div className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2 bg-blue-50/90 border border-blue-200 rounded-lg shadow-2xs text-xs animate-tableFadeInOnly shrink-0">
+                <div className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 bg-blue-50/90 border border-blue-200 rounded-lg shadow-2xs text-xs animate-tableFadeInOnly shrink-0">
                   <div className="flex items-center gap-2.5">
                     <span className="font-bold text-[#0B57D0] flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
@@ -7319,36 +7942,79 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-zinc-700">Bulk Change Method:</span>
-                    <select
-                      value={bulkDeliveryMethod}
-                      onChange={(e) => setBulkDeliveryMethod(e.target.value)}
-                      className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] cursor-pointer"
-                    >
-                      <option value="Company Delivery">Company Delivery</option>
-                      <option value="External Delivery">External Delivery</option>
-                      <option value="Warehouse Pickup">Warehouse Pickup</option>
-                    </select>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {/* Bulk Change Method */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-zinc-700">Method:</span>
+                      <select
+                        value={bulkDeliveryMethod}
+                        onChange={(e) => setBulkDeliveryMethod(e.target.value)}
+                        className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] cursor-pointer shadow-2xs"
+                      >
+                        <option value="Company Delivery">Company Delivery</option>
+                        <option value="External Delivery">External Delivery</option>
+                        <option value="Warehouse Pickup">Warehouse Pickup</option>
+                      </select>
 
-                    <button
-                      type="button"
-                      onClick={() => handleBulkUpdateDeliveryMethod(bulkDeliveryMethod)}
-                      disabled={isBulkUpdatingMethod}
-                      className="flex items-center gap-1.5 px-3 py-1 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold rounded shadow-xs transition-all cursor-pointer disabled:opacity-50"
-                    >
-                      {isBulkUpdatingMethod ? (
-                        <>
-                          <Loader2 size={12} className="animate-spin" />
-                          <span>Updating...</span>
-                        </>
-                      ) : (
-                        <>
-                          <Check size={12} strokeWidth={2.5} />
-                          <span>Apply Method</span>
-                        </>
-                      )}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => handleBulkUpdateDeliveryMethod(bulkDeliveryMethod)}
+                        disabled={isBulkUpdatingMethod || isBulkUpdatingStatus}
+                        className="flex items-center gap-1 px-2.5 py-1 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold rounded shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                        title="Apply delivery method to all selected orders"
+                      >
+                        {isBulkUpdatingMethod ? (
+                          <>
+                            <Loader2 size={12} className="animate-spin" />
+                            <span>Updating...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Check size={12} strokeWidth={2.5} />
+                            <span>Apply Method</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    <div className="h-4 w-px bg-blue-200 hidden md:block" />
+
+                    {/* Bulk Overwrite Status */}
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-zinc-700">Status:</span>
+                      <select
+                        value={bulkStatus}
+                        onChange={(e) => setBulkStatus(e.target.value)}
+                        className="bg-white border border-slate-300 rounded px-2 py-1 text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] cursor-pointer shadow-2xs"
+                      >
+                        <option value="Ready to Pick">Ready to Pick</option>
+                        <option value="Picking">Picking</option>
+                        <option value="Ready to Deliver">Ready to Deliver</option>
+                        <option value="Load">Load</option>
+                        <option value="Out for Delivery">Out for Delivery</option>
+                        <option value="Delivered">Delivered</option>
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => handleBulkUpdateStatus(bulkStatus)}
+                        disabled={isBulkUpdatingMethod || isBulkUpdatingStatus}
+                        className="flex items-center gap-1 px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                        title="Overwrite status for all selected orders"
+                      >
+                        {isBulkUpdatingStatus ? (
+                          <>
+                            <Loader2 size={12} className="animate-spin" />
+                            <span>Updating...</span>
+                          </>
+                        ) : (
+                          <>
+                            <History size={12} />
+                            <span>Overwrite Status</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -8359,59 +9025,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         </div>
       )}
 
-      {/* TAB CONTENT: CREATE JOB */}
-      {activeTab === "job" && (
+      {/* TAB CONTENT: CREATE JOB / JOB DISPATCH */}
+      {((activeTab === "create" && createOrderSubView === "dispatch") || activeTab === "job") && (
         <div className="flex-1 flex flex-col gap-3 animate-tableFadeInOnly min-h-0 overflow-hidden">
-          {/* Sub-view Switcher Toolbar */}
-          <div className="flex items-center justify-between px-1 shrink-0 pb-1.5 border-b border-slate-200">
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={() => setJobSubView("create")}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-                  jobSubView === "create"
-                    ? "bg-[#0B57D0] text-white shadow-xs"
-                    : "bg-slate-100 text-zinc-600 hover:bg-slate-200 hover:text-zinc-900"
-                }`}
-              >
-                <Layers size={14} />
-                <span>Dispatch Job</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setJobSubView("history");
-                  fetchJobHistory();
-                }}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-                  jobSubView === "history"
-                    ? "bg-[#0B57D0] text-white shadow-xs"
-                    : "bg-slate-100 text-zinc-600 hover:bg-slate-200 hover:text-zinc-900"
-                }`}
-              >
-                <History size={14} />
-                <span>Job History</span>
-                {jobHistoryList.filter((j) => j.status === "OPEN").length > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded-full bg-emerald-500 text-white text-[10px] font-bold shrink-0">
-                    {jobHistoryList.filter((j) => j.status === "OPEN").length} Active
-                  </span>
-                )}
-              </button>
-            </div>
-            {jobSubView === "history" && (
-              <button
-                type="button"
-                onClick={fetchJobHistory}
-                disabled={jobHistoryLoading}
-                className="px-2.5 py-1 rounded-lg border border-slate-200 text-zinc-600 hover:bg-slate-100 text-xs flex items-center gap-1 cursor-pointer font-semibold whitespace-nowrap shrink-0"
-                title="Refresh Job History"
-              >
-                <RefreshCw size={13} className={jobHistoryLoading ? "animate-spin" : ""} />
-                <span>Refresh</span>
-              </button>
-            )}
-          </div>
-
           {/* SUBVIEW 1: CREATE / DISPATCH NEW JOB */}
           {jobSubView === "create" && (
             <>
@@ -8979,8 +9595,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         </div>
       )}
 
-      {/* TAB CONTENT: CREATE ORDER */}
-      {activeTab === "create" && (
+      {/* TAB CONTENT: CREATE ORDER / DRAFTS */}
+      {activeTab === "create" && createOrderSubView === "drafts" && (
         <div className="flex-1 flex flex-col gap-4 animate-tableFadeInOnly min-h-0 overflow-hidden">
           {/* Hidden File Input Refs */}
           <input
@@ -9009,11 +9625,63 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
           <div className="flex-1 w-full min-h-0 relative overflow-hidden">
             {drafts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
+              <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none p-6">
                 <FileText size={40} className="text-zinc-400 mb-3" />
-                <span className="font-primary text-sm text-zinc-500 font-medium">
-                  No draft orders. Upload a Delivery Order PDF or click Create Order to start.
+                <span className="font-primary text-sm text-zinc-600 font-semibold">
+                  No draft orders found
                 </span>
+                <span className="font-primary text-xs text-zinc-400 mt-1 mb-4 text-center max-w-md">
+                  Import DO orders from PDF / Excel sheets or draft manual order records below.
+                </span>
+                <div className="flex flex-wrap items-center justify-center gap-2">
+                  <CustomButton
+                    variant="default"
+                    onClick={() => {
+                      if (!pdfLoading) setIsDoUploadChoiceOpen(true);
+                    }}
+                    disabled={pdfLoading}
+                    className="text-xs font-semibold"
+                  >
+                    <Upload size={14} />
+                    <span>Import Order</span>
+                  </CustomButton>
+                  <CustomButton
+                    variant="dark"
+                    onClick={() => {
+                      setCreateDoNumber(`DO-${Date.now()}`);
+                      setCreateRefNumber("");
+                      setCreateMark(getNextAvailableMark(drafts, pendingOrders));
+                      setCreateType("Normal");
+                      setCreateDeliverTo("");
+                      setCreatePoscode("");
+                      setCreateItems([]);
+                      setIsCreatePanelOpen(true);
+                    }}
+                    className="text-xs font-semibold"
+                  >
+                    <Plus size={14} />
+                    <span>Create Order</span>
+                  </CustomButton>
+                  <CustomButton
+                    variant="default"
+                    onClick={() => {
+                      returnPdfInputRef.current?.click();
+                    }}
+                    disabled={isReturnParsing}
+                    className="text-xs font-semibold"
+                  >
+                    <Upload size={14} />
+                    <span>Import Return</span>
+                  </CustomButton>
+                  <CustomButton
+                    variant="default"
+                    onClick={openCreateReturnPanel}
+                    className="text-xs font-semibold"
+                  >
+                    <Plus size={14} />
+                    <span>Create Return</span>
+                  </CustomButton>
+                </div>
               </div>
             ) : (
               <div className="h-full overflow-auto border border-slate-200 rounded bg-white">
@@ -10829,6 +11497,450 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         </div>
       )}
 
+      {/* Hidden Return PDF File Input */}
+      <input
+        type="file"
+        ref={returnPdfInputRef}
+        accept=".pdf"
+        className="hidden"
+        onChange={handleReturnPdfSelect}
+      />
+
+      {/* VISUAL RETURN MAPPER MODAL */}
+      {isReturnVisualMapperOpen && (
+        <div 
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-primary select-none"
+          onPointerMove={(e) => {
+            if (!dragState || !visualMapperCanvasWrapperRef.current) return;
+            const rect = visualMapperCanvasWrapperRef.current.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return;
+
+            const deltaXPercent = ((e.clientX - dragState.startX) / rect.width) * 100;
+            const deltaYPercent = ((e.clientY - dragState.startY) / rect.height) * 100;
+
+            const updateBox = (prev: ReturnBoundingBox): ReturnBoundingBox => {
+              if (dragState.mode === "move") {
+                const nextX = Math.max(0, Math.min(100 - prev.w, dragState.initialBox.x + deltaXPercent));
+                const nextY = Math.max(0, Math.min(100 - prev.h, dragState.initialBox.y + deltaYPercent));
+                return { ...prev, x: Math.round(nextX * 10) / 10, y: Math.round(nextY * 10) / 10 };
+              } else {
+                const nextW = Math.max(4, Math.min(100 - prev.x, dragState.initialBox.w + deltaXPercent));
+                const nextH = Math.max(2, Math.min(100 - prev.y, dragState.initialBox.h + deltaYPercent));
+                return { ...prev, w: Math.round(nextW * 10) / 10, h: Math.round(nextH * 10) / 10 };
+              }
+            };
+
+            if (dragState.boxType === "ref") setReturnBoxRef(prev => updateBox(prev));
+            if (dragState.boxType === "loc") setReturnBoxLoc(prev => updateBox(prev));
+            if (dragState.boxType === "pos") setReturnBoxPos(prev => updateBox(prev));
+          }}
+          onPointerUp={() => {
+            setDragState(null);
+            updateCropPreviews();
+          }}
+        >
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-5xl h-[88vh] flex flex-col overflow-hidden animate-zoom-in">
+            {/* Modal Header */}
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+              <div>
+                <h3 className="text-sm font-semibold text-zinc-900">Map Return Document Template</h3>
+                <p className="text-xs text-zinc-500">
+                  {returnMapperPdfFile?.name || "Return Document.pdf"} • {returnMapperTotalPages} Page{returnMapperTotalPages > 1 ? "s" : ""}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                disabled={isReturnParsing}
+                onClick={() => setIsReturnVisualMapperOpen(false)}
+                className="p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Modal Main Body (2 Columns: Left Canvas, Right Controls) */}
+            <div className="flex-1 flex min-h-0 overflow-hidden divide-x divide-slate-200">
+              
+              {/* Left Column: PDF Canvas Preview */}
+              <div className="flex-1 bg-slate-50 p-4 overflow-auto flex flex-col items-center justify-start relative">
+                <div 
+                  ref={visualMapperCanvasWrapperRef}
+                  style={{
+                    aspectRatio: `${returnMapperPageNaturalWidth} / ${returnMapperPageNaturalHeight}`
+                  }}
+                  className="relative max-w-[660px] w-full bg-white shadow-sm border border-slate-200 rounded overflow-hidden select-none"
+                >
+                  {/* PDF Page 1 Rendered Canvas */}
+                  <canvas 
+                    ref={page1CanvasRef}
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      display: "block"
+                    }}
+                    className="pointer-events-none bg-white"
+                  />
+
+                    {/* 1. Ref Number Box (Blue) */}
+                    <div
+                      style={{
+                        left: `${returnBoxRef.x}%`,
+                        top: `${returnBoxRef.y}%`,
+                        width: `${returnBoxRef.w}%`,
+                        height: `${returnBoxRef.h}%`
+                      }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        setActiveBoxType("ref");
+                        setDragState({
+                          mode: "move",
+                          boxType: "ref",
+                          startX: e.clientX,
+                          startY: e.clientY,
+                          initialBox: { ...returnBoxRef }
+                        });
+                      }}
+                      className="absolute border-2 border-[#0B57D0] bg-[#0B57D0]/10 rounded-xs cursor-move z-20"
+                    >
+                      <div className="absolute -top-4.5 left-0 px-1.5 py-0.2 text-[9px] font-semibold text-white bg-[#0B57D0] rounded-t-xs whitespace-nowrap pointer-events-none shadow-2xs">
+                        Ref Number
+                      </div>
+                      <div
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          setActiveBoxType("ref");
+                          setDragState({
+                            mode: "resize",
+                            boxType: "ref",
+                            startX: e.clientX,
+                            startY: e.clientY,
+                            initialBox: { ...returnBoxRef }
+                          });
+                        }}
+                        className="w-2.5 h-2.5 bg-white border-2 border-[#0B57D0] rounded-xs absolute -bottom-1 -right-1 cursor-nwse-resize z-30"
+                      />
+                    </div>
+
+                    {/* 2. Return Location Box (Blue) */}
+                    <div
+                      style={{
+                        left: `${returnBoxLoc.x}%`,
+                        top: `${returnBoxLoc.y}%`,
+                        width: `${returnBoxLoc.w}%`,
+                        height: `${returnBoxLoc.h}%`
+                      }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        setActiveBoxType("loc");
+                        setDragState({
+                          mode: "move",
+                          boxType: "loc",
+                          startX: e.clientX,
+                          startY: e.clientY,
+                          initialBox: { ...returnBoxLoc }
+                        });
+                      }}
+                      className="absolute border-2 border-[#0B57D0] bg-[#0B57D0]/10 rounded-xs cursor-move z-20"
+                    >
+                      <div className="absolute -top-4.5 left-0 px-1.5 py-0.2 text-[9px] font-semibold text-white bg-[#0B57D0] rounded-t-xs whitespace-nowrap pointer-events-none shadow-2xs">
+                        Location
+                      </div>
+                      <div
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          setActiveBoxType("loc");
+                          setDragState({
+                            mode: "resize",
+                            boxType: "loc",
+                            startX: e.clientX,
+                            startY: e.clientY,
+                            initialBox: { ...returnBoxLoc }
+                          });
+                        }}
+                        className="w-2.5 h-2.5 bg-white border-2 border-[#0B57D0] rounded-xs absolute -bottom-1 -right-1 cursor-nwse-resize z-30"
+                      />
+                    </div>
+
+                    {/* 3. Postal Code Box (Blue) */}
+                    <div
+                      style={{
+                        left: `${returnBoxPos.x}%`,
+                        top: `${returnBoxPos.y}%`,
+                        width: `${returnBoxPos.w}%`,
+                        height: `${returnBoxPos.h}%`
+                      }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        setActiveBoxType("pos");
+                        setDragState({
+                          mode: "move",
+                          boxType: "pos",
+                          startX: e.clientX,
+                          startY: e.clientY,
+                          initialBox: { ...returnBoxPos }
+                        });
+                      }}
+                      className="absolute border-2 border-[#0B57D0] bg-[#0B57D0]/10 rounded-xs cursor-move z-20"
+                    >
+                      <div className="absolute -top-4.5 left-0 px-1.5 py-0.2 text-[9px] font-semibold text-white bg-[#0B57D0] rounded-t-xs whitespace-nowrap pointer-events-none shadow-2xs">
+                        Postal Code
+                      </div>
+                      <div
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          setActiveBoxType("pos");
+                          setDragState({
+                            mode: "resize",
+                            boxType: "pos",
+                            startX: e.clientX,
+                            startY: e.clientY,
+                            initialBox: { ...returnBoxPos }
+                          });
+                        }}
+                        className="w-2.5 h-2.5 bg-white border-2 border-[#0B57D0] rounded-xs absolute -bottom-1 -right-1 cursor-nwse-resize z-30"
+                      />
+                    </div>
+
+                  </div>
+                </div>
+
+              {/* Right Column: Clean & Flat Controls */}
+              <div className="w-80 shrink-0 bg-white p-4 flex flex-col justify-between overflow-y-auto">
+                
+                <div className="space-y-4">
+                  {/* Templates */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-zinc-800">
+                        Template Preset
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => setShowSaveTemplateForm(!showSaveTemplateForm)}
+                        className="text-xs text-[#0B57D0] hover:underline cursor-pointer"
+                      >
+                        {showSaveTemplateForm ? "Cancel" : "+ Save Preset"}
+                      </button>
+                    </div>
+
+                    {showSaveTemplateForm ? (
+                      <div className="space-y-1.5 pt-1">
+                        <input
+                          type="text"
+                          placeholder="Template Name (e.g. FairPrice)"
+                          value={newTemplateNameInput}
+                          onChange={(e) => setNewTemplateNameInput(e.target.value)}
+                          className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs focus:ring-1 focus:ring-[#0B57D0]"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSaveReturnTemplate}
+                          className="w-full py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-medium cursor-pointer"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={selectedTemplateId}
+                          onChange={(e) => handleApplyReturnTemplate(e.target.value)}
+                          className="flex-1 px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs text-zinc-800 focus:ring-1 focus:ring-[#0B57D0]"
+                        >
+                          <option value="">— Select Saved Template —</option>
+                          {returnTemplates.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                        {selectedTemplateId && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteReturnTemplate(selectedTemplateId)}
+                            title="Delete Template"
+                            className="p-1.5 text-zinc-400 hover:text-red-600 border border-slate-200 rounded cursor-pointer"
+                          >
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Return Order Settings */}
+                  <div className="space-y-3 pt-3 border-t border-slate-200">
+                    <label className="text-xs font-semibold text-zinc-800 block">
+                      Order Settings
+                    </label>
+
+                    <div>
+                      <span className="text-xs text-zinc-600 block mb-1">
+                        Collect Before Date
+                      </span>
+                      <input
+                        type="date"
+                        value={returnMapperCollectDate}
+                        onChange={(e) => setReturnMapperCollectDate(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs text-zinc-800 focus:ring-1 focus:ring-[#0B57D0]"
+                      />
+                    </div>
+
+                    <div>
+                      <span className="text-xs text-zinc-600 block mb-1">
+                        Collection Method
+                      </span>
+                      <select
+                        value={returnMapperMethod}
+                        onChange={(e) => setReturnMapperMethod(e.target.value)}
+                        className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded text-xs text-zinc-800 focus:ring-1 focus:ring-[#0B57D0]"
+                      >
+                        <option value="Company Vehicle">Company Vehicle</option>
+                        <option value="Driver (Direct)">Driver (Direct)</option>
+                        <option value="Van Outsource">Van Outsource</option>
+                        <option value="Lorry Outsource">Lorry Outsource</option>
+                        <option value="Self Collect">Self Collect</option>
+                      </select>
+                    </div>
+                  </div>
+                  {/* Cropped Sections Preview (Page 1) */}
+                  <div className="space-y-2 pt-3 border-t border-slate-200">
+                    <label className="text-xs font-semibold text-zinc-800 block">
+                      Crop Preview (Page 1)
+                    </label>
+                    <div className="space-y-2">
+                      <div>
+                        <span className="text-[10px] text-zinc-500 font-medium block mb-0.5">Ref Number:</span>
+                        {cropPreviewRef ? (
+                          <div className="border border-slate-200 bg-white rounded p-1.5 flex items-center justify-center min-h-[46px] max-h-20 overflow-hidden shadow-2xs">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={cropPreviewRef} alt="Ref Crop" className="max-h-16 w-auto max-w-full object-contain" />
+                          </div>
+                        ) : (
+                          <div className="h-9 bg-slate-100 rounded border border-dashed border-slate-200" />
+                        )}
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] text-zinc-500 font-medium block mb-0.5">Location:</span>
+                        {cropPreviewLoc ? (
+                          <div className="border border-slate-200 bg-white rounded p-1.5 flex items-center justify-center min-h-[46px] max-h-20 overflow-hidden shadow-2xs">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={cropPreviewLoc} alt="Location Crop" className="max-h-16 w-auto max-w-full object-contain" />
+                          </div>
+                        ) : (
+                          <div className="h-9 bg-slate-100 rounded border border-dashed border-slate-200" />
+                        )}
+                      </div>
+
+                      <div>
+                        <span className="text-[10px] text-zinc-500 font-medium block mb-0.5">Postal Code:</span>
+                        {cropPreviewPos ? (
+                          <div className="border border-slate-200 bg-white rounded p-1.5 flex items-center justify-center min-h-[46px] max-h-20 overflow-hidden shadow-2xs">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={cropPreviewPos} alt="Postal Code Crop" className="max-h-16 w-auto max-w-full object-contain" />
+                          </div>
+                        ) : (
+                          <div className="h-9 bg-slate-100 rounded border border-dashed border-slate-200" />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Real-time Extracted Page Values Log */}
+                  {extractedPagesLog.length > 0 && (
+                    <div className="space-y-1.5 pt-3 border-t border-slate-200">
+                      <div className="flex items-center justify-between text-xs font-semibold text-zinc-800">
+                        <span>Fetched Results ({extractedPagesLog.length}/{returnMapperTotalPages})</span>
+                      </div>
+                      <div className="max-h-44 overflow-y-auto border border-slate-200 rounded divide-y divide-slate-100 text-[11px] bg-slate-50/50">
+                        {extractedPagesLog.map((item) => (
+                          <div key={item.page} className="p-2 bg-white flex flex-col gap-0.5">
+                            <div className="flex items-center justify-between">
+                              <span className="font-bold text-[#0B57D0]">Page {item.page}</span>
+                              <span className="font-mono text-[10px] text-zinc-600 bg-slate-100 px-1 py-0.2 rounded">
+                                {item.poscode || "No Poscode"}
+                              </span>
+                            </div>
+                            <div className="text-zinc-900 font-semibold truncate text-[11px]">
+                              {item.refNumber || "—"}
+                            </div>
+                            <div className="text-zinc-500 truncate text-[10px]">
+                              {item.location || "—"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                </div>
+
+                {/* Batch Action Buttons */}
+                <div className="pt-3 border-t border-slate-200 space-y-2">
+                  {isReturnParsing ? (
+                    <div className="space-y-2">
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-xs text-[#0B57D0] font-medium">
+                          <span className="flex items-center gap-1.5">
+                            <Loader2 size={12} className="animate-spin" />
+                            <span>Reading pages...</span>
+                          </span>
+                          <span>{returnParseProgress.current} / {returnParseProgress.total}</span>
+                        </div>
+                        <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                          <div 
+                            className="bg-[#0B57D0] h-full transition-all duration-200 rounded-full"
+                            style={{
+                              width: returnParseProgress.total > 0
+                                ? `${Math.round((returnParseProgress.current / returnParseProgress.total) * 100)}%`
+                                : "0%"
+                            }}
+                          />
+                        </div>
+                        <p className="text-[11px] text-zinc-500 truncate">{returnParseProgress.message}</p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          cancelExtractionRef.current = true;
+                          showToast("Cancelling extraction...", "info");
+                        }}
+                        className="w-full py-1.5 px-3 bg-red-600 hover:bg-red-700 text-white rounded text-xs font-semibold cursor-pointer transition-all shadow-xs"
+                      >
+                        Cancel Run
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={handleRunReturnBatchExtraction}
+                        className="w-full py-2 px-3 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all cursor-pointer shadow-xs"
+                      >
+                        Run Batch Extraction ({returnMapperTotalPages} Pages)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsReturnVisualMapperOpen(false)}
+                        className="w-full py-1.5 px-3 bg-white hover:bg-slate-50 text-zinc-600 border border-slate-300 rounded text-xs font-medium cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
+

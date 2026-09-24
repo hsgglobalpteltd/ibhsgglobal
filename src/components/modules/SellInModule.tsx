@@ -39,6 +39,8 @@ interface CustomSelectProps {
   placeholder?: string;
   className?: string;
   minWidth?: string;
+  placement?: "bottom" | "top" | "auto";
+  maxHeight?: string;
 }
 
 function CustomSelect({
@@ -47,9 +49,12 @@ function CustomSelect({
   options,
   placeholder = "Select...",
   className = "",
-  minWidth = "min-w-[130px]"
+  minWidth = "min-w-[130px]",
+  placement = "auto",
+  maxHeight = "max-h-44"
 }: CustomSelectProps) {
   const [open, setOpen] = React.useState(false);
+  const [openUp, setOpenUp] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -66,13 +71,26 @@ function CustomSelect({
     };
   }, [open]);
 
+  const handleToggle = () => {
+    if (!open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      if (placement === "top" || (placement === "auto" && spaceBelow < 210)) {
+        setOpenUp(true);
+      } else {
+        setOpenUp(false);
+      }
+    }
+    setOpen((prev) => !prev);
+  };
+
   const selectedOpt = options.find((o) => o.value === value);
 
   return (
     <div className={`relative inline-block text-left ${className}`} ref={ref}>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={handleToggle}
         className={`h-8 px-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-zinc-700 flex items-center justify-between gap-1.5 focus:outline-none focus:border-[#0B57D0] cursor-pointer transition-colors shadow-2xs ${minWidth}`}
       >
         <span className="truncate">{selectedOpt ? selectedOpt.label : placeholder}</span>
@@ -80,7 +98,7 @@ function CustomSelect({
       </button>
 
       {open && (
-        <div className="absolute left-0 mt-1 w-full min-w-[160px] max-h-56 overflow-auto bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-40 text-xs font-medium text-zinc-700 animate-in fade-in zoom-in-95 duration-100">
+        <div className={`absolute left-0 ${openUp ? "bottom-full mb-1" : "top-full mt-1"} w-full min-w-[160px] ${maxHeight} overflow-auto bg-white border border-slate-200 rounded-lg shadow-xl py-1 z-50 text-xs font-medium text-zinc-700 animate-in fade-in zoom-in-95 duration-100`}>
           {options.length === 0 ? (
             <div className="px-3 py-2 text-zinc-400 text-[11px] text-center">No options</div>
           ) : (
@@ -168,6 +186,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [newBuyerCode, setNewBuyerCode] = React.useState<string>("");
   const [newBuyerName, setNewBuyerName] = React.useState<string>("");
   const [newBuyerChannel, setNewBuyerChannel] = React.useState<string>("Retailer");
+  const [newBuyerPaymentTerm, setNewBuyerPaymentTerm] = React.useState<string>("90d");
+  const [newBuyerStoreGroups, setNewBuyerStoreGroups] = React.useState<Array<{ group_name: string; store_count: number }>>([
+    { group_name: "", store_count: 1 }
+  ]);
   const [savingNewBuyer, setSavingNewBuyer] = React.useState<boolean>(false);
 
   const [showAddSkuModal, setShowAddSkuModal] = React.useState<boolean>(false);
@@ -191,6 +213,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
   // Reset Month state
   const [showResetConfirm, setShowResetConfirm] = React.useState<boolean>(false);
   const [resettingMonth, setResettingMonth] = React.useState<boolean>(false);
+  const [recalculating, setRecalculating] = React.useState<boolean>(false);
+
+  // Assign Channel Modal State
+  const [showAssignChannelModal, setShowAssignChannelModal] = React.useState<boolean>(false);
+  const [assignChannelTarget, setAssignChannelTarget] = React.useState<any | null>(null);
+  const [selectedAssignChannel, setSelectedAssignChannel] = React.useState<string>("");
+  const [applyChannelToAllBuyerRows, setApplyChannelToAllBuyerRows] = React.useState<boolean>(true);
+  const [savingAssignChannel, setSavingAssignChannel] = React.useState<boolean>(false);
 
   // Confirmation dialog
   const [confirmConfig, setConfirmConfig] = React.useState<{
@@ -308,9 +338,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
     records.forEach((r) => {
       grossDemand += Number(r.total_demand || 0);
-      demandQty += Number(r.quantity || 0);
+      demandQty += Number(r.demand_qty ?? r.quantity ?? 0);
       cnAmount += Number(r.cn_amount || 0);
-      cnQty += Number(r.cn_quantity || 0);
+      cnQty += Number(r.reject_qty ?? r.cn_quantity ?? 0);
       if (r.validation_status && r.validation_status !== "valid") {
         unresolvedCount++;
       }
@@ -355,6 +385,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   }, [records, subFilterTab, channelFilter, brandFilter, searchTerm]);
 
   // File Upload Handlers (Million Statement)
+  // Handle Million Excel File Upload (Row 1 & 2 ignored, Row 3 is Header, Row 4+ is Data)
   const handleMillionFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -366,7 +397,24 @@ export function SellInModule({ profile }: SellInModuleProps) {
         const wb = XLSX.read(bstr, { type: "binary" });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const rawJson: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+        // 2D Array inspection to detect header row (default to index 2 = Row 3)
+        const rows2D: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+        let headerRowIndex = 2; // Default: Row 3 (0-indexed 2)
+
+        for (let i = 0; i < Math.min(rows2D.length, 6); i++) {
+          const rowStr = (rows2D[i] || []).map((c) => String(c).toLowerCase().replace(/[^a-z0-9]/g, "")).join(" ");
+          if (
+            (rowStr.includes("custcode") || rowStr.includes("customercode") || rowStr.includes("accno") || rowStr.includes("customer")) &&
+            (rowStr.includes("prodcode") || rowStr.includes("productcode") || rowStr.includes("itemcode") || rowStr.includes("sku") || rowStr.includes("item"))
+          ) {
+            headerRowIndex = i;
+            break;
+          }
+        }
+
+        // Parse sheet starting from detected header row (skips preceding title/banner rows)
+        const rawJson: any[] = XLSX.utils.sheet_to_json(ws, { range: headerRowIndex, defval: "" });
 
         const parsedRows = rawJson.map((row) => {
           const keys = Object.keys(row);
@@ -380,20 +428,43 @@ export function SellInModule({ profile }: SellInModuleProps) {
             return "";
           };
 
-          const custcode = String(getVal(["custcode", "customercode", "code", "accno"]) || row["custcode"] || "").trim();
-          const name = String(getVal(["name", "customername", "company"]) || row["name"] || custcode).trim();
-          const prodcode = String(getVal(["prodcode", "productcode", "itemcode", "sku"]) || row["prodcode"] || "").trim();
-          const proddesp = String(getVal(["proddesp", "description", "itemdescription", "itemname"]) || row["proddesp"] || prodcode).trim();
-          const qty = Number(getVal(["qty", "quantity", "salesqty"]) || row["qty"] || 0);
-          const totalsi = Number(getVal(["totalsi", "salesamount", "grossamount", "gross"]) || row["totalsi"] || 0);
-          const totalcn = Number(getVal(["totalcn", "cnamount", "creditnote", "cn"]) || row["totalcn"] || 0);
-          const nett = Number(getVal(["nett", "netamount", "total"]) || row["nett"] || totalsi - totalcn);
+          const custcode = String(getVal(["custcode", "customercode", "code", "accno", "customer"]) || row["custcode"] || "").trim();
+          const name = String(getVal(["name", "customername", "company", "custname"]) || row["name"] || custcode).trim();
+          const prodcode = String(getVal(["prodcode", "productcode", "itemcode", "sku", "itemno"]) || row["prodcode"] || "").trim();
+          const proddesp = String(getVal(["proddesp", "description", "itemdescription", "itemname", "desp", "proddesc"]) || row["proddesp"] || prodcode).trim();
+          const qty = Number(getVal(["qty", "quantity", "salesqty", "units"]) || row["qty"] || 0);
+          const totalsi = Number(getVal(["totalsi", "salesamount", "grossamount", "gross", "total_si", "amount"]) || row["totalsi"] || 0);
+          const totalcn = Number(getVal(["totalcn", "cnamount", "creditnote", "cn", "total_cn"]) || row["totalcn"] || 0);
+          const nett = Number(getVal(["nett", "netamount", "total", "net"]) || row["nett"] || (totalsi - totalcn));
+          const rawQty = Math.abs(qty);
+          let demand_qty = 0;
+          let reject_qty = 0;
+          let unit_price = 0;
 
-          return { custcode, name, prodcode, proddesp, qty, totalsi, totalcn, nett };
+          if (totalsi > 0 && totalcn === 0) {
+            demand_qty = rawQty;
+            reject_qty = 0;
+            unit_price = rawQty > 0 ? totalsi / rawQty : 0;
+          } else if (totalsi === 0 && totalcn > 0) {
+            // User rule: if CN only, unit price = total CN / qty, demand is 0, reject is qty
+            demand_qty = 0;
+            reject_qty = rawQty;
+            unit_price = rawQty > 0 ? totalcn / rawQty : 0;
+          } else if (totalsi > 0 && totalcn > 0) {
+            demand_qty = rawQty;
+            reject_qty = 0;
+            unit_price = rawQty > 0 ? totalsi / rawQty : 0;
+          } else {
+            demand_qty = rawQty;
+            reject_qty = 0;
+            unit_price = 0;
+          }
+
+          return { custcode, name, prodcode, proddesp, qty: rawQty, demand_qty, reject_qty, unit_price, totalsi, totalcn, nett };
         }).filter((r) => r.custcode.length > 0 && r.prodcode.length > 0);
 
         if (parsedRows.length === 0) {
-          showToast("No valid Million statement rows found. Check column headers (custcode, name, prodcode, qty, totalsi, totalcn)", "error");
+          showToast("No valid Million statement rows found. Header must be on Row 3 (custcode, name, prodcode, qty, totalsi, totalcn)", "error");
           return;
         }
 
@@ -417,6 +488,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           period: currentPeriod,
+          items: millionRows,
           rows: millionRows
         })
       });
@@ -462,22 +534,39 @@ export function SellInModule({ profile }: SellInModuleProps) {
   };
 
   // 1-Click Register Buyer
-  const handleQuickRegisterBuyer = async (code: string, name: string, channel: string) => {
+  const handleQuickRegisterBuyer = async (
+    code: string, 
+    name: string, 
+    channel: string, 
+    payment_term: string = newBuyerPaymentTerm, 
+    store_groups: any[] = newBuyerStoreGroups
+  ) => {
     setSavingNewBuyer(true);
     try {
+      const validGroups = store_groups
+        .filter((g) => g.group_name && g.group_name.trim().length > 0)
+        .map((g) => ({ group_name: g.group_name.trim(), store_count: Number(g.store_count) || 1 }));
+
       const res = await fetch(`${API_BASE}/api/sellin/quick-register-buyer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           buyer_code: code,
           buyer_name: name || code,
-          channel: channel || "Retailer"
+          channel: channel || "Retailer",
+          payment_term: payment_term || "90d",
+          store_groups: validGroups,
+          period: currentPeriod
         })
       });
       const data = await res.json();
       if (res.ok && data.success) {
         showToast(`Buyer ${name} registered successfully!`, "success");
         setShowAddBuyerModal(false);
+        setNewBuyerCode("");
+        setNewBuyerName("");
+        setNewBuyerPaymentTerm("90d");
+        setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
         fetchBatchDetails(currentPeriod);
       } else {
         showToast(data.error || "Failed to register buyer", "error");
@@ -528,7 +617,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       const res = await fetch(`${API_BASE}/api/sellin/records/${encodeURIComponent(recordId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ unit_price: newUnitPrice })
+        body: JSON.stringify({ id: recordId, unit_price: newUnitPrice })
       });
       const data = await res.json();
       if (res.ok && data.success) {
@@ -592,6 +681,63 @@ export function SellInModule({ profile }: SellInModuleProps) {
         }
       }
     });
+  };
+
+  // Recalculate Month Demand & Reject Quantities
+  const handleRecalculateMonth = async () => {
+    setRecalculating(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/recalculate-all?period=${encodeURIComponent(currentPeriod)}`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`Recalculated Demand & Reject Qty for ${currentPeriod} successfully!`, "success");
+        fetchBatchDetails(currentPeriod);
+      } else {
+        showToast(data.error || "Recalculation failed", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Recalculation error", "error");
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
+  // Assign Sales Channel to Record(s)
+  const handleSaveAssignChannel = async () => {
+    if (!assignChannelTarget || !selectedAssignChannel) {
+      showToast("Please select a sales channel", "error");
+      return;
+    }
+    setSavingAssignChannel(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/assign-channel`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: assignChannelTarget.id,
+          buyer_code: assignChannelTarget.buyer_code,
+          buyer_name: assignChannelTarget.buyer_name,
+          period: currentPeriod,
+          channel: selectedAssignChannel,
+          apply_all_buyer_records: applyChannelToAllBuyerRows
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(data.message || `Channel assigned to "${selectedAssignChannel}"!`, "success");
+        setShowAssignChannelModal(false);
+        setAssignChannelTarget(null);
+        fetchBatchDetails(currentPeriod, true);
+      } else {
+        showToast(data.error || "Failed to assign channel", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Assign channel error", "error");
+    } finally {
+      setSavingAssignChannel(false);
+    }
   };
 
   // Export Excel
@@ -900,9 +1046,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <span className="text-[10px] text-zinc-400 font-normal">({kpis.demandQty.toLocaleString()} pcs)</span>
               </div>
 
-              {/* Adjustments (CN) Pill */}
+              {/* Reject (CN) Pill */}
               <div className="h-7 flex items-center gap-1 px-2 rounded-md bg-[#F8F9FA] border border-slate-200 text-[11px]">
-                <span className="text-zinc-500 font-normal">CN:</span>
+                <span className="text-zinc-500 font-normal">Reject:</span>
                 <span className="font-medium text-zinc-700">
                   ${kpis.cnAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
@@ -1058,6 +1204,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   setNewBuyerCode("");
                   setNewBuyerName("");
                   setNewBuyerChannel(channelsList[0]?.channel_name || "Retailer");
+                  setNewBuyerPaymentTerm("90d");
+                  setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
                   setShowAddBuyerModal(true);
                 }}
                 className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
@@ -1157,6 +1305,20 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
             {/* Right Action Buttons */}
             <div className="flex items-center gap-2 shrink-0">
+              {/* Recalculate Month Demand & Reject Qty */}
+              {records.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleRecalculateMonth}
+                  disabled={recalculating}
+                  className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                  title={`Recalculate Demand Qty & Reject Qty for ${currentPeriod}`}
+                >
+                  <RefreshCw size={13} className={`text-zinc-500 ${recalculating ? "animate-spin" : ""}`} />
+                  <span>Recalc Qty</span>
+                </button>
+              )}
+
               {/* Reset Month Button */}
               {records.length > 0 && (
                 <button
@@ -1261,6 +1423,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <th className="py-2.5 px-3 w-24 text-right">Demand Qty</th>
                     <th className="py-2.5 px-3 w-28 text-right">Unit Price ($)</th>
                     <th className="py-2.5 px-3 w-28 text-right">Total Demand</th>
+                    <th className="py-2.5 px-3 w-24 text-right">Reject Qty</th>
                     <th className="py-2.5 px-3 w-24 text-right">CN ($)</th>
                     <th className="py-2.5 px-3 min-w-[160px] text-center">Diagnostic Status</th>
                     <th className="py-2.5 px-3 w-10 text-center"></th>
@@ -1302,9 +1465,20 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                         {/* Channel */}
                         <td className="py-2 px-3">
-                          <span className="text-zinc-600 text-[11px]">
-                            {r.channel || "Retailer"}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAssignChannelTarget(r);
+                              setSelectedAssignChannel(r.channel || channelsList[0]?.channel_name || "Retailer");
+                              setApplyChannelToAllBuyerRows(true);
+                              setShowAssignChannelModal(true);
+                            }}
+                            className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0B57D0] border border-slate-200/80 hover:border-blue-200 transition-colors cursor-pointer inline-flex items-center gap-1 group"
+                            title="Click to assign sales channel"
+                          >
+                            <span>{r.channel || "Retailer"}</span>
+                            <Edit2 size={9} className="text-zinc-400 group-hover:text-[#0B57D0] opacity-60 group-hover:opacity-100" />
+                          </button>
                         </td>
 
                         {/* Product SKU & Name */}
@@ -1322,7 +1496,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                         {/* Demand Quantity */}
                         <td className="py-2 px-3 text-right text-zinc-800 font-mono">
-                          {Number(r.quantity || 0).toLocaleString()}
+                          {Number(r.demand_qty ?? r.quantity ?? 0).toLocaleString()}
                         </td>
 
                         {/* Editable Unit Price ($/pcs) */}
@@ -1367,6 +1541,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           ${Number(r.total_demand || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
 
+                        {/* Reject Qty */}
+                        <td className="py-2 px-3 text-right text-zinc-600 font-mono">
+                          {Number(r.reject_qty ?? r.cn_quantity ?? 0) > 0 ? Number(r.reject_qty ?? r.cn_quantity ?? 0).toLocaleString() : "-"}
+                        </td>
+
                         {/* CN Amount ($) */}
                         <td className="py-2 px-3 text-right text-zinc-500 font-mono">
                           {Number(r.cn_amount || 0) > 0 ? `-$${Number(r.cn_amount).toFixed(2)}` : "-"}
@@ -1381,6 +1560,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                 setNewBuyerCode(r.buyer_code);
                                 setNewBuyerName(r.buyer_name || r.buyer_code);
                                 setNewBuyerChannel(r.source_type === "tiktok" ? "TikTok" : "Retailer");
+                                setNewBuyerPaymentTerm("90d");
+                                setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
                                 setShowAddBuyerModal(true);
                               }}
                               className="px-2 py-0.5 rounded bg-white hover:bg-slate-50 text-zinc-700 text-[10.5px] font-medium border border-slate-200 transition-colors cursor-pointer flex items-center justify-center gap-1 mx-auto"
@@ -1723,8 +1904,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   <tr className="bg-slate-50 text-zinc-500 font-medium border-b border-slate-200">
                     <th className="py-1.5 px-2">Buyer</th>
                     <th className="py-1.5 px-2">SKU</th>
-                    <th className="py-1.5 px-2 text-right">Qty</th>
+                    <th className="py-1.5 px-2 text-right">Demand Qty</th>
+                    <th className="py-1.5 px-2 text-right">Unit Price</th>
                     <th className="py-1.5 px-2 text-right">Total SI</th>
+                    <th className="py-1.5 px-2 text-right">Reject Qty</th>
                     <th className="py-1.5 px-2 text-right">Total CN</th>
                   </tr>
                 </thead>
@@ -1733,8 +1916,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <tr key={idx}>
                       <td className="py-1.5 px-2 text-zinc-800 font-sans font-medium">{row.name} ({row.custcode})</td>
                       <td className="py-1.5 px-2 text-[#0B57D0]">{row.prodcode}</td>
-                      <td className="py-1.5 px-2 text-right font-medium">{row.qty}</td>
+                      <td className="py-1.5 px-2 text-right font-medium">{row.demand_qty ?? (row.totalsi > 0 ? row.qty : 0)}</td>
+                      <td className="py-1.5 px-2 text-right">${Number(row.unit_price || 0).toFixed(2)}</td>
                       <td className="py-1.5 px-2 text-right">${row.totalsi.toFixed(2)}</td>
+                      <td className="py-1.5 px-2 text-right text-amber-700">{row.reject_qty ?? (row.totalsi === 0 && row.totalcn > 0 ? row.qty : 0)}</td>
                       <td className="py-1.5 px-2 text-right text-amber-700">${row.totalcn.toFixed(2)}</td>
                     </tr>
                   ))}
@@ -1818,8 +2003,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
       {/* Modal: Quick Register Buyer */}
       {showAddBuyerModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+          <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-visible flex flex-col animate-in zoom-in-95 duration-100">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-950">Register New Buyer</h2>
                 <p className="text-xs text-zinc-500">Add to isolated Sell-In Buyers Master</p>
@@ -1830,15 +2015,28 @@ export function SellInModule({ profile }: SellInModuleProps) {
             </div>
 
             <div className="p-4 flex flex-col gap-3 text-xs">
-              <div>
-                <label className="font-medium text-zinc-700 block mb-1">Buyer Code / CustCode</label>
-                <input
-                  type="text"
-                  value={newBuyerCode}
-                  onChange={(e) => setNewBuyerCode(e.target.value)}
-                  placeholder="e.g. 3000/F011 or TIKTOK_SHOP1"
-                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
-                />
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-medium text-zinc-700 block mb-1">Buyer Code / CustCode</label>
+                  <input
+                    type="text"
+                    value={newBuyerCode}
+                    onChange={(e) => setNewBuyerCode(e.target.value)}
+                    placeholder="e.g. 3000/F011 or TIKTOK_SHOP1"
+                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-medium text-zinc-700 block mb-1">Payment Term</label>
+                  <input
+                    type="text"
+                    value={newBuyerPaymentTerm}
+                    onChange={(e) => setNewBuyerPaymentTerm(e.target.value)}
+                    placeholder="e.g. 90d, 30d, Cash"
+                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
               </div>
 
               <div>
@@ -1852,7 +2050,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 />
               </div>
 
-              <div>
+              {/* Sales Channel Dropdown with ample z-index and overflow-visible */}
+              <div className="relative z-30">
                 <label className="font-medium text-zinc-700 block mb-1">Sales Channel</label>
                 <CustomSelect
                   value={newBuyerChannel}
@@ -1862,9 +2061,80 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   minWidth="w-full"
                 />
               </div>
+
+              {/* Store Groups & Outlets Dynamic Builder */}
+              <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/60 flex flex-col gap-2.5 mt-1">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-semibold text-zinc-800 text-xs">Store Groups & Outlets</span>
+                    <p className="text-[11px] text-zinc-500">Add retail banners & outlet counts (e.g. FairPrice Supermarket, Cheers)</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNewBuyerStoreGroups((prev) => [...prev, { group_name: "", store_count: 1 }])}
+                    className="h-6 px-2 rounded-md bg-white border border-slate-300 hover:bg-slate-100 text-[#0B57D0] text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Plus size={11} />
+                    <span>Add Group</span>
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2 max-h-40 overflow-y-auto pr-0.5">
+                  {newBuyerStoreGroups.map((grp, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-white p-1.5 rounded-lg border border-slate-200">
+                      <input
+                        type="text"
+                        value={grp.group_name}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setNewBuyerStoreGroups((prev) => {
+                            const copy = [...prev];
+                            copy[idx] = { ...copy[idx], group_name: val };
+                            return copy;
+                          });
+                        }}
+                        placeholder="Group / Banner (e.g. Cheers, FairPrice Supermarket)"
+                        className="flex-1 h-7 px-2 border border-slate-200 rounded text-xs text-zinc-800 focus:outline-none focus:border-[#0B57D0]"
+                      />
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-[11px] text-zinc-400">Stores:</span>
+                        <input
+                          type="number"
+                          min="1"
+                          value={grp.store_count}
+                          onChange={(e) => {
+                            const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                            setNewBuyerStoreGroups((prev) => {
+                              const copy = [...prev];
+                              copy[idx] = { ...copy[idx], store_count: val };
+                              return copy;
+                            });
+                          }}
+                          className="w-16 h-7 px-1.5 border border-slate-200 rounded text-xs font-mono text-center text-zinc-800 focus:outline-none focus:border-[#0B57D0]"
+                        />
+                      </div>
+                      {newBuyerStoreGroups.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setNewBuyerStoreGroups((prev) => prev.filter((_, i) => i !== idx))}
+                          className="p-1 text-zinc-400 hover:text-red-600 rounded cursor-pointer"
+                          title="Remove Group"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="text-[11px] text-zinc-500 flex items-center justify-between pt-1 border-t border-slate-200/80">
+                  <span>Total Groups: <strong>{newBuyerStoreGroups.filter(g => g.group_name.trim().length > 0).length || 1}</strong></span>
+                  <span>Total Outlets: <strong>{newBuyerStoreGroups.reduce((acc, curr) => acc + (Number(curr.store_count) || 1), 0)} stores</strong></span>
+                </div>
+              </div>
             </div>
 
-            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
               <button
                 type="button"
                 onClick={() => setShowAddBuyerModal(false)}
@@ -1875,11 +2145,118 @@ export function SellInModule({ profile }: SellInModuleProps) {
               <button
                 type="button"
                 disabled={savingNewBuyer || !newBuyerCode.trim() || !newBuyerName.trim()}
-                onClick={() => handleQuickRegisterBuyer(newBuyerCode.trim(), newBuyerName.trim(), newBuyerChannel)}
-                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50"
+                onClick={() => handleQuickRegisterBuyer(newBuyerCode.trim(), newBuyerName.trim(), newBuyerChannel, newBuyerPaymentTerm, newBuyerStoreGroups)}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
               >
                 {savingNewBuyer ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
                 <span>Save Buyer</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Assign Sales Channel */}
+      {showAssignChannelModal && assignChannelTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-visible animate-in zoom-in-95 duration-100 flex flex-col">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-950">Assign Sales Channel</h2>
+                <p className="text-xs text-zinc-500">Categorize this buyer demand into a registered sales channel.</p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowAssignChannelModal(false);
+                  setAssignChannelTarget(null);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4 flex flex-col gap-3.5 text-xs">
+              {/* Buyer Context Card */}
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium text-[11px]">Buyer:</span>
+                  <span className="font-semibold text-zinc-900">{assignChannelTarget.buyer_name || assignChannelTarget.buyer_code}</span>
+                </div>
+                {assignChannelTarget.buyer_code && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-500 font-medium text-[11px]">Buyer Code / ID:</span>
+                    <span className="font-mono text-zinc-700">{assignChannelTarget.buyer_code}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium text-[11px]">Current Channel:</span>
+                  <span className="text-zinc-700 font-medium">{assignChannelTarget.channel || "Retailer"}</span>
+                </div>
+              </div>
+
+              {/* Registered Channel Selector with high stacking and compact height */}
+              <div className="relative z-30">
+                <label className="font-medium text-zinc-700 block mb-1">
+                  Assign to Registered Channel <span className="text-red-500">*</span>
+                </label>
+                <CustomSelect
+                  value={selectedAssignChannel}
+                  onChange={setSelectedAssignChannel}
+                  options={channelsList.map((ch) => ({
+                    label: ch.channel_name,
+                    value: ch.channel_name
+                  }))}
+                  placeholder="Select registered channel..."
+                  className="w-full"
+                  minWidth="w-full"
+                  maxHeight="max-h-40"
+                  placement="auto"
+                />
+                <p className="text-[11px] text-zinc-400 mt-1">
+                  Only registered channels from the <b>Buyers & Channels</b> directory are available.
+                </p>
+              </div>
+
+              {/* Checkbox Option: Apply to all rows for this buyer */}
+              <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-blue-50/50 border border-blue-100 cursor-pointer text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={applyChannelToAllBuyerRows}
+                  onChange={(e) => setApplyChannelToAllBuyerRows(e.target.checked)}
+                  className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 mt-0.5"
+                />
+                <div className="flex flex-col">
+                  <span className="text-xs font-semibold text-zinc-800">
+                    Apply to all rows for this buyer in {formatPeriodLabel(currentPeriod)}
+                  </span>
+                  <span className="text-[11px] text-zinc-500 leading-tight mt-0.5">
+                    Updates all demand items matching "{assignChannelTarget.buyer_name || assignChannelTarget.buyer_code}".
+                  </span>
+                </div>
+              </label>
+            </div>
+
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAssignChannelModal(false);
+                  setAssignChannelTarget(null);
+                }}
+                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={savingAssignChannel || !selectedAssignChannel}
+                onClick={handleSaveAssignChannel}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+              >
+                {savingAssignChannel ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                <span>Save Channel</span>
               </button>
             </div>
           </div>

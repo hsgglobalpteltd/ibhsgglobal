@@ -29,6 +29,8 @@ interface CustomSelectProps {
   placeholder?: string;
   className?: string;
   minWidth?: string;
+  placement?: "bottom" | "top" | "auto";
+  maxHeight?: string;
 }
 
 function CustomSelect({
@@ -37,9 +39,12 @@ function CustomSelect({
   options,
   placeholder = "Select...",
   className = "",
-  minWidth = "min-w-[130px]"
+  minWidth = "min-w-[130px]",
+  placement = "auto",
+  maxHeight = "max-h-44"
 }: CustomSelectProps) {
   const [open, setOpen] = React.useState(false);
+  const [openUp, setOpenUp] = React.useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
@@ -56,13 +61,26 @@ function CustomSelect({
     };
   }, [open]);
 
+  const handleToggle = () => {
+    if (!open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      if (placement === "top" || (placement === "auto" && spaceBelow < 210)) {
+        setOpenUp(true);
+      } else {
+        setOpenUp(false);
+      }
+    }
+    setOpen((prev) => !prev);
+  };
+
   const selectedOpt = options.find((o) => o.value === value);
 
   return (
     <div className={`relative inline-block text-left ${className}`} ref={ref}>
       <button
         type="button"
-        onClick={() => setOpen(!open)}
+        onClick={handleToggle}
         className={`h-8 px-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-zinc-700 flex items-center justify-between gap-1.5 focus:outline-none focus:border-[#0B57D0] cursor-pointer transition-colors shadow-2xs ${minWidth}`}
       >
         <span className="truncate">{selectedOpt ? selectedOpt.label : placeholder}</span>
@@ -70,7 +88,7 @@ function CustomSelect({
       </button>
 
       {open && (
-        <div className="absolute left-0 mt-1 w-full min-w-[160px] max-h-56 overflow-auto bg-white border border-slate-200 rounded-lg shadow-lg py-1 z-40 text-xs font-medium text-zinc-700 animate-in fade-in zoom-in-95 duration-100">
+        <div className={`absolute left-0 ${openUp ? "bottom-full mb-1" : "top-full mt-1"} w-full min-w-[160px] ${maxHeight} overflow-auto bg-white border border-slate-200 rounded-lg shadow-xl py-1 z-50 text-xs font-medium text-zinc-700 animate-in fade-in zoom-in-95 duration-100`}>
           {options.length === 0 ? (
             <div className="px-3 py-2 text-zinc-400 text-[11px] text-center">No options</div>
           ) : (
@@ -136,11 +154,16 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
   const [newChannelDesc, setNewChannelDesc] = React.useState<string>("");
   const [savingChannel, setSavingChannel] = React.useState<boolean>(false);
 
-  // Add Buyer Modal
+  // Add / Edit Buyer Modal
   const [showAddBuyerModal, setShowAddBuyerModal] = React.useState<boolean>(false);
+  const [editingBuyerId, setEditingBuyerId] = React.useState<string | null>(null);
   const [newBuyerCode, setNewBuyerCode] = React.useState<string>("");
   const [newBuyerName, setNewBuyerName] = React.useState<string>("");
   const [newBuyerChannel, setNewBuyerChannel] = React.useState<string>("Retailer");
+  const [newBuyerPaymentTerm, setNewBuyerPaymentTerm] = React.useState<string>("90d");
+  const [newBuyerStoreGroups, setNewBuyerStoreGroups] = React.useState<Array<{ group_name: string; store_count: number }>>([
+    { group_name: "", store_count: 1 }
+  ]);
   const [savingNewBuyer, setSavingNewBuyer] = React.useState<boolean>(false);
 
   // Excel Import Modal
@@ -244,32 +267,69 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
     }
   };
 
-  // Add Buyer Action
+  // Open Add Buyer Modal
+  const handleOpenAddBuyer = () => {
+    setEditingBuyerId(null);
+    setNewBuyerCode("");
+    setNewBuyerName("");
+    setNewBuyerChannel(channelsList[0]?.channel_name || "Retailer");
+    setNewBuyerPaymentTerm("90d");
+    setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
+    setShowAddBuyerModal(true);
+  };
+
+  // Open Edit Buyer Modal
+  const handleOpenEditBuyer = (buyer: any) => {
+    setEditingBuyerId(buyer.id);
+    setNewBuyerCode(buyer.buyer_code || "");
+    setNewBuyerName(buyer.buyer_name || "");
+    setNewBuyerChannel(buyer.channel || "Retailer");
+    setNewBuyerPaymentTerm(buyer.payment_term || "90d");
+    const groups = Array.isArray(buyer.store_groups) && buyer.store_groups.length > 0
+      ? buyer.store_groups.map((g: any) => ({ group_name: g.group_name || "", store_count: Number(g.store_count || 1) }))
+      : [{ group_name: buyer.buyer_name || "", store_count: 1 }];
+    setNewBuyerStoreGroups(groups);
+    setShowAddBuyerModal(true);
+  };
+
+  // Add or Edit Buyer Action
   const handleAddBuyer = async () => {
     if (!newBuyerCode.trim() || !newBuyerName.trim()) return;
     setSavingNewBuyer(true);
     try {
-      const res = await fetch(`${API_BASE}/api/buyers`, {
-        method: "POST",
+      const validGroups = newBuyerStoreGroups
+        .filter(g => g.group_name.trim().length > 0)
+        .map(g => ({ group_name: g.group_name.trim(), store_count: Math.max(1, Number(g.store_count) || 1) }));
+
+      const payload = {
+        buyer_code: newBuyerCode.trim(),
+        buyer_name: newBuyerName.trim(),
+        channel: newBuyerChannel || "Retailer",
+        payment_term: newBuyerPaymentTerm.trim() || "90d",
+        store_groups: validGroups.length > 0 ? validGroups : [{ group_name: newBuyerName.trim(), store_count: 1 }]
+      };
+
+      const url = editingBuyerId ? `${API_BASE}/api/buyers/${encodeURIComponent(editingBuyerId)}` : `${API_BASE}/api/buyers`;
+      const method = editingBuyerId ? "PUT" : "POST";
+
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          buyer_code: newBuyerCode.trim(),
-          buyer_name: newBuyerName.trim(),
-          channel: newBuyerChannel || "Retailer"
-        })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast(`Buyer "${newBuyerName}" registered successfully!`, "success");
+        showToast(editingBuyerId ? `Buyer "${newBuyerName}" updated successfully!` : `Buyer "${newBuyerName}" registered successfully!`, "success");
         setShowAddBuyerModal(false);
+        setEditingBuyerId(null);
         setNewBuyerCode("");
         setNewBuyerName("");
         fetchData();
       } else {
-        showToast(data.error || "Failed to register buyer", "error");
+        showToast(data.error || "Failed to save buyer", "error");
       }
     } catch (e: any) {
-      showToast(e.message || "Register error", "error");
+      showToast(e.message || "Save error", "error");
     } finally {
       setSavingNewBuyer(false);
     }
@@ -527,12 +587,7 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
           {/* Add Single Buyer */}
           <button
             type="button"
-            onClick={() => {
-              setNewBuyerCode("");
-              setNewBuyerName("");
-              setNewBuyerChannel(channelsList[0]?.channel_name || "Retailer");
-              setShowAddBuyerModal(true);
-            }}
+            onClick={handleOpenAddBuyer}
             className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
           >
             <Plus size={13} />
@@ -592,15 +647,19 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
               <tr className="text-[11px] font-medium text-zinc-500">
                 <th className="py-2.5 px-3 w-12 text-center">#</th>
                 <th className="py-2.5 px-3 w-36">Buyer Code</th>
-                <th className="py-2.5 px-3 min-w-[220px]">Buyer Name</th>
-                <th className="py-2.5 px-3 w-48">Assigned Sales Channel</th>
-                <th className="py-2.5 px-3 w-32 text-center">Registered Date</th>
-                <th className="py-2.5 px-3 w-16 text-center">Action</th>
+                <th className="py-2.5 px-3 min-w-[200px]">Buyer Name</th>
+                <th className="py-2.5 px-3 w-40">Assigned Channel</th>
+                <th className="py-2.5 px-3 min-w-[170px]">Store Groups & Outlets</th>
+                <th className="py-2.5 px-3 w-28 text-center">Payment Term</th>
+                <th className="py-2.5 px-3 w-28 text-center">Registered</th>
+                <th className="py-2.5 px-3 w-20 text-center">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredBuyers.map((b, idx) => {
                 const draft = buyerDrafts[b.id] || { buyer_code: b.buyer_code, buyer_name: b.buyer_name, channel: b.channel || "Retailer" };
+                const groups = Array.isArray(b.store_groups) ? b.store_groups : [];
+                const totalStores = groups.reduce((acc: number, curr: any) => acc + (Number(curr.store_count) || 1), 0);
 
                 return (
                   <tr key={b.id || idx} className="hover:bg-slate-50/80 transition-colors">
@@ -665,28 +724,61 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
                       )}
                     </td>
 
+                    {/* Store Groups & Outlets */}
+                    <td className="py-2 px-3">
+                      {groups.length > 0 ? (
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs font-medium text-zinc-800">
+                            {totalStores} {totalStores === 1 ? 'store' : 'stores'} ({groups.length} {groups.length === 1 ? 'group' : 'groups'})
+                          </span>
+                          <span className="text-[10.5px] text-zinc-400 truncate max-w-[200px]" title={groups.map((g: any) => `${g.group_name}: ${g.store_count}`).join(", ")}>
+                            {groups.map((g: any) => `${g.group_name} (${g.store_count})`).join(", ")}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-zinc-400 text-xs italic">1 store</span>
+                      )}
+                    </td>
+
+                    {/* Payment Term */}
+                    <td className="py-2 px-3 text-center">
+                      <span className="px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-slate-100 text-slate-700 border border-slate-200/80">
+                        {b.payment_term || "90d"}
+                      </span>
+                    </td>
+
                     {/* Registered Date */}
                     <td className="py-2 px-3 text-center text-zinc-400 font-mono text-[11px]">
                       {formatDateDDMMYYYY(b.created_at)}
                     </td>
 
-                    {/* Delete Button */}
+                    {/* Actions: Edit + Delete */}
                     <td className="py-2 px-3 text-center">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setConfirmConfig({
-                            open: true,
-                            title: "Remove Buyer Master",
-                            description: `Are you sure you want to remove ${b.buyer_name} (${b.buyer_code})?`,
-                            onConfirm: () => handleDeleteBuyer(b.id)
-                          });
-                        }}
-                        className="p-1 rounded text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                        title="Delete Buyer"
-                      >
-                        <Trash2 size={13} />
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditBuyer(b)}
+                          className="p-1 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer"
+                          title="Edit Buyer Master & Store Groups"
+                        >
+                          <Edit2 size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmConfig({
+                              open: true,
+                              title: "Remove Buyer Master",
+                              description: `Are you sure you want to remove ${b.buyer_name} (${b.buyer_code})?`,
+                              onConfirm: () => handleDeleteBuyer(b.id)
+                            });
+                          }}
+                          className="p-1 rounded text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                          title="Delete Buyer"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -782,30 +874,55 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
         </div>
       )}
 
-      {/* Modal: Quick Register Buyer */}
+      {/* Modal: Quick Register or Edit Buyer */}
       {showAddBuyerModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+          <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-visible flex flex-col my-auto">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
               <div>
-                <h2 className="text-sm font-semibold text-zinc-950">Register New Buyer</h2>
-                <p className="text-xs text-zinc-500">Add to standalone Buyers Master directory</p>
+                <h2 className="text-sm font-semibold text-zinc-950">
+                  {editingBuyerId ? "Edit Buyer Master" : "Register New Buyer"}
+                </h2>
+                <p className="text-xs text-zinc-500">
+                  {editingBuyerId ? "Update company details, channel, payment terms & store groups" : "Add to standalone Buyers Master directory"}
+                </p>
               </div>
-              <button type="button" onClick={() => setShowAddBuyerModal(false)} className="p-1 text-zinc-400 hover:text-zinc-700">
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowAddBuyerModal(false);
+                  setEditingBuyerId(null);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700"
+              >
                 <X size={16} />
               </button>
             </div>
 
-            <div className="p-4 flex flex-col gap-3 text-xs">
-              <div>
-                <label className="font-medium text-zinc-700 block mb-1">Buyer Code / CustCode</label>
-                <input
-                  type="text"
-                  value={newBuyerCode}
-                  onChange={(e) => setNewBuyerCode(e.target.value)}
-                  placeholder="e.g. 3000/F011 or TIKTOK_SHOP1"
-                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
-                />
+            <div className="p-4 flex flex-col gap-3 text-xs overflow-visible">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-medium text-zinc-700 block mb-1">Buyer Code / CustCode</label>
+                  <input
+                    type="text"
+                    value={newBuyerCode}
+                    disabled={!!editingBuyerId}
+                    onChange={(e) => setNewBuyerCode(e.target.value)}
+                    placeholder="e.g. 3000/F011 or TIKTOK_SHOP1"
+                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0] disabled:bg-slate-100 disabled:text-zinc-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-medium text-zinc-700 block mb-1">Payment Term</label>
+                  <input
+                    type="text"
+                    value={newBuyerPaymentTerm}
+                    onChange={(e) => setNewBuyerPaymentTerm(e.target.value)}
+                    placeholder="e.g. 90d, 30d, Cash"
+                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
               </div>
 
               <div>
@@ -819,7 +936,8 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
                 />
               </div>
 
-              <div>
+              {/* Sales Channel Dropdown with ample z-index and overflow-visible */}
+              <div className="relative z-30">
                 <label className="font-medium text-zinc-700 block mb-1">Sales Channel</label>
                 <CustomSelect
                   value={newBuyerChannel}
@@ -829,13 +947,87 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
                   minWidth="w-full"
                 />
               </div>
+
+              {/* Store Groups & Outlets Dynamic Builder */}
+              <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/60 flex flex-col gap-2.5 mt-1">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-semibold text-zinc-800 text-xs">Store Groups & Outlets</span>
+                    <p className="text-[11px] text-zinc-500">Add retail banners & outlet counts (e.g. FairPrice Supermarket, Cheers)</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNewBuyerStoreGroups((prev) => [...prev, { group_name: "", store_count: 1 }])}
+                    className="h-6 px-2 rounded-md bg-white border border-slate-300 hover:bg-slate-100 text-[#0B57D0] text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Plus size={11} />
+                    <span>Add Group</span>
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2 max-h-40 overflow-y-auto pr-0.5">
+                  {newBuyerStoreGroups.map((grp, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-white p-1.5 rounded-lg border border-slate-200">
+                      <input
+                        type="text"
+                        value={grp.group_name}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setNewBuyerStoreGroups((prev) => {
+                            const copy = [...prev];
+                            copy[idx] = { ...copy[idx], group_name: val };
+                            return copy;
+                          });
+                        }}
+                        placeholder="Group / Banner (e.g. Cheers, FairPrice Supermarket)"
+                        className="flex-1 h-7 px-2 border border-slate-200 rounded text-xs text-zinc-800 focus:outline-none focus:border-[#0B57D0]"
+                      />
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-[11px] text-zinc-400">Stores:</span>
+                        <input
+                          type="number"
+                          min="1"
+                          value={grp.store_count}
+                          onChange={(e) => {
+                            const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                            setNewBuyerStoreGroups((prev) => {
+                              const copy = [...prev];
+                              copy[idx] = { ...copy[idx], store_count: val };
+                              return copy;
+                            });
+                          }}
+                          className="w-16 h-7 px-1.5 border border-slate-200 rounded text-xs font-mono text-center text-zinc-800 focus:outline-none focus:border-[#0B57D0]"
+                        />
+                      </div>
+                      {newBuyerStoreGroups.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setNewBuyerStoreGroups((prev) => prev.filter((_, i) => i !== idx))}
+                          className="p-1 text-zinc-400 hover:text-red-600 rounded cursor-pointer"
+                          title="Remove Group"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="text-[11px] text-zinc-500 flex items-center justify-between pt-1 border-t border-slate-200/80">
+                  <span>Total Groups: <strong>{newBuyerStoreGroups.filter(g => g.group_name.trim().length > 0).length || 1}</strong></span>
+                  <span>Total Outlets: <strong>{newBuyerStoreGroups.reduce((acc, curr) => acc + (Number(curr.store_count) || 1), 0)} stores</strong></span>
+                </div>
+              </div>
             </div>
 
-            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
               <button
                 type="button"
-                onClick={() => setShowAddBuyerModal(false)}
-                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100"
+                onClick={() => {
+                  setShowAddBuyerModal(false);
+                  setEditingBuyerId(null);
+                }}
+                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
               >
                 Cancel
               </button>
@@ -843,10 +1035,10 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
                 type="button"
                 disabled={savingNewBuyer || !newBuyerCode.trim() || !newBuyerName.trim()}
                 onClick={handleAddBuyer}
-                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50"
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
               >
                 {savingNewBuyer ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                <span>Save Buyer</span>
+                <span>{editingBuyerId ? "Save Changes" : "Save Buyer"}</span>
               </button>
             </div>
           </div>
