@@ -3394,10 +3394,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const bStart = toMinutes(startB);
     const bEnd = toMinutes(endB);
 
-    // Conflict exists if they overlap with a 1-hour (60 min) buffer.
-    // Shift B must start at least 60 mins after Shift A ends, OR Shift A must start at least 60 mins after Shift B ends.
-    // Therefore, they DO overlap/conflict if: bStart < aEnd + 60 AND aStart < bEnd + 60.
-    return bStart < aEnd + 60 && aStart < bEnd + 60;
+    // Conflict exists if they overlap with a 15-minute buffer.
+    // Shift B must start at least 15 mins after Shift A ends, OR Shift A must start at least 15 mins after Shift B ends.
+    // Therefore, they DO overlap/conflict if: bStart < aEnd + 15 AND aStart < bEnd + 15.
+    return bStart < aEnd + 15 && aStart < bEnd + 15;
   };
 
   const getConflictingShift = (promoterId: string, dateVal: number, newStart: string, newEnd: string, excludeShiftId?: string): any | null => {

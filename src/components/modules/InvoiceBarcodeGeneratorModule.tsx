@@ -6,8 +6,10 @@ import { showToast } from "@/lib/toast";
 import { loadScript } from "@/lib/script-loader";
 import { FileText, Trash2, Barcode, Upload, Loader2 } from "lucide-react";
 
+import JsBarcode from "jsbarcode";
+import { PDFDocument } from "pdf-lib";
+
 export function InvoiceBarcodeGeneratorModule() {
-  const [scriptsReady, setScriptsReady] = React.useState(false);
   const [currentPdfData, setCurrentPdfData] = React.useState<string | null>(null);
   const [fileName, setFileName] = React.useState<string>("");
   const [invoiceNumber, setInvoiceNumber] = React.useState<string>("");
@@ -20,48 +22,23 @@ export function InvoiceBarcodeGeneratorModule() {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
 
-  // Load scripts on mount
+  // Restore session data on mount
   React.useEffect(() => {
-    async function initScripts() {
-      try {
-        await loadScript("https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js");
-        await loadScript("https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js");
-        await loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js");
+    try {
+      const savedPdf = localStorage.getItem("last_invoice_pdf");
+      const savedNum = localStorage.getItem("last_invoice_number");
 
-        if (
-          typeof window !== "undefined" &&
-          (window as any).PDFLib &&
-          (window as any).JsBarcode &&
-          (window as any).pdfjsLib
-        ) {
-          const pdfjs = (window as any).pdfjsLib;
-          pdfjs.GlobalWorkerOptions.workerSrc =
-            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
-          setScriptsReady(true);
-        } else {
-          showToast("Failed to initialize PDF libraries", "error");
-        }
-      } catch (err: any) {
-        showToast("Error loading PDF libraries: " + err.message, "error");
+      if (savedPdf) {
+        setCurrentPdfData(savedPdf);
+        setFileName("Previously uploaded PDF");
       }
+      if (savedNum) {
+        setInvoiceNumber(savedNum);
+      }
+    } catch {
+      // Ignore storage errors
     }
-    initScripts();
   }, []);
-
-  // Restore session data
-  React.useEffect(() => {
-    if (!scriptsReady) return;
-    const savedPdf = localStorage.getItem("last_invoice_pdf");
-    const savedNum = localStorage.getItem("last_invoice_number");
-
-    if (savedPdf) {
-      setCurrentPdfData(savedPdf);
-      setFileName("Previously uploaded PDF");
-    }
-    if (savedNum) {
-      setInvoiceNumber(savedNum);
-    }
-  }, [scriptsReady]);
 
   const resetTool = () => {
     localStorage.removeItem("last_invoice_pdf");
@@ -82,7 +59,27 @@ export function InvoiceBarcodeGeneratorModule() {
     setStatusType("info");
 
     try {
-      const pdfjs = (window as any).pdfjsLib;
+      // Try loading pdf.js with a fast timeout if not already loaded
+      if (typeof window !== "undefined" && !(window as any).pdfjsLib) {
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Timeout loading PDF scanner")), 2500)
+        );
+        await Promise.race([
+          loadScript("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"),
+          timeoutPromise,
+        ]);
+        if ((window as any).pdfjsLib) {
+          (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+            "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
+        }
+      }
+
+      const pdfjs = typeof window !== "undefined" ? (window as any).pdfjsLib : null;
+      if (!pdfjs) {
+        setIsScanning(false);
+        return null;
+      }
+
       const loadingTask = pdfjs.getDocument(base64);
       const pdf = await loadingTask.promise;
       const page = await pdf.getPage(1);
@@ -96,7 +93,7 @@ export function InvoiceBarcodeGeneratorModule() {
         return match[0];
       }
     } catch (err) {
-      console.error("Extraction error:", err);
+      console.warn("Extraction skipped or timed out:", err);
       setIsScanning(false);
     }
     return null;
@@ -128,7 +125,7 @@ export function InvoiceBarcodeGeneratorModule() {
         } else {
           setStatusMsg("File ready. Please enter Invoice # manually.");
           setStatusType("success");
-          showToast("Document loaded. No invoice number detected.", "info");
+          showToast("Document loaded. Enter 9-digit invoice #.", "info");
         }
       } catch (err) {
         setCurrentPdfData(base64);
@@ -168,7 +165,9 @@ export function InvoiceBarcodeGeneratorModule() {
   const handleInvoiceNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.replace(/\D/g, "");
     setInvoiceNumber(val);
-    localStorage.setItem("last_invoice_number", val);
+    try {
+      localStorage.setItem("last_invoice_number", val);
+    } catch {}
 
     if (val.length === 9) {
       setStatusMsg("Ready to generate barcode");
@@ -187,9 +186,6 @@ export function InvoiceBarcodeGeneratorModule() {
 
     setIsGenerating(true);
     try {
-      const JsBarcode = (window as any).JsBarcode;
-      const { PDFDocument } = (window as any).PDFLib;
-
       // 1. Generate Barcode Image (Code 39)
       if (!canvasRef.current) throw new Error("Barcode canvas not available");
       JsBarcode(canvasRef.current, invoiceNumber, {
@@ -226,7 +222,7 @@ export function InvoiceBarcodeGeneratorModule() {
 
       // 3. Save and Open
       const pdfBytesFinal = await pdfDoc.save();
-      const blob = new Blob([pdfBytesFinal], { type: "application/pdf" });
+      const blob = new Blob([pdfBytesFinal as any], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       window.open(url, "_blank");
 
@@ -242,19 +238,6 @@ export function InvoiceBarcodeGeneratorModule() {
       setIsGenerating(false);
     }
   };
-
-  if (!scriptsReady) {
-    return (
-      <div className="flex flex-1 h-full items-center justify-center p-6 font-primary">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-8 h-8 text-zinc-600 animate-spin" />
-          <span className="text-zinc-500 text-sm font-semibold italic">
-            Loading barcode processor libraries...
-          </span>
-        </div>
-      </div>
-    );
-  }
 
   const isFormValid = currentPdfData && invoiceNumber.length === 9 && !isScanning;
 

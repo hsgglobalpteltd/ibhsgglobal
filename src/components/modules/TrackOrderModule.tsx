@@ -871,6 +871,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     allDrafts: TrackOrderDraft[];
   } | null>(null);
 
+  // Pending Delivery Bulk Selection & Edit States
+  const [selectedPendingOrderIds, setSelectedPendingOrderIds] = React.useState<Record<string, boolean>>({});
+  const [bulkDeliveryMethod, setBulkDeliveryMethod] = React.useState<string>("Company Delivery");
+  const [isBulkUpdatingMethod, setIsBulkUpdatingMethod] = React.useState<boolean>(false);
+
   // Create Job Tab States
   const [jobSubView, setJobSubView] = React.useState<"create" | "history">("create");
   const [jobZoneFilter, setJobZoneFilter] = React.useState<string>("All");
@@ -5897,6 +5902,135 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       });
   }, [pendingOrders, deliveryStatusFilter, deliverySearchQuery, matchesOrderSearch]);
 
+  const selectedPendingCount = React.useMemo(() => {
+    return Object.values(selectedPendingOrderIds).filter(Boolean).length;
+  }, [selectedPendingOrderIds]);
+
+  const isAllPendingSelected = React.useMemo(() => {
+    if (sortedPendingOrders.length === 0) return false;
+    return sortedPendingOrders.every((o) => !!selectedPendingOrderIds[o.id]);
+  }, [sortedPendingOrders, selectedPendingOrderIds]);
+
+  const toggleSelectPendingOrder = (id: string) => {
+    setSelectedPendingOrderIds((prev) => ({
+      ...prev,
+      [id]: !prev[id]
+    }));
+  };
+
+  const toggleSelectAllPendingOrders = () => {
+    if (isAllPendingSelected) {
+      setSelectedPendingOrderIds({});
+    } else {
+      const updated: Record<string, boolean> = {};
+      sortedPendingOrders.forEach((o) => {
+        updated[o.id] = true;
+      });
+      setSelectedPendingOrderIds(updated);
+    }
+  };
+
+  const handleBulkUpdateDeliveryMethod = async (newMethod: string) => {
+    const selectedIds = Object.keys(selectedPendingOrderIds).filter((id) => selectedPendingOrderIds[id]);
+    if (selectedIds.length === 0) {
+      showToast("Please select at least one pending order.", "error");
+      return;
+    }
+    if (!newMethod) {
+      showToast("Please select a delivery method.", "error");
+      return;
+    }
+
+    setIsBulkUpdatingMethod(true);
+    showToast(`Updating delivery method for ${selectedIds.length} orders...`, "info");
+
+    const previousDbOrders = [...dbOrders];
+    const now = Date.now();
+
+    // Optimistic UI Update
+    setDbOrders((prev) =>
+      prev.map((order) => {
+        if (selectedIds.includes(order.id)) {
+          let currentLogs: LogEntry[] = [];
+          try {
+            currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs || "[]") : order.logs || [];
+          } catch (_) {}
+          if (!Array.isArray(currentLogs)) currentLogs = [];
+
+          const updatedLogs: LogEntry[] = [
+            ...currentLogs,
+            {
+              action: "Method Edited by Admin",
+              actionBy: currentUser,
+              remark: `Method updated to "${newMethod}" (Bulk update)`,
+              timestamp: now
+            }
+          ];
+
+          return {
+            ...order,
+            deliver_method: newMethod,
+            logs: JSON.stringify(updatedLogs)
+          };
+        }
+        return order;
+      })
+    );
+
+    setSelectedPendingOrderIds({});
+
+    try {
+      const updatePromises = selectedIds.map(async (id) => {
+        const order = previousDbOrders.find((o) => o.id === id);
+        let currentLogs: LogEntry[] = [];
+        try {
+          currentLogs = typeof order?.logs === "string" ? JSON.parse(order.logs || "[]") : order?.logs || [];
+        } catch (_) {}
+        if (!Array.isArray(currentLogs)) currentLogs = [];
+
+        const updatedLogs: LogEntry[] = [
+          ...currentLogs,
+          {
+            action: "Method Edited by Admin",
+            actionBy: currentUser,
+            remark: `Method updated to "${newMethod}" (Bulk update)`,
+            timestamp: now
+          }
+        ];
+
+        const payload = {
+          table: "Track_Orders",
+          action: "update",
+          id: id,
+          data: {
+            id: id,
+            deliver_method: newMethod,
+            logs: JSON.stringify(updatedLogs)
+          }
+        };
+
+        const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error(`Server returned ${res.status}`);
+        const json = (await res.json()) as any;
+        if (!json.success) throw new Error(json.error || "Update failed");
+      });
+
+      await Promise.all(updatePromises);
+      showToast(`Successfully updated delivery method to "${newMethod}" for ${selectedIds.length} orders.`, "success");
+      fetchDatabaseOrders(true);
+    } catch (err: any) {
+      console.error("Bulk update deliver method error:", err);
+      setDbOrders(previousDbOrders);
+      showToast(`Failed to update delivery method: ${err.message}`, "error");
+    } finally {
+      setIsBulkUpdatingMethod(false);
+    }
+  };
+
   // Filter & Sort Completed Delivery Orders
   const sortedCompletedOrders = React.useMemo(() => {
     return completedOrders
@@ -7046,7 +7180,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setActiveDeliveryTab("pending")}
+                onClick={() => {
+                  setActiveDeliveryTab("pending");
+                  setSelectedPendingOrderIds({});
+                }}
                 className={`px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
                   activeDeliveryTab === "pending"
                     ? "border-[#0B57D0] text-[#0B57D0]"
@@ -7057,7 +7194,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               </button>
               <button
                 type="button"
-                onClick={() => setActiveDeliveryTab("complete")}
+                onClick={() => {
+                  setActiveDeliveryTab("complete");
+                  setSelectedPendingOrderIds({});
+                }}
                 className={`px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
                   activeDeliveryTab === "complete"
                     ? "border-[#0B57D0] text-[#0B57D0]"
@@ -7160,7 +7300,59 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
 
           {activeDeliveryTab === "pending" ? (
-            <div className="flex-1 w-full min-h-0 relative overflow-hidden">
+            <div className="flex-1 w-full min-h-0 relative overflow-hidden flex flex-col gap-2">
+              {/* Bulk Actions Bar for Selected Pending Orders */}
+              {selectedPendingCount > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2 bg-blue-50/90 border border-blue-200 rounded-lg shadow-2xs text-xs animate-tableFadeInOnly shrink-0">
+                  <div className="flex items-center gap-2.5">
+                    <span className="font-bold text-[#0B57D0] flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
+                      {selectedPendingCount} order{selectedPendingCount > 1 ? "s" : ""} selected
+                    </span>
+                    <span className="text-zinc-300">|</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPendingOrderIds({})}
+                      className="text-zinc-500 hover:text-zinc-900 underline cursor-pointer"
+                    >
+                      Deselect all
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-zinc-700">Bulk Change Method:</span>
+                    <select
+                      value={bulkDeliveryMethod}
+                      onChange={(e) => setBulkDeliveryMethod(e.target.value)}
+                      className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] cursor-pointer"
+                    >
+                      <option value="Company Delivery">Company Delivery</option>
+                      <option value="External Delivery">External Delivery</option>
+                      <option value="Warehouse Pickup">Warehouse Pickup</option>
+                    </select>
+
+                    <button
+                      type="button"
+                      onClick={() => handleBulkUpdateDeliveryMethod(bulkDeliveryMethod)}
+                      disabled={isBulkUpdatingMethod}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold rounded shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {isBulkUpdatingMethod ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin" />
+                          <span>Updating...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check size={12} strokeWidth={2.5} />
+                          <span>Apply Method</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {sortedPendingOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
                   <Boxes size={40} className="text-zinc-400 mb-3" />
@@ -7169,10 +7361,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   </span>
                 </div>
               ) : (
-                <div className="h-full overflow-auto border border-slate-200 rounded bg-white">
+                <div className="flex-1 min-h-0 overflow-auto border border-slate-200 rounded bg-white">
                   <table className="w-full text-left font-primary text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
+                        <th className="sticky top-0 bg-slate-50 p-3 w-10 text-center align-middle z-10">
+                          <input
+                            type="checkbox"
+                            checked={isAllPendingSelected}
+                            onChange={toggleSelectAllPendingOrders}
+                            className="rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer w-4 h-4"
+                            title={isAllPendingSelected ? "Deselect All" : "Select All"}
+                          />
+                        </th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10"></th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Mark</th>
@@ -7190,6 +7391,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       {(() => {
                         let lastDate = "";
                         return sortedPendingOrders.map((order, idx) => {
+                          const isSelected = !!selectedPendingOrderIds[order.id];
                           const dateStr = formatDateStr(order.timestamp);
                           const showDivider = dateStr !== lastDate;
                           if (showDivider) {
@@ -7238,16 +7440,26 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             <React.Fragment key={`${order.id}-${idx}`}>
                               {showDivider && (
                                 <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
-                                  <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                  <td colSpan={12} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
                                     📅 {dateStr}
                                   </td>
                                 </tr>
                               )}
                               <tr 
                                 className={`transition-all h-14 ${
-                                  idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
-                                } hover:bg-slate-50`}
+                                  isSelected 
+                                    ? "bg-blue-50/60 hover:bg-blue-50" 
+                                    : (idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]") + " hover:bg-slate-50"
+                                }`}
                               >
+                                <td className="p-3 w-10 text-center align-middle border-b border-zinc-200">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => toggleSelectPendingOrder(order.id)}
+                                    className="rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer w-4 h-4"
+                                  />
+                                </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
                                   <div className="flex items-center gap-1.5">
                                     <button
