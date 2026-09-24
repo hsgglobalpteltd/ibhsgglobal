@@ -46,7 +46,8 @@ import {
   Maximize2,
   Sliders,
   Sparkles,
-  Move
+  Move,
+  RotateCcw
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { PDFDocument } from "pdf-lib";
@@ -1011,6 +1012,90 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   }, [activeTab, createOrderSubView, fetchJobHistory]);
 
+  // Job Revoke and Delete State Modals
+  const [revokeJobModalOpen, setRevokeJobModalOpen] = React.useState(false);
+  const [targetRevokeJob, setTargetRevokeJob] = React.useState<any>(null);
+  const [revokeLoading, setRevokeLoading] = React.useState(false);
+
+  const [deleteJobModalOpen, setDeleteJobModalOpen] = React.useState(false);
+  const [targetDeleteJob, setTargetDeleteJob] = React.useState<any>(null);
+  const [deleteLoading, setDeleteLoading] = React.useState(false);
+
+  const [blockDeleteModalOpen, setBlockDeleteModalOpen] = React.useState(false);
+  const [targetBlockDeleteJob, setTargetBlockDeleteJob] = React.useState<any>(null);
+
+  const handleOpenRevokeJobModal = (job: any) => {
+    setTargetRevokeJob(job);
+    setRevokeJobModalOpen(true);
+  };
+
+  const handleConfirmRevokeJob = async () => {
+    if (!targetRevokeJob || !targetRevokeJob.id) return;
+    setRevokeLoading(true);
+    try {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "revoke",
+          id: targetRevokeJob.id,
+          token: targetRevokeJob.token,
+          operator: "Operator"
+        })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(`Job [${targetRevokeJob.token}] revoked! ${json.reverted_count || ''} order(s) reset to Ready to Deliver.`, "success");
+        setRevokeJobModalOpen(false);
+        setTargetRevokeJob(null);
+        await Promise.all([fetchJobHistory(), fetchDatabaseOrders(true)]);
+      } else {
+        showToast(json.error || "Failed to revoke job", "error");
+      }
+    } catch (err: any) {
+      showToast("Error revoking job: " + err.message, "error");
+    } finally {
+      setRevokeLoading(false);
+    }
+  };
+
+  const handleClickDeleteJob = (job: any) => {
+    if (!job) return;
+    const isUnrevoked = job.status === "OPEN" || job.status === "CLAIMED";
+    if (isUnrevoked) {
+      setTargetBlockDeleteJob(job);
+      setBlockDeleteModalOpen(true);
+    } else {
+      setTargetDeleteJob(job);
+      setDeleteJobModalOpen(true);
+    }
+  };
+
+  const handleConfirmDeleteJob = async () => {
+    if (!targetDeleteJob || !targetDeleteJob.id) return;
+    setDeleteLoading(true);
+    try {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", id: targetDeleteJob.id, token: targetDeleteJob.token })
+      });
+      const json = await res.json();
+      if (json.success) {
+        showToast(`Job package [${targetDeleteJob.token}] deleted from history.`, "success");
+        setDeleteJobModalOpen(false);
+        setTargetDeleteJob(null);
+        fetchJobHistory();
+      } else {
+        showToast(json.error || "Failed to delete job", "error");
+      }
+    } catch (err: any) {
+      showToast("Error deleting job: " + err.message, "error");
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   const handleCancelJob = async (job: any) => {
     if (!job || !job.id) return;
     try {
@@ -1028,26 +1113,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
     } catch (err: any) {
       showToast("Error cancelling job: " + err.message, "error");
-    }
-  };
-
-  const handleDeleteJob = async (job: any) => {
-    if (!job || !job.id) return;
-    try {
-      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/job", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", id: job.id })
-      });
-      const json = await res.json();
-      if (json.success) {
-        showToast(`Job package [${job.token}] deleted.`, "success");
-        fetchJobHistory();
-      } else {
-        showToast(json.error || "Failed to delete job", "error");
-      }
-    } catch (err: any) {
-      showToast("Error deleting job: " + err.message, "error");
     }
   };
 
@@ -9505,10 +9570,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   Claimed & Loaded
                                 </span>
                               )}
-                              {isCancelled && (
-                                <span className="px-2 py-0.5 rounded-full bg-slate-100 text-zinc-500 border border-slate-200 text-[11px] font-medium inline-flex items-center gap-1">
+                              {(isCancelled || job.status === "REVOKED") && (
+                                <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-semibold inline-flex items-center gap-1">
                                   <Ban size={12} />
-                                  Voided / Cancelled
+                                  {job.status === "REVOKED" ? "Revoked" : "Voided / Cancelled"}
                                 </span>
                               )}
                             </td>
@@ -9559,28 +9624,26 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   <Printer size={13} className="text-zinc-600" />
                                   <span>Print PDF</span>
                                 </button>
-                                {isOpen && (
+                                {(isOpen || isClaimed) && (
                                   <button
                                     type="button"
-                                    onClick={() => handleCancelJob(job)}
-                                    className="px-2.5 py-1 rounded bg-white border border-amber-300 text-amber-700 hover:bg-amber-50 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
-                                    title="Cancel / Void this job token"
+                                    onClick={() => handleOpenRevokeJobModal(job)}
+                                    className="px-2.5 py-1 rounded bg-white border border-amber-300 text-amber-800 hover:bg-amber-50 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                                    title="Revoke job and return uncompleted orders to Ready to Deliver"
                                   >
-                                    <Ban size={13} />
-                                    <span>Void</span>
+                                    <RotateCcw size={13} />
+                                    <span>Revoke</span>
                                   </button>
                                 )}
-                                {(isCancelled || isClaimed) && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteJob(job)}
-                                    className="px-2.5 py-1 rounded bg-white border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors"
-                                    title="Permanently delete this job package record"
-                                  >
-                                    <Trash2 size={13} />
-                                    <span>Delete</span>
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleClickDeleteJob(job)}
+                                  className="px-2.5 py-1 rounded bg-white border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+                                  title="Delete this job package record"
+                                >
+                                  <Trash2 size={13} />
+                                  <span>Delete</span>
+                                </button>
                               </div>
                             </td>
                           </tr>
@@ -11935,6 +11998,251 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
               </div>
 
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 1: CONFIRM REVOKE JOB */}
+      {revokeJobModalOpen && targetRevokeJob && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-md flex flex-col overflow-hidden animate-zoom-in">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950">Revoke Job Package</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">Reset orders and void claim token</p>
+              </div>
+              <button
+                type="button"
+                disabled={revokeLoading}
+                onClick={() => {
+                  setRevokeJobModalOpen(false);
+                  setTargetRevokeJob(null);
+                }}
+                className="p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 text-xs text-zinc-700">
+              <div className="p-3.5 bg-amber-50/70 border border-amber-200 rounded-lg flex items-start gap-3">
+                <AlertTriangle size={18} className="text-amber-700 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-amber-900">Are you sure you want to revoke this job?</p>
+                  <p className="text-amber-800 leading-relaxed">
+                    This will invalidate token <strong className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-amber-300">{targetRevokeJob.token}</strong>. All uncompleted orders will have driver assignments removed and will be immediately reverted to <strong className="text-zinc-900">Ready to Deliver</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                <div className="flex justify-between items-center text-zinc-600">
+                  <span>Claim Token:</span>
+                  <span className="font-mono font-bold text-[#0B57D0]">{targetRevokeJob.token}</span>
+                </div>
+                <div className="flex justify-between items-center text-zinc-600">
+                  <span>Assigned Driver:</span>
+                  <span className="font-semibold text-zinc-800">{targetRevokeJob.driver || "Unclaimed"}</span>
+                </div>
+                <div className="flex justify-between items-center text-zinc-600">
+                  <span>Orders in Job:</span>
+                  <span className="font-semibold text-zinc-800">
+                    {(() => {
+                      try {
+                        const ids = typeof targetRevokeJob.order_ids === "string" ? JSON.parse(targetRevokeJob.order_ids) : (targetRevokeJob.order_ids || []);
+                        return Array.isArray(ids) ? ids.length : (targetRevokeJob.total_orders || 0);
+                      } catch (_) {
+                        return targetRevokeJob.total_orders || 0;
+                      }
+                    })()} Orders
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-zinc-500 italic">
+                * Any orders that have already been marked as Delivered or Completed will remain untouched.
+              </p>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5 shrink-0">
+              <button
+                type="button"
+                disabled={revokeLoading}
+                onClick={() => {
+                  setRevokeJobModalOpen(false);
+                  setTargetRevokeJob(null);
+                }}
+                className="px-4 py-2 bg-white hover:bg-slate-100 text-zinc-700 border border-slate-300 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={revokeLoading}
+                onClick={handleConfirmRevokeJob}
+                className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-all shadow-xs disabled:opacity-50"
+              >
+                {revokeLoading ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Revoking...</span>
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw size={14} />
+                    <span>Confirm Revoke</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: BLOCK DELETE WARNING (REVOKE FIRST) */}
+      {blockDeleteModalOpen && targetBlockDeleteJob && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-md flex flex-col overflow-hidden animate-zoom-in">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950">Revoke Required Before Deleting</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">Active or claimed job package</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setBlockDeleteModalOpen(false);
+                  setTargetBlockDeleteJob(null);
+                }}
+                className="p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 text-xs text-zinc-700">
+              <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-lg flex items-start gap-3">
+                <AlertTriangle size={18} className="text-amber-700 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-amber-900">This job package cannot be deleted directly</p>
+                  <p className="text-amber-800 leading-relaxed">
+                    Job package <strong className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-amber-300">{targetBlockDeleteJob.token}</strong> is currently <strong>{targetBlockDeleteJob.status === "CLAIMED" ? "Claimed by a driver" : "Active / Open"}</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-zinc-600 leading-relaxed">
+                To prevent orders from being stranded or orphaned in the driver system, you must first <strong>Revoke</strong> the job. Revoking unassigns the driver and safely resets uncompleted orders to <strong>Ready to Deliver</strong>.
+              </p>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setBlockDeleteModalOpen(false);
+                  setTargetBlockDeleteJob(null);
+                }}
+                className="px-4 py-2 bg-white hover:bg-slate-100 text-zinc-700 border border-slate-300 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const jobToRevoke = targetBlockDeleteJob;
+                  setBlockDeleteModalOpen(false);
+                  setTargetBlockDeleteJob(null);
+                  handleOpenRevokeJobModal(jobToRevoke);
+                }}
+                className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-all shadow-xs"
+              >
+                <RotateCcw size={14} />
+                <span>Revoke Job Now</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: CONFIRM DELETE JOB (AFTER REVOKED OR CANCELLED) */}
+      {deleteJobModalOpen && targetDeleteJob && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn">
+          <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-md flex flex-col overflow-hidden animate-zoom-in">
+            {/* Header */}
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950">Delete Job Package</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">Permanent removal from job history</p>
+              </div>
+              <button
+                type="button"
+                disabled={deleteLoading}
+                onClick={() => {
+                  setDeleteJobModalOpen(false);
+                  setTargetDeleteJob(null);
+                }}
+                className="p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 space-y-4 text-xs text-zinc-700">
+              <div className="p-3.5 bg-red-50/70 border border-red-200 rounded-lg flex items-start gap-3">
+                <Trash2 size={18} className="text-red-600 shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-red-900">Permanently delete job history record?</p>
+                  <p className="text-red-700 leading-relaxed">
+                    This will delete the package record for token <strong className="font-mono font-bold bg-white px-1.5 py-0.5 rounded border border-red-300">{targetDeleteJob.token}</strong>.
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-zinc-500">
+                * Note: Individual order records in your database will not be deleted.
+              </p>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2.5 shrink-0">
+              <button
+                type="button"
+                disabled={deleteLoading}
+                onClick={() => {
+                  setDeleteJobModalOpen(false);
+                  setTargetDeleteJob(null);
+                }}
+                className="px-4 py-2 bg-white hover:bg-slate-100 text-zinc-700 border border-slate-300 rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleteLoading}
+                onClick={handleConfirmDeleteJob}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-all shadow-xs disabled:opacity-50"
+              >
+                {deleteLoading ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Deleting...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    <span>Delete Record</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>
