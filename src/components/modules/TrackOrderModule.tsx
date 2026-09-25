@@ -277,57 +277,6 @@ async function loadPdfJs(): Promise<any> {
   });
 }
 
-// Resolve proof image links dynamically from corresponding DbOrder columns or direct log photoUrl
-function getLogImagesForAction(action: string, order: DbOrder, logPhotoUrl?: string): string[] {
-  let val: any = "";
-  
-  if (logPhotoUrl) {
-    val = logPhotoUrl;
-  } else {
-    if (!order) return [];
-    const act = String(action || "").toLowerCase();
-    
-    if (act.includes("created") || act.includes("imported") || act.includes("sent")) {
-      val = order.photo_do_paper;
-    } else if (act.includes("picked") || act.includes("proof")) {
-      val = order.photo_picker_proof;
-    } else if (act.includes("delivered")) {
-      val = order.photo_delivered_proof;
-    } else if (act.includes("handover")) {
-      val = order.photo_handover_proof;
-    } else if (act.includes("signed")) {
-      val = order.photo_do_paper_signed;
-    } else if (act.includes("pick return") || act.includes("return paper")) {
-      val = order.photo_return_paper;
-    } else if (act.includes("unpick return") || act.includes("return paper admin")) {
-      val = order.photo_return_paper_admin;
-    }
-  }
-  
-  if (!val) return [];
-  
-  try {
-    if (typeof val === "string" && (val.startsWith("[") || val.startsWith("{"))) {
-      const parsed = JSON.parse(val);
-      if (Array.isArray(parsed)) {
-        return parsed.filter(Boolean);
-      }
-      if (parsed && typeof parsed === "object") {
-        return [parsed.url || parsed.uri || ""].filter(Boolean);
-      }
-    }
-  } catch (_) {}
-  
-  if (typeof val === "string") {
-    if (val.includes(",")) {
-      return val.split(",").map(v => v.trim()).filter(Boolean);
-    }
-    return [val.trim()].filter(Boolean);
-  }
-  
-  return [];
-}
-
 // Parse Image URL list from JSON array string, comma-separated string, or direct URL
 function parseImageUrlList(val: any): string[] {
   if (!val) return [];
@@ -350,6 +299,59 @@ function parseImageUrlList(val: any): string[] {
     return [trimmed];
   }
   return [];
+}
+
+// Resolve proof image links dynamically from corresponding DbOrder columns or direct log photoUrl
+function getLogImagesForAction(action: string, order: DbOrder, logPhotoUrl?: string, logEntry?: any): string[] {
+  const images: string[] = [];
+  
+  // 1. Direct log photos specifically attached to this log entry
+  if (logPhotoUrl) {
+    images.push(...parseImageUrlList(logPhotoUrl));
+  }
+  if (logEntry) {
+    if (logEntry.photoUrls) images.push(...parseImageUrlList(logEntry.photoUrls));
+    if (logEntry.photos) images.push(...parseImageUrlList(logEntry.photos));
+    if (logEntry.photoUrl && logEntry.photoUrl !== logPhotoUrl) images.push(...parseImageUrlList(logEntry.photoUrl));
+  }
+  
+  // 2. Order lifecycle proof columns (only match exact specific stage completion actions)
+  if (order) {
+    const act = String(action || "").toLowerCase().trim();
+    const isStatusOverwriteOrAdmin = act.includes("overwrite") || act.includes("ready to deliver") || act.includes("job code") || act.includes("batch load") || act.includes("revoke") || act.includes("cancel");
+
+    if (!isStatusOverwriteOrAdmin) {
+      if (act === "delivered" || act.startsWith("delivered") || act === "goods delivered" || act === "delivery completed") {
+        // Delivered Log: Collect all photos taken during delivery completion
+        if (order.photo_delivered_proof) images.push(...parseImageUrlList(order.photo_delivered_proof));
+        if (order.photo_do_paper_signed) images.push(...parseImageUrlList(order.photo_do_paper_signed));
+        if (order.photo_handover_proof) images.push(...parseImageUrlList(order.photo_handover_proof));
+      } else if (act.includes("handover")) {
+        if (order.photo_handover_proof) images.push(...parseImageUrlList(order.photo_handover_proof));
+      } else if (act === "signed" || act.includes("signed do")) {
+        if (order.photo_do_paper_signed) images.push(...parseImageUrlList(order.photo_do_paper_signed));
+      } else if (act === "unpick return paper" || act === "return collected" || act === "collected") {
+        if (order.photo_return_paper_admin) images.push(...parseImageUrlList(order.photo_return_paper_admin));
+      } else if (act === "pick return paper" || act === "pick return") {
+        if (order.photo_return_paper) images.push(...parseImageUrlList(order.photo_return_paper));
+      } else if (act === "picked" || act === "goods picked" || act === "picking completed") {
+        if (order.photo_picker_proof) images.push(...parseImageUrlList(order.photo_picker_proof));
+      } else if (act === "created" || act === "order created" || act === "imported") {
+        if (order.photo_do_paper) images.push(...parseImageUrlList(order.photo_do_paper));
+      }
+    }
+  }
+  
+  // 3. Deduplicate and filter valid non-empty URLs
+  const uniqueUrls: string[] = [];
+  images.forEach((url) => {
+    const trimmed = String(url || "").trim();
+    if (trimmed && trimmed !== "null" && trimmed !== "undefined" && !uniqueUrls.includes(trimmed)) {
+      uniqueUrls.push(trimmed);
+    }
+  });
+  
+  return uniqueUrls;
 }
 
 // Image Base64 Loader Helper for jsPDF (resilient fetch + canvas fallback)
@@ -10078,34 +10080,43 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       </p>
                     )}
 
-                    {selectedOrder ? (
-                      <div className="flex flex-wrap gap-2 mt-1.5">
-                        {getLogImagesForAction(log.action, selectedOrder, log.photoUrl).map((url, imgIdx) => (
-                          <div 
-                            key={imgIdx} 
-                            onClick={() => setActiveLightboxImage(url)}
-                            className="rounded-lg overflow-hidden border border-zinc-300 max-w-[240px] shadow-sm bg-white cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-md hover:border-zinc-400 active:scale-[0.98]"
-                          >
-                            <img 
-                              src={url} 
-                              alt="Proof Confirmation" 
-                              className="object-cover w-full h-36" 
-                            />
+                    {(() => {
+                      const photos = selectedOrder
+                        ? getLogImagesForAction(log.action, selectedOrder, log.photoUrl, log)
+                        : (log.photoUrl ? parseImageUrlList(log.photoUrl) : []);
+
+                      if (photos.length === 0) return null;
+
+                      return (
+                        <div className="flex flex-col gap-1.5 mt-1.5">
+                          {photos.length > 1 && (
+                            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-500">
+                              <ImageIcon size={12} className="text-[#0B57D0]" />
+                              <span>Attached Photos ({photos.length})</span>
+                            </div>
+                          )}
+                          <div className="flex flex-wrap gap-2.5">
+                            {photos.map((url, imgIdx) => (
+                              <div 
+                                key={imgIdx} 
+                                onClick={() => setActiveLightboxImage(url)}
+                                className="group relative rounded-lg overflow-hidden border border-zinc-200 hover:border-[#0B57D0] max-w-[200px] shadow-xs bg-white cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-md active:scale-[0.98]"
+                                title={`Click to view photo #${imgIdx + 1} full size`}
+                              >
+                                <img 
+                                  src={url} 
+                                  alt={`Log Proof ${imgIdx + 1}`} 
+                                  className="object-cover w-full h-32 bg-slate-50" 
+                                />
+                                <div className="absolute top-1 left-1 px-1.5 py-0.5 bg-black/60 backdrop-blur-xs text-white text-[9px] font-mono font-bold rounded">
+                                  #{imgIdx + 1}
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
-                    ) : log.photoUrl ? (
-                      <div 
-                        onClick={() => setActiveLightboxImage(log.photoUrl || null)}
-                        className="mt-1.5 rounded-lg overflow-hidden border border-zinc-300 max-w-[240px] shadow-sm bg-white cursor-pointer transition-all duration-200 hover:scale-[1.02] hover:shadow-md hover:border-zinc-400 active:scale-[0.98]"
-                      >
-                        <img 
-                          src={log.photoUrl} 
-                          alt="Delivery Confirmation" 
-                          className="object-cover w-full h-36" 
-                        />
-                      </div>
-                    ) : null}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                 </div>
