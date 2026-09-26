@@ -904,6 +904,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           cost_price: editingItem.cost_price,
           retailer_price: editingItem.retailer_price,
           market_price: editingItem.market_price,
+          uom: editingItem.uom || "CTN",
+          pack_size: editingItem.pack_size || "",
           remark: "Manual Item Edit",
           action_by: profile?.name || profile?.email || "Operator"
         })
@@ -972,6 +974,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
         retailer_sku: edited.retailer_sku !== undefined ? edited.retailer_sku : orig.retailer_sku,
         listing_type: lt,
         store_tier: lt,
+        uom: edited.uom !== undefined ? edited.uom : (orig.uom || "CTN"),
+        pack_size: edited.pack_size !== undefined ? edited.pack_size : (orig.pack_size || ""),
         cost_price: edited.cost_price !== undefined ? edited.cost_price : orig.cost_price,
         retailer_price: edited.retailer_price !== undefined ? edited.retailer_price : orig.retailer_price,
         market_price: edited.market_price !== undefined ? edited.market_price : orig.market_price,
@@ -1049,23 +1053,53 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
       // Title & Header Information (Black & White Theme)
-      doc.setFontSize(14);
+      // Listing Sheet Name as Big Title Page
+      doc.setFontSize(15);
       doc.setFont("helvetica", "bold");
       doc.setTextColor(20, 20, 20); // Pure Black
-      doc.text(forBuyer ? "PRODUCT & RSP LISTING SHEET" : "MARKET PRICE & RSP LISTING SHEET", 14, 15);
+      doc.text(activeSheet.name.toUpperCase(), 14, 15);
 
-      doc.setFontSize(9);
+      let currentHeaderY = 21;
+
+      // Extract store groups from assigned buyers: {Store Group Name} (qty)
+      const storeGroupFormattedList: string[] = [];
+      activeSheetRetailerIds.forEach((rid) => {
+        const buyer = retailers.find((r) => String(r.id || r.ID || r.buyer_code) === String(rid));
+        if (buyer) {
+          let sGroups = buyer.store_groups;
+          if (typeof sGroups === "string") {
+            try { sGroups = JSON.parse(sGroups); } catch { sGroups = null; }
+          }
+          if (Array.isArray(sGroups) && sGroups.length > 0) {
+            sGroups.forEach((g: any) => {
+              const gName = g.group_name || g.name || buyer.buyer_name || buyer.name;
+              const gCount = Number(g.store_count || g.count || 1);
+              if (gName) {
+                storeGroupFormattedList.push(`${gName} (${gCount})`);
+              }
+            });
+          } else {
+            // If no explicit store_groups array, fallback to buyer name with default 1 store
+            const bName = buyer.buyer_name || buyer.display_name || buyer.name || `Buyer #${rid}`;
+            storeGroupFormattedList.push(`${bName} (1)`);
+          }
+        }
+      });
+
+      doc.setFontSize(8.5);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(60, 60, 60); // Neutral dark charcoal
-      doc.text(`Listing Sheet: ${activeSheet.name}`, 14, 21);
-      
-      const retNames = activeSheetRetailerIds.map((rid) => getRetailerName(rid)).filter(Boolean).join(", ");
-      let currentHeaderY = 26;
-      if (retNames) {
-        doc.text(`Assigned Buyers: ${retNames}`, 14, currentHeaderY);
-        currentHeaderY += 5;
+
+      if (storeGroupFormattedList.length > 0) {
+        const storesText = `Stores : ${storeGroupFormattedList.join(", ")}`;
+        const maxTextWidth = doc.internal.pageSize.getWidth() - 28;
+        const splitStores = doc.splitTextToSize(storesText, maxTextWidth);
+        doc.text(splitStores, 14, currentHeaderY);
+        currentHeaderY += splitStores.length * 4.2 + 1;
       }
-      doc.text(`Generated Date: ${new Date().toLocaleString("en-SG")}`, 14, currentHeaderY);
+
+      doc.text(`Generated Date : ${new Date().toLocaleString("en-SG")}`, 14, currentHeaderY);
+      currentHeaderY += 4.5;
 
       // Group items by Tier
       const tierGroups: { [tierName: string]: PriceItem[] } = {};
@@ -1098,6 +1132,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 "#",
                 "SKU",
                 "Description",
+                "UOM",
                 "Buyer Cost",
                 "Market Price"
               ]
@@ -1114,6 +1149,9 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               }
 
               const productCombined = `${item.product_sku || "-"}\n${item.product_name || ""}`.trim();
+              const uomStr = item.uom || "CTN";
+              const packStr = item.pack_size ? ` (${item.pack_size})` : "";
+              const uomCombined = `${uomStr}${packStr}`;
               const mktStr = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
               const mktCombined = `${mktStr}\n${mktMarginStr}`;
 
@@ -1121,6 +1159,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 String(idx + 1),
                 item.retailer_sku || item.product_sku || "-",
                 productCombined,
+                uomCombined,
                 item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-",
                 mktCombined
               ];
@@ -1146,14 +1185,15 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
             },
             columnStyles: {
               0: { halign: "center", cellWidth: 10, fontStyle: "normal" },
-              1: { halign: "center", cellWidth: 32, fontStyle: "normal" },
+              1: { halign: "center", cellWidth: 28, fontStyle: "normal" },
               2: { cellWidth: "auto", fontStyle: "normal" },
-              3: { halign: "right", cellWidth: 32, fontStyle: "normal" },
-              4: { halign: "right", cellWidth: 36, fontStyle: "normal" }
+              3: { halign: "center", cellWidth: 24, fontStyle: "normal" },
+              4: { halign: "right", cellWidth: 28, fontStyle: "normal" },
+              5: { halign: "right", cellWidth: 32, fontStyle: "normal" }
             },
             didParseCell: (data) => {
               if (data.section === "body") {
-                if (data.column.index === 2 || data.column.index === 4) {
+                if (data.column.index === 2 || data.column.index === 5) {
                   data.cell.styles.minCellHeight = 9.5;
                   data.cell.text = [];
                 }
@@ -1179,7 +1219,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   const maxW = data.cell.width - 4;
                   const nameLines = doc.splitTextToSize(item.product_name || "", maxW);
                   doc.text(nameLines.slice(0, 2), x, y + 3.4);
-                } else if (data.column.index === 4) {
+                } else if (data.column.index === 5) {
                   const mktVal = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
                   const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
                   const mNum = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : 0;
@@ -1237,6 +1277,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 "#",
                 "SKU",
                 "Description",
+                "UOM",
                 "Our Cost",
                 "Buyer Cost",
                 "Market Price"
@@ -1262,6 +1303,9 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               }
 
               const productCombined = `${item.product_sku || "-"}\n${item.product_name || ""}`.trim();
+              const uomStr = item.uom || "CTN";
+              const packStr = item.pack_size ? ` (${item.pack_size})` : "";
+              const uomCombined = `${uomStr}${packStr}`;
               const costStr = item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-";
               const costCombined = `${costStr}\n${ourMarginStr}`;
               const mktStr = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
@@ -1271,6 +1315,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 String(idx + 1),
                 item.retailer_sku || item.product_sku || "-",
                 productCombined,
+                uomCombined,
                 costCombined,
                 item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-",
                 mktCombined
@@ -1297,15 +1342,16 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
             },
             columnStyles: {
               0: { halign: "center", cellWidth: 10, fontStyle: "normal" },
-              1: { halign: "center", cellWidth: 30, fontStyle: "normal" },
+              1: { halign: "center", cellWidth: 26, fontStyle: "normal" },
               2: { cellWidth: "auto", fontStyle: "normal" },
-              3: { halign: "right", cellWidth: 32, fontStyle: "normal" },
+              3: { halign: "center", cellWidth: 22, fontStyle: "normal" },
               4: { halign: "right", cellWidth: 28, fontStyle: "normal" },
-              5: { halign: "right", cellWidth: 32, fontStyle: "normal" }
+              5: { halign: "right", cellWidth: 26, fontStyle: "normal" },
+              6: { halign: "right", cellWidth: 30, fontStyle: "normal" }
             },
             didParseCell: (data) => {
               if (data.section === "body") {
-                if (data.column.index === 2 || data.column.index === 3 || data.column.index === 5) {
+                if (data.column.index === 2 || data.column.index === 4 || data.column.index === 6) {
                   data.cell.styles.minCellHeight = 9.5;
                   data.cell.text = [];
                 }
@@ -1331,7 +1377,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   const maxW = data.cell.width - 4;
                   const nameLines = doc.splitTextToSize(item.product_name || "", maxW);
                   doc.text(nameLines.slice(0, 2), x, y + 3.4);
-                } else if (data.column.index === 3) {
+                } else if (data.column.index === 4) {
                   const cost = item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-";
                   const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
                   const cNum = item.cost_price !== null && item.cost_price !== undefined ? Number(item.cost_price) : 0;
@@ -1354,7 +1400,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   doc.setFontSize(6);
                   doc.setTextColor(90, 90, 90);
                   doc.text(marginText, x, y + 3.4, { align: "right" });
-                } else if (data.column.index === 5) {
+                } else if (data.column.index === 6) {
                   const mktVal = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
                   const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
                   const mNum = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : 0;
@@ -1426,7 +1472,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   title="Print full internal listing sheet with Our Cost"
                 >
                   <Printer size={14} className="text-zinc-600" />
-                  <span>Print PDF</span>
+                  <span>Print Listing</span>
                 </button>
                 <button
                   onClick={() => handlePrintPdfBlob(true)}
@@ -1814,27 +1860,29 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                             className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
                           />
                         </th>
-                        <th className="px-3 py-2 min-w-[150px]">Product / Brand</th>
-                        <th className="px-3 py-2 min-w-[160px]">Product Name</th>
-                        <th className="px-3 py-2 min-w-[120px]">Buyer SKU</th>
-                        <th className="px-3 py-2 min-w-[100px]">Listing Type</th>
-                        <th className="px-3 py-2 text-right min-w-[115px]">Cost Price</th>
-                        <th className="px-3 py-2 text-right min-w-[115px]">Cost to Buyer</th>
-                        <th className="px-3 py-2 text-right min-w-[115px]">Market Price (RSP)</th>
-                        <th className="px-3 py-2 text-right min-w-[100px]">Margin</th>
-                        <th className="w-24 px-3 py-2 text-center">Actions</th>
+                        <th className="px-3 py-2 min-w-[140px]">Product / Brand</th>
+                        <th className="px-3 py-2 min-w-[150px]">Product Name</th>
+                        <th className="px-3 py-2 min-w-[110px]">Buyer SKU</th>
+                        <th className="px-3 py-2 min-w-[90px]">Listing Type</th>
+                        <th className="px-2 py-2 min-w-[75px] text-center">UOM</th>
+                        <th className="px-2 py-2 min-w-[80px] text-center">Qty (Pcs/Ctn)</th>
+                        <th className="px-3 py-2 text-right min-w-[110px]">Cost Price</th>
+                        <th className="px-3 py-2 text-right min-w-[110px]">Cost to Buyer</th>
+                        <th className="px-3 py-2 text-right min-w-[110px]">Market Price (RSP)</th>
+                        <th className="px-3 py-2 text-right min-w-[95px]">Margin</th>
+                        <th className="w-20 px-3 py-2 text-center">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-zinc-800">
                       {loadingItems ? (
                         <tr>
-                          <td colSpan={10} className="p-8 text-center text-zinc-400">
+                          <td colSpan={12} className="p-8 text-center text-zinc-400">
                             Loading pricing catalog...
                           </td>
                         </tr>
                       ) : filteredItems.length === 0 ? (
                         <tr>
-                          <td colSpan={10} className="p-8 text-center text-zinc-400">
+                          <td colSpan={12} className="p-8 text-center text-zinc-400">
                             No products added to this sheet yet. Click <span className="font-semibold text-[#0B57D0]">"+ Add Products"</span> to begin.
                           </td>
                         </tr>
@@ -1843,7 +1891,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                           <React.Fragment key={tierGroup.tierName}>
                             {/* Tier Header Divider */}
                             <tr className="bg-[#F8F9FA] border-y border-slate-200 text-zinc-600 font-medium">
-                              <td colSpan={10} className="px-4 py-1 text-xs">
+                              <td colSpan={12} className="px-4 py-1 text-xs">
                                 <span className="font-semibold text-zinc-700">Listing Type:</span> {tierGroup.tierName}{" "}
                                 <span className="text-zinc-400 font-normal">
                                   ({tierGroup.brandGroups.reduce((acc, bg) => acc + bg.items.length, 0)} SKUs)
@@ -1907,7 +1955,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                       />
                                     </td>
 
-                                    {/* Brand Expand Toggle & Brand Name */}
+                                    {/* Brand Expand Toggle & Clean Brand Name (NO spec/pcs in parent header) */}
                                     <td className="px-3 py-2 align-middle">
                                       <button
                                         type="button"
@@ -1919,11 +1967,6 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                         </div>
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-xs font-semibold">{bg.brandName}</span>
-                                          {bg.specLabel && (
-                                            <span className="text-xs text-zinc-500 font-normal">
-                                              ({bg.specLabel})
-                                            </span>
-                                          )}
                                         </div>
                                       </button>
                                     </td>
@@ -1941,6 +1984,16 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                     {/* Store Tier */}
                                     <td className="px-3 py-2 align-middle text-zinc-500 text-xs font-normal">
                                       {bg.tierName}
+                                    </td>
+
+                                    {/* UOM placeholder */}
+                                    <td className="px-2 py-2 text-center align-middle text-zinc-300 text-xs font-normal">
+                                      -
+                                    </td>
+
+                                    {/* Qty placeholder */}
+                                    <td className="px-2 py-2 text-center align-middle text-zinc-300 text-xs font-normal">
+                                      -
                                     </td>
 
                                     {/* Brand Cost Price (Cascade Edit) */}
@@ -2170,6 +2223,51 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                           ) : (
                                             <span className="text-zinc-500 text-xs">
                                               {item.listing_type || item.store_tier || "Standard"}
+                                            </span>
+                                          )}
+                                        </td>
+
+                                        {/* UOM (EA / CTN Dropdown) */}
+                                        <td className="px-2 py-2 text-center align-middle">
+                                          {isEditMode ? (
+                                            <select
+                                              value={editRow.uom || "CTN"}
+                                              onChange={(e) => {
+                                                setEditRowsMap((prev) => ({
+                                                  ...prev,
+                                                  [item.id]: { ...prev[item.id], uom: e.target.value }
+                                                }));
+                                              }}
+                                              className="w-full px-1 py-1 border border-slate-300 rounded bg-white text-xs text-center font-bold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                            >
+                                              <option value="EA">EA</option>
+                                              <option value="CTN">CTN</option>
+                                            </select>
+                                          ) : (
+                                            <span className="inline-block px-1.5 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-zinc-700">
+                                              {item.uom || "CTN"}
+                                            </span>
+                                          )}
+                                        </td>
+
+                                        {/* Qty (Pack Size / Pcs per carton) */}
+                                        <td className="px-2 py-2 text-center align-middle">
+                                          {isEditMode ? (
+                                            <input
+                                              type="text"
+                                              placeholder="e.g. 12"
+                                              value={editRow.pack_size ?? ""}
+                                              onChange={(e) => {
+                                                setEditRowsMap((prev) => ({
+                                                  ...prev,
+                                                  [item.id]: { ...prev[item.id], pack_size: e.target.value }
+                                                }));
+                                              }}
+                                              className="w-16 px-1.5 py-1 text-center border border-slate-300 rounded bg-white text-xs font-mono text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                            />
+                                          ) : (
+                                            <span className="font-mono text-zinc-600 text-xs">
+                                              {item.pack_size || "-"}
                                             </span>
                                           )}
                                         </td>
@@ -3061,13 +3159,14 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
                         UOM
                       </label>
-                      <input
-                        type="text"
-                        placeholder="SET / BOX / CTN"
-                        value={customSetForm.uom}
+                      <select
+                        value={customSetForm.uom || "CTN"}
                         onChange={(e) => setCustomSetForm({ ...customSetForm, uom: e.target.value })}
-                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs"
-                      />
+                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-zinc-800"
+                      >
+                        <option value="EA">EA</option>
+                        <option value="CTN">CTN</option>
+                      </select>
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-zinc-700 mb-1">
@@ -3170,6 +3269,35 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                       </option>
                     ))}
                   </select>
+                </div>
+              </div>
+
+              {/* UOM & Qty (Pack Size / Pcs per carton) */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                    UOM (Unit of Measure)
+                  </label>
+                  <select
+                    value={editingItem.uom || "CTN"}
+                    onChange={(e) => setEditingItem({ ...editingItem, uom: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-bold text-zinc-800 focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  >
+                    <option value="EA">EA</option>
+                    <option value="CTN">CTN</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                    Qty (Pcs / Pack Size)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 10 or 12 pcs"
+                    value={editingItem.pack_size || ""}
+                    onChange={(e) => setEditingItem({ ...editingItem, pack_size: e.target.value })}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-mono focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
                 </div>
               </div>
 
