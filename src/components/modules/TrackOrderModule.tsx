@@ -1548,6 +1548,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Map Panel Open state
   const [isMapOpen, setIsMapOpen] = React.useState<boolean>(false);
   const [mapFilter, setMapFilter] = React.useState<"pending" | "complete">("pending");
+  const [mapShowDelivery, setMapShowDelivery] = React.useState<boolean>(true);
+  const [mapShowReturn, setMapShowReturn] = React.useState<boolean>(true);
   const [mapSearchQuery, setMapSearchQuery] = React.useState<string>("");
 
   // OneMap API settings from Setting_API
@@ -2769,17 +2771,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     };
 
     // 1. Deliveries (Type !== "Return")
-    const targetDeliveries = dbOrders.filter((o) => {
-      if (o.type === "Return") return false;
-      if (!matchesOrderSearch(o, mapSearchQuery)) return false;
-      
-      if (mapFilter === "pending") {
-        if (String(o.completed) === "true" || o.completed === true) return false;
-        return o.status !== "Delivered";
-      } else {
-        return o.status === "Delivered" && isDoneToday(o);
-      }
-    });
+    const targetDeliveries = mapShowDelivery
+      ? dbOrders.filter((o) => {
+          if (o.type === "Return") return false;
+          if (!matchesOrderSearch(o, mapSearchQuery)) return false;
+          
+          if (mapFilter === "pending") {
+            if (String(o.completed) === "true" || o.completed === true) return false;
+            return o.status !== "Delivered";
+          } else {
+            return o.status === "Delivered" && isDoneToday(o);
+          }
+        })
+      : [];
 
     const deliveryPins = targetDeliveries
       .filter((o) => o.poscode && validatePoscode(o.poscode))
@@ -2834,18 +2838,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       });
 
     // 2. Returns (Type === "Return")
-    const targetReturns = dbOrders.filter((o) => {
-      if (o.type !== "Return") return false;
-      if (o.status === "Complete") return false; // Exclude complete status as requested
-      if (!matchesOrderSearch(o, mapSearchQuery)) return false;
+    const targetReturns = mapShowReturn
+      ? dbOrders.filter((o) => {
+          if (o.type !== "Return") return false;
+          if (o.status === "Complete") return false; // Exclude complete status as requested
+          if (!matchesOrderSearch(o, mapSearchQuery)) return false;
 
-      if (mapFilter === "pending") {
-        if (String(o.completed) === "true" || o.completed === true) return false;
-        return o.status !== "Collected" && o.status !== "Return Collected";
-      } else {
-        return (o.status === "Collected" || o.status === "Return Collected") && isDoneToday(o);
-      }
-    });
+          if (mapFilter === "pending") {
+            if (String(o.completed) === "true" || o.completed === true) return false;
+            return o.status !== "Collected" && o.status !== "Return Collected";
+          } else {
+            return (o.status === "Collected" || o.status === "Return Collected") && isDoneToday(o);
+          }
+        })
+      : [];
 
     const returnPins = targetReturns
       .filter((o) => o.poscode)
@@ -2905,7 +2911,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       });
 
     return [...deliveryPins, ...returnPins];
-  }, [dbOrders, stores, mapFilter, mapSearchQuery, matchesOrderSearch]);
+  }, [dbOrders, stores, mapFilter, mapShowDelivery, mapShowReturn, mapSearchQuery, matchesOrderSearch]);
 
   // View Logs Dialog
   const handleOpenLogs = React.useCallback((order: DbOrder) => {
@@ -7215,9 +7221,33 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 </button>
               </div>
 
-              {/* Search Bar for Track Location */}
+              {/* Filters & Search Bar for Track Location */}
               {activeLiveTrackingSubTab === "location" && (
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-4">
+                  {/* Delivery & Return Filter Ticks */}
+                  <div className="flex items-center gap-3.5 select-none">
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer hover:text-zinc-950 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={mapShowDelivery}
+                        onChange={(e) => setMapShowDelivery(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
+                      />
+                      <span>Delivery</span>
+                    </label>
+
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-zinc-700 cursor-pointer hover:text-zinc-950 transition-colors">
+                      <input
+                        type="checkbox"
+                        checked={mapShowReturn}
+                        onChange={(e) => setMapShowReturn(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
+                      />
+                      <span>Return</span>
+                    </label>
+                  </div>
+
+                  {/* Search Bar for Track Location */}
                   <div className="relative w-72">
                     <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
                     <input
