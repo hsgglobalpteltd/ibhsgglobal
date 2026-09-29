@@ -456,14 +456,14 @@ function SlidePanel({ isOpen, onClose, title, children, footer }: SlidePanelProp
     <>
       {/* Backdrop overlay to close when clicking outside */}
       <div 
-        className={`fixed inset-0 bg-zinc-950/25 z-40 transition-opacity duration-300 ${
+        className={`fixed inset-0 bg-black/40 backdrop-blur-xs z-[999] transition-opacity duration-300 ${
           isOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
         }`}
         onClick={onClose}
       />
       
       <div 
-        className={`fixed top-0 right-0 h-screen w-full sm:w-[450px] bg-white shadow-2xl border-l border-slate-200 z-50 transform transition-transform duration-300 ease-in-out flex flex-col ${
+        className={`fixed top-0 right-0 h-screen w-full sm:w-[450px] bg-white shadow-2xl border-l border-slate-200 z-[1000] transform transition-transform duration-300 ease-in-out flex flex-col ${
           isOpen ? "translate-x-0" : "translate-x-full"
         }`}
       >
@@ -760,12 +760,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     { id: "dashboard", label: "Live Tracking", desc: "Real-time dispatch route visualization and live driver shift monitoring." },
     { id: "delivery", label: "Delivery Order", desc: "Manage pending deliveries, invoices, and complete fulfilled orders." },
     { id: "return", label: "Return Order", desc: "Track return collection pickups, due dates, and credit notes." },
-    { id: "create", label: "Create Order", desc: "Import DO orders, create drafts, or dispatch grouped job packages." }
+    { id: "create", label: "Create Order", desc: "Import DO orders from PDF / Excel sheets or draft manual order records." }
   ];
 
   const [activeTab, setActiveTab] = React.useState<string>("dashboard");
   const [createOrderSubView, setCreateOrderSubView] = React.useState<"drafts" | "dispatch">("drafts");
-  const [activeDeliveryTab, setActiveDeliveryTab] = React.useState<"pending" | "complete">("pending");
+  const [activeDeliveryTab, setActiveDeliveryTab] = React.useState<"pending" | "complete" | "dispatch">("pending");
   const [deliveryStatusFilter, setDeliveryStatusFilter] = React.useState<string>("all");
   const [deliverySearchQuery, setDeliverySearchQuery] = React.useState<string>("");
 
@@ -987,11 +987,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   }, []);
 
-  // Map order IDs to active/open job tokens
+  // Map order IDs to active/open/claimed job tokens
   const activeJobOrderByOrderId = React.useMemo(() => {
     const map: Record<string, { token: string; status: string; id: string }> = {};
     jobHistoryList.forEach((job) => {
-      if (job.status === "OPEN") {
+      if (job.status === "OPEN" || job.status === "CLAIMED") {
         let ids: string[] = [];
         try {
           ids = typeof job.order_ids === "string" ? JSON.parse(job.order_ids) : (job.order_ids || []);
@@ -1009,10 +1009,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   }, [jobHistoryList]);
 
   React.useEffect(() => {
-    if (activeTab === "job" || (activeTab === "create" && createOrderSubView === "dispatch")) {
+    if (activeTab === "delivery" || activeDeliveryTab === "dispatch") {
       fetchJobHistory();
     }
-  }, [activeTab, createOrderSubView, fetchJobHistory]);
+  }, [activeTab, activeDeliveryTab, fetchJobHistory]);
 
   // Job Revoke and Delete State Modals
   const [revokeJobModalOpen, setRevokeJobModalOpen] = React.useState(false);
@@ -1445,6 +1445,55 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     await handleGenerateJobPdf(job.token, matchedOrders);
     showToast(`Generating PDF for Job [${job.token}]...`, "success");
+  };
+
+  // Group Dispatch from Pending Orders Selection
+  const [isCreatingGroupDispatch, setIsCreatingGroupDispatch] = React.useState(false);
+
+  const handleCreateGroupDispatchFromSelection = async () => {
+    const selectedIds = Object.keys(selectedPendingOrderIds).filter((id) => selectedPendingOrderIds[id]);
+    if (selectedIds.length === 0) {
+      showToast("Please select at least 1 order to dispatch.", "error");
+      return;
+    }
+
+    const selectedOrders = dbOrders.filter((o) => selectedIds.includes(o.id));
+    setIsCreatingGroupDispatch(true);
+
+    try {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/job", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create",
+          order_ids: selectedIds
+        })
+      });
+
+      if (!res.ok) {
+        throw new Error(`Server returned error status ${res.status}`);
+      }
+
+      const json = await res.json();
+      if (!json.success || !json.token) {
+        throw new Error(json.error || "Failed to create job package");
+      }
+
+      const token = json.token;
+
+      // Generate PDF Loading Sheet & Route Breakdown
+      await handleGenerateJobPdf(token, selectedOrders);
+
+      // Deselect and refresh
+      setSelectedPendingOrderIds({});
+      showToast(`Group Dispatch created! Claim Token: [ ${token} ]`, "success");
+      await Promise.all([fetchJobHistory(), fetchDatabaseOrders(true)]);
+    } catch (err: any) {
+      console.error("Group dispatch error:", err);
+      showToast("Failed to create group dispatch: " + err.message, "error");
+    } finally {
+      setIsCreatingGroupDispatch(false);
+    }
   };
 
   // Handler to update Link Store on existing orders in Complete tables
@@ -2682,14 +2731,97 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const pStr = String(poscode || "").trim();
     if (!pStr) return <span className="text-zinc-400">—</span>;
     const zone = getZoneFromPostcode(pStr);
-    const badgeClass = getZoneBadgeClass(zone);
 
     return (
-      <div className="flex flex-col items-center justify-center gap-0.5">
-        <span className={`inline-flex items-center px-1.5 py-0.2 rounded border text-[8.5px] font-bold whitespace-nowrap leading-tight ${badgeClass}`}>
+      <div className="flex flex-col items-center justify-center leading-tight">
+        <span className="text-[10px] font-semibold text-zinc-400 whitespace-nowrap">
           {zone}
         </span>
-        <span className="font-normal text-zinc-600 text-xs font-mono">{pStr}</span>
+        <span className="font-normal text-zinc-700 text-xs font-mono">
+          {pStr}
+        </span>
+      </div>
+    );
+  };
+
+  const renderStoreIdCell = (
+    order: DbOrder, 
+    currentInputValue: string, 
+    isDropdownOpen: boolean, 
+    filteredStores: any[]
+  ) => {
+    return (
+      <div className="relative inline-block min-w-[60px]">
+        {isDropdownOpen ? (
+          <>
+            <input
+              autoFocus
+              type="text"
+              value={currentInputValue}
+              placeholder="-"
+              maxLength={10}
+              onChange={(e) => {
+                const val = e.target.value;
+                setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: val }));
+              }}
+              onBlur={() => {
+                // Slight delay so clicking dropdown option registers
+                setTimeout(() => {
+                  setActiveLinkStoreDropdown((current) => (current === order.id ? null : current));
+                  handleUpdateOrderLinkStore(order, currentInputValue);
+                }, 200);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setActiveLinkStoreDropdown(null);
+                  handleUpdateOrderLinkStore(order, currentInputValue);
+                  (e.target as HTMLInputElement).blur();
+                } else if (e.key === "Escape") {
+                  setActiveLinkStoreDropdown(null);
+                }
+              }}
+              className="w-20 text-center px-1.5 py-0.5 text-xs font-normal uppercase rounded border border-[#0B57D0] bg-white text-zinc-800 focus:outline-none shadow-2xs font-mono"
+            />
+            {filteredStores.length > 0 && (
+              <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 w-56 bg-white border border-slate-200 rounded-md shadow-lg z-50 overflow-hidden text-left divide-y divide-slate-100">
+                {filteredStores.map((st: any) => {
+                  const sId = String(st.id || "");
+                  const sName = String(st["Display Name"] || st.display_name || "");
+                  return (
+                    <button
+                      key={sId}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: sId }));
+                        setActiveLinkStoreDropdown(null);
+                        handleUpdateOrderLinkStore(order, sId);
+                      }}
+                      className="w-full px-2.5 py-1.5 text-xs hover:bg-[#F0F4F9] text-left flex flex-col transition-colors cursor-pointer"
+                    >
+                      <span className="font-normal text-zinc-900 flex items-center justify-between">
+                        <span className="font-mono">{sId}</span>
+                        <span className="text-[10px] text-zinc-400 font-normal truncate max-w-[120px]">{sName}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        ) : (
+          <div
+            onClick={() => setActiveLinkStoreDropdown(order.id)}
+            className="cursor-pointer py-1 px-2 text-xs font-normal text-zinc-700 hover:text-[#0B57D0] hover:bg-slate-100/70 rounded transition-colors text-center select-none"
+            title="Click to edit Store ID"
+          >
+            {currentInputValue && currentInputValue.trim() !== "-" ? (
+              <span className="font-normal text-xs text-zinc-700 font-mono">{currentInputValue}</span>
+            ) : (
+              <span className="font-normal text-xs text-zinc-400">—</span>
+            )}
+          </div>
+        )}
       </div>
     );
   };
@@ -7003,181 +7135,81 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
         )}
 
-        {/* Header Action Buttons & Sub-view Switcher for Create Tab */}
+        {/* Header Action Buttons for Create Tab */}
         {activeTab === "create" && (
-          <div className="flex items-center gap-3">
-            {/* Context Actions for Drafts / Job Dispatch on the left */}
-            {createOrderSubView === "drafts" ? (
-              <div className="flex items-center gap-2">
-                {/* 1. Import Order */}
-                <CustomButton 
-                  variant="default"
-                  onClick={() => {
-                    if (!pdfLoading) setIsDoUploadChoiceOpen(true);
-                  }}
-                  disabled={pdfLoading}
-                  className="text-xs font-semibold"
-                >
-                  {pdfLoading ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      <span>{pdfLoadingText}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload size={14} />
-                      <span>Import Order</span>
-                    </>
-                  )}
-                </CustomButton>
+          <div className="flex items-center gap-2">
+            {/* 1. Import Order */}
+            <CustomButton 
+              variant="default"
+              onClick={() => {
+                if (!pdfLoading) setIsDoUploadChoiceOpen(true);
+              }}
+              disabled={pdfLoading}
+              className="text-xs font-semibold"
+            >
+              {pdfLoading ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>{pdfLoadingText}</span>
+                </>
+              ) : (
+                <>
+                  <Upload size={14} />
+                  <span>Import Order</span>
+                </>
+              )}
+            </CustomButton>
 
-                {/* 2. Create Order */}
-                <CustomButton 
-                  variant="dark"
-                  onClick={() => {
-                    setCreateDoNumber(`DO-${Date.now()}`);
-                    setCreateRefNumber("");
-                    setCreateMark(getNextAvailableMark(drafts, pendingOrders));
-                    setCreateType("Normal");
-                    setCreateDeliverTo("");
-                    setCreatePoscode("");
-                    setCreateItems([]);
-                    setIsCreatePanelOpen(true);
-                  }}
-                  className="text-xs font-semibold"
-                >
-                  <Plus size={14} />
-                  <span>Create Order</span>
-                </CustomButton>
+            {/* 2. Create Order */}
+            <CustomButton 
+              variant="dark"
+              onClick={() => {
+                setCreateDoNumber(`DO-${Date.now()}`);
+                setCreateRefNumber("");
+                setCreateMark(getNextAvailableMark(drafts, pendingOrders));
+                setCreateType("Normal");
+                setCreateDeliverTo("");
+                setCreatePoscode("");
+                setCreateItems([]);
+                setIsCreatePanelOpen(true);
+              }}
+              className="text-xs font-semibold"
+            >
+              <Plus size={14} />
+              <span>Create Order</span>
+            </CustomButton>
 
-                {/* 3. Import Return */}
-                <CustomButton 
-                  variant="default"
-                  onClick={() => {
-                    returnPdfInputRef.current?.click();
-                  }}
-                  disabled={isReturnParsing}
-                  className="text-xs font-semibold"
-                >
-                  {isReturnParsing ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      <span>{returnParseProgress.message || "Importing Return..."}</span>
-                    </>
-                  ) : (
-                    <>
-                      <Upload size={14} />
-                      <span>Import Return</span>
-                    </>
-                  )}
-                </CustomButton>
+            {/* 3. Import Return */}
+            <CustomButton 
+              variant="default"
+              onClick={() => {
+                returnPdfInputRef.current?.click();
+              }}
+              disabled={isReturnParsing}
+              className="text-xs font-semibold"
+            >
+              {isReturnParsing ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>{returnParseProgress.message || "Importing Return..."}</span>
+                </>
+              ) : (
+                <>
+                  <Upload size={14} />
+                  <span>Import Return</span>
+                </>
+              )}
+            </CustomButton>
 
-                {/* 4. Create Return */}
-                <CustomButton 
-                  variant="default"
-                  onClick={openCreateReturnPanel}
-                  className="text-xs font-semibold"
-                >
-                  <Plus size={14} />
-                  <span>Create Return</span>
-                </CustomButton>
-              </div>
-            ) : (
-              /* Context Controls for Job Dispatch */
-              <div className="flex items-center gap-2">
-                {jobSubView === "create" && (
-                  <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-blue-50 border border-blue-200 text-[#0B57D0]">
-                    {Object.values(selectedJobOrderIds).filter(Boolean).length} Orders Selected
-                  </span>
-                )}
-                <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg border border-slate-200">
-                  <button
-                    type="button"
-                    onClick={() => setJobSubView("create")}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                      jobSubView === "create"
-                        ? "bg-[#0B57D0] text-white shadow-2xs"
-                        : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-200/60"
-                    }`}
-                  >
-                    <Layers size={13} />
-                    <span>Dispatch</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setJobSubView("history");
-                      fetchJobHistory();
-                    }}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                      jobSubView === "history"
-                        ? "bg-[#0B57D0] text-white shadow-2xs"
-                        : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-200/60"
-                    }`}
-                  >
-                    <History size={13} />
-                    <span>Job History</span>
-                    {jobHistoryList.filter((j) => j.status === "OPEN").length > 0 && (
-                      <span className="ml-1 px-1.5 py-0.2 rounded-full bg-emerald-500 text-white text-[10px] font-bold">
-                        {jobHistoryList.filter((j) => j.status === "OPEN").length}
-                      </span>
-                    )}
-                  </button>
-                </div>
-                {jobSubView === "history" && (
-                  <button
-                    type="button"
-                    onClick={fetchJobHistory}
-                    disabled={jobHistoryLoading}
-                    className="p-1 rounded-md border border-slate-200 text-zinc-600 hover:bg-slate-100 text-xs flex items-center gap-1 cursor-pointer font-semibold shadow-2xs"
-                    title="Refresh Job History"
-                  >
-                    <RefreshCw size={13} className={jobHistoryLoading ? "animate-spin" : ""} />
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* Hairline Divider */}
-            <div className="h-5 w-px bg-slate-200" />
-
-            {/* Sub-view switcher at the VERY END RIGHT */}
-            <div className="inline-flex items-center p-1 bg-slate-50 border border-slate-200 rounded-lg shadow-2xs">
-              <button
-                type="button"
-                onClick={() => setCreateOrderSubView("drafts")}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                  createOrderSubView === "drafts"
-                    ? "bg-white text-zinc-950 font-bold border border-slate-200/90 shadow-xs"
-                    : "text-zinc-500 hover:text-zinc-800 hover:bg-slate-100"
-                }`}
-              >
-                <FileText size={13} className={createOrderSubView === "drafts" ? "text-[#0B57D0]" : "text-zinc-400"} />
-                <span>Draft Orders</span>
-                {drafts.length > 0 && (
-                  <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                    createOrderSubView === "drafts" ? "bg-blue-50 text-[#0B57D0] border border-blue-200" : "bg-slate-200 text-zinc-600"
-                  }`}>
-                    {drafts.length}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCreateOrderSubView("dispatch");
-                  fetchJobHistory();
-                }}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1.5 whitespace-nowrap ${
-                  createOrderSubView === "dispatch"
-                    ? "bg-white text-zinc-950 font-bold border border-slate-200/90 shadow-xs"
-                    : "text-zinc-500 hover:text-zinc-800 hover:bg-slate-100"
-                }`}
-              >
-                <Layers size={13} className={createOrderSubView === "dispatch" ? "text-[#0B57D0]" : "text-zinc-400"} />
-                <span>Job Dispatch</span>
-              </button>
-            </div>
+            {/* 4. Create Return */}
+            <CustomButton 
+              variant="default"
+              onClick={openCreateReturnPanel}
+              className="text-xs font-semibold"
+            >
+              <Plus size={14} />
+              <span>Create Return</span>
+            </CustomButton>
           </div>
         )}
       </div>
@@ -7926,29 +7958,46 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               >
                 Complete
               </button>
-
               <button
                 type="button"
                 onClick={() => {
-                  if (!invoiceLoading) setIsInvoiceUploadChoiceOpen(true);
+                  setActiveDeliveryTab("dispatch");
+                  setSelectedPendingOrderIds({});
+                  fetchJobHistory();
                 }}
-                disabled={invoiceLoading}
-                className={`ml-2 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${
-                  invoiceLoading ? "opacity-80 cursor-not-allowed" : ""
+                className={`px-4 py-2 font-primary text-xs font-bold border-b-2 transition-all duration-200 cursor-pointer ${
+                  activeDeliveryTab === "dispatch"
+                    ? "border-[#0B57D0] text-[#0B57D0]"
+                    : "border-transparent text-zinc-400 hover:text-zinc-700"
                 }`}
               >
-                {invoiceLoading ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    <span>{invoiceLoadingText}</span>
-                  </>
-                ) : (
-                  <>
-                    <Upload size={14} />
-                    <span>Bulk Invoices Upload</span>
-                  </>
-                )}
+                Dispatch History
               </button>
+
+              {activeDeliveryTab !== "dispatch" && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!invoiceLoading) setIsInvoiceUploadChoiceOpen(true);
+                  }}
+                  disabled={invoiceLoading}
+                  className={`ml-2 flex items-center gap-1.5 px-3 py-1.5 bg-[#0B57D0] hover:bg-[#0B57D0]/90 text-white rounded text-xs font-bold cursor-pointer transition-all ${
+                    invoiceLoading ? "opacity-80 cursor-not-allowed" : ""
+                  }`}
+                >
+                  {invoiceLoading ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" />
+                      <span>{invoiceLoadingText}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={14} />
+                      <span>Bulk Invoices Upload</span>
+                    </>
+                  )}
+                </button>
+              )}
               <input
                 type="file"
                 ref={invoicePdfInputRef}
@@ -7973,50 +8022,86 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             </div>
 
             {/* Filter Status & Search Bar */}
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={deliveryStatusFilter}
-                onChange={(e) => setDeliveryStatusFilter(e.target.value)}
-                className="text-xs bg-white border border-slate-200 rounded px-2.5 py-1.5 text-zinc-700 font-medium focus:outline-none focus:border-[#0B57D0] cursor-pointer"
-              >
-                <option value="all">All Statuses</option>
-                {activeDeliveryTab === "pending" ? (
-                  <>
-                    <option value="Ready to Pick">Ready to Pick</option>
-                    <option value="Picking">Picking</option>
-                    <option value="Ready to Deliver">Ready to Deliver</option>
-                    <option value="Out for Delivery">Out for Delivery</option>
-                    <option value="Delivered">Delivered</option>
-                  </>
-                ) : (
-                  <>
-                    <option value="Complete">Complete</option>
-                    <option value="Delivered">Delivered</option>
-                  </>
-                )}
-              </select>
+            {activeDeliveryTab === "dispatch" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={fetchJobHistory}
+                  disabled={jobHistoryLoading}
+                  className="px-2.5 py-1.5 bg-white border border-slate-200 text-zinc-700 hover:bg-slate-50 rounded text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs transition-all disabled:opacity-50"
+                  title="Refresh Job History"
+                >
+                  <RefreshCw size={13} className={jobHistoryLoading ? "animate-spin text-[#0B57D0]" : "text-zinc-600"} />
+                  <span>Refresh</span>
+                </button>
 
-              <div className="relative w-full sm:w-72">
-                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
-                <input
-                  type="text"
-                  value={deliverySearchQuery}
-                  onChange={(e) => setDeliverySearchQuery(e.target.value)}
-                  placeholder="Search ID, Ref, Address, Mark (e.g. A.)..."
-                  className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-200 rounded focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-colors"
-                />
-                {deliverySearchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setDeliverySearchQuery("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
-                    title="Clear Search"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                <div className="relative w-full sm:w-72">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={deliverySearchQuery}
+                    onChange={(e) => setDeliverySearchQuery(e.target.value)}
+                    placeholder="Search token, driver, zone..."
+                    className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-200 rounded focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-colors"
+                  />
+                  {deliverySearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setDeliverySearchQuery("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
+                      title="Clear Search"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={deliveryStatusFilter}
+                  onChange={(e) => setDeliveryStatusFilter(e.target.value)}
+                  className="text-xs bg-white border border-slate-200 rounded px-2.5 py-1.5 text-zinc-700 font-medium focus:outline-none focus:border-[#0B57D0] cursor-pointer"
+                >
+                  <option value="all">All Statuses</option>
+                  {activeDeliveryTab === "pending" ? (
+                    <>
+                      <option value="Ready to Pick">Ready to Pick</option>
+                      <option value="Picking">Picking</option>
+                      <option value="Ready to Deliver">Ready to Deliver</option>
+                      <option value="Out for Delivery">Out for Delivery</option>
+                      <option value="Delivered">Delivered</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="Complete">Complete</option>
+                      <option value="Delivered">Delivered</option>
+                    </>
+                  )}
+                </select>
+
+                <div className="relative w-full sm:w-72">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 w-3.5 h-3.5 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={deliverySearchQuery}
+                    onChange={(e) => setDeliverySearchQuery(e.target.value)}
+                    placeholder="Search ID, Ref, Address, Mark (e.g. A.)..."
+                    className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-200 rounded focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-colors"
+                  />
+                  {deliverySearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setDeliverySearchQuery("")}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
+                      title="Clear Search"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {activeDeliveryTab === "pending" ? (
@@ -8024,7 +8109,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               {/* Bulk Actions Bar for Selected Pending Orders */}
               {selectedPendingCount > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-2.5 bg-blue-50/90 border border-blue-200 rounded-lg shadow-2xs text-xs animate-tableFadeInOnly shrink-0">
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex flex-wrap items-center gap-2.5">
                     <span className="font-bold text-[#0B57D0] flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
                       {selectedPendingCount} order{selectedPendingCount > 1 ? "s" : ""} selected
@@ -8036,6 +8121,26 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       className="text-zinc-500 hover:text-zinc-900 underline cursor-pointer"
                     >
                       Deselect all
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isCreatingGroupDispatch}
+                      onClick={handleCreateGroupDispatchFromSelection}
+                      className="ml-2 flex items-center gap-1 px-3 py-1 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-bold rounded shadow-xs transition-all cursor-pointer disabled:opacity-50"
+                      title="Create 5-letter claim token and generate dispatch job package"
+                    >
+                      {isCreatingGroupDispatch ? (
+                        <>
+                          <Loader2 size={12} className="animate-spin" />
+                          <span>Generating Dispatch...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Layers size={12} />
+                          <span>Create Group Dispatch</span>
+                        </>
+                      )}
                     </button>
                   </div>
 
@@ -8137,7 +8242,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             title={isAllPendingSelected ? "Deselect All" : "Select All"}
                           />
                         </th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10"></th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-44 align-middle z-10"></th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Mark</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Reference Number</th>
@@ -8145,9 +8250,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                         <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Store ID</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Address</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Poscode</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Method</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10 whitespace-nowrap">Method</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Items</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Logs</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200">
@@ -8203,7 +8307,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             <React.Fragment key={`${order.id}-${idx}`}>
                               {showDivider && (
                                 <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
-                                  <td colSpan={12} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                  <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
                                     📅 {dateStr}
                                   </td>
                                 </tr>
@@ -8223,7 +8327,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                     className="rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer w-4 h-4"
                                   />
                                 </td>
-                                <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                                <td className="p-3 w-44 align-middle border-b border-zinc-200">
                                   <div className="flex items-center gap-1.5">
                                     <button
                                       type="button"
@@ -8272,6 +8376,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                     >
                                       <CheckCircle size={12} />
                                     </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenLogs(order)}
+                                      title="View Logs"
+                                      className="w-7 h-7 rounded-md bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 border border-slate-200 shadow-2xs flex items-center justify-center transition-all hover:border-slate-300 cursor-pointer"
+                                    >
+                                      <FileText size={12} />
+                                    </button>
                                   </div>
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
@@ -8295,61 +8407,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   {renderTypeCell(order)}
                                 </td>
                                 <td className="p-3 w-28 align-middle border-b border-zinc-200 relative text-center">
-                                  <div className="relative inline-block w-20">
-                                    <input
-                                      type="text"
-                                      value={currentInputValue}
-                                      placeholder="-"
-                                      maxLength={10}
-                                      onChange={(e) => {
-                                        const val = e.target.value;
-                                        setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: val }));
-                                        setActiveLinkStoreDropdown(order.id);
-                                      }}
-                                      onFocus={() => setActiveLinkStoreDropdown(order.id)}
-                                      onBlur={() => {
-                                        // Slight delay so clicking dropdown option registers
-                                        setTimeout(() => {
-                                          setActiveLinkStoreDropdown((current) => (current === order.id ? null : current));
-                                          handleUpdateOrderLinkStore(order, currentInputValue);
-                                        }, 200);
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") {
-                                          setActiveLinkStoreDropdown(null);
-                                          handleUpdateOrderLinkStore(order, currentInputValue);
-                                          (e.target as HTMLInputElement).blur();
-                                        }
-                                      }}
-                                      className="w-full text-center px-1.5 py-1 text-xs font-semibold uppercase rounded border border-slate-300 bg-white text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] shadow-2xs"
-                                    />
-                                    {isDropdownOpen && filteredStores.length > 0 && (
-                                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 w-56 bg-white border border-slate-200 rounded-md shadow-lg z-50 overflow-hidden text-left divide-y divide-slate-100">
-                                        {filteredStores.map((st: any) => {
-                                          const sId = String(st.id || "");
-                                          const sName = String(st["Display Name"] || st.display_name || "");
-                                          return (
-                                            <button
-                                              key={sId}
-                                              type="button"
-                                              onMouseDown={(e) => {
-                                                e.preventDefault();
-                                                setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: sId }));
-                                                setActiveLinkStoreDropdown(null);
-                                                handleUpdateOrderLinkStore(order, sId);
-                                              }}
-                                              className="w-full px-2.5 py-1.5 text-xs hover:bg-[#F0F4F9] text-left flex flex-col transition-colors cursor-pointer"
-                                            >
-                                              <span className="font-bold text-zinc-900 flex items-center justify-between">
-                                                <span>{sId}</span>
-                                                <span className="text-[10px] text-zinc-400 font-normal truncate max-w-[120px]">{sName}</span>
-                                              </span>
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
+                                  {renderStoreIdCell(order, currentInputValue, isDropdownOpen, filteredStores)}
                                 </td>
                                 <td className="p-3 w-36 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
                                   {order.deliver_to}
@@ -8357,8 +8415,22 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 <td className="p-3 w-28 text-center text-zinc-500 align-middle border-b border-zinc-200">
                                   {renderPoscodeCell(order.poscode)}
                                 </td>
-                                <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
-                                  {order.deliver_method || "Company Delivery"}
+                                <td className="p-3 w-40 align-middle border-b border-zinc-200 text-zinc-500">
+                                  {(() => {
+                                    const activeJob = activeJobOrderByOrderId[order.id];
+                                    return (
+                                      <div className="flex flex-col items-start gap-1">
+                                        {activeJob?.token && (
+                                          <span className="inline-flex items-center px-1.5 py-0.5 rounded bg-blue-50 text-[#0B57D0] border border-blue-200 text-[11px] font-mono font-bold leading-none">
+                                            {activeJob.token}
+                                          </span>
+                                        )}
+                                        <span className="whitespace-nowrap text-xs text-zinc-600 font-normal">
+                                          {order.deliver_method || "Company Delivery"}
+                                        </span>
+                                      </div>
+                                    );
+                                  })()}
                                 </td>
                                 <td className="p-3 w-20 text-center align-middle border-b border-zinc-200">
                                   <button
@@ -8368,15 +8440,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   >
                                     <Boxes size={12} className="text-zinc-500" />
                                     <span>{itemsCount}</span>
-                                  </button>
-                                </td>
-                                <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenLogs(order)}
-                                    className="p-1 rounded hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-all cursor-pointer"
-                                  >
-                                    <History size={16} />
                                   </button>
                                 </td>
                               </tr>
@@ -8389,7 +8452,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 </div>
               )}
             </div>
-          ) : (
+          ) : activeDeliveryTab === "complete" ? (
             <div className="flex-1 w-full min-h-0 relative overflow-hidden">
               {sortedCompletedOrders.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full bg-[#F0F4F9]/40 border border-dashed border-slate-200 rounded select-none">
@@ -8403,18 +8466,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   <table className="w-full text-left font-primary text-xs border-collapse">
                     <thead>
                       <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
-                        <th className="sticky top-0 bg-slate-50 p-3 w-32 align-middle z-10"></th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10"></th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Delivered</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Deliver by</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-44 align-middle z-10">Reference Number</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-28 text-center align-middle z-10">Store ID</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Address</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Method</th>
+                        <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10 whitespace-nowrap">Method</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Invoice</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Amount</th>
                         <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Items</th>
-                        <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Logs</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-200">
@@ -8467,7 +8529,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             <React.Fragment key={order.id}>
                               {showDivider && (
                                 <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
-                                  <td colSpan={12} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                  <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
                                     📅 {dateStr}
                                   </td>
                                 </tr>
@@ -8477,7 +8539,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
                                 } hover:bg-slate-50`}
                               >
-                                <td className="p-3 w-32 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                                <td className="p-3 w-40 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
                                   <button
                                     type="button"
                                     onClick={() => handleTriggerRevokeComplete(order)}
@@ -8501,6 +8563,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                     className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-blue-50 text-zinc-600 hover:text-blue-600 hover:border-blue-300 cursor-pointer transition-all shadow-2xs outline-none"
                                   >
                                     <FileDown size={12} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenLogs(order)}
+                                    title="View Logs"
+                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer transition-all shadow-2xs outline-none"
+                                  >
+                                    <FileText size={12} />
                                   </button>
                                 </td>
                                 <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
@@ -8530,66 +8600,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   </div>
                                 </td>
                                 <td className="p-3 w-28 align-middle border-b border-zinc-200 relative text-center">
-                                  <div className="relative inline-block w-20">
-                                    <input
-                                      type="text"
-                                      value={currentInputValue}
-                                      placeholder="-"
-                                      maxLength={10}
-                                      onChange={(e) => {
-                                        const val = e.target.value;
-                                        setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: val }));
-                                        setActiveLinkStoreDropdown(order.id);
-                                      }}
-                                      onFocus={() => setActiveLinkStoreDropdown(order.id)}
-                                      onBlur={() => {
-                                        // Slight delay so clicking dropdown option registers
-                                        setTimeout(() => {
-                                          setActiveLinkStoreDropdown((current) => (current === order.id ? null : current));
-                                          handleUpdateOrderLinkStore(order, currentInputValue);
-                                        }, 200);
-                                      }}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") {
-                                          setActiveLinkStoreDropdown(null);
-                                          handleUpdateOrderLinkStore(order, currentInputValue);
-                                          (e.target as HTMLInputElement).blur();
-                                        }
-                                      }}
-                                      className="w-full text-center px-1.5 py-1 text-xs font-semibold uppercase rounded border border-slate-300 bg-white text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] shadow-2xs"
-                                    />
-                                    {isDropdownOpen && filteredStores.length > 0 && (
-                                      <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 w-56 bg-white border border-slate-200 rounded-md shadow-lg z-50 overflow-hidden text-left divide-y divide-slate-100">
-                                        {filteredStores.map((st: any) => {
-                                          const sId = String(st.id || "");
-                                          const sName = String(st["Display Name"] || st.display_name || "");
-                                          return (
-                                            <button
-                                              key={sId}
-                                              type="button"
-                                              onMouseDown={(e) => {
-                                                e.preventDefault();
-                                                setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: sId }));
-                                                setActiveLinkStoreDropdown(null);
-                                                handleUpdateOrderLinkStore(order, sId);
-                                              }}
-                                              className="w-full px-2.5 py-1.5 text-xs hover:bg-[#F0F4F9] text-left flex flex-col transition-colors cursor-pointer"
-                                            >
-                                              <span className="font-bold text-zinc-900 flex items-center justify-between">
-                                                <span>{sId}</span>
-                                                <span className="text-[10px] text-zinc-400 font-normal truncate max-w-[120px]">{sName}</span>
-                                              </span>
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
+                                  {renderStoreIdCell(order, currentInputValue, isDropdownOpen, filteredStores)}
                                 </td>
                                 <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
                                   {order.deliver_to}
                                 </td>
-                                <td className="p-3 w-36 align-middle border-b border-zinc-200 text-zinc-500">
+                                <td className="p-3 w-40 align-middle border-b border-zinc-200 text-zinc-500 whitespace-nowrap">
                                   {order.deliver_method || "Company Delivery"}
                                 </td>
                                 <td className="p-3 w-36 font-semibold text-zinc-800 align-middle border-b border-zinc-200">
@@ -8608,15 +8624,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                     <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
                                   </button>
                                 </td>
-                                <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenLogs(order)}
-                                    className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 cursor-pointer transition-all outline-none mx-auto"
-                                  >
-                                    <FileText size={12} />
-                                  </button>
-                                </td>
                               </tr>
                             </React.Fragment>
                           );
@@ -8626,6 +8633,199 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                   </table>
                 </div>
               )}
+            </div>
+          ) : (
+            <div className="h-full overflow-auto border border-slate-200 rounded bg-white">
+              <table className="w-full text-left font-primary text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
+                    <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Claim Token</th>
+                    <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
+                    <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Orders Grouped</th>
+                    <th className="sticky top-0 bg-slate-50 p-3 w-56 align-middle z-10">Claimed By</th>
+                    <th className="sticky top-0 bg-slate-50 p-3 text-right align-middle z-10">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-200">
+                  {jobHistoryLoading ? (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-zinc-500">
+                        <Loader2 size={24} className="animate-spin text-[#0B57D0] mx-auto mb-2" />
+                        <span>Loading Job Packages...</span>
+                      </td>
+                    </tr>
+                  ) : jobHistoryList.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-zinc-400">
+                        <Layers size={32} className="mx-auto mb-2 text-zinc-300" />
+                        <p className="font-semibold text-zinc-600">No Job Packages Found</p>
+                        <p className="text-[11px] text-zinc-400 mt-1">
+                          Select pending delivery orders and click "Create Group Dispatch" to generate tokens and paperwork.
+                        </p>
+                      </td>
+                    </tr>
+                  ) : (
+                    jobHistoryList
+                      .filter((job) => {
+                        if (!deliverySearchQuery.trim()) return true;
+                        const q = deliverySearchQuery.toLowerCase().trim();
+                        const tokenMatch = (job.token || "").toLowerCase().includes(q);
+                        const driverMatch = (job.driver || "").toLowerCase().includes(q);
+                        return tokenMatch || driverMatch;
+                      })
+                      .map((job, idx) => {
+                        const isOpen = job.status === "OPEN";
+                        const isClaimed = job.status === "CLAIMED";
+                        const isCancelled = job.status === "CANCELLED";
+
+                        let orderIdsCount = 0;
+                        let jobOrderIds: string[] = [];
+                        try {
+                          const ids = typeof job.order_ids === "string" ? JSON.parse(job.order_ids) : (job.order_ids || []);
+                          jobOrderIds = Array.isArray(ids) ? ids.map((id: any) => String(id)) : [];
+                          orderIdsCount = jobOrderIds.length > 0 ? jobOrderIds.length : (job.total_orders || 0);
+                        } catch (_) {
+                          orderIdsCount = job.total_orders || 0;
+                        }
+
+                        // Count delivered vs pending orders in this dispatch package
+                        const deliveredCount = jobOrderIds.filter((id) => {
+                          const ord = dbOrders.find((o) => String(o.id) === id || String(o.do_number) === id || String(o.ref_number) === id);
+                          return ord ? (ord.status === "Delivered" || ord.status === "Complete" || ord.completed === true || String(ord.completed) === "true") : false;
+                        }).length;
+
+                        const pendingCount = Math.max(0, orderIdsCount - deliveredCount);
+                        const isAllOrdersCompleted = orderIdsCount > 0 && pendingCount === 0;
+
+                        const claimedDateStr = job.claimed_at
+                          ? new Date(Number(job.claimed_at)).toLocaleString("en-SG", {
+                              day: "2-digit",
+                              month: "2-digit",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              hour12: true
+                            })
+                          : null;
+
+                        return (
+                          <tr 
+                            key={job.id || job.token} 
+                            className={`transition-all h-14 ${
+                              idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
+                            } hover:bg-slate-50`}
+                          >
+                            {/* Token */}
+                            <td className="p-3 w-36 align-middle border-b border-zinc-200 font-mono font-bold text-xs text-zinc-900">
+                              {job.token}
+                            </td>
+
+                            {/* Status */}
+                            <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                              {isOpen && !isAllOrdersCompleted && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap bg-emerald-50 text-emerald-700 border-emerald-200">
+                                  Active / Open
+                                </span>
+                              )}
+                              {isOpen && isAllOrdersCompleted && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap bg-zinc-100 text-zinc-600 border-zinc-300">
+                                  Unclaimed / Closed
+                                </span>
+                              )}
+                              {isClaimed && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap bg-blue-50 text-blue-700 border-blue-200">
+                                  Claimed & Loaded
+                                </span>
+                              )}
+                              {(isCancelled || job.status === "REVOKED") && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap bg-zinc-100 text-zinc-700 border-zinc-300">
+                                  {job.status === "REVOKED" ? "Revoked" : "Voided / Cancelled"}
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Orders Count */}
+                            <td className="p-3 w-36 align-middle border-b border-zinc-200">
+                              <div className="flex flex-col items-start gap-0.5">
+                                <span className="font-semibold text-zinc-900 text-xs">
+                                  {orderIdsCount} Orders
+                                  {job.total_qty > 0 && (
+                                    <span className="text-zinc-400 text-[11px] font-normal ml-1">({job.total_qty} units)</span>
+                                  )}
+                                </span>
+                                <span className="text-[11px] text-zinc-400 font-normal leading-none">
+                                  {orderIdsCount === 0 
+                                    ? "0 orders" 
+                                    : pendingCount === 0 
+                                      ? "all delivered" 
+                                      : `${pendingCount} pending`}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Claimed By */}
+                            <td className="p-3 w-56 align-middle border-b border-zinc-200">
+                              {job.driver ? (
+                                <div>
+                                  <span className="font-semibold text-zinc-800 text-xs">{job.driver}</span>
+                                  {claimedDateStr && (
+                                    <div className="text-[10px] text-zinc-400">{claimedDateStr}</div>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-zinc-400 italic text-xs">Not claimed yet</span>
+                              )}
+                            </td>
+
+                            {/* Actions */}
+                            <td className="p-3 align-middle border-b border-zinc-200 text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                {(isOpen || isClaimed) && (
+                                  <button
+                                    type="button"
+                                    disabled={isAllOrdersCompleted}
+                                    onClick={() => {
+                                      if (isAllOrdersCompleted) return;
+                                      handleOpenRevokeJobModal(job);
+                                    }}
+                                    className={`w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border transition-all shadow-2xs outline-none ${
+                                      isAllOrdersCompleted
+                                        ? "opacity-40 cursor-not-allowed bg-slate-50 border-slate-200 text-zinc-300"
+                                        : "bg-white border-slate-200 text-zinc-600 hover:text-amber-800 hover:bg-amber-50 hover:border-amber-300 cursor-pointer"
+                                    }`}
+                                    title={
+                                      isAllOrdersCompleted
+                                        ? "All orders in this package have already been delivered/completed"
+                                        : "Revoke job and return uncompleted orders to Ready to Deliver"
+                                    }
+                                  >
+                                    <RotateCcw size={12} className={isAllOrdersCompleted ? "text-zinc-300" : "text-amber-600"} />
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleClickDeleteJob(job)}
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-red-50 text-zinc-600 hover:text-red-600 hover:border-red-200 cursor-pointer transition-all shadow-2xs outline-none"
+                                  title="Delete this job package record"
+                                >
+                                  <Trash2 size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleReprintJobPdf(job)}
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer transition-all shadow-2xs outline-none"
+                                  title="Print Staging & Driver PDF"
+                                >
+                                  <Printer size={12} />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                  )}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
@@ -8760,7 +8960,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 <table className="w-full text-left font-primary text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
-                      <th className="sticky top-0 bg-slate-50 p-3 w-32 align-middle z-10"></th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10"></th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-40 align-middle z-10">Collected</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Collected by</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Status</th>
@@ -8771,7 +8971,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Credit Note</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Amount</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Items</th>
-                      <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Logs</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200">
@@ -8811,11 +9010,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                         const filteredStores = currentInputValue.trim()
                           ? stores
                               .filter((s: any) => {
-                                const q = currentInputValue.trim().toLowerCase();
-                                const idStr = String(s.id || "").toLowerCase();
-                                const nameStr = String(s["Display Name"] || s.display_name || "").toLowerCase();
-                                const addrStr = String(s.Address || s.address || "").toLowerCase();
-                                return idStr.includes(q) || nameStr.includes(q) || addrStr.includes(q);
+                                  const q = currentInputValue.trim().toLowerCase();
+                                  const idStr = String(s.id || "").toLowerCase();
+                                  const nameStr = String(s["Display Name"] || s.display_name || "").toLowerCase();
+                                  const addrStr = String(s.Address || s.address || "").toLowerCase();
+                                  return idStr.includes(q) || nameStr.includes(q) || addrStr.includes(q);
                               })
                               .slice(0, 5)
                           : stores.slice(0, 5);
@@ -8824,7 +9023,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           <React.Fragment key={order.id}>
                             {showDivider && (
                               <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
-                                <td colSpan={12} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                <td colSpan={11} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
                                   📅 {dateStr}
                                 </td>
                               </tr>
@@ -8834,7 +9033,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
                               } hover:bg-slate-50`}
                             >
-                              <td className="p-3 w-32 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                              <td className="p-3 w-40 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
                                 <button
                                   type="button"
                                   onClick={() => handleTriggerRevokeComplete(order)}
@@ -8859,6 +9058,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 >
                                   <FileDown size={12} />
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenLogs(order)}
+                                  title="View Logs"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 cursor-pointer transition-all outline-none"
+                                >
+                                  <FileText size={12} />
+                                </button>
                               </td>
                               <td className="p-3 w-40 font-semibold text-zinc-700 align-middle border-b border-zinc-200">
                                 {formatTimestamp(deliveredTs)}
@@ -8881,61 +9088,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 {order.ref_number || order.do_number}
                               </td>
                               <td className="p-3 w-28 align-middle border-b border-zinc-200 relative text-center">
-                                <div className="relative inline-block w-20">
-                                  <input
-                                    type="text"
-                                    value={currentInputValue}
-                                    placeholder="-"
-                                    maxLength={10}
-                                    onChange={(e) => {
-                                      const val = e.target.value;
-                                      setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: val }));
-                                      setActiveLinkStoreDropdown(order.id);
-                                    }}
-                                    onFocus={() => setActiveLinkStoreDropdown(order.id)}
-                                    onBlur={() => {
-                                      // Slight delay so clicking dropdown option registers
-                                      setTimeout(() => {
-                                        setActiveLinkStoreDropdown((current) => (current === order.id ? null : current));
-                                        handleUpdateOrderLinkStore(order, currentInputValue);
-                                      }, 200);
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter") {
-                                        setActiveLinkStoreDropdown(null);
-                                        handleUpdateOrderLinkStore(order, currentInputValue);
-                                        (e.target as HTMLInputElement).blur();
-                                      }
-                                    }}
-                                    className="w-full text-center px-1.5 py-1 text-xs font-semibold uppercase rounded border border-slate-300 bg-white text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0] shadow-2xs"
-                                  />
-                                  {isDropdownOpen && filteredStores.length > 0 && (
-                                    <div className="absolute left-1/2 -translate-x-1/2 top-full mt-1 w-56 bg-white border border-slate-200 rounded-md shadow-lg z-50 overflow-hidden text-left divide-y divide-slate-100">
-                                      {filteredStores.map((st: any) => {
-                                        const sId = String(st.id || "");
-                                        const sName = String(st["Display Name"] || st.display_name || "");
-                                        return (
-                                          <button
-                                            key={sId}
-                                            type="button"
-                                            onMouseDown={(e) => {
-                                              e.preventDefault();
-                                              setLinkStoreInputValues((prev) => ({ ...prev, [order.id]: sId }));
-                                              setActiveLinkStoreDropdown(null);
-                                              handleUpdateOrderLinkStore(order, sId);
-                                            }}
-                                            className="w-full px-2.5 py-1.5 text-xs hover:bg-[#F0F4F9] text-left flex flex-col transition-colors cursor-pointer"
-                                          >
-                                            <span className="font-bold text-zinc-900 flex items-center justify-between">
-                                              <span>{sId}</span>
-                                              <span className="text-[10px] text-zinc-400 font-normal truncate max-w-[120px]">{sName}</span>
-                                            </span>
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-                                  )}
-                                </div>
+                                {renderStoreIdCell(order, currentInputValue, isDropdownOpen, filteredStores)}
                               </td>
                               <td className="p-3 w-56 text-zinc-500 align-middle border-b border-zinc-200 whitespace-nowrap" title={order.deliver_to}>
                                 {order.deliver_to}
@@ -8959,15 +9112,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
                                 </button>
                               </td>
-                              <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenLogs(order)}
-                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 cursor-pointer transition-all outline-none mx-auto"
-                                >
-                                  <FileText size={12} />
-                                </button>
-                              </td>
                             </tr>
                           </React.Fragment>
                         );
@@ -8981,7 +9125,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 <table className="w-full text-left font-primary text-xs border-collapse">
                   <thead>
                     <tr className="bg-slate-50 text-zinc-700 font-bold border-b border-slate-200 h-12">
-                      <th className="sticky top-0 bg-slate-50 p-3 w-28 align-middle z-10"></th>
+                      <th className="sticky top-0 bg-slate-50 p-3 w-44 align-middle z-10"></th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Mark</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-32 align-middle z-10">Status</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-44 align-middle z-10">Ref Number</th>
@@ -8989,7 +9133,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Collect Method</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-36 align-middle z-10">Due Date</th>
                       <th className="sticky top-0 bg-slate-50 p-3 w-20 text-center align-middle z-10">Items</th>
-                      <th className="sticky top-0 bg-slate-50 p-3 w-16 text-center align-middle z-10">Logs</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-200">
@@ -9021,7 +9164,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                           <React.Fragment key={order.id}>
                             {showDivider && (
                               <tr className="bg-[#F1F3F4]/80 text-[#1A73E8] border-y border-[#DADCE0]">
-                                <td colSpan={9} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
+                                <td colSpan={8} className="p-2.5 pl-4 text-xs font-bold tracking-wide uppercase select-none">
                                   📅 {dateStr}
                                 </td>
                               </tr>
@@ -9031,7 +9174,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 idx % 2 === 0 ? "bg-[#FFFFFF]" : "bg-[#F8F9FA]"
                               } hover:bg-slate-50`}
                             >
-                              <td className="p-3 w-36 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
+                              <td className="p-3 w-44 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
                                 <button
                                   type="button"
                                   onClick={() => handleDeleteReturnOrder(order)}
@@ -9069,6 +9212,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 >
                                   <CheckCircle size={12} />
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenLogs(order)}
+                                  title="View Logs"
+                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-slate-100 text-zinc-600 hover:text-zinc-950 hover:border-slate-300 cursor-pointer transition-all shadow-2xs outline-none"
+                                >
+                                  <FileText size={12} />
+                                </button>
                               </td>
                               <td className="p-3 w-16 text-center font-bold text-zinc-800 align-middle border-b border-zinc-200">
                                 {order.mark}
@@ -9100,15 +9251,6 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   <span className="font-bold text-[10px] text-zinc-600">{itemsCount}</span>
                                 </button>
                               </td>
-                              <td className="p-3 w-16 text-center align-middle border-b border-zinc-200">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenLogs(order)}
-                                  className="p-1 rounded hover:bg-zinc-200 text-zinc-600 hover:text-zinc-950 transition-all cursor-pointer"
-                                >
-                                  <History size={16} />
-                                </button>
-                              </td>
                             </tr>
                           </React.Fragment>
                         );
@@ -9121,574 +9263,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           </div>
         </div>
       )}
-
-      {/* TAB CONTENT: CREATE JOB / JOB DISPATCH */}
-      {((activeTab === "create" && createOrderSubView === "dispatch") || activeTab === "job") && (
-        <div className="flex-1 flex flex-col gap-3 animate-tableFadeInOnly min-h-0 overflow-hidden">
-          {/* SUBVIEW 1: CREATE / DISPATCH NEW JOB */}
-          {jobSubView === "create" && (
-            <>
-              {/* Last Generated Job Alert Banner */}
-          {lastGeneratedJob && (
-            <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-lg flex flex-wrap items-center justify-between gap-3 shrink-0 shadow-2xs">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-[#0B57D0] text-white flex items-center justify-center font-bold text-lg shadow-xs">
-                  <QrCode size={20} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-zinc-900">Job Package Created Successfully:</span>
-                    <span className="px-2.5 py-0.5 bg-white border border-blue-300 rounded font-mono font-bold text-[#0B57D0] text-sm tracking-wider">
-                      {lastGeneratedJob.token}
-                    </span>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(lastGeneratedJob.token);
-                        showToast(`Copied token "${lastGeneratedJob.token}" to clipboard!`, "success");
-                      }}
-                      className="text-[11px] font-semibold text-[#0B57D0] hover:underline cursor-pointer"
-                    >
-                      Copy Token
-                    </button>
-                  </div>
-                  <p className="text-[11px] text-zinc-600 mt-0.5">
-                    {lastGeneratedJob.orderCount} orders grouped ({lastGeneratedJob.totalQty} items). Driver can open <strong>Driver App &gt; Menu &gt; Batch Load (Job Code)</strong> and enter <strong>{lastGeneratedJob.token}</strong> to load all at once.
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setLastGeneratedJob(null)}
-                  className="p-1 rounded text-zinc-400 hover:text-zinc-600 hover:bg-blue-100/50 cursor-pointer"
-                  title="Dismiss banner"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Job Filter & Toolbar */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 px-1 border-b border-slate-200 pb-2.5 shrink-0">
-            {/* Zone & Method Filter Pills */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-xs font-semibold text-zinc-500 mr-1">Zone / Type:</span>
-              {["All", "Central", "East", "North", "North-East", "West", "South", "Warehouse Pickup"].map((zone) => {
-                const isSelected = jobZoneFilter === zone;
-                return (
-                  <button
-                    key={zone}
-                    onClick={() => setJobZoneFilter(zone)}
-                    className={`px-2.5 py-1 text-xs font-semibold rounded-full transition-colors cursor-pointer ${
-                      isSelected
-                        ? "bg-[#0B57D0] text-white shadow-2xs"
-                        : "bg-white border border-slate-200 text-zinc-700 hover:bg-slate-50 hover:text-zinc-900"
-                    }`}
-                  >
-                    {zone}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Search & Actions */}
-            <div className="flex items-center gap-2.5">
-              <div className="relative">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                <input
-                  type="text"
-                  placeholder="Search DO, address, poscode..."
-                  value={jobSearchQuery}
-                  onChange={(e) => setJobSearchQuery(e.target.value)}
-                  className="pl-8 pr-3 py-1 text-xs border border-slate-200 rounded-lg w-52 md:w-60 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                />
-                {jobSearchQuery && (
-                  <button
-                    onClick={() => setJobSearchQuery("")}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
-                  >
-                    <X size={12} />
-                  </button>
-                )}
-              </div>
-
-              {/* Action Button: Generate Job & PDF */}
-              <CustomButton
-                variant="default"
-                disabled={jobGenerating || Object.values(selectedJobOrderIds).filter(Boolean).length === 0}
-                onClick={async () => {
-                  const selectedIds = Object.keys(selectedJobOrderIds).filter((id) => selectedJobOrderIds[id]);
-                  if (selectedIds.length === 0) {
-                    showToast("Please select at least 1 order to generate a job package.", "error");
-                    return;
-                  }
-
-                  const selectedOrders = dbOrders.filter((o) => selectedIds.includes(o.id));
-                  setJobGenerating(true);
-
-                  try {
-                    // Call backend API to create job package
-                    const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/job", {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        action: "create",
-                        order_ids: selectedIds
-                      })
-                    });
-
-                    if (!res.ok) {
-                      throw new Error(`Server returned error status ${res.status}`);
-                    }
-
-                    const json = await res.json();
-                    if (!json.success || !json.token) {
-                      throw new Error(json.error || "Failed to create job");
-                    }
-
-                    const token = json.token;
-
-                    // Calculate total qty
-                    let totalQty = 0;
-                    selectedOrders.forEach((ord) => {
-                      let items: SKUItem[] = [];
-                      try {
-                        items = typeof ord.items === "string" ? JSON.parse(ord.items) : (ord.items || []);
-                      } catch (_) {}
-                      items.forEach((it) => {
-                        totalQty += Number(it.qty || 1);
-                      });
-                    });
-
-                    // Generate PDF Loading Sheet & Route Breakdown
-                    await handleGenerateJobPdf(token, selectedOrders);
-
-                    // Update UI state
-                    setLastGeneratedJob({
-                      token,
-                      orderCount: selectedOrders.length,
-                      totalQty
-                    });
-
-                    // Clear selections
-                    setSelectedJobOrderIds({});
-                    showToast(`Job package created! Claim Token: [ ${token} ]`, "success");
-                  } catch (err: any) {
-                    console.error("Job generation error:", err);
-                    showToast("Failed to create job package: " + err.message, "error");
-                  } finally {
-                    setJobGenerating(false);
-                  }
-                }}
-                className="text-xs font-semibold shrink-0"
-              >
-                {jobGenerating ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin mr-1.5" />
-                    <span>Generating PDF...</span>
-                  </>
-                ) : (
-                  <>
-                    <Layers size={14} className="mr-1.5" />
-                    <span>
-                      {jobZoneFilter === "Warehouse Pickup" || jobZoneFilter === "Self-Collect"
-                        ? `Generate Pickup Sheet & PDF (${Object.values(selectedJobOrderIds).filter(Boolean).length})`
-                        : `Generate Job Package & PDF (${Object.values(selectedJobOrderIds).filter(Boolean).length})`}
-                    </span>
-                  </>
-                )}
-              </CustomButton>
-            </div>
-          </div>
-
-          {/* Orders Table for Job Selection */}
-          {(() => {
-            // Filter undelivered orders
-            const candidateOrders = dbOrders.filter((o) => {
-              const isDelivered = o.status === "Delivered" || String(o.completed) === "true" || o.completed === true;
-              const isCollectedReturn = o.type === "Return" && (o.status === "Collected" || o.status === "Return Collected");
-              if (isDelivered || isCollectedReturn) return false;
-
-              // Zone & Warehouse Pickup / Self-Collect filter
-              const m = String(o.deliver_method || "").toLowerCase();
-              const p = String(o.poscode || "").toLowerCase();
-              const isSelfCollect = m.includes("self") || m.includes("collect") || m.includes("pickup") || m.includes("warehouse") || p.includes("self") || p.includes("pickup");
-              const orderZone = getZoneFromPostcode(o.poscode);
-
-              if (jobZoneFilter === "Warehouse Pickup" || jobZoneFilter === "Self-Collect") {
-                if (!isSelfCollect) return false;
-              } else if (jobZoneFilter !== "All") {
-                if (isSelfCollect || orderZone !== jobZoneFilter) return false;
-              }
-
-              // Search query
-              if (jobSearchQuery.trim()) {
-                const q = jobSearchQuery.toLowerCase().trim();
-                const matchDo = (o.do_number || "").toLowerCase().includes(q);
-                const matchRef = (o.ref_number || "").toLowerCase().includes(q);
-                const matchDeliverTo = (o.deliver_to || "").toLowerCase().includes(q);
-                const matchPoscode = (o.poscode || "").toLowerCase().includes(q);
-                const matchMark = (o.mark || "").toLowerCase().includes(q);
-                const matchZone = orderZone.toLowerCase().includes(q);
-                const matchMethod = String(o.deliver_method || "").toLowerCase().includes(q);
-                if (!matchDo && !matchRef && !matchDeliverTo && !matchPoscode && !matchMark && !matchZone && !matchMethod) return false;
-              }
-              return true;
-            });
-
-            const allCandidateIds = candidateOrders.map((o) => o.id);
-            const isAllSelected = candidateOrders.length > 0 && candidateOrders.every((o) => selectedJobOrderIds[o.id]);
-
-            return (
-              <div className="flex-1 min-h-0 overflow-auto border border-slate-200 rounded-lg bg-white shadow-2xs">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
-                    <tr className="text-zinc-600 font-bold text-[11px] uppercase tracking-wider">
-                      <th className="py-2.5 px-3 w-10 text-center">
-                        <input
-                          type="checkbox"
-                          checked={isAllSelected}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              const newMap = { ...selectedJobOrderIds };
-                              allCandidateIds.forEach((id) => (newMap[id] = true));
-                              setSelectedJobOrderIds(newMap);
-                            } else {
-                              const newMap = { ...selectedJobOrderIds };
-                              allCandidateIds.forEach((id) => delete newMap[id]);
-                              setSelectedJobOrderIds(newMap);
-                            }
-                          }}
-                          className="rounded text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
-                        />
-                      </th>
-                      <th className="py-2.5 px-3 w-16">Mark</th>
-                      <th className="py-2.5 px-3 w-20">Type</th>
-                      <th className="py-2.5 px-3 w-36">DO / Ref Number</th>
-                      <th className="py-2.5 px-3 min-w-[200px]">Delivery Address</th>
-                      <th className="py-2.5 px-3 w-28">Zone / Postcode</th>
-                      <th className="py-2.5 px-3 min-w-[160px]">Items / Qty</th>
-                      <th className="py-2.5 px-3 w-32">Current Status</th>
-                      <th className="py-2.5 px-3 w-28">Driver</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs font-medium text-zinc-700">
-                    {candidateOrders.length === 0 ? (
-                      <tr>
-                        <td colSpan={9} className="py-12 text-center text-zinc-400">
-                          <Layers size={28} className="mx-auto mb-2 opacity-30 text-zinc-500" />
-                          <p className="font-semibold text-zinc-500">No undelivered orders found for this zone / filter.</p>
-                          <p className="text-[11px] text-zinc-400 mt-0.5">Try selecting "All" zones or clearing your search term.</p>
-                        </td>
-                      </tr>
-                    ) : (
-                      candidateOrders.map((order) => {
-                        const isSelected = !!selectedJobOrderIds[order.id];
-                        const zone = getZoneFromPostcode(order.poscode);
-                        const activeJob = activeJobOrderByOrderId[String(order.id).trim()];
-
-                        let items: SKUItem[] = [];
-                        try {
-                          items = typeof order.items === "string" ? JSON.parse(order.items) : (order.items || []);
-                        } catch (_) {}
-                        const totalQty = items.reduce((acc, it) => acc + (Number(it.qty) || 0), 0);
-
-                        return (
-                          <tr
-                            key={order.id}
-                            onClick={() => {
-                              setSelectedJobOrderIds((prev) => ({
-                                ...prev,
-                                [order.id]: !prev[order.id]
-                              }));
-                            }}
-                            className={`hover:bg-slate-50 transition-colors cursor-pointer ${
-                              isSelected ? "bg-blue-50/60" : ""
-                            }`}
-                          >
-                            <td className="py-2.5 px-3 text-center" onClick={(e) => e.stopPropagation()}>
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={(e) => {
-                                  setSelectedJobOrderIds((prev) => ({
-                                    ...prev,
-                                    [order.id]: e.target.checked
-                                  }));
-                                }}
-                                className="rounded text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
-                              />
-                            </td>
-                            <td className="py-2.5 px-3 font-bold text-zinc-900">
-                              <span className="px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-zinc-800 text-[11px] font-mono">
-                                {order.mark || "-"}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                  order.type === "Urgent"
-                                    ? "bg-red-50 text-red-600 border border-red-200"
-                                    : order.type === "Appointment"
-                                    ? "bg-purple-50 text-purple-600 border border-purple-200"
-                                    : order.type === "Return"
-                                    ? "bg-amber-50 text-amber-700 border border-amber-200"
-                                    : "bg-slate-100 text-zinc-600 border border-slate-200"
-                                }`}
-                              >
-                                {order.type || "Normal"}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3 font-semibold text-zinc-900">
-                              <div className="flex items-center gap-1.5 flex-wrap">
-                                <span>{order.do_number || "-"}</span>
-                                {activeJob && (
-                                  <span
-                                    className="px-1.5 py-0.5 rounded bg-blue-50 text-[#0B57D0] border border-blue-200 text-[10px] font-mono font-bold shrink-0 inline-flex items-center gap-1 shadow-2xs"
-                                    title={`Already assigned in Active Job Package [${activeJob.token}]`}
-                                  >
-                                    <Layers size={10} />
-                                    {activeJob.token}
-                                  </span>
-                                )}
-                              </div>
-                              {order.ref_number && (
-                                <div className="text-[11px] text-zinc-400 font-mono">{order.ref_number}</div>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <div className="font-semibold text-zinc-800 line-clamp-1">{order.deliver_to || "Address not provided"}</div>
-                            </td>
-                            <td className="py-2.5 px-3 text-center">
-                              {renderPoscodeCell(order.poscode)}
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <span className="font-bold text-zinc-900">{totalQty} units</span>
-                              <span className="text-zinc-400 text-[11px] ml-1.5">({items.length} SKUs)</span>
-                            </td>
-                            <td className="py-2.5 px-3">
-                              <div className="flex flex-col gap-0.5 items-start">
-                                <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-zinc-700 text-[11px] font-semibold whitespace-nowrap">
-                                  {order.status || "Ready to Pick"}
-                                </span>
-                                {activeJob && (
-                                  <span className="text-[10px] font-semibold text-[#0B57D0]">
-                                    In Job [{activeJob.token}]
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="py-2.5 px-3 text-zinc-600">
-                              {order.driver || <span className="text-zinc-400 italic">Unassigned</span>}
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            );
-          })()}
-            </>
-          )}
-
-          {/* SUBVIEW 2: JOB HISTORY & TOKEN MANAGEMENT */}
-          {jobSubView === "history" && (
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-white border border-slate-200 rounded-lg shadow-2xs">
-              <div className="flex-1 min-h-0 overflow-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead className="bg-slate-50 sticky top-0 z-10 border-b border-slate-200">
-                    <tr className="text-zinc-600 font-bold text-[11px] uppercase tracking-wider">
-                      <th className="py-2.5 px-3 w-32">Claim Token</th>
-                      <th className="py-2.5 px-3 w-36">Status</th>
-                      <th className="py-2.5 px-3 w-28">Zone / Type</th>
-                      <th className="py-2.5 px-3 w-36">Orders Grouped</th>
-                      <th className="py-2.5 px-3 w-40">Created At</th>
-                      <th className="py-2.5 px-3 w-40">Claimed By</th>
-                      <th className="py-2.5 px-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 text-xs">
-                    {jobHistoryLoading ? (
-                      <tr>
-                        <td colSpan={7} className="py-12 text-center text-zinc-500">
-                          <Loader2 size={24} className="animate-spin text-[#0B57D0] mx-auto mb-2" />
-                          <span>Loading Job Packages...</span>
-                        </td>
-                      </tr>
-                    ) : jobHistoryList.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="py-12 text-center text-zinc-400">
-                          <Layers size={32} className="mx-auto mb-2 text-zinc-300" />
-                          <p className="font-semibold text-zinc-600">No Job Packages Found</p>
-                          <p className="text-[11px] text-zinc-400 mt-1">
-                            Create a job package from the Dispatch tab to generate tokens and staging sheets.
-                          </p>
-                        </td>
-                      </tr>
-                    ) : (
-                      jobHistoryList.map((job) => {
-                        const isOpen = job.status === "OPEN";
-                        const isClaimed = job.status === "CLAIMED";
-                        const isCancelled = job.status === "CANCELLED";
-
-                        let orderIdsCount = 0;
-                        try {
-                          const ids = typeof job.order_ids === "string" ? JSON.parse(job.order_ids) : (job.order_ids || []);
-                          orderIdsCount = Array.isArray(ids) ? ids.length : (job.total_orders || 0);
-                        } catch (_) {
-                          orderIdsCount = job.total_orders || 0;
-                        }
-
-                        const createdDateStr = job.created_at
-                          ? new Date(Number(job.created_at)).toLocaleString("en-SG", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              hour12: true
-                            })
-                          : "-";
-
-                        const claimedDateStr = job.claimed_at
-                          ? new Date(Number(job.claimed_at)).toLocaleString("en-SG", {
-                              day: "2-digit",
-                              month: "2-digit",
-                              year: "numeric",
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              hour12: true
-                            })
-                          : null;
-
-                        return (
-                          <tr key={job.id || job.token} className="hover:bg-slate-50/80 transition-colors">
-                            {/* Token */}
-                            <td className="py-2.5 px-3">
-                              <div className="flex items-center gap-1.5">
-                                <span className="font-mono font-bold text-sm text-[#0B57D0] px-2 py-0.5 bg-blue-50 border border-blue-200 rounded">
-                                  {job.token}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(job.token);
-                                    showToast(`Copied token "${job.token}" to clipboard!`, "success");
-                                  }}
-                                  className="text-[11px] text-zinc-400 hover:text-zinc-700 cursor-pointer p-0.5"
-                                  title="Copy Token"
-                                >
-                                  Copy
-                                </button>
-                              </div>
-                            </td>
-
-                            {/* Status */}
-                            <td className="py-2.5 px-3">
-                              {isOpen && (
-                                <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-bold inline-flex items-center gap-1">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                                  Active / Open
-                                </span>
-                              )}
-                              {isClaimed && (
-                                <span className="px-2 py-0.5 rounded-full bg-blue-50 text-[#0B57D0] border border-blue-200 text-[11px] font-bold inline-flex items-center gap-1">
-                                  <CheckCircle2 size={12} />
-                                  Claimed & Loaded
-                                </span>
-                              )}
-                              {(isCancelled || job.status === "REVOKED") && (
-                                <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-semibold inline-flex items-center gap-1">
-                                  <Ban size={12} />
-                                  {job.status === "REVOKED" ? "Revoked" : "Voided / Cancelled"}
-                                </span>
-                              )}
-                            </td>
-
-                            {/* Zone / Type */}
-                            <td className="py-2.5 px-3">
-                              <span className="px-2 py-0.5 rounded bg-slate-100 text-zinc-700 font-semibold text-[11px]">
-                                {job.zone || "All"}
-                              </span>
-                            </td>
-
-                            {/* Orders Count */}
-                            <td className="py-2.5 px-3">
-                              <span className="font-bold text-zinc-900">{orderIdsCount} Orders</span>
-                              {job.total_qty > 0 && (
-                                <span className="text-zinc-500 text-[11px] ml-1">({job.total_qty} units)</span>
-                              )}
-                            </td>
-
-                            {/* Created At */}
-                            <td className="py-2.5 px-3 text-zinc-600 font-medium text-[11px]">
-                              {createdDateStr}
-                            </td>
-
-                            {/* Claimed By */}
-                            <td className="py-2.5 px-3 text-zinc-700 text-[11px]">
-                              {job.driver ? (
-                                <div>
-                                  <span className="font-bold text-zinc-900">{job.driver}</span>
-                                  {claimedDateStr && (
-                                    <div className="text-[10px] text-zinc-400">{claimedDateStr}</div>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-zinc-400 italic">Not claimed yet</span>
-                              )}
-                            </td>
-
-                            {/* Actions */}
-                            <td className="py-2.5 px-3 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => handleReprintJobPdf(job)}
-                                  className="px-2.5 py-1 rounded bg-white border border-slate-200 text-zinc-700 hover:bg-slate-50 hover:text-zinc-900 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                                  title="Re-generate and download PDF"
-                                >
-                                  <Printer size={13} className="text-zinc-600" />
-                                  <span>Print PDF</span>
-                                </button>
-                                {(isOpen || isClaimed) && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleOpenRevokeJobModal(job)}
-                                    className="px-2.5 py-1 rounded bg-white border border-amber-300 text-amber-800 hover:bg-amber-50 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                                    title="Revoke job and return uncompleted orders to Ready to Deliver"
-                                  >
-                                    <RotateCcw size={13} />
-                                    <span>Revoke</span>
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => handleClickDeleteJob(job)}
-                                  className="px-2.5 py-1 rounded bg-white border border-red-200 text-red-600 hover:bg-red-50 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
-                                  title="Delete this job package record"
-                                >
-                                  <Trash2 size={13} />
-                                  <span>Delete</span>
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* TAB CONTENT: CREATE ORDER / DRAFTS */}
-      {activeTab === "create" && createOrderSubView === "drafts" && (
+      {activeTab === "create" && (
         <div className="flex-1 flex flex-col gap-4 animate-tableFadeInOnly min-h-0 overflow-hidden">
           {/* Hidden File Input Refs */}
           <input

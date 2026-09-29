@@ -26,7 +26,9 @@ import {
   Calendar,
   Sparkles,
   Trash2,
-  Zap
+  Zap,
+  MousePointerClick,
+  RotateCcw
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -155,6 +157,116 @@ function CustomSelect({
   );
 }
 
+function SkuAutocompleteInput({
+  value,
+  onChange,
+  productsList = [],
+  placeholder = "Type or select SKU (e.g. CHM)..."
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  productsList: any[];
+  placeholder?: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState(value || "");
+  const wrapperRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    setQuery(value || "");
+  }, [value]);
+
+  React.useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const filtered = React.useMemo(() => {
+    const q = (query || "").toLowerCase().trim();
+    if (!q) return productsList.slice(0, 30);
+    return productsList.filter((p) => {
+      const s = String(p.product_sku || p.sku || "").toLowerCase();
+      const n = String(p.product_name || p.display_name || "").toLowerCase();
+      const b = String(p.brand || "").toLowerCase();
+      return s.includes(q) || n.includes(q) || b.includes(q);
+    }).slice(0, 30);
+  }, [productsList, query]);
+
+  return (
+    <div className="relative w-full text-left" ref={wrapperRef} onClick={(e) => e.stopPropagation()}>
+      <div className="relative flex items-center">
+        <input
+          type="text"
+          placeholder={placeholder}
+          value={query}
+          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            const val = e.target.value.toUpperCase();
+            setQuery(val);
+            onChange(val);
+            setOpen(true);
+          }}
+          className="w-full h-7 px-2 pr-6 bg-blue-50/60 border border-blue-300 rounded text-xs font-mono font-bold text-blue-900 focus:outline-none focus:border-blue-600 uppercase"
+        />
+        {query ? (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery("");
+              onChange("");
+            }}
+            className="absolute right-1.5 p-0.5 text-zinc-400 hover:text-zinc-600 rounded cursor-pointer"
+          >
+            <X size={12} />
+          </button>
+        ) : (
+          <ChevronDown size={12} className="absolute right-1.5 text-zinc-400 pointer-events-none" />
+        )}
+      </div>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1 w-[260px] max-h-52 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100 divide-y divide-slate-100 text-left">
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-[11px] text-zinc-400 text-center">No matching SKU found</div>
+          ) : (
+            filtered.map((p, idx) => {
+              const sku = p.product_sku || p.sku || "";
+              const name = p.product_name || p.display_name || "";
+              const brand = p.brand || "";
+              const isSelected = sku === value;
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    setQuery(sku);
+                    onChange(sku);
+                    setOpen(false);
+                  }}
+                  className={`w-full text-left px-2.5 py-1.5 hover:bg-blue-50 transition-colors flex flex-col cursor-pointer ${
+                    isSelected ? "bg-blue-50/80 font-semibold" : ""
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="font-mono text-xs font-bold text-blue-900">{sku}</span>
+                    {brand && <span className="text-[9.5px] px-1 py-0.2 rounded bg-slate-100 text-zinc-500 font-sans">{brand}</span>}
+                  </div>
+                  {name && <span className="text-[10.5px] text-zinc-600 truncate max-w-[240px] font-sans">{name}</span>}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface SellOutModuleProps {
   profile?: any;
 }
@@ -192,7 +304,34 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
   const [parsedRows, setParsedRows] = React.useState<any[]>([]);
   const [importFile, setImportFile] = React.useState<File | null>(null);
   const [importFileName, setImportFileName] = React.useState<string>("");
+  const [rawSheetGrid, setRawSheetGrid] = React.useState<any[][]>([]);
   const [importing, setImporting] = React.useState<boolean>(false);
+  const [fetchingPreview, setFetchingPreview] = React.useState<boolean>(false);
+  const [savingTemplate, setSavingTemplate] = React.useState<boolean>(false);
+  const [activeImportStep, setActiveImportStep] = React.useState<"template" | "preview">("template");
+  // Template Configuration Rules & Visual Selection
+  const [activeTarget, setActiveTarget] = React.useState<"sku" | "store" | "qty" | "amount" | null>("sku");
+  const [templateSkuRule, setTemplateSkuRule] = React.useState<string>("");
+  const [templateSkuMultiple, setTemplateSkuMultiple] = React.useState<boolean>(false);
+  const [templateSingleSku, setTemplateSingleSku] = React.useState<string>("");
+  const [templateStoreRule, setTemplateStoreRule] = React.useState<string>("");
+  const [templateQtyRule, setTemplateQtyRule] = React.useState<string>("");
+  const [templateAmountRule, setTemplateAmountRule] = React.useState<string>("");
+  const [templateAdditionalPrompt, setTemplateAdditionalPrompt] = React.useState<string>("");
+  const [loadedTemplateId, setLoadedTemplateId] = React.useState<string>("");
+
+  // Visual Cell Selections Map (Target -> { minR, maxR, minC, maxC, label })
+  const [skuRange, setSkuRange] = React.useState<{ minR: number; maxR: number; minC: number; maxC: number } | null>(null);
+  const [storeRange, setStoreRange] = React.useState<{ minR: number; maxR: number; minC: number; maxC: number } | null>(null);
+  const [qtyRange, setQtyRange] = React.useState<{ minR: number; maxR: number; minC: number; maxC: number } | null>(null);
+  const [amountRange, setAmountRange] = React.useState<{ minR: number; maxR: number; minC: number; maxC: number } | null>(null);
+
+  // Drag-to-select temp state
+  const [isSelectingGrid, setIsSelectingGrid] = React.useState<boolean>(false);
+  const [selectionStart, setSelectionStart] = React.useState<{ r: number; c: number } | null>(null);
+  const [selectionEnd, setSelectionEnd] = React.useState<{ r: number; c: number } | null>(null);
+  const [lastClickedCell, setLastClickedCell] = React.useState<{ r: number; c: number } | null>(null);
+
   const [importReconciliation, setImportReconciliation] = React.useState<{
     totalQty: number;
     totalAmt: number;
@@ -378,7 +517,7 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
     return map;
   }, [buyersList]);
 
-  // Distinct Buyers strictly from BuyerDB (buyers_db)
+  // Distinct Buyers strictly from BuyerDB (buyers_db) for Import & mapping
   const availableBuyers = React.useMemo(() => {
     const list: Array<{ label: string; value: string; code: string }> = [];
     const seen = new Set<string>();
@@ -410,6 +549,34 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
     return list;
   }, [buyersList, records]);
 
+  // Distinct Buyers strictly having existing Sell-Out records in this period
+  const existingDataBuyers = React.useMemo(() => {
+    const list: Array<{ label: string; value: string; count: number; total_qty: number }> = [];
+    const map = new Map<string, { count: number; total_qty: number }>();
+
+    records.forEach((r) => {
+      const bName = String(r.buyer_name || "").trim();
+      if (!bName) return;
+      const existing = map.get(bName) || { count: 0, total_qty: 0 };
+      existing.count += 1;
+      existing.total_qty += Number(r.sales_quantity || 0);
+      map.set(bName, existing);
+    });
+
+    Array.from(map.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .forEach(([name, stat]) => {
+        list.push({
+          label: `${name} (${stat.count} records)`,
+          value: name,
+          count: stat.count,
+          total_qty: stat.total_qty
+        });
+      });
+
+    return list;
+  }, [records]);
+
   // Distinct Sell-In Buyers strictly with Sell-In records in this Period
   const availableSellInBuyers = React.useMemo(() => {
     if (sellInBuyersList.length > 0) {
@@ -427,13 +594,13 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
     return [];
   }, [sellInBuyersList, buyerChannelMap]);
 
-  // Dropdown Options
+  // Dropdown Options for Main Table Filter (Only show buyers with existing data)
   const buyerFilterOptions = React.useMemo(() => {
     return [
       { label: "All Retailers", value: "all" },
-      ...availableBuyers.map((b) => ({ label: b.label, value: b.value }))
+      ...existingDataBuyers.map((b) => ({ label: b.value, value: b.value }))
     ];
-  }, [availableBuyers]);
+  }, [existingDataBuyers]);
 
   const brandFilterOptions = React.useMemo(() => {
     const list = [{ label: "All Brands", value: "all" }];
@@ -469,7 +636,199 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
   }, [records, subFilterTab, buyerFilter, brandFilter, searchTerm]);
 
   // -------------------------------------------------------------
-  // Excel File Parsing for Import Modal
+  // Visual Spreadsheet Grid Selection Helpers
+  // -------------------------------------------------------------
+  const sheetColumnCount = React.useMemo(() => {
+    if (!rawSheetGrid || rawSheetGrid.length === 0) return 15;
+    let max = 0;
+    for (const r of rawSheetGrid) {
+      if (Array.isArray(r) && r.length > max) max = r.length;
+    }
+    return Math.max(max, 15);
+  }, [rawSheetGrid]);
+
+  const getColumnName = (colIndex: number): string => {
+    let name = "";
+    let temp = colIndex;
+    while (temp >= 0) {
+      name = String.fromCharCode((temp % 26) + 65) + name;
+      temp = Math.floor(temp / 26) - 1;
+    }
+    return name;
+  };
+
+  const formatCellRange = (range: { minR: number; maxR: number; minC: number; maxC: number } | null): string => {
+    if (!range) return "Not selected";
+    const startCell = `${getColumnName(range.minC)}${range.minR + 1}`;
+    const endCell = `${getColumnName(range.maxC)}${range.maxR + 1}`;
+    if (startCell === endCell) return startCell;
+    return `${startCell}:${endCell}`;
+  };
+
+  const applyRangeToActiveTarget = (range: { minR: number; maxR: number; minC: number; maxC: number }) => {
+    const rangeText = formatCellRange(range);
+    if (activeTarget === "sku") {
+      setSkuRange(range);
+      if (!templateSkuRule) setTemplateSkuRule(`Range: ${rangeText}`);
+    } else if (activeTarget === "store") {
+      setStoreRange(range);
+      if (!templateStoreRule) setTemplateStoreRule(`Range: ${rangeText}`);
+    } else if (activeTarget === "qty") {
+      setQtyRange(range);
+      if (!templateQtyRule) setTemplateQtyRule(`Range: ${rangeText}`);
+    } else if (activeTarget === "amount") {
+      setAmountRange(range);
+      if (!templateAmountRule) setTemplateAmountRule(`Range: ${rangeText}`);
+    }
+  };
+
+  const handleCellMouseDown = (r: number, c: number, e: React.MouseEvent) => {
+    if (!activeTarget) return;
+
+    // Shift + Click Range Selection
+    if (e.shiftKey && lastClickedCell) {
+      const minR = Math.min(lastClickedCell.r, r);
+      const maxR = Math.max(lastClickedCell.r, r);
+      const minC = Math.min(lastClickedCell.c, c);
+      const maxC = Math.max(lastClickedCell.c, c);
+      const range = { minR, maxR, minC, maxC };
+      applyRangeToActiveTarget(range);
+      setSelectionStart(null);
+      setSelectionEnd(null);
+      setIsSelectingGrid(false);
+      return;
+    }
+
+    setLastClickedCell({ r, c });
+    setIsSelectingGrid(true);
+    setSelectionStart({ r, c });
+    setSelectionEnd({ r, c });
+  };
+
+  const handleCellMouseEnter = (r: number, c: number) => {
+    if (!isSelectingGrid) return;
+    setSelectionEnd({ r, c });
+  };
+
+  const handleCellMouseUp = () => {
+    if (!isSelectingGrid || !selectionStart || !selectionEnd || !activeTarget) {
+      setIsSelectingGrid(false);
+      return;
+    }
+    setIsSelectingGrid(false);
+    const minR = Math.min(selectionStart.r, selectionEnd.r);
+    const maxR = Math.max(selectionStart.r, selectionEnd.r);
+    const minC = Math.min(selectionStart.c, selectionEnd.c);
+    const maxC = Math.max(selectionStart.c, selectionEnd.c);
+
+    const range = { minR, maxR, minC, maxC };
+    applyRangeToActiveTarget(range);
+    setSelectionStart(null);
+    setSelectionEnd(null);
+  };
+
+  const handleColumnHeaderClick = (colIdx: number) => {
+    if (!activeTarget || rawSheetGrid.length === 0) return;
+    const startR = rawSheetGrid.length > 1 ? 1 : 0;
+    const endR = rawSheetGrid.length - 1;
+    const range = { minR: startR, maxR: endR, minC: colIdx, maxC: colIdx };
+    applyRangeToActiveTarget(range);
+    setLastClickedCell({ r: startR, c: colIdx });
+  };
+
+  // -------------------------------------------------------------
+  // Load Buyer Template when Buyer changes
+  // -------------------------------------------------------------
+  const loadBuyerTemplate = async (buyerName: string) => {
+    if (!buyerName || buyerName === "__custom__") {
+      setLoadedTemplateId("");
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/sellout/templates?buyer_name=${encodeURIComponent(buyerName)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const tpls = data.templates || [];
+        if (tpls.length > 0) {
+          const cfg = tpls[0].template_config || {};
+          setTemplateSkuRule(cfg.sku_rule || "");
+          setTemplateSkuMultiple(Boolean(cfg.sku_has_multiple));
+          setTemplateSingleSku(cfg.single_sku || "");
+          setTemplateStoreRule(cfg.store_rule || "");
+          setTemplateQtyRule(cfg.qty_rule || "");
+          setTemplateAmountRule(cfg.amount_rule || "");
+          setTemplateAdditionalPrompt(cfg.additional_prompt || "");
+          setSkuRange(cfg.sku_range || null);
+          setStoreRange(cfg.store_range || null);
+          setQtyRange(cfg.qty_range || null);
+          setAmountRange(cfg.amount_range || null);
+          setLoadedTemplateId(tpls[0].id || "");
+        } else {
+          // Reset if no saved template exists for this buyer
+          setLoadedTemplateId("");
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load template for buyer:", e);
+    }
+  };
+
+  const handleBuyerSelectionChange = (bName: string) => {
+    setImportBuyer(bName);
+    loadBuyerTemplate(bName);
+  };
+
+  // -------------------------------------------------------------
+  // Save or Update Template for Buyer
+  // -------------------------------------------------------------
+  const handleSaveTemplate = async () => {
+    const finalBuyerName = importBuyer === "__custom__" ? customBuyerName.trim() : importBuyer.trim();
+    if (!finalBuyerName) {
+      showToast("Please select or enter Buyer / Retailer name before saving template", "error");
+      return;
+    }
+
+    setSavingTemplate(true);
+    try {
+      const templateConfig = {
+        sku_rule: templateSkuMultiple ? (templateSkuRule.trim() || formatCellRange(skuRange)) : `Fixed Single SKU: ${templateSingleSku.trim()}`,
+        sku_has_multiple: templateSkuMultiple,
+        single_sku: templateSingleSku.trim(),
+        sku_range: templateSkuMultiple ? skuRange : null,
+        store_rule: templateStoreRule.trim() || formatCellRange(storeRange),
+        store_range: storeRange,
+        qty_rule: templateQtyRule.trim() || formatCellRange(qtyRange),
+        qty_range: qtyRange,
+        amount_rule: templateAmountRule.trim() || formatCellRange(amountRange),
+        amount_range: amountRange,
+        additional_prompt: templateAdditionalPrompt.trim()
+      };
+
+      const res = await fetch(`${API_BASE}/api/sellout/save-template`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          buyer_name: finalBuyerName,
+          template_config: templateConfig
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setLoadedTemplateId(data.id || "saved");
+        showToast(`Template mapping saved for ${finalBuyerName}!`, "success");
+      } else {
+        showToast(data.error || "Failed to save template", "error");
+      }
+    } catch (err: any) {
+      showToast("Save template error: " + err.message, "error");
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // Excel File Parsing & Grid Extraction for Import Modal
   // -------------------------------------------------------------
   const handleExcelFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -477,6 +836,9 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
 
     setImportFile(file);
     setImportFileName(file.name);
+    setParsedRows([]);
+    setImportReconciliation(null);
+    setActiveImportStep("template");
 
     const reader = new FileReader();
     reader.onload = (evt) => {
@@ -484,76 +846,355 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
         const bstr = evt.target?.result;
         const wb = XLSX.read(bstr, { type: "binary" });
         
-        let targetSheetName = wb.SheetNames.find((n) => n.toLowerCase().includes("cleaned")) || wb.SheetNames[0];
+        // Single sheet extraction (Sheet 1)
+        const targetSheetName = wb.SheetNames[0];
         const ws = wb.Sheets[targetSheetName];
 
-        const rawJson: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        // 2D Array of all cells in Sheet 1
+        const rawAoA: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
 
-        if (rawJson.length === 0) {
+        if (!rawAoA || rawAoA.length === 0) {
           showToast("No data rows found in sheet: " + targetSheetName, "error");
           return;
         }
 
-        const totalRowsFound = rawJson.length;
-        const parsed = rawJson.map((row) => {
-          const keys = Object.keys(row);
-          const getVal = (possibleKeys: string[]) => {
-            for (const k of keys) {
-              const cleanK = k.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-              for (const pk of possibleKeys) {
-                if (cleanK.includes(pk)) return row[k];
-              }
-            }
-            return "";
-          };
-
-          const outletCode = String(getVal(["outletcode", "storecode", "code", "custcode", "customercode", "outlet"]) || row["Outlet Code"] || "").trim();
-          const outletName = String(getVal(["outletname", "storename", "outlet", "name", "customername", "store"]) || row["Outlet Name"] || "").trim();
-          const brand = String(getVal(["brandname", "brand", "branddescription"]) || row["Brand Name"] || "BIBIK EXPRESS").trim();
-          const productName = String(getVal(["productname", "originalskuname", "itemname", "proddesp", "description", "itemdescription"]) || row["Product Name"] || "").trim();
-          const standardSku = String(getVal(["standardsku", "sku", "itemcode", "prodcode"]) || row["Standard SKU"] || "").trim();
-          const salesQty = Number(getVal(["salesquantity", "quantity", "qty", "salesqty", "units"]) || row["Sales Quantity"] || 0);
-          const salesAmt = Number(getVal(["salesamount", "amount", "salesamt", "totalsi", "grossamount", "sales"]) || row["Sales Amount"] || 0);
-
-          return {
-            outlet_code: outletCode,
-            outlet_name: outletName,
-            brand: brand,
-            raw_product_description: productName,
-            product_name: productName,
-            standard_sku: standardSku,
-            sales_quantity: salesQty,
-            sales_amount: salesAmt
-          };
-        }).filter((r) => (r.outlet_code.length > 0 || r.raw_product_description.length > 0) && (r.sales_quantity > 0 || r.sales_amount > 0));
-
-        if (parsed.length === 0) {
-          showToast("No active sales rows (> 0) found in " + file.name, "error");
-          return;
-        }
-
-        let totQty = 0;
-        let totAmt = 0;
-        parsed.forEach((r) => {
-          totQty += r.sales_quantity;
-          totAmt += r.sales_amount;
-        });
-
-        const skippedZeroCount = totalRowsFound - parsed.length;
-        setParsedRows(parsed);
-        setImportReconciliation({
-          totalQty: totQty,
-          totalAmt: totAmt,
-          unregisteredCount: skippedZeroCount > 0 ? skippedZeroCount : 0
-        });
+        setRawSheetGrid(rawAoA);
+        showToast(`Loaded ${rawAoA.length} rows from sheet "${targetSheetName}". Click and drag on cells to map SKU, Store, Qty, and Amount.`, "success");
       } catch (err: any) {
-        showToast("Failed to parse Excel: " + err.message, "error");
+        showToast("Failed to read Excel file: " + err.message, "error");
       }
     };
     reader.readAsBinaryString(file);
   };
 
+  // -------------------------------------------------------------
+  // Fetch Data Preview using Template Rules & Visual Cell Ranges
+  // -------------------------------------------------------------
+  const handleFetchPreview = async () => {
+    const finalBuyerName = importBuyer === "__custom__" ? customBuyerName.trim() : importBuyer.trim();
+    if (!finalBuyerName) {
+      showToast("Please select or enter the Buyer / Retailer name", "error");
+      return;
+    }
+    if (rawSheetGrid.length === 0) {
+      showToast("Please select an Excel file first", "error");
+      return;
+    }
+
+    if (!templateSkuMultiple && !templateSingleSku.trim() && !skuRange) {
+      showToast("Please enter the Product SKU or enable Multi-SKU to select a range", "error");
+      return;
+    }
+
+    setFetchingPreview(true);
+    try {
+      const skuInstruction = templateSkuMultiple
+        ? `Selected Range: ${formatCellRange(skuRange)}. Multiple SKUs across rows/columns. ${templateSkuRule}`.trim()
+        : `Fixed Single SKU for whole file: "${templateSingleSku.trim()}". ${templateSkuRule}`.trim();
+
+      const templateConfig = {
+        sku_rule: skuInstruction,
+        sku_has_multiple: templateSkuMultiple,
+        single_sku: templateSingleSku.trim(),
+        sku_range: templateSkuMultiple ? skuRange : null,
+        store_rule: `Selected Range: ${formatCellRange(storeRange)}. ${templateStoreRule}`.trim(),
+        store_range: storeRange,
+        qty_rule: `Selected Range: ${formatCellRange(qtyRange)}. ${templateQtyRule}`.trim(),
+        qty_range: qtyRange,
+        amount_rule: `Selected Range: ${formatCellRange(amountRange)}. ${templateAmountRule}`.trim(),
+        amount_range: amountRange,
+        additional_prompt: templateAdditionalPrompt.trim()
+      };
+
+      // 1. FAST LOCAL MATRIX & SPREADSHEET UNPIVOTER (Runs in 1ms)
+      const isMatrixStoresHorizontal = 
+        storeRange && 
+        storeRange.minC < storeRange.maxC && 
+        qtyRange && 
+        qtyRange.minC < qtyRange.maxC;
+
+      const isMatrixSkusHorizontal = 
+        templateSkuMultiple &&
+        skuRange && 
+        skuRange.minC < skuRange.maxC && 
+        storeRange && 
+        qtyRange &&
+        qtyRange.minC < qtyRange.maxC;
+
+      if (isMatrixStoresHorizontal) {
+        // MATRIX TYPE 1: Outlets horizontal on header row (e.g. I3:N3), SKUs down rows (e.g. E5:E7)
+        const storeRowIdx = storeRange.minR;
+        const storeHeaderRow = rawSheetGrid[storeRowIdx] || [];
+
+        const startRow = Math.min(
+          qtyRange ? qtyRange.minR : (skuRange ? skuRange.minR : 0),
+          amountRange ? amountRange.minR : (skuRange ? skuRange.minR : 0)
+        );
+        const endRow = Math.max(
+          qtyRange ? qtyRange.maxR : (skuRange ? skuRange.maxR : rawSheetGrid.length - 1),
+          amountRange ? amountRange.maxR : (skuRange ? skuRange.maxR : rawSheetGrid.length - 1)
+        );
+
+        const startCol = Math.min(storeRange.minC, qtyRange.minC);
+        const endCol = Math.max(storeRange.maxC, qtyRange.maxC, amountRange ? amountRange.maxC : storeRange.maxC);
+
+        const localRows: any[] = [];
+        let totalQ = 0;
+        let totalA = 0;
+
+        for (let r = startRow; r <= Math.min(endRow, rawSheetGrid.length - 1); r++) {
+          const row = rawSheetGrid[r] || [];
+          let skuVal = "";
+          if (templateSkuMultiple && skuRange) {
+            skuVal = String(row[skuRange.minC] ?? "").trim();
+          } else {
+            skuVal = String(templateSingleSku || "").trim();
+          }
+          if (!skuVal) continue;
+
+          for (let c = startCol; c <= endCol; c += 2) {
+            let storeVal = String(storeHeaderRow[c] || storeHeaderRow[c + 1] || "").trim();
+            if (!storeVal || storeVal === "-" || storeVal.toLowerCase() === "total") continue;
+
+            const qRaw = row[c];
+            const aRaw = row[c + 1];
+
+            const qNum = Math.abs(parseFloat(String(qRaw !== null && qRaw !== undefined ? qRaw : "").replace(/,/g, "")) || 0);
+            const aNum = Math.abs(parseFloat(String(aRaw !== null && aRaw !== undefined ? aRaw : "").replace(/[\$,]/g, "")) || 0);
+
+            if (qNum === 0 && aNum === 0) continue;
+
+            totalQ += qNum;
+            totalA += aNum;
+
+            let code = storeVal;
+            let name = storeVal;
+            if (storeVal.includes(" - ")) {
+              const parts = storeVal.split(" - ");
+              code = parts[0].trim();
+              name = parts.slice(1).join(" - ").trim();
+            } else if (storeVal.includes("-")) {
+              const parts = storeVal.split("-");
+              code = parts[0].trim();
+              name = parts.slice(1).join("-").trim();
+            }
+
+            localRows.push({
+              id: `preview_${localRows.length + 1}`,
+              outlet_code: code,
+              outlet_name: name,
+              raw_product_description: skuVal,
+              product_sku: skuVal,
+              product_name: skuVal,
+              brand: "BIBIK EXPRESS",
+              sales_quantity: qNum,
+              sales_amount: aNum
+            });
+          }
+        }
+
+        if (localRows.length > 0) {
+          setParsedRows(localRows);
+          setImportReconciliation({ totalQty: totalQ, totalAmt: totalA, unregisteredCount: 0 });
+          setActiveImportStep("preview");
+          showToast(`Extracted ${localRows.length} sell-out line items from matrix table!`, "success");
+          return;
+        }
+      } else if (isMatrixSkusHorizontal) {
+        // MATRIX TYPE 2: SKUs horizontal on header row, Outlets down rows
+        const skuRowIdx = skuRange!.minR;
+        const skuHeaderRow = rawSheetGrid[skuRowIdx] || [];
+
+        const startRow = Math.min(
+          qtyRange ? qtyRange.minR : (storeRange ? storeRange.minR : 0),
+          amountRange ? amountRange.minR : (storeRange ? storeRange.minR : 0)
+        );
+        const endRow = Math.max(
+          qtyRange ? qtyRange.maxR : (storeRange ? storeRange.maxR : rawSheetGrid.length - 1),
+          amountRange ? amountRange.maxR : (storeRange ? storeRange.maxR : rawSheetGrid.length - 1)
+        );
+
+        const startCol = Math.min(skuRange!.minC, qtyRange.minC);
+        const endCol = Math.max(skuRange!.maxC, qtyRange.maxC, amountRange ? amountRange.maxC : skuRange!.maxC);
+
+        const localRows: any[] = [];
+        let totalQ = 0;
+        let totalA = 0;
+
+        for (let r = startRow; r <= Math.min(endRow, rawSheetGrid.length - 1); r++) {
+          const row = rawSheetGrid[r] || [];
+          const storeVal = storeRange ? String(row[storeRange.minC] ?? "").trim() : "";
+          if (!storeVal || storeVal.toLowerCase() === "total" || storeVal.toLowerCase().includes("grand total")) continue;
+
+          let code = storeVal;
+          let name = storeVal;
+          if (storeVal.includes(" - ")) {
+            const parts = storeVal.split(" - ");
+            code = parts[0].trim();
+            name = parts.slice(1).join(" - ").trim();
+          }
+
+          for (let c = startCol; c <= endCol; c += 2) {
+            const skuVal = String(skuHeaderRow[c] || skuHeaderRow[c + 1] || "").trim();
+            if (!skuVal || skuVal === "-") continue;
+
+            const qRaw = row[c];
+            const aRaw = row[c + 1];
+
+            const qNum = Math.abs(parseFloat(String(qRaw || 0).replace(/,/g, "")) || 0);
+            const aNum = Math.abs(parseFloat(String(aRaw || 0).replace(/[\$,]/g, "")) || 0);
+
+            if (qNum === 0 && aNum === 0) continue;
+
+            totalQ += qNum;
+            totalA += aNum;
+
+            localRows.push({
+              id: `preview_${localRows.length + 1}`,
+              outlet_code: code,
+              outlet_name: name,
+              raw_product_description: skuVal,
+              product_sku: skuVal,
+              product_name: skuVal,
+              brand: "BIBIK EXPRESS",
+              sales_quantity: qNum,
+              sales_amount: aNum
+            });
+          }
+        }
+
+        if (localRows.length > 0) {
+          setParsedRows(localRows);
+          setImportReconciliation({ totalQty: totalQ, totalAmt: totalA, unregisteredCount: 0 });
+          setActiveImportStep("preview");
+          showToast(`Extracted ${localRows.length} sell-out line items from matrix table!`, "success");
+          return;
+        }
+      }
+
+      // 2. BACKEND / AI EXTRACTION
+      const res = await fetch(`${API_BASE}/api/sellout/fetch-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          buyer_name: finalBuyerName,
+          raw_grid: rawSheetGrid,
+          template_config: templateConfig
+        })
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.needs_client_fallback && data.api_key && data.system_prompt) {
+        // Direct browser Gemini call (runs in Singapore client location without Cloudflare IP location blocking)
+        const models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"];
+        let rawAiText = "";
+        let aiErr = "";
+        for (const m of models) {
+          try {
+            const gUrl = `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${data.api_key}`;
+            const gRes = await fetch(gUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ parts: [{ text: data.system_prompt }] }],
+                generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
+              })
+            });
+            if (gRes.ok) {
+              const gData = (await gRes.json()) as any;
+              const parts = gData?.candidates?.[0]?.content?.parts || [];
+              let txt = "";
+              for (const p of parts) {
+                if (p && typeof p.text === "string" && !p.thought) txt += p.text;
+              }
+              if (txt.trim()) {
+                rawAiText = txt.trim();
+                break;
+              }
+            } else {
+              aiErr = await gRes.text();
+            }
+          } catch (e: any) {
+            aiErr = e.message;
+          }
+        }
+
+        if (rawAiText) {
+          let clean = rawAiText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+          let parsed: any[] = [];
+          try {
+            parsed = JSON.parse(clean);
+          } catch {
+            const fb = clean.indexOf("[");
+            const lb = clean.lastIndexOf("]");
+            if (fb !== -1 && lb > fb) {
+              try { parsed = JSON.parse(clean.substring(fb, lb + 1)); } catch {}
+            }
+          }
+
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            let totalQ = 0;
+            let totalA = 0;
+            const formatted = parsed.map((r: any, i: number) => {
+              const q = Math.abs(Number(r.sales_quantity || 0));
+              const a = Math.abs(Number(r.sales_amount || 0));
+              totalQ += q;
+              totalA += a;
+              return {
+                id: `preview_${i + 1}`,
+                outlet_code: String(r.outlet_code || "").trim(),
+                outlet_name: String(r.outlet_name || "").trim(),
+                raw_product_description: String(r.raw_product_description || r.product_name || "").trim(),
+                product_sku: String(r.product_sku || templateSingleSku.trim() || "").trim(),
+                product_name: String(r.raw_product_description || r.product_name || "").trim(),
+                brand: String(r.brand || "BIBIK EXPRESS").trim(),
+                sales_quantity: q,
+                sales_amount: a
+              };
+            }).filter((r) => r.sales_quantity > 0 || r.sales_amount > 0 || r.raw_product_description.length > 0);
+
+            setParsedRows(formatted);
+            setImportReconciliation({ totalQty: totalQ, totalAmt: totalA, unregisteredCount: 0 });
+            setActiveImportStep("preview");
+            showToast(`Fetched ${formatted.length} sell-out line items! Please verify line by line before importing.`, "success");
+            return;
+          }
+        } else if (data.direct_fallback_rows && Array.isArray(data.direct_fallback_rows)) {
+          setParsedRows(data.direct_fallback_rows);
+          setImportReconciliation({
+            totalQty: data.total_quantity || 0,
+            totalAmt: data.total_amount || 0,
+            unregisteredCount: 0
+          });
+          setActiveImportStep("preview");
+          showToast(`Fetched ${data.direct_fallback_rows.length} sell-out line items via grid mapping!`, "success");
+          return;
+        }
+      }
+
+      if (res.ok && data.success && Array.isArray(data.rows)) {
+        setParsedRows(data.rows);
+        setImportReconciliation({
+          totalQty: data.total_quantity || 0,
+          totalAmt: data.total_amount || 0,
+          unregisteredCount: 0
+        });
+        setActiveImportStep("preview");
+        showToast(`Fetched ${data.rows.length} sell-out line items! Please verify line by line before importing.`, "success");
+      } else {
+        showToast(data.error || "Failed to extract records. Please check template rules.", "error");
+      }
+    } catch (err: any) {
+      showToast("Extraction error: " + err.message, "error");
+    } finally {
+      setFetchingPreview(false);
+    }
+  };
+
+  // -------------------------------------------------------------
   // Submit Import to Backend
+  // -------------------------------------------------------------
   const handleConfirmImport = async () => {
     const finalBuyerName = importBuyer === "__custom__" ? customBuyerName.trim() : importBuyer.trim();
     if (!finalBuyerName) {
@@ -561,7 +1202,7 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
       return;
     }
     if (parsedRows.length === 0) {
-      showToast("No parsed rows to import", "error");
+      showToast("No parsed rows to import. Please click Fetch Data first.", "error");
       return;
     }
 
@@ -604,10 +1245,12 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
         showToast(`Successfully imported ${data.count} sell-out records for ${finalBuyerName}!`, "success");
         setShowImportModal(false);
         setParsedRows([]);
+        setRawSheetGrid([]);
         setImportFile(null);
         setImportFileName("");
         setImportBuyer("");
         setCustomBuyerName("");
+        setActiveImportStep("template");
         fetchBatchDetails(currentPeriod);
       } else {
         showToast(data.error || "Failed to import records", "error");
@@ -1493,122 +2136,559 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
       </div>
 
       {/* ========================================================= */}
-      {/* 3. MODAL: IMPORT EXCEL                                    */}
+      {/* 3. MODAL: IMPORT EXCEL WITH TEMPLATE MAPPING & PREVIEW    */}
       {/* ========================================================= */}
       {showImportModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-xl flex flex-col overflow-visible animate-in fade-in zoom-in-95 duration-100">
-            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 rounded-t-xl bg-white">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-900">Import Monthly Sell-Out Data</h2>
-                <p className="text-xs text-zinc-500 mt-0.5">Target Period: {formatPeriodLabel(currentPeriod)}</p>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Target Period: <span className="font-semibold text-zinc-800">{formatPeriodLabel(currentPeriod)}</span>
+                  {loadedTemplateId && <span className="ml-2 text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.2 rounded text-[10.5px]">✓ Template Loaded</span>}
+                </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setShowImportModal(false)}
-                className="p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors"
-              >
-                <X size={16} />
-              </button>
+              <div className="flex items-center gap-2">
+                {activeImportStep === "preview" && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveImportStep("template")}
+                    className="h-7 px-2.5 bg-slate-100 hover:bg-slate-200 text-zinc-700 rounded text-xs font-medium transition-colors"
+                  >
+                    ← Edit Rules
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setShowImportModal(false)}
+                  className="p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
 
-            <div className="p-5 space-y-4 text-xs overflow-visible">
-              <div className="relative z-30">
-                <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  1. Select Buyer / Retailer <span className="text-red-500">*</span>
-                </label>
-                <CustomSelect
-                  value={importBuyer}
-                  onChange={(val) => setImportBuyer(val)}
-                  options={[
-                    ...availableBuyers.map((b) => ({ label: b.label, value: b.value })),
-                    { label: "+ Enter New Retailer Name", value: "__custom__" }
-                  ]}
-                  placeholder="Choose Retailer from BuyerDB..."
-                  className="w-full"
-                />
-                {importBuyer === "__custom__" && (
-                  <input
-                    type="text"
-                    placeholder="Type Retailer Name (e.g. FairPrice, Sheng Siong, Cold Storage)..."
-                    value={customBuyerName}
-                    onChange={(e) => setCustomBuyerName(e.target.value)}
-                    className="mt-2 w-full h-8 px-3 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#0B57D0]"
+            {/* Modal Body */}
+            <div className="p-5 flex-1 min-h-0 overflow-y-auto space-y-4 text-xs">
+              {/* Step 1: Buyer & File Selection */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="relative z-30">
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                    1. Select Buyer / Retailer <span className="text-red-500">*</span>
+                  </label>
+                  <CustomSelect
+                    value={importBuyer}
+                    onChange={(val) => handleBuyerSelectionChange(val)}
+                    options={[
+                      ...availableBuyers.map((b) => ({ label: b.label, value: b.value })),
+                      { label: "+ Enter New Retailer Name", value: "__custom__" }
+                    ]}
+                    placeholder="Choose Retailer from BuyerDB..."
+                    className="w-full"
                   />
-                )}
-              </div>
+                  {importBuyer === "__custom__" && (
+                    <input
+                      type="text"
+                      placeholder="Type Retailer Name (e.g. FairPrice, Sheng Siong, Cold Storage)..."
+                      value={customBuyerName}
+                      onChange={(e) => setCustomBuyerName(e.target.value)}
+                      className="mt-2 w-full h-8 px-3 border border-slate-200 rounded-lg text-xs focus:outline-none focus:border-[#0B57D0]"
+                    />
+                  )}
+                </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  2. Select Cleaned Excel File <span className="text-red-500">*</span>
-                </label>
-                <div className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center hover:bg-slate-50/50 transition-colors relative">
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls,.csv"
-                    onChange={handleExcelFileChange}
-                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                  />
-                  <div className="flex flex-col items-center justify-center gap-1.5 text-zinc-500 pointer-events-none">
-                    <FileSpreadsheet size={28} className="text-[#0B57D0]" />
-                    {importFileName ? (
-                      <span className="font-semibold text-zinc-800 text-xs">{importFileName}</span>
-                    ) : (
-                      <>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                    2. Select Excel File (Sheet 1) <span className="text-red-500">*</span>
+                  </label>
+                  <div className="border-2 border-dashed border-slate-200 rounded-lg p-2.5 text-center hover:bg-slate-50/50 transition-colors relative">
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={handleExcelFileChange}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    />
+                    <div className="flex items-center justify-center gap-2 text-zinc-500 pointer-events-none">
+                      <FileSpreadsheet size={20} className="text-[#0B57D0] shrink-0" />
+                      {importFileName ? (
+                        <span className="font-semibold text-zinc-800 text-xs truncate max-w-[240px]">{importFileName}</span>
+                      ) : (
                         <span className="font-medium text-xs">Click or drag & drop Excel file here</span>
-                        <span className="text-[11px] text-zinc-400">Supports FairPrice (FP), Sheng Siong (SSG), and standard templates</span>
-                      </>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {parsedRows.length > 0 && importReconciliation && (
-                <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-lg space-y-1.5">
-                  <div className="flex items-center justify-between gap-1.5 text-emerald-800 font-bold text-xs">
-                    <div className="flex items-center gap-1.5">
-                      <CheckCircle2 size={14} />
-                      <span>File Parsed Successfully ({parsedRows.length.toLocaleString()} active sales rows)</span>
+              {/* Step 2: Visual Excel Grid Mapping Selector (When file is uploaded & in template step) */}
+              {activeImportStep === "template" && (
+                <div className="space-y-3 pt-2 border-t border-slate-200">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-xs font-bold text-zinc-900">Interactive Visual Excel Mapping</h3>
+                      <p className="text-[11px] text-zinc-500">
+                        Select a target button below, then click or drag directly on the spreadsheet cells to map.
+                      </p>
                     </div>
-                    {importReconciliation.unregisteredCount > 0 && (
-                      <span className="text-[10.5px] font-normal text-emerald-700 bg-emerald-100/70 px-1.5 py-0.5 rounded">
-                        {importReconciliation.unregisteredCount.toLocaleString()} zero-sale rows skipped
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      onClick={handleSaveTemplate}
+                      disabled={savingTemplate || !importBuyer}
+                      className="h-7 px-3 bg-white border border-slate-200 hover:bg-slate-50 text-zinc-700 rounded-lg font-medium text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-2xs"
+                    >
+                      {savingTemplate ? <RefreshCw size={12} className="animate-spin" /> : <Tag size={12} className="text-blue-600" />}
+                      <span>Save Template</span>
+                    </button>
                   </div>
-                  <div className="grid grid-cols-2 gap-2 pt-1 text-zinc-700 text-[11px]">
-                    <div>
-                      <span className="text-zinc-500">Total Quantity:</span>{" "}
-                      <span className="font-bold">{importReconciliation.totalQty.toLocaleString()} units</span>
+
+                  {/* Mapping Target Control Pills */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    {/* SKU Target */}
+                    <div 
+                      onClick={() => {
+                        if (templateSkuMultiple) setActiveTarget("sku");
+                      }}
+                      className={`p-2.5 rounded-lg border transition-all relative group ${
+                        activeTarget === "sku" && templateSkuMultiple
+                          ? "bg-blue-50/80 border-blue-500 ring-2 ring-blue-500/20 shadow-xs" 
+                          : "bg-white border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-[11.5px] text-blue-900 flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
+                          1. SKU / Product
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <label 
+                            onClick={(e) => e.stopPropagation()} 
+                            className="flex items-center gap-1 text-[10.5px] text-zinc-600 cursor-pointer font-normal"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={templateSkuMultiple}
+                              onChange={(e) => {
+                                const isMulti = e.target.checked;
+                                setTemplateSkuMultiple(isMulti);
+                                if (isMulti) {
+                                  setActiveTarget("sku");
+                                } else {
+                                  if (activeTarget === "sku") setActiveTarget("store");
+                                }
+                              }}
+                              className="rounded text-[#0B57D0] focus:ring-0 cursor-pointer w-3 h-3"
+                            />
+                            <span>Multi-SKU</span>
+                          </label>
+                          {(skuRange || templateSkuRule || templateSingleSku) && (
+                            <button
+                              type="button"
+                              title="Reset SKU mapping"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSkuRange(null);
+                                setTemplateSkuRule("");
+                                setTemplateSingleSku("");
+                              }}
+                              className="p-0.5 text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 rounded transition-colors"
+                            >
+                              <RotateCcw size={11} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {templateSkuMultiple ? (
+                        <>
+                          <div className="font-mono text-xs font-semibold text-blue-700 truncate">
+                            {formatCellRange(skuRange)}
+                          </div>
+                          <textarea
+                            rows={2}
+                            placeholder="Note / prompt rule for SKU (optional)..."
+                            value={templateSkuRule}
+                            onClick={(e) => e.stopPropagation()}
+                            onChange={(e) => setTemplateSkuRule(e.target.value)}
+                            className="mt-1.5 w-full p-1.5 bg-white/95 border border-slate-200 rounded text-[11px] text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-blue-500 resize-none leading-tight"
+                          />
+                        </>
+                      ) : (
+                        <div className="space-y-1">
+                          <div className="text-[10px] text-zinc-500 font-medium">Select / Type Product SKU:</div>
+                          <SkuAutocompleteInput
+                            value={templateSingleSku}
+                            onChange={(val) => setTemplateSingleSku(val)}
+                            productsList={productsList}
+                            placeholder="Type or select SKU (e.g. CHM)..."
+                          />
+                        </div>
+                      )}
                     </div>
-                    <div>
-                      <span className="text-zinc-500">Total Sales Amount:</span>{" "}
-                      <span className="font-bold">
-                        ${importReconciliation.totalAmt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
+
+                    {/* Store Target */}
+                    <div 
+                      onClick={() => setActiveTarget("store")}
+                      className={`p-2.5 rounded-lg border cursor-pointer transition-all relative group ${
+                        activeTarget === "store" 
+                          ? "bg-amber-50/80 border-amber-500 ring-2 ring-amber-500/20 shadow-xs" 
+                          : "bg-white border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-[11.5px] text-amber-900 flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
+                          2. Store / Outlet
+                        </span>
+                        <div className="flex items-center gap-1">
+                          {storeRange && (
+                            <span className="text-[10px] text-amber-700 bg-amber-100/70 px-1 rounded">Mapped</span>
+                          )}
+                          {(storeRange || templateStoreRule) && (
+                            <button
+                              type="button"
+                              title="Reset Store mapping"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setStoreRange(null);
+                                setTemplateStoreRule("");
+                              }}
+                              className="p-0.5 text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 rounded transition-colors cursor-pointer"
+                            >
+                              <RotateCcw size={11} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="font-mono text-xs font-semibold text-amber-700 truncate">
+                        {formatCellRange(storeRange)}
+                      </div>
+                      <textarea
+                        rows={2}
+                        placeholder="Note / prompt rule for Store (optional)..."
+                        value={templateStoreRule}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setTemplateStoreRule(e.target.value)}
+                        className="mt-1.5 w-full p-1.5 bg-white/95 border border-slate-200 rounded text-[11px] text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-amber-500 resize-none leading-tight"
+                      />
                     </div>
+
+                    {/* Quantity Target */}
+                    <div 
+                      onClick={() => setActiveTarget("qty")}
+                      className={`p-2.5 rounded-lg border cursor-pointer transition-all relative group ${
+                        activeTarget === "qty" 
+                          ? "bg-emerald-50/80 border-emerald-500 ring-2 ring-emerald-500/20 shadow-xs" 
+                          : "bg-white border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-[11.5px] text-emerald-900 flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-600"></span>
+                          3. Quantity Sold
+                        </span>
+                        <div className="flex items-center gap-1">
+                          {qtyRange && (
+                            <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-1 rounded">Mapped</span>
+                          )}
+                          {(qtyRange || templateQtyRule) && (
+                            <button
+                              type="button"
+                              title="Reset Quantity mapping"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setQtyRange(null);
+                                setTemplateQtyRule("");
+                              }}
+                              className="p-0.5 text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 rounded transition-colors cursor-pointer"
+                            >
+                              <RotateCcw size={11} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="font-mono text-xs font-semibold text-emerald-700 truncate">
+                        {formatCellRange(qtyRange)}
+                      </div>
+                      <textarea
+                        rows={2}
+                        placeholder="Note / prompt rule for Qty (optional)..."
+                        value={templateQtyRule}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setTemplateQtyRule(e.target.value)}
+                        className="mt-1.5 w-full p-1.5 bg-white/95 border border-slate-200 rounded text-[11px] text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-emerald-500 resize-none leading-tight"
+                      />
+                    </div>
+
+                    {/* Amount Target */}
+                    <div 
+                      onClick={() => setActiveTarget("amount")}
+                      className={`p-2.5 rounded-lg border cursor-pointer transition-all relative group ${
+                        activeTarget === "amount" 
+                          ? "bg-purple-50/80 border-purple-500 ring-2 ring-purple-500/20 shadow-xs" 
+                          : "bg-white border-slate-200 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-bold text-[11.5px] text-purple-900 flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-purple-600"></span>
+                          4. Sales Amount ($)
+                        </span>
+                        <div className="flex items-center gap-1">
+                          {amountRange && (
+                            <span className="text-[10px] text-purple-700 bg-purple-100/70 px-1 rounded">Mapped</span>
+                          )}
+                          {(amountRange || templateAmountRule) && (
+                            <button
+                              type="button"
+                              title="Reset Sales Amount mapping"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setAmountRange(null);
+                                setTemplateAmountRule("");
+                              }}
+                              className="p-0.5 text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 rounded transition-colors cursor-pointer"
+                            >
+                              <RotateCcw size={11} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="font-mono text-xs font-semibold text-purple-700 truncate">
+                        {formatCellRange(amountRange)}
+                      </div>
+                      <textarea
+                        rows={2}
+                        placeholder="Note / prompt rule for Amount (optional)..."
+                        value={templateAmountRule}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setTemplateAmountRule(e.target.value)}
+                        className="mt-1.5 w-full p-1.5 bg-white/95 border border-slate-200 rounded text-[11px] text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-purple-500 resize-none leading-tight"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Additional Guidance prompt (one-liner) */}
+                  <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-200">
+                    <span className="text-[11px] font-semibold text-zinc-700 shrink-0">Extra Guidance:</span>
+                    <input
+                      type="text"
+                      placeholder="e.g. Ignore summary rows with grand total, multiply unit price if total omitted..."
+                      value={templateAdditionalPrompt}
+                      onChange={(e) => setTemplateAdditionalPrompt(e.target.value)}
+                      className="flex-1 h-7 px-2.5 bg-white border border-slate-200 rounded text-xs focus:outline-none focus:border-[#0B57D0]"
+                    />
+                  </div>
+
+                  {/* VISUAL SPREADSHEET TABLE VIEWER */}
+                  {rawSheetGrid.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between text-[11px] text-zinc-500 gap-2">
+                        <span className="font-medium flex items-center gap-1.5">
+                          <MousePointerClick size={13} className="text-[#0B57D0]" />
+                          <span>
+                            Click & drag or <strong>Shift + Click</strong> to map to:{" "}
+                            <strong className="text-zinc-900 uppercase">
+                              {activeTarget === "sku" ? "1. SKU / Product" : activeTarget === "store" ? "2. Store / Outlet" : activeTarget === "qty" ? "3. Quantity Sold" : "4. Sales Amount"}
+                            </strong>
+                          </span>
+                        </span>
+                        <div className="flex items-center gap-3 text-[10.5px]">
+                          <span className="text-zinc-400">Tip: Click column letter (e.g. A, B) to select entire column</span>
+                          <span className="font-semibold text-zinc-700">Showing {Math.min(rawSheetGrid.length, 100)} rows</span>
+                        </div>
+                      </div>
+
+                      <div 
+                        className="border border-slate-300 rounded-lg overflow-x-auto overflow-y-auto max-h-[320px] bg-slate-100 select-none shadow-inner"
+                        onMouseUp={handleCellMouseUp}
+                      >
+                        <table className="border-collapse text-[11.5px] font-mono bg-white w-full">
+                          <thead>
+                            <tr className="sticky top-0 bg-slate-200 text-zinc-700 font-bold border-b border-slate-300 z-10">
+                              <th className="py-1 px-2 text-center bg-slate-300 border-r border-slate-300 w-12 text-[10.5px]">
+                                #
+                              </th>
+                              {Array.from({ length: sheetColumnCount }).map((_, cIdx) => (
+                                <th 
+                                  key={cIdx} 
+                                  onClick={() => handleColumnHeaderClick(cIdx)}
+                                  className="py-1 px-2 text-center border-r border-slate-300 min-w-[100px] text-[11px] cursor-pointer hover:bg-slate-300 transition-colors group select-none"
+                                  title={`Click to select entire column ${getColumnName(cIdx)} (from row 2 down)`}
+                                >
+                                  <span className="group-hover:text-[#0B57D0]">{getColumnName(cIdx)}</span>
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rawSheetGrid.slice(0, 100).map((row, rIdx) => (
+                              <tr key={rIdx} className="border-b border-slate-200 hover:bg-slate-50/50">
+                                {/* Row Number Index */}
+                                <td className="py-1 px-2 text-center bg-slate-100 text-zinc-500 font-bold border-r border-slate-300 text-[10.5px] sticky left-0 z-5">
+                                  {rIdx + 1}
+                                </td>
+
+                                {/* Cells */}
+                                {Array.from({ length: sheetColumnCount }).map((_, cIdx) => {
+                                  const cellVal = String(row[cIdx] !== null && row[cIdx] !== undefined ? row[cIdx] : "").trim();
+                                  
+                                  // Highlight Calculation
+                                  const inSku = skuRange && rIdx >= skuRange.minR && rIdx <= skuRange.maxR && cIdx >= skuRange.minC && cIdx <= skuRange.maxC;
+                                  const inStore = storeRange && rIdx >= storeRange.minR && rIdx <= storeRange.maxR && cIdx >= storeRange.minC && cIdx <= storeRange.maxC;
+                                  const inQty = qtyRange && rIdx >= qtyRange.minR && rIdx <= qtyRange.maxR && cIdx >= qtyRange.minC && cIdx <= qtyRange.maxC;
+                                  const inAmount = amountRange && rIdx >= amountRange.minR && rIdx <= amountRange.maxR && cIdx >= amountRange.minC && cIdx <= amountRange.maxC;
+
+                                  // Active dragging highlight
+                                  const isDragging = isSelectingGrid && selectionStart && selectionEnd &&
+                                    rIdx >= Math.min(selectionStart.r, selectionEnd.r) &&
+                                    rIdx <= Math.max(selectionStart.r, selectionEnd.r) &&
+                                    cIdx >= Math.min(selectionStart.c, selectionEnd.c) &&
+                                    cIdx <= Math.max(selectionStart.c, selectionEnd.c);
+
+                                  let cellClass = "bg-white text-zinc-800";
+                                  if (isDragging) {
+                                    cellClass = activeTarget === "sku" ? "bg-blue-200 text-blue-900 ring-1 ring-blue-500" :
+                                                activeTarget === "store" ? "bg-amber-200 text-amber-900 ring-1 ring-amber-500" :
+                                                activeTarget === "qty" ? "bg-emerald-200 text-emerald-900 ring-1 ring-emerald-500" :
+                                                "bg-purple-200 text-purple-900 ring-1 ring-purple-500";
+                                  } else if (inSku) {
+                                    cellClass = "bg-blue-100 text-blue-900 font-semibold border-blue-300";
+                                  } else if (inStore) {
+                                    cellClass = "bg-amber-100 text-amber-900 font-semibold border-amber-300";
+                                  } else if (inQty) {
+                                    cellClass = "bg-emerald-100 text-emerald-900 font-semibold border-emerald-300";
+                                  } else if (inAmount) {
+                                    cellClass = "bg-purple-100 text-purple-900 font-semibold border-purple-300";
+                                  }
+
+                                  return (
+                                    <td
+                                      key={cIdx}
+                                      onMouseDown={(e) => handleCellMouseDown(rIdx, cIdx, e)}
+                                      onMouseEnter={() => handleCellMouseEnter(rIdx, cIdx)}
+                                      className={`py-1 px-2 border-r border-slate-200 truncate max-w-[180px] cursor-crosshair transition-colors ${cellClass}`}
+                                      title={`Cell ${getColumnName(cIdx)}${rIdx + 1}: ${cellVal}`}
+                                    >
+                                      {cellVal || <span className="text-zinc-300 italic">-</span>}
+                                    </td>
+                                  );
+                                })}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-8 border-2 border-dashed border-slate-200 rounded-lg text-center text-zinc-400 text-xs">
+                      Please upload an Excel file above to preview spreadsheet grid and select mapping areas.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Step 3: Line-by-Line Preview Verification Table */}
+              {activeImportStep === "preview" && (
+                <div className="space-y-3 pt-2 border-t border-slate-200">
+                  {importReconciliation && (
+                    <div className="p-3 bg-blue-50/70 border border-blue-200 rounded-lg flex items-center justify-between gap-3 text-xs">
+                      <div>
+                        <div className="font-bold text-blue-900 flex items-center gap-1.5">
+                          <CheckCircle2 size={14} className="text-[#0B57D0]" />
+                          <span>Fetched {parsedRows.length} Line Items</span>
+                        </div>
+                        <p className="text-[11px] text-blue-700 mt-0.5">Please review line by line before confirming import into database.</p>
+                      </div>
+                      <div className="flex items-center gap-4 text-right">
+                        <div>
+                          <div className="text-[10.5px] text-blue-600 uppercase font-semibold">Total Quantity</div>
+                          <div className="font-bold text-blue-950 font-mono text-sm">{importReconciliation.totalQty.toLocaleString()} units</div>
+                        </div>
+                        <div>
+                          <div className="text-[10.5px] text-blue-600 uppercase font-semibold">Total Amount</div>
+                          <div className="font-bold text-blue-950 font-mono text-sm">
+                            ${importReconciliation.totalAmt.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="border border-slate-200 rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="sticky top-0 bg-slate-100 text-zinc-700 font-semibold border-b border-slate-200 text-[11px]">
+                        <tr>
+                          <th className="py-2 px-3 w-10 text-center">#</th>
+                          <th className="py-2 px-3">Store / Outlet Code</th>
+                          <th className="py-2 px-3">Store Name</th>
+                          <th className="py-2 px-3">Product Description / SKU</th>
+                          <th className="py-2 px-3 text-right">Qty Sold</th>
+                          <th className="py-2 px-3 text-right">Sales Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 bg-white font-mono text-[11.5px]">
+                        {parsedRows.map((r, idx) => (
+                          <tr key={idx} className="hover:bg-slate-50/80">
+                            <td className="py-1.5 px-3 text-center text-zinc-400 font-sans">{idx + 1}</td>
+                            <td className="py-1.5 px-3 text-zinc-900 font-semibold">{r.outlet_code || "-"}</td>
+                            <td className="py-1.5 px-3 text-zinc-700 font-sans truncate max-w-[160px]">{r.outlet_name || "-"}</td>
+                            <td className="py-1.5 px-3 text-zinc-800 font-sans">
+                              <div className="truncate max-w-[260px] font-medium">{r.raw_product_description || r.product_name}</div>
+                              {r.product_sku && <div className="text-[10px] text-zinc-400 font-mono">{r.product_sku}</div>}
+                            </td>
+                            <td className="py-1.5 px-3 text-right text-zinc-900 font-bold">{Number(r.sales_quantity || 0).toLocaleString()}</td>
+                            <td className="py-1.5 px-3 text-right text-zinc-900">
+                              ${Number(r.sales_amount || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               )}
             </div>
 
-            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setShowImportModal(false)}
-                className="h-8 px-3 rounded-lg border border-slate-200 text-zinc-700 hover:bg-zinc-100 font-medium text-xs transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmImport}
-                disabled={importing || parsedRows.length === 0}
-                className="h-8 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg font-medium text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-2xs"
-              >
-                {importing ? <RefreshCw size={13} className="animate-spin" /> : <Upload size={13} />}
-                <span>{importing ? "Ingesting..." : "Confirm & Import"}</span>
-              </button>
+            {/* Modal Footer */}
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <div>
+                {activeImportStep === "template" && (
+                  <span className="text-[11px] text-zinc-500">Click Fetch Data to parse and verify the report before importing.</span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowImportModal(false)}
+                  className="h-8 px-3 rounded-lg border border-slate-200 text-zinc-700 hover:bg-zinc-100 font-medium text-xs transition-colors"
+                >
+                  Cancel
+                </button>
+
+                {activeImportStep === "template" ? (
+                  <button
+                    type="button"
+                    onClick={handleFetchPreview}
+                    disabled={fetchingPreview || !importBuyer || rawSheetGrid.length === 0}
+                    className="h-8 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg font-medium text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-2xs"
+                  >
+                    {fetchingPreview ? <RefreshCw size={13} className="animate-spin" /> : <FileText size={13} />}
+                    <span>{fetchingPreview ? "Extracting Data..." : "Fetch Data"}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleConfirmImport}
+                    disabled={importing || parsedRows.length === 0}
+                    className="h-8 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg font-medium text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-2xs"
+                  >
+                    {importing ? <RefreshCw size={13} className="animate-spin" /> : <Upload size={13} />}
+                    <span>{importing ? "Ingesting..." : "Confirm & Import"}</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -1646,8 +2726,8 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
                 <CustomSelect
                   value={resetBuyer}
                   onChange={(val) => setResetBuyer(val)}
-                  options={availableBuyers.map((b) => ({ label: b.label, value: b.value }))}
-                  placeholder="Select Buyer..."
+                  options={existingDataBuyers.map((b) => ({ label: b.label, value: b.value }))}
+                  placeholder={existingDataBuyers.length === 0 ? "No buyers with data in this period" : "Select Buyer with data..."}
                   className="w-full"
                 />
               </div>

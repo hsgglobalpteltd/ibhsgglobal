@@ -23,7 +23,8 @@ import {
   ExternalLink,
   ChevronDown,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  AlertCircle
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -210,9 +211,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [editingPriceRowId, setEditingPriceRowId] = React.useState<string | null>(null);
   const [editingPriceVal, setEditingPriceVal] = React.useState<string>("");
 
-  // Reset Month state
-  const [showResetConfirm, setShowResetConfirm] = React.useState<boolean>(false);
-  const [resettingMonth, setResettingMonth] = React.useState<boolean>(false);
+  // Reset Modal states (100% same layout as Sell-Out)
+  const [showResetModal, setShowResetModal] = React.useState<boolean>(false);
+  const [resetBuyer, setResetBuyer] = React.useState<string>("");
+  const [resetConfirmText, setResetConfirmText] = React.useState<string>("");
+  const [resetting, setResetting] = React.useState<boolean>(false);
   const [recalculating, setRecalculating] = React.useState<boolean>(false);
 
   // Assign Channel Modal State
@@ -357,6 +360,34 @@ export function SellInModule({ profile }: SellInModuleProps) {
       if (r.brand && r.brand.trim()) set.add(r.brand.trim());
     });
     return Array.from(set).sort();
+  }, [records]);
+
+  // Distinct Buyers strictly having existing Sell-In records in this period
+  const existingDataBuyers = React.useMemo(() => {
+    const list: Array<{ label: string; value: string; count: number; total_qty: number }> = [];
+    const map = new Map<string, { count: number; total_qty: number }>();
+
+    records.forEach((r) => {
+      const bName = String(r.buyer_name || "").trim();
+      if (!bName) return;
+      const existing = map.get(bName) || { count: 0, total_qty: 0 };
+      existing.count += 1;
+      existing.total_qty += Number(r.demand_qty ?? r.quantity ?? 0);
+      map.set(bName, existing);
+    });
+
+    Array.from(map.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .forEach(([name, stat]) => {
+        list.push({
+          label: `${name} (${stat.count} records)`,
+          value: name,
+          count: stat.count,
+          total_qty: stat.total_qty
+        });
+      });
+
+    return list;
   }, [records]);
 
   // Filtered Records for Sell-In Tab
@@ -654,33 +685,55 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   };
 
-  // Reset Month (Clear all demand records for current month)
-  const handleResetMonth = () => {
-    setConfirmConfig({
-      open: true,
-      title: `Reset & Clear Month (${currentPeriod})`,
-      description: `Are you sure you want to clear all Sell-In records and reset data for ${formatPeriodLabel(currentPeriod)}? This action cannot be undone.`,
-      onConfirm: async () => {
-        try {
-          const res = await fetch(`${API_BASE}/api/sellin/reset-period`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ period: currentPeriod })
-          });
-          const data = await res.json();
-          if (res.ok && data.success) {
-            showToast(`Cleared all records for ${currentPeriod}`, "success");
-            fetchBatchDetails(currentPeriod, true);
-          } else {
-            showToast(data.error || "Failed to reset month", "error");
-          }
-        } catch (e: any) {
-          showToast(e.message || "Reset failed", "error");
-        } finally {
-          setConfirmConfig((prev) => ({ ...prev, open: false }));
-        }
+  // Open Reset Modal
+  const handleOpenResetModal = () => {
+    if (existingDataBuyers.length === 0) {
+      showToast("No Sell-In records exist in this period to reset", "error");
+      return;
+    }
+    setResetBuyer(existingDataBuyers[0]?.value || "");
+    setResetConfirmText("");
+    setShowResetModal(true);
+  };
+
+  // Confirm Buyer Reset
+  const handleConfirmReset = async () => {
+    if (!resetBuyer) {
+      showToast("Please select a buyer to reset", "error");
+      return;
+    }
+    const expected = `reset_sales_${currentPeriod}`.toLowerCase();
+    if (resetConfirmText.trim().toLowerCase() !== expected) {
+      showToast(`Please type "${expected}" exactly to confirm`, "error");
+      return;
+    }
+
+    setResetting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: currentPeriod,
+          buyer_name: resetBuyer,
+          confirmation: resetConfirmText.trim()
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(data.message || `Reset records for ${resetBuyer}!`, "success");
+        setShowResetModal(false);
+        setResetConfirmText("");
+        setResetBuyer("");
+        fetchBatchDetails(currentPeriod, true);
+      } else {
+        showToast(data.error || "Failed to reset buyer records", "error");
       }
-    });
+    } catch (e: any) {
+      showToast("Reset error: " + e.message, "error");
+    } finally {
+      setResetting(false);
+    }
   };
 
   // Recalculate Month Demand & Reject Quantities
@@ -1323,12 +1376,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
               {records.length > 0 && (
                 <button
                   type="button"
-                  onClick={handleResetMonth}
+                  onClick={handleOpenResetModal}
                   className="h-8 px-2.5 rounded-lg bg-white border border-red-200 hover:bg-red-50 text-red-600 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                  title={`Reset and clear all data for ${currentPeriod}`}
+                  title={`Reset buyer records for ${currentPeriod}`}
                 >
                   <Trash2 size={13} className="text-red-500" />
-                  <span>Reset Month</span>
+                  <span>Reset</span>
                 </button>
               )}
 
@@ -2408,6 +2461,87 @@ export function SellInModule({ profile }: SellInModuleProps) {
               >
                 {importingBuyers ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
                 <span>Import All</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 4D. MODAL: RESET BUYER SALES WITH TYPED CONFIRMATION      */}
+      {/* ========================================================= */}
+      {showResetModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md flex flex-col overflow-visible animate-in fade-in zoom-in-95 duration-100">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-red-50/50 shrink-0 rounded-t-xl">
+              <div className="flex items-center gap-2 text-red-700">
+                <AlertCircle size={16} />
+                <h2 className="text-sm font-bold">Reset Buyer Sell-In Records</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowResetModal(false)}
+                className="p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3.5 text-xs overflow-visible">
+              <p className="text-zinc-600">
+                Select the specific buyer you want to reset for <span className="font-bold text-zinc-900">{formatPeriodLabel(currentPeriod)}</span>.
+              </p>
+
+              <div className="relative z-30">
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                  Select Retailer / Buyer to Reset
+                </label>
+                <CustomSelect
+                  value={resetBuyer}
+                  onChange={(val) => setResetBuyer(val)}
+                  options={existingDataBuyers.map((b) => ({ label: b.label, value: b.value }))}
+                  placeholder={existingDataBuyers.length === 0 ? "No buyers with data in this period" : "Select Buyer with data..."}
+                  className="w-full"
+                />
+              </div>
+
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 space-y-1">
+                <p className="font-bold">⚠️ Warning: Irreversible Action</p>
+                <p className="text-[11px]">
+                  All sell-in records for <span className="font-semibold">{resetBuyer || "the selected buyer"}</span> in {currentPeriod} will be permanently removed.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">
+                  To confirm, type <span className="font-mono font-bold text-red-600 select-all">reset_sales_{currentPeriod}</span> below:
+                </label>
+                <input
+                  type="text"
+                  placeholder={`reset_sales_${currentPeriod}`}
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                  className="w-full h-8 px-3 border border-red-300 rounded-lg text-xs font-mono focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 bg-red-50/30"
+                />
+              </div>
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
+              <button
+                type="button"
+                onClick={() => setShowResetModal(false)}
+                className="h-8 px-3 rounded-lg border border-slate-200 text-zinc-700 hover:bg-zinc-100 font-medium text-xs transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmReset}
+                disabled={resetting || !resetConfirmText.toLowerCase().includes("reset")}
+                className="h-8 px-4 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-2xs"
+              >
+                {resetting ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                <span>{resetting ? "Resetting..." : "Confirm & Delete"}</span>
               </button>
             </div>
           </div>

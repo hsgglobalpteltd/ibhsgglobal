@@ -17,6 +17,7 @@ import {
   Sparkles, 
   FileText, 
   ChevronRight, 
+  ChevronLeft,
   ExternalLink, 
   AlertCircle, 
   Sliders, 
@@ -60,6 +61,224 @@ import {
 } from "@/lib/api";
 import { getModulePermission } from "@/lib/permissions";
 import { toast } from "sonner";
+
+interface ProductSkuCardProps {
+  sku: BrandLaunchpadProduct;
+  index: number;
+  activeBrand: BrandLaunchpadBrand;
+  perm: { view: boolean; edit: boolean; delete: boolean };
+  checkEditPermission: () => boolean;
+  checkDeletePermission: () => boolean;
+  setEditingSku: (sku: BrandLaunchpadProduct) => void;
+  setShowAddSkuModal: (show: boolean) => void;
+  setDeleteConfirm: (confirm: { type: "brand" | "sku" | "review"; id: string; name: string } | null) => void;
+  downloadingPdfId: string | null;
+  downloadSkuPaperScorecardPDF: (sku: BrandLaunchpadProduct, brandName: string) => void;
+}
+
+function ProductSkuCard({
+  sku,
+  index,
+  activeBrand,
+  perm,
+  checkEditPermission,
+  checkDeletePermission,
+  setEditingSku,
+  setShowAddSkuModal,
+  setDeleteConfirm,
+  downloadingPdfId,
+  downloadSkuPaperScorecardPDF,
+}: ProductSkuCardProps) {
+  const [currentPhotoIdx, setCurrentPhotoIdx] = React.useState(0);
+  const images = (sku.images && sku.images.length > 0) ? sku.images : [];
+
+  // If images array changes and current index is out of bounds, adjust gracefully
+  const safePhotoIdx = currentPhotoIdx < images.length ? currentPhotoIdx : 0;
+
+  const handlePrev = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (images.length === 0) return;
+    setCurrentPhotoIdx((prev) => (prev > 0 ? prev - 1 : images.length - 1));
+  };
+
+  const handleNext = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (images.length === 0) return;
+    setCurrentPhotoIdx((prev) => (prev < images.length - 1 ? prev + 1 : 0));
+  };
+
+  const cost = Number(sku.cost_price) || 0;
+  const land = Number(sku.land_price) || Number((cost * (1 + (Number(sku.landed_cost_rate) || 10) / 100)).toFixed(2));
+  const ourP = Number(sku.our_price) || Number((land * (1 + (Number(sku.overhead_rate) || 5) / 100)).toFixed(2));
+  const tradeP = Number(sku.price_to_retailer) || Number((ourP / (1 - (Number(sku.our_margin_rate) || 25) / 100)).toFixed(2));
+  const rspP = Number(sku.rsp) || Number((tradeP / (1 - (Number(sku.retailer_margin_rate) || 35) / 100)).toFixed(2));
+
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 shadow-xs hover:shadow-md transition-shadow flex flex-col overflow-hidden">
+      {/* 1:1 Square Photo Hero with < and > Navigation Arrows */}
+      <div className="aspect-square w-full bg-slate-100 border-b border-slate-200 relative overflow-hidden flex items-center justify-center group select-none">
+        {images.length > 0 ? (
+          <img
+            src={images[safePhotoIdx]}
+            alt={sku.product_name}
+            className="w-full h-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+          />
+        ) : (
+          <div className="flex flex-col items-center justify-center text-slate-400 p-4">
+            <Package className="w-12 h-12 stroke-[1.5]" />
+            <span className="text-[11px] text-zinc-400 mt-1.5 font-medium">No photo uploaded</span>
+          </div>
+        )}
+
+        {/* Multi-Photo Slot Counter Badge */}
+        {images.length > 0 && (
+          <div className="absolute top-2.5 right-2.5 px-2 py-0.5 rounded-md bg-black/60 backdrop-blur-xs text-white text-[11px] font-semibold pointer-events-none tracking-tight shadow-2xs">
+            {safePhotoIdx + 1} / {images.length}
+          </div>
+        )}
+
+        {/* Left Arrow Button */}
+        {images.length > 1 && (
+          <button
+            type="button"
+            onClick={handlePrev}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/55 hover:bg-black/85 text-white flex items-center justify-center transition-all opacity-80 hover:opacity-100 cursor-pointer shadow-md active:scale-95 z-10"
+            title="Previous photo"
+          >
+            <ChevronLeft className="w-5 h-5 stroke-[2.5]" />
+          </button>
+        )}
+
+        {/* Right Arrow Button */}
+        {images.length > 1 && (
+          <button
+            type="button"
+            onClick={handleNext}
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-black/55 hover:bg-black/85 text-white flex items-center justify-center transition-all opacity-80 hover:opacity-100 cursor-pointer shadow-md active:scale-95 z-10"
+            title="Next photo"
+          >
+            <ChevronRight className="w-5 h-5 stroke-[2.5]" />
+          </button>
+        )}
+
+        {/* Floating Taste Score Pill */}
+        <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1 bg-white/95 backdrop-blur-xs border border-slate-200/80 px-2 py-0.5 rounded-md shadow-xs text-zinc-800 z-10">
+          <Star className="w-3 h-3 fill-amber-400 text-amber-500" />
+          <span className="text-[11px] font-bold">
+            {Number(sku.avg_taste_score || 0) > 0 ? `${Number(sku.avg_taste_score).toFixed(1)}/30` : "New"}
+          </span>
+          <span className="text-[10px] text-zinc-500">({sku.reviews_count || 0})</span>
+        </div>
+      </div>
+
+      {/* Card Content */}
+      <div className="p-2.5 flex flex-col flex-1 justify-between gap-2">
+        {/* Title & Metadata Line */}
+        <div>
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-xs font-semibold text-zinc-900 truncate flex-1" title={sku.product_name}>
+              {sku.product_name}
+            </h4>
+            <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[10px] font-medium shrink-0">
+              #{index + 1}
+            </span>
+          </div>
+
+          <div className="text-[10px] text-zinc-500 truncate mt-0.5">
+            {sku.category || "General"} • {sku.pack_size || "Std"} • {sku.shelf_life_months} Mos • {sku.storage_condition}
+          </div>
+        </div>
+
+        {/* Compact 5-Column Pricing Strip */}
+        <div className="bg-[#F8F9FA] rounded border border-slate-200/80 p-1.5 grid grid-cols-5 gap-1 text-center text-[10px]">
+          <div>
+            <span className="text-zinc-400 block text-[9px] leading-tight">Cost</span>
+            <span className="text-zinc-700 font-medium">${cost.toFixed(2)}</span>
+          </div>
+          <div>
+            <span className="text-zinc-400 block text-[9px] leading-tight">Landed</span>
+            <span className="text-zinc-700 font-medium">${land.toFixed(2)}</span>
+          </div>
+          <div>
+            <span className="text-zinc-400 block text-[9px] leading-tight">Our</span>
+            <span className="text-zinc-700 font-medium">${ourP.toFixed(2)}</span>
+          </div>
+          <div>
+            <span className="text-zinc-400 block text-[9px] leading-tight">Trade</span>
+            <span className="text-[#0B57D0] font-medium">${tradeP.toFixed(2)}</span>
+          </div>
+          <div className="bg-emerald-50 rounded border border-emerald-200/60">
+            <span className="text-emerald-700 block text-[9px] leading-tight font-medium">RSP</span>
+            <span className="text-emerald-800 font-semibold">${rspP.toFixed(2)}</span>
+          </div>
+        </div>
+
+        {/* Card Actions Footer */}
+        <div className="pt-1.5 border-t border-slate-100 flex items-center justify-between gap-1.5">
+          <div className="flex items-center gap-1 min-w-0">
+            <button
+              type="button"
+              onClick={() => {
+                const origin = typeof window !== "undefined" ? window.location.origin : "https://ib.hsgglobal.sg";
+                const link = `${origin}/review?pid=${encodeURIComponent(sku.id)}`;
+                navigator.clipboard.writeText(link);
+                toast.success("Online scorecard link copied!");
+              }}
+              className="h-6 px-2 rounded border border-slate-200 bg-white hover:bg-slate-50 text-[10px] font-medium text-zinc-600 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs"
+              title="Copy Online Scorecard Link"
+            >
+              <Copy className="w-2.5 h-2.5 text-zinc-400" /> Copy Link
+            </button>
+
+            <button
+              type="button"
+              onClick={() => downloadSkuPaperScorecardPDF(sku, activeBrand.brand_name)}
+              disabled={Boolean(downloadingPdfId)}
+              className="h-6 px-2 rounded border border-slate-200 bg-white hover:bg-slate-50 text-[10px] font-medium text-zinc-600 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs disabled:opacity-50 truncate"
+              title="Download Printable Scorecard for this SKU"
+            >
+              {downloadingPdfId === `scorecard-${sku.id}` ? (
+                <Loader2 className="w-2.5 h-2.5 animate-spin text-[#0B57D0]" />
+              ) : (
+                <Download className="w-2.5 h-2.5 text-[#0B57D0]" />
+              )}
+              Scorecard
+            </button>
+          </div>
+
+          <div className="flex items-center gap-0.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                if (!checkEditPermission()) return;
+                setEditingSku(sku);
+                setShowAddSkuModal(true);
+              }}
+              disabled={!perm.edit}
+              className="p-1 rounded hover:bg-slate-100 text-zinc-500 hover:text-[#0B57D0] transition-colors cursor-pointer disabled:opacity-40"
+              title="Edit SKU"
+            >
+              <Edit3 className="w-3.5 h-3.5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (!checkDeletePermission()) return;
+                setDeleteConfirm({ type: "sku", id: sku.id, name: sku.product_name });
+              }}
+              disabled={!perm.delete}
+              className="p-1 rounded hover:bg-rose-50 text-zinc-400 hover:text-rose-600 transition-colors cursor-pointer disabled:opacity-40"
+              title="Delete SKU"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 interface BrandLaunchpadModuleProps {
   profile?: UserProfile | null;
@@ -1498,23 +1717,16 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
       {/* Top Header Bar */}
-      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-        <div>
-          <h1 className="text-base font-bold text-zinc-950">Brand Launchpad</h1>
-          <p className="text-xs text-zinc-500 mt-0.5">
-            5-Step New Brand & Product launch pipeline: Intake, Taste Scorecards, Marketing Support, Online Trial, and Retail Readiness.
-          </p>
-        </div>
+      {!activeBrand ? (
+        <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+          <div>
+            <h1 className="text-base font-bold text-zinc-950">Brand Launchpad</h1>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              5-Step New Brand & Product launch pipeline: Intake, Taste Scorecards, Marketing Support, Online Trial, and Retail Readiness.
+            </p>
+          </div>
 
-        <div className="flex items-center gap-2">
-          {activeBrand ? (
-            <button
-              onClick={() => setActiveBrand(null)}
-              className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors"
-            >
-              <ChevronRight className="w-3.5 h-3.5 rotate-180" /> Back to Brand Pipeline
-            </button>
-          ) : (
+          <div className="flex items-center gap-2">
             <button
               onClick={() => {
                 if (!checkEditPermission()) return;
@@ -1542,15 +1754,85 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
               disabled={!perm.edit}
               className={`h-8 px-3.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
                 perm.edit
-                  ? "bg-[#0B57D0] hover:bg-[#0842A0] text-white cursor-pointer"
+                  ? "bg-[#0B57D0] hover:bg-[#0842A0] text-white cursor-pointer shadow-xs"
                   : "bg-[#0B57D0]/50 text-white cursor-not-allowed opacity-60"
               }`}
             >
               <Plus className="w-4 h-4" /> New Brand Pitch
             </button>
-          )}
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="px-4 py-2.5 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-white">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setActiveBrand(null)}
+              className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer transition-colors shrink-0 shadow-2xs"
+              title="Back to Brands Pipeline"
+            >
+              <ChevronLeft className="w-4 h-4 text-zinc-500" /> Pipeline
+            </button>
+
+            <div className="h-5 w-px bg-slate-200 hidden sm:block" />
+
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h1 className="text-base font-bold text-zinc-950">{activeBrand.brand_name}</h1>
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200/60">
+                  {activeBrand.owner_type}
+                </span>
+                <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#D3E3FD] text-[#041E49]">
+                  {activeBrand.status}
+                </span>
+              </div>
+              <div className="text-xs text-zinc-500 mt-0.5">
+                {activeBrand.company_name} • Contact: {activeBrand.contact_person || "-"} {activeBrand.contact_email ? `(${activeBrand.contact_email})` : ""} • Lead Time: {activeBrand.lead_time_days || 14}d
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (!checkEditPermission()) return;
+                setEditingBrand(activeBrand);
+                setShowNewBrandModal(true);
+              }}
+              disabled={!perm.edit}
+              className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-40 shadow-2xs"
+            >
+              <Edit3 className="w-3.5 h-3.5 text-zinc-500" /> Edit Profile
+            </button>
+
+            <button
+              onClick={() => downloadFullBrandDossierPDF(activeBrand)}
+              disabled={Boolean(downloadingPdfId)}
+              className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs disabled:opacity-50"
+              title="Download 2-Page Combined Brand & Marketing Dossier"
+            >
+              {downloadingPdfId === `dossier-${activeBrand.id}` ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+              ) : (
+                <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
+              )}
+              Full Dossier
+            </button>
+
+            <button
+              onClick={() => downloadRetailPitchDeckPDF(activeBrand)}
+              disabled={Boolean(downloadingPdfId)}
+              className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs disabled:opacity-50"
+            >
+              {downloadingPdfId === `deck-${activeBrand.id}` ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+              ) : (
+                <Download className="w-3.5 h-3.5" />
+              )}
+              1-Page Retail Pitch Deck
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Main Viewport Container */}
       {!activeBrand ? (
@@ -1769,110 +2051,88 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
         // ACTIVE BRAND 5-STEP PIPELINE WORKSPACE
         // --------------------------------------------------------------------
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          {/* Brand Header Capsule */}
-          <div className="px-4 py-3 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-zinc-950">{activeBrand.brand_name}</h2>
-                  <span className="px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-200 text-slate-800">
-                    {activeBrand.owner_type}
-                  </span>
-                  <span className="px-2 py-0.5 rounded-md text-[11px] font-bold bg-[#D3E3FD] text-[#041E49]">
-                    {activeBrand.status}
-                  </span>
-                </div>
-                <div className="text-xs text-zinc-500 mt-0.5">
-                  {activeBrand.company_name} • Contact: {activeBrand.contact_person || "-"} ({activeBrand.contact_email || "-"}) • Lead Time: {activeBrand.lead_time_days || 14} Days
-                </div>
-              </div>
+          {/* Combined 5-Step Stepper & Contextual Step Action Bar */}
+          <div className="px-4 py-2 bg-[#F8F9FA] border-b border-slate-200 flex items-center justify-between gap-3 overflow-x-auto shrink-0">
+            <div className="flex items-center gap-1.5 overflow-x-auto">
+              {[
+                { num: 1, title: "Step 1: Intake & Pricing", icon: Building2 },
+                { num: 2, title: "Step 2: Taste Scorecard", icon: Star },
+                { num: 3, title: "Step 3: Marketing Support", icon: TrendingUp },
+                { num: 4, title: "Step 4: Online Trial", icon: Layers },
+                { num: 5, title: "Step 5: Retail Ready", icon: Store }
+              ].map((step) => {
+                const isActive = activeStepTab === step.num;
+                const isPast = (activeBrand.current_step || 1) >= step.num;
+                return (
+                  <button
+                    key={step.num}
+                    onClick={() => setActiveStepTab(step.num)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shrink-0 ${
+                      isActive
+                        ? "bg-[#D3E3FD] text-[#041E49] shadow-xs"
+                        : "text-zinc-600 hover:bg-slate-200/60 hover:text-zinc-900"
+                    }`}
+                  >
+                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
+                      isActive
+                        ? "bg-[#0B57D0] text-white"
+                        : isPast
+                        ? "bg-slate-200 text-slate-800"
+                        : "bg-slate-100 text-slate-500"
+                    }`}>
+                      {step.num}
+                    </span>
+                    <span>{step.title}</span>
+                  </button>
+                );
+              })}
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => {
-                  if (!checkEditPermission()) return;
-                  setEditingBrand(activeBrand);
-                  setShowNewBrandModal(true);
-                }}
-                disabled={!perm.edit}
-                className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
-              >
-                <Edit3 className="w-3.5 h-3.5" /> Edit Profile
-              </button>
-
-              <button
-                onClick={() => downloadFullBrandDossierPDF(activeBrand)}
-                disabled={Boolean(downloadingPdfId)}
-                className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs disabled:opacity-50"
-                title="Download 2-Page Combined Brand & Marketing Dossier"
-              >
-                {downloadingPdfId === `dossier-${activeBrand.id}` ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
-                ) : (
-                  <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
-                )}
-                Full Dossier
-              </button>
-
-              <button
-                onClick={() => downloadRetailPitchDeckPDF(activeBrand)}
-                disabled={Boolean(downloadingPdfId)}
-                className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs disabled:opacity-50"
-              >
-                {downloadingPdfId === `deck-${activeBrand.id}` ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
-                ) : (
-                  <Download className="w-3.5 h-3.5" />
-                )}
-                1-Page Retail Pitch Deck
-              </button>
-            </div>
-          </div>
-
-          {/* 5-Step Stepper Navigation Bar */}
-          <div className="px-4 py-2 bg-white border-b border-slate-200 flex items-center justify-between gap-2 overflow-x-auto shrink-0">
-            {[
-              { num: 1, title: "Step 1: Intake & Pricing", icon: Building2 },
-              { num: 2, title: "Step 2: Taste Scorecard", icon: Star },
-              { num: 3, title: "Step 3: Marketing Support", icon: TrendingUp },
-              { num: 4, title: "Step 4: Online Trial", icon: Layers },
-              { num: 5, title: "Step 5: Retail Ready", icon: Store }
-            ].map((step) => {
-              const isActive = activeStepTab === step.num;
-              const isPast = (activeBrand.current_step || 1) >= step.num;
-              return (
-                <button
-                  key={step.num}
-                  onClick={() => setActiveStepTab(step.num)}
-                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer transition-all shrink-0 ${
-                    isActive
-                      ? "bg-[#D3E3FD] text-[#041E49] shadow-xs"
-                      : "text-zinc-600 hover:bg-slate-100 hover:text-zinc-900"
-                  }`}
+            <div className="flex items-center gap-2 ml-auto shrink-0">
+              {activeBrand.scanned_intake_url && activeStepTab === 1 && (
+                <a
+                  href={activeBrand.scanned_intake_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-[#0B57D0] hover:underline flex items-center gap-1 font-semibold mr-2"
                 >
-                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${
-                    isActive
-                      ? "bg-[#0B57D0] text-white"
-                      : isPast
-                      ? "bg-slate-200 text-slate-800"
-                      : "bg-slate-100 text-slate-500"
-                  }`}>
-                    {step.num}
-                  </span>
-                  <span>{step.title}</span>
-                </button>
-              );
-            })}
+                  <FileCheck className="w-3.5 h-3.5" /> Archived Scan
+                </a>
+              )}
 
-            <div className="flex items-center gap-1.5 ml-auto shrink-0">
+              {activeStepTab === 1 && (
+                <button
+                  onClick={() => {
+                    if (!checkEditPermission()) return;
+                    setEditingSku({
+                      product_name: "",
+                      sku: "",
+                      category: "Food & Beverage",
+                      pack_size: "",
+                      shelf_life_months: 12,
+                      storage_condition: "Ambient",
+                      cost_price: 0,
+                      landed_cost_rate: 10,
+                      overhead_rate: 5,
+                      our_margin_rate: 25,
+                      retailer_margin_rate: 35
+                    });
+                    setShowAddSkuModal(true);
+                  }}
+                  disabled={!perm.edit}
+                  className="h-7 px-3 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add Product (SKU)
+                </button>
+              )}
+
               {activeStepTab < 5 && (
                 <button
                   onClick={() => handleUpdateStep(activeStepTab + 1)}
                   disabled={!perm.edit}
-                  className="h-7 px-3 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-40"
+                  className="h-7 px-3 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-800 text-xs font-semibold flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-40 shadow-2xs"
                 >
-                  Advance to Step {activeStepTab + 1} <ChevronRight className="w-3 h-3" />
+                  Advance to Step {activeStepTab + 1} <ChevronRight className="w-3 h-3 text-zinc-500" />
                 </button>
               )}
             </div>
@@ -1882,216 +2142,37 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
           <div className="flex-1 min-h-0 overflow-y-auto p-4 bg-slate-50/50">
             {/* STEP 1: INTAKE & PRICING WATERFALL */}
             {activeStepTab === 1 && (
-              <div className="flex flex-col gap-4 max-w-6xl mx-auto">
-                {/* Step Toolbar & Forms */}
-                <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-3.5 rounded-lg border border-slate-200 shadow-xs">
-                  <div>
-                    <h3 className="text-sm font-bold text-zinc-950">Step 1: Brand & SKU Commercial Intake</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">
-                      Configure multiple SKU variants, packaging dimensions, and 5-tier pricing waterfall (Cost $\to$ Land $\to$ Our Price $\to$ Trade Price $\to$ Shelf RSP).
-                    </p>
+              <div className="w-full">
+                {(!activeBrand.products || activeBrand.products.length === 0) ? (
+                  <div className="bg-white rounded-lg border border-slate-200 p-12 text-center text-zinc-500 text-xs">
+                    No product SKUs added yet. Click &quot;Add Product (SKU)&quot; above to add individual products.
                   </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => downloadFullBrandDossierPDF(activeBrand)}
-                      disabled={Boolean(downloadingPdfId)}
-                      className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                      title="Download combined Page 1 (Details) and Page 2 (Marketing)"
-                    >
-                      {downloadingPdfId === `dossier-${activeBrand.id}` ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
-                      ) : (
-                        <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
-                      )}
-                      Full Dossier
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        if (!checkEditPermission()) return;
-                        setEditingSku({
-                          product_name: "",
-                          sku: "",
-                          category: "Food & Beverage",
-                          pack_size: "",
-                          shelf_life_months: 12,
-                          storage_condition: "Ambient",
-                          cost_price: 0,
-                          landed_cost_rate: 10,
-                          overhead_rate: 5,
-                          our_margin_rate: 25,
-                          retailer_margin_rate: 35
-                        });
-                        setShowAddSkuModal(true);
-                      }}
-                      disabled={!perm.edit}
-                      className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add Product (SKU)
-                    </button>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-4 w-full">
+                    {activeBrand.products.map((sku, index) => (
+                      <ProductSkuCard
+                        key={sku.id}
+                        sku={sku}
+                        index={index}
+                        activeBrand={activeBrand}
+                        perm={perm}
+                        checkEditPermission={checkEditPermission}
+                        checkDeletePermission={checkDeletePermission}
+                        setEditingSku={setEditingSku}
+                        setShowAddSkuModal={setShowAddSkuModal}
+                        setDeleteConfirm={setDeleteConfirm}
+                        downloadingPdfId={downloadingPdfId}
+                        downloadSkuPaperScorecardPDF={downloadSkuPaperScorecardPDF}
+                      />
+                    ))}
                   </div>
-                </div>
-
-                {/* SKU Cards / Table */}
-                <div className="bg-white rounded-lg border border-slate-200 shadow-xs overflow-hidden">
-                  <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex items-center justify-between">
-                    <span className="text-xs font-bold text-zinc-800 uppercase tracking-wider">
-                      Product SKUs ({activeBrand.products?.length || 0})
-                    </span>
-                    {activeBrand.scanned_intake_url && (
-                      <a
-                        href={activeBrand.scanned_intake_url}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs text-[#0B57D0] hover:underline flex items-center gap-1 font-semibold"
-                      >
-                        <FileCheck className="w-3.5 h-3.5" /> View Archived Intake Scan
-                      </a>
-                    )}
-                  </div>
-
-                  {(!activeBrand.products || activeBrand.products.length === 0) ? (
-                    <div className="p-8 text-center text-zinc-500 text-xs">
-                      No product SKUs added yet. Click &quot;Add Product (SKU)&quot; above to add individual products.
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-slate-100">
-                      {activeBrand.products.map((sku, index) => {
-                        const firstImg = sku.images && sku.images.length > 0 ? sku.images[0] : null;
-                        return (
-                          <div key={sku.id} className="p-4 flex flex-col gap-3 hover:bg-slate-50/50 transition-colors">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-3">
-                                {/* 1:1 Square Product Thumbnail */}
-                                <div className="w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 shrink-0 overflow-hidden flex items-center justify-center">
-                                  {firstImg ? (
-                                    <img src={firstImg} alt={sku.product_name} className="w-full h-full object-cover" />
-                                  ) : (
-                                    <Package className="w-5 h-5 text-slate-400" />
-                                  )}
-                                </div>
-
-                                <div>
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="w-4 h-4 rounded bg-slate-100 text-slate-600 flex items-center justify-center text-[10px] font-bold">
-                                      {index + 1}
-                                    </span>
-                                    <h4 className="text-sm font-bold text-zinc-950">{sku.product_name}</h4>
-                                  </div>
-                                  <span className="text-xs text-zinc-500 mt-0.5 block">
-                                    SKU: {sku.sku || "N/A"} • {sku.category || "General"} • {sku.pack_size || "Standard"} • {sku.shelf_life_months} Mos • {sku.storage_condition}
-                                  </span>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  onClick={() => {
-                                    const origin = typeof window !== "undefined" ? window.location.origin : "https://ib.hsgglobal.sg";
-                                    const link = `${origin}/review?pid=${encodeURIComponent(sku.id)}`;
-                                    navigator.clipboard.writeText(link);
-                                    toast.success("Online scorecard link copied!");
-                                  }}
-                                  className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer"
-                                  title="Copy Online Scorecard Link"
-                                >
-                                  <Copy className="w-3 h-3" /> Copy Link
-                                </button>
-
-                                <button
-                                  onClick={() => downloadSkuPaperScorecardPDF(sku, activeBrand.brand_name)}
-                                  disabled={Boolean(downloadingPdfId)}
-                                  className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                                  title="Download Printable Scorecard for this SKU"
-                                >
-                                  {downloadingPdfId === `scorecard-${sku.id}` ? (
-                                    <Loader2 className="w-3 h-3 animate-spin text-[#0B57D0]" />
-                                  ) : (
-                                    <Download className="w-3 h-3" />
-                                  )}
-                                  Scorecard Review
-                                </button>
-
-                                <button
-                                  onClick={() => {
-                                    if (!checkEditPermission()) return;
-                                    setEditingSku(sku);
-                                    setShowAddSkuModal(true);
-                                  }}
-                                  disabled={!perm.edit}
-                                  className="p-1.5 rounded-md hover:bg-slate-100 text-zinc-600 hover:text-[#0B57D0] transition-colors disabled:opacity-40"
-                                >
-                                  <Edit3 className="w-3.5 h-3.5" />
-                                </button>
-
-                                <button
-                                  onClick={() => {
-                                    if (!checkDeletePermission()) return;
-                                    setDeleteConfirm({ type: "sku", id: sku.id, name: sku.product_name });
-                                  }}
-                                  disabled={!perm.delete}
-                                  className="p-1.5 rounded-md hover:bg-rose-50 text-zinc-400 hover:text-rose-600 transition-colors disabled:opacity-40"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Pricing Waterfall Metrics Ribbon */}
-                            {(() => {
-                              const cost = Number(sku.cost_price) || 0;
-                              const land = Number(sku.land_price) || Number((cost * (1 + (Number(sku.landed_cost_rate) || 10) / 100)).toFixed(2));
-                              const ourP = Number(sku.our_price) || Number((land * (1 + (Number(sku.overhead_rate) || 5) / 100)).toFixed(2));
-                              const tradeP = Number(sku.price_to_retailer) || Number((ourP / (1 - (Number(sku.our_margin_rate) || 25) / 100)).toFixed(2));
-                              const rspP = Number(sku.rsp) || Number((tradeP / (1 - (Number(sku.retailer_margin_rate) || 35) / 100)).toFixed(2));
-
-                              return (
-                                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-[#F8F9FA] p-3 rounded-lg border border-slate-200 text-xs">
-                                  <div>
-                                    <span className="text-[10px] text-zinc-500 block">1. Cost Price</span>
-                                    <span className="font-bold text-zinc-900">${cost.toFixed(2)}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-[10px] text-zinc-500 block">2. Land Price (+{sku.landed_cost_rate || 10}%)</span>
-                                    <span className="font-bold text-zinc-900">${land.toFixed(2)}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-[10px] text-zinc-500 block">3. Our Price (+{sku.overhead_rate || 5}%)</span>
-                                    <span className="font-bold text-zinc-900">${ourP.toFixed(2)}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-[10px] text-zinc-500 block">4. Trade Price ({sku.our_margin_rate || 25}% Mgn)</span>
-                                    <span className="font-bold text-[#0B57D0]">${tradeP.toFixed(2)}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-[10px] text-zinc-500 block">5. Shelf RSP ({sku.retailer_margin_rate || 35}% Mgn)</span>
-                                    <span className="font-bold text-emerald-700">${rspP.toFixed(2)}</span>
-                                  </div>
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
             )}
 
             {/* STEP 2: TASTE SCORECARDS */}
             {activeStepTab === 2 && (
-              <div className="flex flex-col gap-4 max-w-6xl mx-auto">
-                <div className="bg-white p-3.5 rounded-lg border border-slate-200 shadow-xs flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-zinc-950">Step 2: Sensory & Taste Evaluation</h3>
-                    <p className="text-xs text-zinc-500 mt-0.5">
-                      Multi-reviewer sensory evaluation across 6 criteria (1-5 pts each, max 30 pts). Download 1-page paper scorecards or review via smartphone QR code.
-                    </p>
-                  </div>
-                </div>
-
+              <div className="flex flex-col gap-4 w-full">
                 <div className="grid grid-cols-1 gap-4">
                   {(!activeBrand.products || activeBrand.products.length === 0) ? (
                     <div className="bg-white p-8 rounded-lg border border-slate-200 text-center text-zinc-500 text-xs">
