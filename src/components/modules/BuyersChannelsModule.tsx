@@ -160,7 +160,7 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
   const [newBuyerCode, setNewBuyerCode] = React.useState<string>("");
   const [newBuyerName, setNewBuyerName] = React.useState<string>("");
   const [newBuyerChannel, setNewBuyerChannel] = React.useState<string>("Retailer");
-  const [newBuyerPaymentTerm, setNewBuyerPaymentTerm] = React.useState<string>("90d");
+  const [newBuyerPaymentTerm, setNewBuyerPaymentTerm] = React.useState<string>("90");
   const [newBuyerStoreGroups, setNewBuyerStoreGroups] = React.useState<Array<{ group_name: string; store_count: number }>>([
     { group_name: "", store_count: 1 }
   ]);
@@ -273,7 +273,7 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
     setNewBuyerCode("");
     setNewBuyerName("");
     setNewBuyerChannel(channelsList[0]?.channel_name || "Retailer");
-    setNewBuyerPaymentTerm("90d");
+    setNewBuyerPaymentTerm("90");
     setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
     setShowAddBuyerModal(true);
   };
@@ -284,7 +284,7 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
     setNewBuyerCode(buyer.buyer_code || "");
     setNewBuyerName(buyer.buyer_name || "");
     setNewBuyerChannel(buyer.channel || "Retailer");
-    setNewBuyerPaymentTerm(buyer.payment_term || "90d");
+    setNewBuyerPaymentTerm(String(buyer.payment_term || "90").replace(/[^0-9]/g, "") || "90");
     const groups = Array.isArray(buyer.store_groups) && buyer.store_groups.length > 0
       ? buyer.store_groups.map((g: any) => ({ group_name: g.group_name || "", store_count: Number(g.store_count || 1) }))
       : [{ group_name: buyer.buyer_name || "", store_count: 1 }];
@@ -305,7 +305,7 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
         buyer_code: newBuyerCode.trim(),
         buyer_name: newBuyerName.trim(),
         channel: newBuyerChannel || "Retailer",
-        payment_term: newBuyerPaymentTerm.trim() || "90d",
+        payment_term: newBuyerPaymentTerm.trim().replace(/[^0-9]/g, "") || "90",
         store_groups: validGroups.length > 0 ? validGroups : [{ group_name: newBuyerName.trim(), store_count: 1 }]
       };
 
@@ -729,7 +729,7 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
                       {groups.length > 0 ? (
                         <div className="flex flex-col gap-0.5">
                           <span className="text-xs font-medium text-zinc-800">
-                            {totalStores} {totalStores === 1 ? 'store' : 'stores'} ({groups.length} {groups.length === 1 ? 'group' : 'groups'})
+                            {totalStores} {totalStores === 1 ? 'store' : 'stores'}
                           </span>
                           <span className="text-[10.5px] text-zinc-400 truncate max-w-[200px]" title={groups.map((g: any) => `${g.group_name}: ${g.store_count}`).join(", ")}>
                             {groups.map((g: any) => `${g.group_name} (${g.store_count})`).join(", ")}
@@ -741,10 +741,8 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
                     </td>
 
                     {/* Payment Term */}
-                    <td className="py-2 px-3 text-center">
-                      <span className="px-2 py-0.5 rounded text-[11px] font-mono font-medium bg-slate-100 text-slate-700 border border-slate-200/80">
-                        {b.payment_term || "90d"}
-                      </span>
+                    <td className="py-2 px-3 text-center text-zinc-700 font-mono text-xs">
+                      {String(b.payment_term || "90").replace(/[^0-9]/g, "") || "90"} days
                     </td>
 
                     {/* Registered Date */}
@@ -915,13 +913,19 @@ export function BuyersChannelsModule({ profile }: BuyersChannelsModuleProps) {
 
                 <div>
                   <label className="font-medium text-zinc-700 block mb-1">Payment Term</label>
-                  <input
-                    type="text"
-                    value={newBuyerPaymentTerm}
-                    onChange={(e) => setNewBuyerPaymentTerm(e.target.value)}
-                    placeholder="e.g. 90d, 30d, Cash"
-                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
-                  />
+                  <div className="relative flex items-center">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={newBuyerPaymentTerm}
+                      onChange={(e) => setNewBuyerPaymentTerm(e.target.value.replace(/[^0-9]/g, ""))}
+                      placeholder="90"
+                      className="w-full h-8 pl-2.5 pr-12 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                    />
+                    <span className="absolute right-2.5 text-xs text-zinc-400 pointer-events-none select-none">
+                      days
+                    </span>
+                  </div>
                 </div>
               </div>
 

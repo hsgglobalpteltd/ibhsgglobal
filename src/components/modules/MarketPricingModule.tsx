@@ -22,7 +22,9 @@ import {
   ChevronRight,
   ChevronDown,
   Store,
-  FileText
+  FileText,
+  Info,
+  Tag
 } from "lucide-react";
 import jsPDF from "jspdf";
 import autoTable, { applyPlugin } from "jspdf-autotable";
@@ -73,6 +75,7 @@ interface PriceItem {
   pack_size: string;
   is_custom?: boolean;
   bundle_components?: BundleComponent[] | string;
+  store_group_prices?: Record<string, number> | string;
   status: string;
   price_logs: string | any[];
   created_at?: number;
@@ -175,6 +178,22 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
 
   const [isEditItemModalOpen, setIsEditItemModalOpen] = React.useState(false);
   const [editingItem, setEditingItem] = React.useState<PriceItem | null>(null);
+  const [editingBundleComponents, setEditingBundleComponents] = React.useState<Array<{
+    sku: string;
+    name: string;
+    qty: number;
+    unit_cost: number;
+  }>>([]);
+  const [editBundleSearch, setEditBundleSearch] = React.useState("");
+
+  // Price Tag Popover State
+  const [priceTagPopover, setPriceTagPopover] = React.useState<{
+    itemId: string;
+    isOpen: boolean;
+    prices: Record<string, string>; // group_name -> string value
+    isEditing: boolean;
+    saving: boolean;
+  } | null>(null);
 
   const [isBulkPriceModalOpen, setIsBulkPriceModalOpen] = React.useState(false);
   const [bulkCostPrice, setBulkCostPrice] = React.useState("");
@@ -438,6 +457,33 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       return [];
     }
   }, [activeSheet]);
+
+  // Extract all store groups assigned to active sheet
+  const activeSheetStoreGroups = React.useMemo(() => {
+    const list: Array<{ group_name: string; store_count: number; buyer_name: string }> = [];
+    activeSheetRetailerIds.forEach((rid) => {
+      const buyer = retailers.find((r) => String(r.id || r.ID || r.buyer_code) === String(rid));
+      if (buyer) {
+        let sGroups = buyer.store_groups;
+        if (typeof sGroups === "string") {
+          try { sGroups = JSON.parse(sGroups); } catch { sGroups = null; }
+        }
+        const bName = buyer.buyer_name || buyer.display_name || buyer.name || `Buyer #${rid}`;
+        if (Array.isArray(sGroups) && sGroups.length > 0) {
+          sGroups.forEach((g: any) => {
+            const gName = g.group_name || g.name || bName;
+            const gCount = Number(g.store_count || g.count || 1);
+            if (gName) {
+              list.push({ group_name: gName, store_count: gCount, buyer_name: bName });
+            }
+          });
+        } else {
+          list.push({ group_name: bName, store_count: 1, buyer_name: bName });
+        }
+      }
+    });
+    return list;
+  }, [activeSheetRetailerIds, retailers]);
 
   // Retailer List with their associated listing sheets (Many-to-Many)
   const retailersWithSheets = React.useMemo(() => {
@@ -906,6 +952,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
           market_price: editingItem.market_price,
           uom: editingItem.uom || "CTN",
           pack_size: editingItem.pack_size || "",
+          bundle_components: editingItem.is_custom ? editingBundleComponents : editingItem.bundle_components,
+          store_group_prices: editingItem.store_group_prices,
           remark: "Manual Item Edit",
           action_by: profile?.name || profile?.email || "Operator"
         })
@@ -917,9 +965,71 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       showToast("Pricing updated successfully", "success");
       setIsEditItemModalOpen(false);
       setEditingItem(null);
+      setEditingBundleComponents([]);
+      setEditBundleSearch("");
       await fetchItems(selectedSheetId);
     } catch (err: any) {
       showToast("Update failed: " + err.message, "error");
+    }
+  };
+
+  // Helper to open Edit Modal and initialize Bundle Components if applicable
+  const handleOpenEditItemModal = (item: PriceItem) => {
+    setEditingItem(item);
+    if (item.is_custom) {
+      let comps: BundleComponent[] = [];
+      try {
+        comps = typeof item.bundle_components === "string" 
+          ? JSON.parse(item.bundle_components) 
+          : (item.bundle_components || []);
+      } catch {}
+      setEditingBundleComponents(Array.isArray(comps) ? comps : []);
+    } else {
+      setEditingBundleComponents([]);
+    }
+    setEditBundleSearch("");
+    setIsEditItemModalOpen(true);
+  };
+
+  // Quick save store group actual prices from Price Tag popover
+  const handleSaveStoreGroupPrices = async (itemId: string, pricesMap: Record<string, string>) => {
+    const item = items.find((it) => it.id === itemId);
+    if (!item) return;
+
+    const numericMap: Record<string, number> = {};
+    Object.entries(pricesMap).forEach(([gName, valStr]) => {
+      const cleanVal = String(valStr).replace(/[^0-9.]/g, "");
+      if (cleanVal !== "") {
+        numericMap[gName] = parseFloat(cleanVal);
+      }
+    });
+
+    try {
+      if (priceTagPopover) {
+        setPriceTagPopover({ ...priceTagPopover, saving: true });
+      }
+      const res = await fetch(`${API_BASE}/api/market-pricing/items/bulk-edit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          item_ids: [itemId],
+          store_group_prices: numericMap,
+          remark: "Store Group Price Tag Update",
+          action_by: profile?.name || profile?.email || "Operator"
+        })
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to save group price tags");
+      }
+      showToast("Price Tag actual prices saved!", "success");
+      setPriceTagPopover(null);
+      await fetchItems(selectedSheetId);
+    } catch (err: any) {
+      showToast("Save failed: " + err.message, "error");
+      if (priceTagPopover) {
+        setPriceTagPopover({ ...priceTagPopover, saving: false });
+      }
     }
   };
 
@@ -1134,7 +1244,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 "Description",
                 "UOM",
                 "Buyer Cost",
-                "Market Price"
+                "Market Price",
+                "Price Tag"
               ]
             ],
             body: items.map((item, idx) => {
@@ -1155,13 +1266,29 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               const mktStr = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
               const mktCombined = `${mktStr}\n${mktMarginStr}`;
 
+              // Price Tag resolution
+              let parsedGroupPrices: Record<string, number> = {};
+              try {
+                parsedGroupPrices = typeof item.store_group_prices === "string" ? JSON.parse(item.store_group_prices) : (item.store_group_prices || {});
+              } catch {}
+              const groupKeys = Object.keys(parsedGroupPrices);
+              let priceTagText = mkt > 0 ? `Standard ($${mkt.toFixed(2)})` : "-";
+              if (groupKeys.length > 0) {
+                priceTagText = groupKeys.map((g) => {
+                  const trimmedG = g.trim();
+                  const shortG = trimmedG.length > 10 ? trimmedG.slice(0, 10) : trimmedG;
+                  return `${shortG}: $${Number(parsedGroupPrices[g]).toFixed(2)}`;
+                }).join("\n");
+              }
+
               return [
                 String(idx + 1),
                 item.retailer_sku || item.product_sku || "-",
                 productCombined,
                 uomCombined,
                 item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-",
-                mktCombined
+                mktCombined,
+                priceTagText
               ];
             }),
             theme: "grid",
@@ -1184,16 +1311,17 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               fillColor: [248, 248, 248]
             },
             columnStyles: {
-              0: { halign: "center", cellWidth: 10, fontStyle: "normal" },
-              1: { halign: "center", cellWidth: 28, fontStyle: "normal" },
+              0: { halign: "center", cellWidth: 7, fontStyle: "normal" },
+              1: { halign: "center", cellWidth: 24, fontStyle: "normal" },
               2: { cellWidth: "auto", fontStyle: "normal" },
-              3: { halign: "center", cellWidth: 24, fontStyle: "normal" },
-              4: { halign: "right", cellWidth: 28, fontStyle: "normal" },
-              5: { halign: "right", cellWidth: 32, fontStyle: "normal" }
+              3: { halign: "center", cellWidth: 14, fontStyle: "normal", fontSize: 6.5 },
+              4: { halign: "right", cellWidth: 22, fontStyle: "normal" },
+              5: { halign: "right", cellWidth: 24, fontStyle: "normal" },
+              6: { halign: "left", cellWidth: 32, fontStyle: "normal", fontSize: 6.5 }
             },
             didParseCell: (data) => {
               if (data.section === "body") {
-                if (data.column.index === 2 || data.column.index === 5) {
+                if (data.column.index === 2 || data.column.index === 5 || data.column.index === 6) {
                   data.cell.styles.minCellHeight = 9.5;
                   data.cell.text = [];
                 }
@@ -1212,13 +1340,20 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   doc.setFontSize(7.5);
                   doc.setTextColor(20, 20, 20);
                   doc.text(item.product_sku || "-", x, y);
-                  // Product Name (small, unbold)
+                  // Product Name (small, unbold, single line with ...)
                   doc.setFont("helvetica", "normal");
                   doc.setFontSize(6);
                   doc.setTextColor(80, 80, 80);
                   const maxW = data.cell.width - 4;
-                  const nameLines = doc.splitTextToSize(item.product_name || "", maxW);
-                  doc.text(nameLines.slice(0, 2), x, y + 3.4);
+                  const rawName = item.product_name || "";
+                  let truncatedName = rawName;
+                  if (doc.getTextWidth(truncatedName) > maxW) {
+                    while (truncatedName.length > 0 && doc.getTextWidth(truncatedName + "...") > maxW) {
+                      truncatedName = truncatedName.slice(0, -1).trim();
+                    }
+                    truncatedName = truncatedName + "...";
+                  }
+                  doc.text(truncatedName, x, y + 3.4);
                 } else if (data.column.index === 5) {
                   const mktVal = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
                   const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
@@ -1242,19 +1377,51 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   doc.setFontSize(6);
                   doc.setTextColor(90, 90, 90);
                   doc.text(mktMarginText, x, y + 3.4, { align: "right" });
+                } else if (data.column.index === 6) {
+                  // Price Tag: Left-aligned group/label, Right-aligned price (Top-aligned, compact font, no wrap)
+                  let parsedGroupPrices: Record<string, number> = {};
+                  try {
+                    parsedGroupPrices = typeof item.store_group_prices === "string" ? JSON.parse(item.store_group_prices) : (item.store_group_prices || {});
+                  } catch {}
+                  const groupKeys = Object.keys(parsedGroupPrices);
+                  const mkt = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : 0;
+
+                  const entries: { label: string; price: string }[] = [];
+                  if (groupKeys.length > 0) {
+                    groupKeys.forEach((g) => {
+                      entries.push({ label: g.trim(), price: `$${Number(parsedGroupPrices[g]).toFixed(2)}` });
+                    });
+                  } else if (mkt > 0) {
+                    entries.push({ label: "Standard", price: `$${mkt.toFixed(2)}` });
+                  } else {
+                    entries.push({ label: "-", price: "" });
+                  }
+
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(5.8);
+                  doc.setTextColor(30, 30, 30);
+
+                  const xLeft = data.cell.x + 2;
+                  const xRight = data.cell.x + data.cell.width - 2;
+                  let curY = data.cell.y + 3.6;
+
+                  entries.slice(0, 3).forEach((entry) => {
+                    const priceW = entry.price ? doc.getTextWidth(entry.price) : 0;
+                    const maxLabelW = Math.max(10, data.cell.width - priceW - 5);
+                    let lbl = entry.label;
+                    if (doc.getTextWidth(lbl) > maxLabelW) {
+                      while (lbl.length > 0 && doc.getTextWidth(lbl) > maxLabelW) {
+                        lbl = lbl.slice(0, -1).trim();
+                      }
+                    }
+                    doc.text(lbl, xLeft, curY);
+                    if (entry.price) {
+                      doc.text(entry.price, xRight, curY, { align: "right" });
+                    }
+                    curY += 2.9;
+                  });
                 }
               }
-            },
-            didDrawPage: (data) => {
-              const pageCount = (doc.internal as any).getNumberOfPages();
-              doc.setFontSize(8);
-              doc.setTextColor(100, 100, 100);
-              doc.text(
-                `Page ${data.pageNumber} of ${pageCount} - HSG Global Internal Bridge (iB)`,
-                doc.internal.pageSize.getWidth() / 2,
-                doc.internal.pageSize.getHeight() - 8,
-                { align: "center" }
-              );
             }
           });
         });
@@ -1280,7 +1447,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 "UOM",
                 "Our Cost",
                 "Buyer Cost",
-                "Market Price"
+                "Market Price",
+                "Price Tag"
               ]
             ],
             body: items.map((item, idx) => {
@@ -1311,6 +1479,21 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               const mktStr = item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-";
               const mktCombined = `${mktStr}\n${mktMarginStr}`;
 
+              // Price Tag resolution
+              let parsedGroupPrices: Record<string, number> = {};
+              try {
+                parsedGroupPrices = typeof item.store_group_prices === "string" ? JSON.parse(item.store_group_prices) : (item.store_group_prices || {});
+              } catch {}
+              const groupKeys = Object.keys(parsedGroupPrices);
+              let priceTagText = mkt > 0 ? `Standard ($${mkt.toFixed(2)})` : "-";
+              if (groupKeys.length > 0) {
+                priceTagText = groupKeys.map((g) => {
+                  const trimmedG = g.trim();
+                  const shortG = trimmedG.length > 10 ? trimmedG.slice(0, 10) : trimmedG;
+                  return `${shortG}: $${Number(parsedGroupPrices[g]).toFixed(2)}`;
+                }).join("\n");
+              }
+
               return [
                 String(idx + 1),
                 item.retailer_sku || item.product_sku || "-",
@@ -1318,7 +1501,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 uomCombined,
                 costCombined,
                 item.retailer_price !== null && item.retailer_price !== undefined ? `$${Number(item.retailer_price).toFixed(2)}` : "-",
-                mktCombined
+                mktCombined,
+                priceTagText
               ];
             }),
             theme: "grid",
@@ -1341,17 +1525,18 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               fillColor: [248, 248, 248]
             },
             columnStyles: {
-              0: { halign: "center", cellWidth: 10, fontStyle: "normal" },
-              1: { halign: "center", cellWidth: 26, fontStyle: "normal" },
+              0: { halign: "center", cellWidth: 7, fontStyle: "normal" },
+              1: { halign: "center", cellWidth: 22, fontStyle: "normal" },
               2: { cellWidth: "auto", fontStyle: "normal" },
-              3: { halign: "center", cellWidth: 22, fontStyle: "normal" },
-              4: { halign: "right", cellWidth: 28, fontStyle: "normal" },
-              5: { halign: "right", cellWidth: 26, fontStyle: "normal" },
-              6: { halign: "right", cellWidth: 30, fontStyle: "normal" }
+              3: { halign: "center", cellWidth: 13, fontStyle: "normal", fontSize: 6.5 },
+              4: { halign: "right", cellWidth: 22, fontStyle: "normal" },
+              5: { halign: "right", cellWidth: 20, fontStyle: "normal" },
+              6: { halign: "right", cellWidth: 24, fontStyle: "normal" },
+              7: { halign: "left", cellWidth: 30, fontStyle: "normal", fontSize: 6.5 }
             },
             didParseCell: (data) => {
               if (data.section === "body") {
-                if (data.column.index === 2 || data.column.index === 4 || data.column.index === 6) {
+                if (data.column.index === 2 || data.column.index === 4 || data.column.index === 6 || data.column.index === 7) {
                   data.cell.styles.minCellHeight = 9.5;
                   data.cell.text = [];
                 }
@@ -1370,13 +1555,20 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   doc.setFontSize(7.5);
                   doc.setTextColor(20, 20, 20);
                   doc.text(item.product_sku || "-", x, y);
-                  // Product Name (small, unbold)
+                  // Product Name (small, unbold, single line with ...)
                   doc.setFont("helvetica", "normal");
                   doc.setFontSize(6);
                   doc.setTextColor(80, 80, 80);
                   const maxW = data.cell.width - 4;
-                  const nameLines = doc.splitTextToSize(item.product_name || "", maxW);
-                  doc.text(nameLines.slice(0, 2), x, y + 3.4);
+                  const rawName = item.product_name || "";
+                  let truncatedName = rawName;
+                  if (doc.getTextWidth(truncatedName) > maxW) {
+                    while (truncatedName.length > 0 && doc.getTextWidth(truncatedName + "...") > maxW) {
+                      truncatedName = truncatedName.slice(0, -1).trim();
+                    }
+                    truncatedName = truncatedName + "...";
+                  }
+                  doc.text(truncatedName, x, y + 3.4);
                 } else if (data.column.index === 4) {
                   const cost = item.cost_price !== null && item.cost_price !== undefined ? `$${Number(item.cost_price).toFixed(2)}` : "-";
                   const retCost = item.retailer_price !== null && item.retailer_price !== undefined ? Number(item.retailer_price) : 0;
@@ -1423,22 +1615,69 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   doc.setFontSize(6);
                   doc.setTextColor(90, 90, 90);
                   doc.text(mktMarginText, x, y + 3.4, { align: "right" });
+                } else if (data.column.index === 7) {
+                  // Price Tag: Left-aligned group/label, Right-aligned price (Top-aligned, compact font, no wrap)
+                  let parsedGroupPrices: Record<string, number> = {};
+                  try {
+                    parsedGroupPrices = typeof item.store_group_prices === "string" ? JSON.parse(item.store_group_prices) : (item.store_group_prices || {});
+                  } catch {}
+                  const groupKeys = Object.keys(parsedGroupPrices);
+                  const mkt = item.market_price !== null && item.market_price !== undefined ? Number(item.market_price) : 0;
+
+                  const entries: { label: string; price: string }[] = [];
+                  if (groupKeys.length > 0) {
+                    groupKeys.forEach((g) => {
+                      entries.push({ label: g.trim(), price: `$${Number(parsedGroupPrices[g]).toFixed(2)}` });
+                    });
+                  } else if (mkt > 0) {
+                    entries.push({ label: "Standard", price: `$${mkt.toFixed(2)}` });
+                  } else {
+                    entries.push({ label: "-", price: "" });
+                  }
+
+                  doc.setFont("helvetica", "normal");
+                  doc.setFontSize(5.8);
+                  doc.setTextColor(30, 30, 30);
+
+                  const xLeft = data.cell.x + 2;
+                  const xRight = data.cell.x + data.cell.width - 2;
+                  let curY = data.cell.y + 3.6;
+
+                  entries.slice(0, 3).forEach((entry) => {
+                    const priceW = entry.price ? doc.getTextWidth(entry.price) : 0;
+                    const maxLabelW = Math.max(10, data.cell.width - priceW - 5);
+                    let lbl = entry.label;
+                    if (doc.getTextWidth(lbl) > maxLabelW) {
+                      while (lbl.length > 0 && doc.getTextWidth(lbl) > maxLabelW) {
+                        lbl = lbl.slice(0, -1).trim();
+                      }
+                    }
+                    doc.text(lbl, xLeft, curY);
+                    if (entry.price) {
+                      doc.text(entry.price, xRight, curY, { align: "right" });
+                    }
+                    curY += 2.9;
+                  });
                 }
               }
-            },
-            didDrawPage: (data) => {
-              const pageCount = (doc.internal as any).getNumberOfPages();
-              doc.setFontSize(8);
-              doc.setTextColor(100, 100, 100);
-              doc.text(
-                `Page ${data.pageNumber} of ${pageCount} - HSG Global Internal Bridge (iB)`,
-                doc.internal.pageSize.getWidth() / 2,
-                doc.internal.pageSize.getHeight() - 8,
-                { align: "center" }
-              );
             }
           });
         });
+      }
+
+      // Add clean, unbolded page numbers across all pages once
+      const totalPages = (doc.internal as any).getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(130, 130, 130);
+        doc.text(
+          `Page ${i} of ${totalPages} - HSG Global Internal Bridge (iB)`,
+          doc.internal.pageSize.getWidth() / 2,
+          doc.internal.pageSize.getHeight() - 8,
+          { align: "center" }
+        );
       }
 
       // Output as Blob URL and open directly in new tab
@@ -1864,8 +2103,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                         <th className="px-3 py-2 min-w-[150px]">Product Name</th>
                         <th className="px-3 py-2 min-w-[110px]">Buyer SKU</th>
                         <th className="px-3 py-2 min-w-[90px]">Listing Type</th>
-                        <th className="px-2 py-2 min-w-[75px] text-center">UOM</th>
-                        <th className="px-2 py-2 min-w-[80px] text-center">Qty (Pcs/Ctn)</th>
+                        <th className="px-2 py-2 min-w-[90px] text-center">UOM</th>
                         <th className="px-3 py-2 text-right min-w-[110px]">Cost Price</th>
                         <th className="px-3 py-2 text-right min-w-[110px]">Cost to Buyer</th>
                         <th className="px-3 py-2 text-right min-w-[110px]">Market Price (RSP)</th>
@@ -1876,13 +2114,13 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                     <tbody className="divide-y divide-slate-100 text-zinc-800">
                       {loadingItems ? (
                         <tr>
-                          <td colSpan={12} className="p-8 text-center text-zinc-400">
+                          <td colSpan={11} className="p-8 text-center text-zinc-400">
                             Loading pricing catalog...
                           </td>
                         </tr>
                       ) : filteredItems.length === 0 ? (
                         <tr>
-                          <td colSpan={12} className="p-8 text-center text-zinc-400">
+                          <td colSpan={11} className="p-8 text-center text-zinc-400">
                             No products added to this sheet yet. Click <span className="font-semibold text-[#0B57D0]">"+ Add Products"</span> to begin.
                           </td>
                         </tr>
@@ -1891,7 +2129,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                           <React.Fragment key={tierGroup.tierName}>
                             {/* Tier Header Divider */}
                             <tr className="bg-[#F8F9FA] border-y border-slate-200 text-zinc-600 font-medium">
-                              <td colSpan={12} className="px-4 py-1 text-xs">
+                              <td colSpan={11} className="px-4 py-1 text-xs">
                                 <span className="font-semibold text-zinc-700">Listing Type:</span> {tierGroup.tierName}{" "}
                                 <span className="text-zinc-400 font-normal">
                                   ({tierGroup.brandGroups.reduce((acc, bg) => acc + bg.items.length, 0)} SKUs)
@@ -1987,11 +2225,6 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                     </td>
 
                                     {/* UOM placeholder */}
-                                    <td className="px-2 py-2 text-center align-middle text-zinc-300 text-xs font-normal">
-                                      -
-                                    </td>
-
-                                    {/* Qty placeholder */}
                                     <td className="px-2 py-2 text-center align-middle text-zinc-300 text-xs font-normal">
                                       -
                                     </td>
@@ -2227,47 +2460,45 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                           )}
                                         </td>
 
-                                        {/* UOM (EA / CTN Dropdown) */}
+                                        {/* UOM */}
                                         <td className="px-2 py-2 text-center align-middle">
                                           {isEditMode ? (
-                                            <select
-                                              value={editRow.uom || "CTN"}
-                                              onChange={(e) => {
-                                                setEditRowsMap((prev) => ({
-                                                  ...prev,
-                                                  [item.id]: { ...prev[item.id], uom: e.target.value }
-                                                }));
-                                              }}
-                                              className="w-full px-1 py-1 border border-slate-300 rounded bg-white text-xs text-center font-bold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                                            >
-                                              <option value="EA">EA</option>
-                                              <option value="CTN">CTN</option>
-                                            </select>
+                                            <div className="flex items-center justify-center gap-1">
+                                              <select
+                                                value={editRow.uom || "CTN"}
+                                                onChange={(e) => {
+                                                  setEditRowsMap((prev) => ({
+                                                    ...prev,
+                                                    [item.id]: { ...prev[item.id], uom: e.target.value }
+                                                  }));
+                                                }}
+                                                className="px-1 py-1 border border-slate-300 rounded bg-white text-xs font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                              >
+                                                <option value="EA">EA</option>
+                                                <option value="CTN">CTN</option>
+                                                <option value="SET">SET</option>
+                                              </select>
+                                              <input
+                                                type="text"
+                                                placeholder="12"
+                                                value={editRow.pack_size ?? ""}
+                                                onChange={(e) => {
+                                                  setEditRowsMap((prev) => ({
+                                                    ...prev,
+                                                    [item.id]: { ...prev[item.id], pack_size: e.target.value }
+                                                  }));
+                                                }}
+                                                className="w-12 px-1 py-1 text-center border border-slate-300 rounded bg-white text-xs font-mono text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                                title="Qty (Pack Size / Pcs per carton)"
+                                              />
+                                            </div>
                                           ) : (
-                                            <span className="inline-block px-1.5 py-0.5 rounded text-[11px] font-bold bg-slate-100 text-zinc-700">
-                                              {item.uom || "CTN"}
-                                            </span>
-                                          )}
-                                        </td>
-
-                                        {/* Qty (Pack Size / Pcs per carton) */}
-                                        <td className="px-2 py-2 text-center align-middle">
-                                          {isEditMode ? (
-                                            <input
-                                              type="text"
-                                              placeholder="e.g. 12"
-                                              value={editRow.pack_size ?? ""}
-                                              onChange={(e) => {
-                                                setEditRowsMap((prev) => ({
-                                                  ...prev,
-                                                  [item.id]: { ...prev[item.id], pack_size: e.target.value }
-                                                }));
-                                              }}
-                                              className="w-16 px-1.5 py-1 text-center border border-slate-300 rounded bg-white text-xs font-mono text-zinc-900 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-                                            />
-                                          ) : (
-                                            <span className="font-mono text-zinc-600 text-xs">
-                                              {item.pack_size || "-"}
+                                            <span className="font-mono text-zinc-700 text-xs">
+                                              {(() => {
+                                                const uom = item.uom || "CTN";
+                                                const pack = item.pack_size ? (item.pack_size.startsWith("(") ? item.pack_size : `(${item.pack_size})`) : "";
+                                                return pack ? `${uom} ${pack}` : uom;
+                                              })()}
                                             </span>
                                           )}
                                         </td>
@@ -2324,7 +2555,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                           )}
                                         </td>
 
-                                        {/* Market Price (RSP) */}
+                                        {/* Market Price (RSP) + Price Tag Tooltip/Popover */}
                                         <td className="px-3 py-2 text-right align-middle font-mono text-xs">
                                           {isEditMode ? (
                                             <div className="relative">
@@ -2344,9 +2575,163 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                               />
                                             </div>
                                           ) : (
-                                            <span className="text-zinc-700">
-                                              {item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-"}
-                                            </span>
+                                            <div className="flex items-center justify-end gap-1.5">
+                                              {/* Price Tag ! Info Popover Trigger */}
+                                              {(() => {
+                                                let parsedGroupPrices: Record<string, number> = {};
+                                                try {
+                                                  parsedGroupPrices = typeof item.store_group_prices === "string" 
+                                                    ? JSON.parse(item.store_group_prices) 
+                                                    : (item.store_group_prices || {});
+                                                } catch {}
+                                                const hasCustomGroupPrices = Object.keys(parsedGroupPrices).length > 0;
+                                                const isCurrentPopoverOpen = priceTagPopover?.itemId === item.id && priceTagPopover.isOpen;
+
+                                                return (
+                                                  <div className="relative inline-block text-left">
+                                                    <button
+                                                      type="button"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        if (isCurrentPopoverOpen) {
+                                                          setPriceTagPopover(null);
+                                                        } else {
+                                                          // Build initial string map from activeSheetStoreGroups
+                                                          const initialMap: Record<string, string> = {};
+                                                          activeSheetStoreGroups.forEach((g) => {
+                                                            const val = parsedGroupPrices[g.group_name];
+                                                            initialMap[g.group_name] = val !== undefined && val !== null 
+                                                              ? Number(val).toFixed(2) 
+                                                              : (item.market_price !== null && item.market_price !== undefined ? Number(item.market_price).toFixed(2) : "");
+                                                          });
+                                                          setPriceTagPopover({
+                                                            itemId: item.id,
+                                                            isOpen: true,
+                                                            prices: initialMap,
+                                                            isEditing: false,
+                                                            saving: false
+                                                          });
+                                                        }
+                                                      }}
+                                                      className={`w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold transition-colors cursor-pointer ${
+                                                        hasCustomGroupPrices
+                                                          ? "bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-300"
+                                                          : "bg-slate-100 text-zinc-500 hover:bg-blue-100 hover:text-[#0B57D0]"
+                                                      }`}
+                                                      title="view actual price tag"
+                                                    >
+                                                      !
+                                                    </button>
+
+                                                    {/* Price Tag Popover Card */}
+                                                    {isCurrentPopoverOpen && (
+                                                      <div 
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        className="absolute right-0 top-full mt-1.5 w-72 bg-white rounded-lg border border-slate-200 shadow-xl z-50 p-3 font-sans animate-in fade-in zoom-in-95 duration-100 text-left"
+                                                      >
+                                                        <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+                                                          <div className="flex items-center gap-1.5">
+                                                            <Tag size={13} className="text-[#0B57D0]" />
+                                                            <span className="text-xs font-bold text-zinc-950">Price Tag</span>
+                                                          </div>
+                                                          <div className="flex items-center gap-2">
+                                                            {!priceTagPopover.isEditing ? (
+                                                              <button
+                                                                type="button"
+                                                                onClick={() => setPriceTagPopover({ ...priceTagPopover, isEditing: true })}
+                                                                className="text-[11px] text-[#0B57D0] hover:underline font-semibold flex items-center gap-0.5 cursor-pointer"
+                                                              >
+                                                                <Edit2 size={10} />
+                                                                <span>Edit</span>
+                                                              </button>
+                                                            ) : (
+                                                              <button
+                                                                type="button"
+                                                                disabled={priceTagPopover.saving}
+                                                                onClick={() => handleSaveStoreGroupPrices(item.id, priceTagPopover.prices)}
+                                                                className="px-2 py-0.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[10px] font-semibold rounded shadow-2xs cursor-pointer"
+                                                              >
+                                                                {priceTagPopover.saving ? "Saving..." : "Save"}
+                                                              </button>
+                                                            )}
+                                                            <button
+                                                              type="button"
+                                                              onClick={() => setPriceTagPopover(null)}
+                                                              className="text-zinc-400 hover:text-zinc-600 p-0.5"
+                                                            >
+                                                              <X size={12} />
+                                                            </button>
+                                                          </div>
+                                                        </div>
+
+                                                        <div className="text-[10px] text-zinc-500 mb-2 flex items-center justify-between">
+                                                          <span>Base RSP: <strong className="text-zinc-800 font-mono">${item.market_price !== null && item.market_price !== undefined ? Number(item.market_price).toFixed(2) : "0.00"}</strong></span>
+                                                          <span className="italic">{activeSheetStoreGroups.length} store groups</span>
+                                                        </div>
+
+                                                        {activeSheetStoreGroups.length === 0 ? (
+                                                          <p className="text-[11px] text-zinc-400 italic py-2 text-center">
+                                                            No store groups found for assigned buyer(s).
+                                                          </p>
+                                                        ) : (
+                                                          <div className="max-h-48 overflow-y-auto space-y-1.5 divide-y divide-slate-100">
+                                                            {activeSheetStoreGroups.map((g) => {
+                                                              const currentVal = priceTagPopover.prices[g.group_name] ?? "";
+                                                              const isOverridden = parsedGroupPrices[g.group_name] !== undefined;
+
+                                                              return (
+                                                                <div key={g.group_name} className="pt-1.5 first:pt-0 flex items-center justify-between gap-2 text-xs">
+                                                                  <div className="min-w-0 flex-1">
+                                                                    <div className="font-medium text-zinc-800 truncate" title={g.group_name}>
+                                                                      {g.group_name}
+                                                                    </div>
+                                                                    <div className="text-[10px] text-zinc-400">
+                                                                      {g.store_count} {g.store_count === 1 ? "store" : "stores"}
+                                                                    </div>
+                                                                  </div>
+
+                                                                  <div className="shrink-0 flex items-center gap-1 font-mono">
+                                                                    {priceTagPopover.isEditing ? (
+                                                                      <div className="relative">
+                                                                        <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-zinc-400 text-[10px]">$</span>
+                                                                        <input
+                                                                          type="number"
+                                                                          step="0.01"
+                                                                          placeholder={item.market_price ? Number(item.market_price).toFixed(2) : "0.00"}
+                                                                          value={currentVal}
+                                                                          onChange={(e) => {
+                                                                            const nextVal = e.target.value;
+                                                                            setPriceTagPopover((prev) => prev ? {
+                                                                              ...prev,
+                                                                              prices: { ...prev.prices, [g.group_name]: nextVal }
+                                                                            } : null);
+                                                                          }}
+                                                                          className="w-16 pl-3.5 pr-1 py-0.5 text-right border border-slate-300 rounded text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                                                        />
+                                                                      </div>
+                                                                    ) : (
+                                                                      <span className={`text-xs font-bold ${isOverridden ? "text-amber-700" : "text-zinc-700"}`}>
+                                                                        ${currentVal ? Number(currentVal).toFixed(2) : (item.market_price ? Number(item.market_price).toFixed(2) : "0.00")}
+                                                                        {!isOverridden && (
+                                                                          <span className="text-[9px] font-normal text-zinc-400 ml-1">(RSP)</span>
+                                                                        )}
+                                                                      </span>
+                                                                    )}
+                                                                  </div>
+                                                                </div>
+                                                               );
+                                                            })}
+                                                          </div>
+                                                        )}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                );
+                                              })()}
+                                              <span className="text-zinc-700 font-medium">
+                                                {item.market_price !== null && item.market_price !== undefined ? `$${Number(item.market_price).toFixed(2)}` : "-"}
+                                              </span>
+                                            </div>
                                           )}
                                         </td>
 
@@ -2377,10 +2762,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                                           <div className="flex items-center justify-center gap-1">
                                             <button
                                               type="button"
-                                              onClick={() => {
-                                                setEditingItem(item);
-                                                setIsEditItemModalOpen(true);
-                                              }}
+                                              onClick={() => handleOpenEditItemModal(item)}
                                               className="p-1 hover:bg-slate-100 text-zinc-500 hover:text-[#0B57D0] rounded cursor-pointer transition-colors"
                                               title="Edit item details"
                                             >
@@ -3207,8 +3589,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
       {/* ================= MODAL: EDIT SINGLE ITEM ================= */}
       {isEditItemModalOpen && editingItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
               <div>
                 <h2 className="text-sm font-bold text-zinc-950">Edit Pricing: {editingItem.product_sku}</h2>
                 <p className="text-xs text-zinc-500 mt-0.5">{editingItem.product_name}</p>
@@ -3221,7 +3603,8 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               </button>
             </div>
 
-            <form onSubmit={handleSaveItem} className="p-5 space-y-4">
+            <form onSubmit={handleSaveItem} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
               {/* Product Name */}
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">
@@ -3300,6 +3683,132 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                   />
                 </div>
               </div>
+
+              {/* If Bundle / Custom Set: Interactive Child Components Editor */}
+              {editingItem.is_custom && (
+                <div className="border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-zinc-800 flex items-center gap-1.5">
+                      <Layers size={13} className="text-[#0B57D0]" />
+                      Bundle Child Components ({editingBundleComponents.length})
+                    </span>
+                    <span className="text-xs font-mono font-bold text-[#0B57D0]">
+                      Base Sum: ${editingBundleComponents.reduce((sum, c) => sum + (c.unit_cost * c.qty), 0).toFixed(2)}
+                    </span>
+                  </div>
+
+                  {/* Component Search / Picker */}
+                  <div className="relative">
+                    <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                    <input
+                      type="text"
+                      placeholder="Search master product to add into this bundle..."
+                      value={editBundleSearch}
+                      onChange={(e) => setEditBundleSearch(e.target.value)}
+                      className="w-full pl-7 pr-3 py-1.5 bg-white border border-slate-300 rounded text-xs text-zinc-800"
+                    />
+                  </div>
+
+                  {/* Search Results Dropdown */}
+                  {editBundleSearch.trim() && (
+                    <div className="max-h-32 overflow-y-auto bg-white border border-slate-200 rounded shadow-xs divide-y divide-slate-100">
+                      {products
+                        .filter((p) => {
+                          const q = editBundleSearch.toLowerCase();
+                          const sku = String(p.sku || p.SKU || "").toLowerCase();
+                          const name = String(p.display_name || p["Display Name"] || p.name || "").toLowerCase();
+                          return sku.includes(q) || name.includes(q);
+                        })
+                        .slice(0, 5)
+                        .map((p) => {
+                          const sku = p.sku || p.SKU;
+                          const name = p.display_name || p["Display Name"] || p.name || sku;
+                          const cost = parseFloat(String(p.cost || p.Cost || "0").replace(/[^0-9.]/g, "") || "0");
+                          return (
+                            <div
+                              key={sku}
+                              onClick={() => {
+                                setEditingBundleComponents((prev) => {
+                                  const existing = prev.find((c) => c.sku === sku);
+                                  if (existing) {
+                                    return prev.map((c) => c.sku === sku ? { ...c, qty: c.qty + 1 } : c);
+                                  }
+                                  return [...prev, { sku, name, qty: 1, unit_cost: cost }];
+                                });
+                                setEditBundleSearch("");
+                              }}
+                              className="p-1.5 flex items-center justify-between hover:bg-blue-50 cursor-pointer text-xs"
+                            >
+                              <div className="min-w-0 pr-2">
+                                <span className="font-mono font-bold text-zinc-900">{sku}</span>
+                                <span className="text-zinc-600 ml-1.5 truncate">{name}</span>
+                              </div>
+                              <span className="font-mono text-zinc-700 shrink-0">${cost.toFixed(2)}</span>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+
+                  {/* Existing Components List */}
+                  {editingBundleComponents.length === 0 ? (
+                    <p className="text-[11px] text-zinc-400 italic text-center py-1.5">
+                      No child products in this bundle. Search above to add components.
+                    </p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                      {editingBundleComponents.map((comp, idx) => (
+                        <div key={comp.sku} className="flex items-center justify-between bg-white p-2 border border-slate-200 rounded text-xs">
+                          <div className="flex items-center gap-1.5 flex-1 min-w-0 pr-2">
+                            <span className="font-mono font-bold text-zinc-900">{comp.sku}</span>
+                            <span className="text-zinc-600 truncate">{comp.name}</span>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-zinc-400 text-[10px]">@ ${comp.unit_cost.toFixed(2)}</span>
+                            <div className="flex items-center gap-1">
+                              <label className="text-[10px] text-zinc-500 font-bold">Qty:</label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={comp.qty}
+                                onChange={(e) => {
+                                  const q = Math.max(1, parseInt(e.target.value) || 1);
+                                  setEditingBundleComponents((prev) => prev.map((c, i) => i === idx ? { ...c, qty: q } : c));
+                                }}
+                                className="w-12 h-6 px-1 text-center border border-slate-300 rounded font-mono font-bold text-xs"
+                              />
+                            </div>
+                            <span className="font-mono font-bold text-zinc-900 w-14 text-right">
+                              ${(comp.unit_cost * comp.qty).toFixed(2)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setEditingBundleComponents((prev) => prev.filter((_, i) => i !== idx))}
+                              className="text-red-500 hover:text-red-700 p-0.5 cursor-pointer"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Button to sync Base Sum into Cost Price field */}
+                  {editingBundleComponents.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const sum = editingBundleComponents.reduce((acc, c) => acc + (c.unit_cost * c.qty), 0);
+                        setEditingItem({ ...editingItem, cost_price: sum });
+                      }}
+                      className="text-[11px] text-[#0B57D0] hover:underline font-semibold cursor-pointer block text-right"
+                    >
+                      Sync Base Sum (${editingBundleComponents.reduce((sum, c) => sum + (c.unit_cost * c.qty), 0).toFixed(2)}) to Cost Price
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Cost Price (Our Price) */}
               <div>
@@ -3391,11 +3900,13 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 );
               })()}
 
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
+              </div>
+
+              <div className="px-5 py-3 bg-zinc-50/80 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0">
                 <button
                   type="button"
                   onClick={() => setIsEditItemModalOpen(false)}
-                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-50 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
+                  className="px-3 py-1.5 border border-slate-300 hover:bg-slate-100 text-xs font-semibold text-zinc-700 rounded-md cursor-pointer"
                 >
                   Cancel
                 </button>

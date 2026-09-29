@@ -1603,14 +1603,6 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                 <option value="Hold">Hold</option>
                 <option value="Stop">Stop</option>
               </select>
-
-              <button
-                onClick={() => loadBrands()}
-                className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs text-zinc-700 flex items-center gap-1 cursor-pointer"
-                title="Refresh Brands"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-              </button>
             </div>
           </div>
 
@@ -1624,7 +1616,7 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
             ) : filteredBrands.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-64 text-center p-6 text-zinc-500">
                 <Building2 className="w-10 h-10 text-slate-300 mb-2" />
-                <p className="text-sm font-bold text-zinc-800">No brand pitches found</p>
+                <p className="text-sm font-semibold text-zinc-800">No brand pitches found</p>
                 <p className="text-xs text-zinc-500 max-w-sm mt-1">
                   Start by adding a new brand pitch with its initial product SKUs and pricing waterfall.
                 </p>
@@ -1641,7 +1633,7 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                       });
                       setShowNewBrandModal(true);
                     }}
-                    className="mt-4 h-8 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                    className="mt-4 h-8 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer"
                   >
                     <Plus className="w-3.5 h-3.5" /> Add First Brand
                   </button>
@@ -1649,18 +1641,17 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
               </div>
             ) : (
               <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 text-zinc-600 font-semibold uppercase text-[11px] tracking-wider">
+                <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 text-zinc-500 font-medium text-xs">
                   <tr>
-                    <th className="py-2.5 px-4">Brand & Company</th>
-                    <th className="py-2.5 px-3">Entity / Origin</th>
-                    <th className="py-2.5 px-3">Products (SKUs)</th>
-                    <th className="py-2.5 px-3">Current Step</th>
-                    <th className="py-2.5 px-3">Status</th>
-                    <th className="py-2.5 px-3">Sensory Score</th>
-                    <th className="py-2.5 px-4 text-right">Actions</th>
+                    <th className="py-2.5 px-4 font-medium">Brand & Company</th>
+                    <th className="py-2.5 px-3 font-medium">Entity / Origin</th>
+                    <th className="py-2.5 px-3 font-medium">Products (SKUs)</th>
+                    <th className="py-2.5 px-3 font-medium">Pipeline Stage</th>
+                    <th className="py-2.5 px-3 font-medium">Sensory Score</th>
+                    <th className="py-2.5 px-4 text-right font-medium">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 text-zinc-800">
+                <tbody className="divide-y divide-slate-100 text-zinc-700">
                   {filteredBrands.map((brand) => {
                     const skus = brand.products || [];
                     const avgScore = skus.length > 0 
@@ -1673,9 +1664,9 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                         onClick={() => setActiveBrand(brand)}
                         className="hover:bg-slate-50/80 cursor-pointer transition-colors group"
                       >
-                        <td className="py-3 px-4 font-semibold text-zinc-950">
+                        <td className="py-3 px-4">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm text-zinc-900 group-hover:text-[#0B57D0] transition-colors">
+                            <span className="text-sm font-medium text-zinc-900 group-hover:text-[#0B57D0] transition-colors">
                               {brand.brand_name}
                             </span>
                           </div>
@@ -1685,39 +1676,33 @@ export function BrandLaunchpadModule({ profile }: BrandLaunchpadModuleProps) {
                         </td>
 
                         <td className="py-3 px-3">
-                          <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-100 text-slate-700">
+                          <span className="inline-block px-2 py-0.5 rounded-md text-[10px] font-normal bg-slate-100 text-slate-600">
                             {brand.owner_type || "Brand Owner"}
                           </span>
                           <div className="text-[11px] text-zinc-500 mt-0.5">{brand.country_of_origin || "Singapore"}</div>
                         </td>
 
                         <td className="py-3 px-3">
-                          <div className="font-semibold text-zinc-900">
+                          <div className="font-normal text-zinc-800">
                             {skus.length} SKU{skus.length !== 1 ? "s" : ""}
                           </div>
-                          <div className="text-[11px] text-zinc-500 truncate max-w-[200px]">
+                          <div className="text-[11px] text-zinc-400 truncate max-w-[220px]">
                             {skus.map(s => s.product_name).join(", ") || "No SKUs listed"}
                           </div>
                         </td>
 
                         <td className="py-3 px-3">
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-[#D3E3FD] text-[#041E49]">
-                            Step {brand.current_step || 1}
-                          </span>
-                        </td>
-
-                        <td className="py-3 px-3">
-                          <span className={`inline-block px-2 py-0.5 rounded-md text-[11px] font-semibold ${
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium ${
                             brand.status === "Scale" ? "bg-emerald-50 text-emerald-700 border border-emerald-200" :
                             brand.status === "Stop" ? "bg-rose-50 text-rose-700 border border-rose-200" :
-                            "bg-slate-100 text-slate-700"
+                            "bg-[#D3E3FD] text-[#041E49]"
                           }`}>
-                            {brand.status}
+                            {brand.status || `Step ${brand.current_step || 1}: Intake`}
                           </span>
                         </td>
 
                         <td className="py-3 px-3">
-                          <div className="flex items-center gap-1 font-semibold text-zinc-900">
+                          <div className="flex items-center gap-1 font-medium text-zinc-800">
                             <Star className="w-3.5 h-3.5 text-[#0B57D0] fill-[#0B57D0]" />
                             <span>{avgScore} / 30</span>
                           </div>

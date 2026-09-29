@@ -98,6 +98,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
         description: "Pure sales demand engine for stock planning, marketing, and manpower. B2B Million statements & TikTok shop sync.",
       },
       {
+        title: "Sell-Out",
+        description: "Pure consumer sell-out demand engine. Import monthly retailer sales, match stores, and diagnose SKU mappings.",
+      },
+      {
         title: "Buyers & Channels",
         description: "Master directory of B2B retail buyers, modern trade accounts, and sales channels registry.",
       },

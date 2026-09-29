@@ -186,7 +186,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [newBuyerCode, setNewBuyerCode] = React.useState<string>("");
   const [newBuyerName, setNewBuyerName] = React.useState<string>("");
   const [newBuyerChannel, setNewBuyerChannel] = React.useState<string>("Retailer");
-  const [newBuyerPaymentTerm, setNewBuyerPaymentTerm] = React.useState<string>("90d");
+  const [newBuyerPaymentTerm, setNewBuyerPaymentTerm] = React.useState<string>("90");
   const [newBuyerStoreGroups, setNewBuyerStoreGroups] = React.useState<Array<{ group_name: string; store_count: number }>>([
     { group_name: "", store_count: 1 }
   ]);
@@ -554,7 +554,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
           buyer_code: code,
           buyer_name: name || code,
           channel: channel || "Retailer",
-          payment_term: payment_term || "90d",
+          payment_term: (payment_term || "90").replace(/[^0-9]/g, "") || "90",
           store_groups: validGroups,
           period: currentPeriod
         })
@@ -565,7 +565,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         setShowAddBuyerModal(false);
         setNewBuyerCode("");
         setNewBuyerName("");
-        setNewBuyerPaymentTerm("90d");
+        setNewBuyerPaymentTerm("90");
         setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
         fetchBatchDetails(currentPeriod);
       } else {
@@ -1204,7 +1204,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   setNewBuyerCode("");
                   setNewBuyerName("");
                   setNewBuyerChannel(channelsList[0]?.channel_name || "Retailer");
-                  setNewBuyerPaymentTerm("90d");
+                  setNewBuyerPaymentTerm("90");
                   setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
                   setShowAddBuyerModal(true);
                 }}
@@ -1560,7 +1560,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                 setNewBuyerCode(r.buyer_code);
                                 setNewBuyerName(r.buyer_name || r.buyer_code);
                                 setNewBuyerChannel(r.source_type === "tiktok" ? "TikTok" : "Retailer");
-                                setNewBuyerPaymentTerm("90d");
+                                setNewBuyerPaymentTerm("90");
                                 setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
                                 setShowAddBuyerModal(true);
                               }}
@@ -1586,7 +1586,15 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               type="button"
                               onClick={() => {
                                 const b = buyersList.find((x) => x.buyer_code === r.buyer_code);
-                                const sh = sheetsList.find((s) => s.buyer_id === b?.id);
+                                const sh = sheetsList.find((s) => {
+                                  if (s.buyer_id === b?.id || s.buyer_id === b?.buyer_code) return true;
+                                  let rIds: any[] = [];
+                                  if (Array.isArray(s.retailer_ids)) rIds = s.retailer_ids;
+                                  else if (typeof s.retailer_ids === "string") {
+                                    try { rIds = JSON.parse(s.retailer_ids); } catch {}
+                                  }
+                                  return rIds.includes(b?.id) || rIds.includes(b?.buyer_code);
+                                });
                                 setAddSkuTarget({
                                   sheet_id: sh?.id || (sheetsList[0]?.id || ""),
                                   product_sku: r.product_sku,
@@ -2029,13 +2037,19 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                 <div>
                   <label className="font-medium text-zinc-700 block mb-1">Payment Term</label>
-                  <input
-                    type="text"
-                    value={newBuyerPaymentTerm}
-                    onChange={(e) => setNewBuyerPaymentTerm(e.target.value)}
-                    placeholder="e.g. 90d, 30d, Cash"
-                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
-                  />
+                  <div className="relative flex items-center">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={newBuyerPaymentTerm}
+                      onChange={(e) => setNewBuyerPaymentTerm(e.target.value.replace(/[^0-9]/g, ""))}
+                      placeholder="90"
+                      className="w-full h-8 pl-2.5 pr-12 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                    />
+                    <span className="absolute right-2.5 text-xs text-zinc-400 pointer-events-none select-none">
+                      days
+                    </span>
+                  </div>
                 </div>
               </div>
 

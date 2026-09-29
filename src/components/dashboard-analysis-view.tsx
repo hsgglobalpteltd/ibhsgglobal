@@ -13,10 +13,24 @@ import {
   X,
   Plus,
   RotateCcw,
+  TrendingUp,
+  TrendingDown,
+  ArrowUpRight,
+  ArrowDownRight,
+  BarChart3,
+  ArrowRightLeft,
+  Package,
+  Sparkles,
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 
-export type ChartCardId = "channel_pie" | "buyer_pie" | "trend_12m";
+export type ChartCardId =
+  | "channel_pie"
+  | "buyer_pie"
+  | "trend_12m"
+  | "sellin_vs_sellout"
+  | "sell_through_rate"
+  | "sku_movers";
 
 export interface ChartLayoutItem {
   id: ChartCardId;
@@ -31,6 +45,9 @@ const DEFAULT_LAYOUT: ChartLayoutItem[] = [
   { id: "channel_pie", title: "Sell In by Channel", visible: true, width: 300, height: 420, order: 0 },
   { id: "buyer_pie", title: "Sell In by Buyers", visible: true, width: 300, height: 420, order: 1 },
   { id: "trend_12m", title: "12-Month Performance Trend", visible: true, width: 550, height: 420, order: 2 },
+  { id: "sellin_vs_sellout", title: "Sell-In vs Sell-Out Comparison", visible: true, width: 560, height: 420, order: 3 },
+  { id: "sell_through_rate", title: "Sell-Through Rate (%)", visible: true, width: 360, height: 420, order: 4 },
+  { id: "sku_movers", title: "Product Movement (Top & Bottom)", visible: true, width: 440, height: 420, order: 5 },
 ];
 
 const API_BASE = "https://ib-v2.hsgglobalpteltd.workers.dev";
@@ -169,6 +186,21 @@ export function DashboardAnalysisView() {
   const [hoveredMonthIndex, setHoveredMonthIndex] = React.useState<number | null>(null);
   const [hoveredTrendCategory, setHoveredTrendCategory] = React.useState<string | null>(null);
   const cache12m = React.useRef<Map<string, any[]>>(new Map());
+
+  // 🛍️ Sell-Out Data & States
+  const [sellOutData, setSellOutData] = React.useState<any[]>([]);
+  const [loadingSellOut, setLoadingSellOut] = React.useState<boolean>(false);
+
+  // Chart A (Sell-In vs Sell-Out) toggles
+  const [soComparisonGroup, setSoComparisonGroup] = React.useState<"channel" | "buyer" | "brand">("channel");
+  const [soComparisonMetric, setSoComparisonMetric] = React.useState<"amount" | "qty">("amount");
+  const [hoveredComparisonBar, setHoveredComparisonBar] = React.useState<string | null>(null);
+
+  // Chart B (Sell-Through Rate) toggles
+  const [sellThroughGroup, setSellThroughGroup] = React.useState<"brand" | "buyer">("buyer");
+
+  // Chart D (Product Movement) toggles
+  const [skuMoverTab, setSkuMoverTab] = React.useState<"top" | "bottom">("top");
 
   // 📐 Custom Dashboard Layout State with LocalStorage Persistence
   const [layout, setLayout] = React.useState<ChartLayoutItem[]>(() => {
@@ -393,6 +425,25 @@ export function DashboardAnalysisView() {
     }
   }, []);
 
+  // Fetch sell-out batch data for the selected month
+  const fetchSellOutData = React.useCallback(async (period: string, silent = false) => {
+    if (!silent) setLoadingSellOut(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sellout/batch-details?period=${encodeURIComponent(period)}`);
+      if (res.ok) {
+        const data = await res.json();
+        const records = Array.isArray(data.records) ? data.records : [];
+        setSellOutData(records);
+      } else {
+        setSellOutData([]);
+      }
+    } catch {
+      setSellOutData([]);
+    } finally {
+      if (!silent) setLoadingSellOut(false);
+    }
+  }, []);
+
   // Fetch 12-Month Batches in parallel
   React.useEffect(() => {
     let isMounted = true;
@@ -452,7 +503,8 @@ export function DashboardAnalysisView() {
 
   React.useEffect(() => {
     fetchMonthData(selectedMonth);
-  }, [selectedMonth, fetchMonthData]);
+    fetchSellOutData(selectedMonth);
+  }, [selectedMonth, fetchMonthData, fetchSellOutData]);
 
   // Listen to Global TopBar #global-refresh-button 'db-refresh' event
   React.useEffect(() => {
@@ -460,6 +512,7 @@ export function DashboardAnalysisView() {
       cache12m.current.clear();
       await Promise.all([
         fetchMonthData(selectedMonth, false),
+        fetchSellOutData(selectedMonth, false),
         fetchMetadata()
       ]);
     };
@@ -468,9 +521,9 @@ export function DashboardAnalysisView() {
     return () => {
       window.removeEventListener("db-refresh", handleDbRefresh);
     };
-  }, [fetchMonthData, fetchMetadata, selectedMonth]);
+  }, [fetchMonthData, fetchSellOutData, fetchMetadata, selectedMonth]);
 
-  // Derived available brands list from products & salesInData
+  // Derived available brands list from products, salesInData & sellOutData
   const availableBrands = React.useMemo(() => {
     const brandSet = new Set<string>();
     
@@ -487,7 +540,6 @@ export function DashboardAnalysisView() {
       if (r.brand && typeof r.brand === "string" && r.brand.trim()) {
         brandSet.add(r.brand.trim());
       }
-      // If product lookup has brand
       const sku = (r.sku || r.prodcode || "").toLowerCase().trim();
       if (sku) {
         const matched = productsList.find(
@@ -502,9 +554,16 @@ export function DashboardAnalysisView() {
       }
     });
 
+    // Check sellOutData
+    sellOutData.forEach((r) => {
+      if (r.brand && typeof r.brand === "string" && r.brand.trim()) {
+        brandSet.add(r.brand.trim());
+      }
+    });
+
     const list = Array.from(brandSet).sort();
     return ["All Brands", ...list];
-  }, [productsList, salesInData]);
+  }, [productsList, salesInData, sellOutData]);
 
   // Filter salesInData by selected brand
   const filteredSalesIn = React.useMemo(() => {
@@ -529,6 +588,31 @@ export function DashboardAnalysisView() {
       return false;
     });
   }, [salesInData, selectedBrand, productsList]);
+
+  // Filter sellOutData by selected brand
+  const filteredSalesOut = React.useMemo(() => {
+    if (selectedBrand === "All Brands") return sellOutData;
+    const bLower = selectedBrand.toLowerCase().trim();
+
+    return sellOutData.filter((r) => {
+      if (r.brand && r.brand.trim().toLowerCase() === bLower) {
+        return true;
+      }
+      const sku = (r.product_sku || r.sku || r.prodcode || "").toLowerCase().trim();
+      if (sku) {
+        const matched = productsList.find(
+          (p) => (p.sku || p.id || "").toLowerCase().trim() === sku
+        );
+        if (matched) {
+          const b = matched.brand || matched.brand_name || matched.brand_assigned;
+          if (b && typeof b === "string" && b.trim().toLowerCase() === bLower) {
+            return true;
+          }
+        }
+      }
+      return false;
+    });
+  }, [sellOutData, selectedBrand, productsList]);
 
   // 1. Aggregate Sell-In by Sales Channel
   const { channelAggregates, totalSellInAmount, totalSellInQty } = React.useMemo(() => {
@@ -829,6 +913,265 @@ export function DashboardAnalysisView() {
   // Active trend dataset based on toggle
   const activeTrendData = trendToggle === "channel" ? twelveMonthChannelData : twelveMonthBuyerData;
 
+  // 📊 Chart A: Sell-In vs Sell-Out Comparison Aggregates
+  const comparisonData = React.useMemo(() => {
+    const map = new Map<string, {
+      label: string;
+      sellInAmt: number;
+      sellInQty: number;
+      sellOutAmt: number;
+      sellOutQty: number;
+    }>();
+
+    const getGroupKey = (r: any) => {
+      if (soComparisonGroup === "channel") {
+        return (r.channel || r.sales_channel || "Retailer").trim();
+      }
+      if (soComparisonGroup === "buyer") {
+        return (
+          r.buyer_name ||
+          r.buyer_code ||
+          r.retailer_name ||
+          r.retailer_group ||
+          r.buyer ||
+          r.customer_name ||
+          "Unknown Buyer"
+        ).trim();
+      }
+      // brand
+      let b = (r.brand || "").trim();
+      if (!b) {
+        const sku = (r.sku || r.product_sku || r.prodcode || "").toLowerCase().trim();
+        const p = productsList.find((item) => (item.sku || item.id || "").toLowerCase().trim() === sku);
+        if (p) b = (p.brand || p.brand_name || p.brand_assigned || "").trim();
+      }
+      return b || "Other Brand";
+    };
+
+    let totalInAmt = 0;
+    let totalInQty = 0;
+    let totalOutAmt = 0;
+    let totalOutQty = 0;
+
+    // Aggregate Sell-In
+    filteredSalesIn.forEach((r) => {
+      const key = getGroupKey(r);
+      const amt = Number(r.total_demand !== undefined ? r.total_demand : (r.gross_amount || (Number(r.total_amount || 0) > 0 ? r.total_amount : 0)));
+      const qty = Number(r.quantity !== undefined ? r.quantity : (r.gross_qty || (Number(r.total_qty || 0) > 0 ? r.total_qty : 0)));
+
+      const cur = map.get(key) || { label: key, sellInAmt: 0, sellInQty: 0, sellOutAmt: 0, sellOutQty: 0 };
+      cur.sellInAmt += amt;
+      cur.sellInQty += qty;
+      map.set(key, cur);
+
+      totalInAmt += amt;
+      totalInQty += qty;
+    });
+
+    // Aggregate Sell-Out
+    filteredSalesOut.forEach((r) => {
+      const key = getGroupKey(r);
+      const amt = Number(r.sales_amount || 0);
+      const qty = Number(r.sales_quantity || 0);
+
+      const cur = map.get(key) || { label: key, sellInAmt: 0, sellInQty: 0, sellOutAmt: 0, sellOutQty: 0 };
+      cur.sellOutAmt += amt;
+      cur.sellOutQty += qty;
+      map.set(key, cur);
+
+      totalOutAmt += amt;
+      totalOutQty += qty;
+    });
+
+    // Sort by combined volume and take top 6
+    const all = Array.from(map.values());
+    all.sort((a, b) => {
+      const volA = soComparisonMetric === "amount" ? (a.sellInAmt + a.sellOutAmt) : (a.sellInQty + a.sellOutQty);
+      const volB = soComparisonMetric === "amount" ? (b.sellInAmt + b.sellOutAmt) : (b.sellInQty + b.sellOutQty);
+      return volB - volA;
+    });
+
+    const items = all.slice(0, 6);
+
+    let maxVal = 100;
+    items.forEach((it) => {
+      const inVal = soComparisonMetric === "amount" ? it.sellInAmt : it.sellInQty;
+      const outVal = soComparisonMetric === "amount" ? it.sellOutAmt : it.sellOutQty;
+      if (inVal > maxVal) maxVal = inVal;
+      if (outVal > maxVal) maxVal = outVal;
+    });
+    maxVal = Math.ceil(maxVal * 1.15);
+
+    return {
+      items,
+      maxVal,
+      totalInAmt,
+      totalInQty,
+      totalOutAmt,
+      totalOutQty,
+      gapAmt: totalInAmt - totalOutAmt,
+      gapQty: totalInQty - totalOutQty,
+    };
+  }, [filteredSalesIn, filteredSalesOut, soComparisonGroup, soComparisonMetric, productsList]);
+
+  // ⚡ Chart B: Sell-Through Rate Aggregates
+  const sellThroughData = React.useMemo(() => {
+    const map = new Map<string, { label: string; inQty: number; outQty: number; inAmt: number; outAmt: number }>();
+
+    filteredSalesIn.forEach((r) => {
+      let key = "Other";
+      if (sellThroughGroup === "brand") {
+        let b = (r.brand || "").trim();
+        if (!b) {
+          const sku = (r.sku || r.prodcode || "").toLowerCase().trim();
+          const p = productsList.find((item) => (item.sku || item.id || "").toLowerCase().trim() === sku);
+          if (p) b = (p.brand || p.brand_name || p.brand_assigned || "").trim();
+        }
+        key = b || "Other";
+      } else {
+        key = (
+          r.buyer_name ||
+          r.buyer_code ||
+          r.retailer_name ||
+          r.retailer_group ||
+          r.buyer ||
+          r.customer_name ||
+          "Unknown Buyer"
+        ).trim();
+      }
+
+      const qty = Number(r.quantity !== undefined ? r.quantity : (r.gross_qty || (Number(r.total_qty || 0) > 0 ? r.total_qty : 0)));
+      const amt = Number(r.total_demand !== undefined ? r.total_demand : (r.gross_amount || (Number(r.total_amount || 0) > 0 ? r.total_amount : 0)));
+      const cur = map.get(key) || { label: key, inQty: 0, outQty: 0, inAmt: 0, outAmt: 0 };
+      cur.inQty += qty;
+      cur.inAmt += amt;
+      map.set(key, cur);
+    });
+
+    filteredSalesOut.forEach((r) => {
+      let key = "Other";
+      if (sellThroughGroup === "brand") {
+        let b = (r.brand || "").trim();
+        if (!b) {
+          const sku = (r.product_sku || r.sku || r.prodcode || "").toLowerCase().trim();
+          const p = productsList.find((item) => (item.sku || item.id || "").toLowerCase().trim() === sku);
+          if (p) b = (p.brand || p.brand_name || p.brand_assigned || "").trim();
+        }
+        key = b || "Other";
+      } else {
+        key = (
+          r.buyer_name ||
+          r.buyer_code ||
+          r.retailer_name ||
+          r.retailer_group ||
+          r.buyer ||
+          r.customer_name ||
+          "Unknown Buyer"
+        ).trim();
+      }
+
+      const qty = Number(r.sales_quantity || 0);
+      const amt = Number(r.sales_amount || 0);
+      const cur = map.get(key) || { label: key, inQty: 0, outQty: 0, inAmt: 0, outAmt: 0 };
+      cur.outQty += qty;
+      cur.outAmt += amt;
+      map.set(key, cur);
+    });
+
+    let overallInQty = 0;
+    let overallOutQty = 0;
+
+    const list = Array.from(map.values())
+      .filter((it) => it.inQty > 0 || it.outQty > 0)
+      .map((it) => {
+        overallInQty += it.inQty;
+        overallOutQty += it.outQty;
+        const rate = it.inQty > 0 ? (it.outQty / it.inQty) * 100 : (it.outQty > 0 ? 100 : 0);
+        return {
+          ...it,
+          rate,
+        };
+      })
+      .sort((a, b) => b.outQty - a.outQty);
+
+    const overallRate = overallInQty > 0 ? (overallOutQty / overallInQty) * 100 : 0;
+
+    return {
+      items: list.slice(0, 10),
+      overallRate,
+      overallInQty,
+      overallOutQty,
+    };
+  }, [filteredSalesIn, filteredSalesOut, sellThroughGroup, productsList]);
+
+  // 🏆 Chart D: Top 5 & Bottom 5 Product Movers
+  const skuMoversData = React.useMemo(() => {
+    const map = new Map<string, {
+      sku: string;
+      name: string;
+      brand: string;
+      inQty: number;
+      outQty: number;
+      outAmt: number;
+    }>();
+
+    filteredSalesIn.forEach((r) => {
+      const sku = (r.sku || r.prodcode || r.product_sku || "SKU-UNKNOWN").trim();
+      let brand = (r.brand || "").trim();
+      let name = (r.product_name || r.raw_product_description || sku).trim();
+
+      const p = productsList.find((item) => (item.sku || item.id || "").toLowerCase().trim() === sku.toLowerCase());
+      if (p) {
+        if (!brand) brand = (p.brand || p.brand_name || p.brand_assigned || "").trim();
+        if (name === sku && (p.name || p.product_name)) name = (p.name || p.product_name).trim();
+      }
+
+      const qty = Number(r.quantity !== undefined ? r.quantity : (r.gross_qty || (Number(r.total_qty || 0) > 0 ? r.total_qty : 0)));
+      const cur = map.get(sku) || { sku, name, brand: brand || "Brand", inQty: 0, outQty: 0, outAmt: 0 };
+      cur.inQty += qty;
+      map.set(sku, cur);
+    });
+
+    filteredSalesOut.forEach((r) => {
+      const sku = (r.product_sku || r.sku || r.prodcode || "SKU-UNKNOWN").trim();
+      let brand = (r.brand || "").trim();
+      let name = (r.product_name || r.raw_product_description || sku).trim();
+
+      const p = productsList.find((item) => (item.sku || item.id || "").toLowerCase().trim() === sku.toLowerCase());
+      if (p) {
+        if (!brand) brand = (p.brand || p.brand_name || p.brand_assigned || "").trim();
+        if (name === sku && (p.name || p.product_name)) name = (p.name || p.product_name).trim();
+      }
+
+      const qty = Number(r.sales_quantity || 0);
+      const amt = Number(r.sales_amount || 0);
+      const cur = map.get(sku) || { sku, name, brand: brand || "Brand", inQty: 0, outQty: 0, outAmt: 0 };
+      cur.outQty += qty;
+      cur.outAmt += amt;
+      map.set(sku, cur);
+    });
+
+    const all = Array.from(map.values());
+
+    // Top 5 Movers: Highest outQty
+    const topMovers = [...all]
+      .filter((it) => it.outQty > 0)
+      .sort((a, b) => b.outQty - a.outQty)
+      .slice(0, 5);
+
+    // Bottom 5 Bottlenecks: Delivered in Sell-In, but lowest sell-out (biggest stock gap)
+    const bottomMovers = [...all]
+      .filter((it) => it.inQty > 0)
+      .sort((a, b) => (b.inQty - b.outQty) - (a.inQty - a.outQty))
+      .slice(0, 5);
+
+    return {
+      topMovers,
+      bottomMovers,
+      totalSkus: all.length,
+    };
+  }, [filteredSalesIn, filteredSalesOut, productsList]);
+
   const [brandDropdownOpen, setBrandDropdownOpen] = React.useState<boolean>(false);
   const brandDropdownRef = React.useRef<HTMLDivElement>(null);
 
@@ -1094,21 +1437,33 @@ export function DashboardAnalysisView() {
                             ? "Sell In by Channel"
                             : item.id === "buyer_pie"
                             ? "Sell In by Buyers"
-                            : `12-Month ${trendToggle === "channel" ? "Channel" : "Buyer"} Trend`}
+                            : item.id === "trend_12m"
+                            ? `12-Month ${trendToggle === "channel" ? "Channel" : "Buyer"} Trend`
+                            : item.id === "sellin_vs_sellout"
+                            ? "Sell-In vs Sell-Out"
+                            : item.id === "sell_through_rate"
+                            ? "Sell-Through Rate (%)"
+                            : "Product Movers (Top & Bottom)"}
                         </h3>
                         <span className="px-1.5 py-0.2 rounded-full bg-blue-50 text-[#0B57D0] text-[10px] font-bold border border-blue-100 shrink-0">
                           {item.id === "channel_pie"
                             ? channelAggregates.length
                             : item.id === "buyer_pie"
                             ? buyerAggregates.length
-                            : `${activeTrendData.categories.length} ${trendToggle === "channel" ? "Channels" : "Buyers"}`}
+                            : item.id === "trend_12m"
+                            ? `${activeTrendData.categories.length} ${trendToggle === "channel" ? "Channels" : "Buyers"}`
+                            : item.id === "sellin_vs_sellout"
+                            ? `${comparisonData.items.length} ${soComparisonGroup}s`
+                            : item.id === "sell_through_rate"
+                            ? `${sellThroughData.items.length} ${sellThroughGroup}s`
+                            : `${skuMoversData.totalSkus} SKUs`}
                         </span>
                       </div>
                       <span className="text-[10px] text-zinc-400 mt-0.2 truncate">
                         {item.id === "trend_12m"
                           ? `${selectedBrand !== "All Brands" ? selectedBrand : "All Brands"} · ${twelveMonths[0]} ~ ${twelveMonths[11]}`
                           : selectedBrand !== "All Brands"
-                          ? selectedBrand
+                          ? `${selectedBrand} · ${formatPeriodLabel(selectedMonth)}`
                           : formatPeriodLabel(selectedMonth)}
                       </span>
                     </div>
@@ -1140,6 +1495,110 @@ export function DashboardAnalysisView() {
                           }`}
                         >
                           Buyer
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Toggle Switches if Sell-In vs Sell-Out */}
+                    {item.id === "sellin_vs_sellout" && (
+                      <div className="flex items-center gap-1 mr-1">
+                        {/* Group Toggle */}
+                        <div className="inline-flex p-0.5 rounded-full bg-[#F0F4F9] border border-slate-200/90 shadow-2xs gap-0.5">
+                          {(["channel", "buyer", "brand"] as const).map((grp) => (
+                            <button
+                              key={grp}
+                              type="button"
+                              onClick={() => setSoComparisonGroup(grp)}
+                              className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold transition-all cursor-pointer capitalize ${
+                                soComparisonGroup === grp
+                                  ? "bg-white text-[#0B57D0] shadow-xs font-bold"
+                                  : "text-zinc-600 hover:text-zinc-950"
+                              }`}
+                            >
+                              {grp}
+                            </button>
+                          ))}
+                        </div>
+                        {/* Metric Toggle ($ vs Qty) */}
+                        <div className="inline-flex p-0.5 rounded-full bg-[#F0F4F9] border border-slate-200/90 shadow-2xs gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setSoComparisonMetric("amount")}
+                            className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold transition-all cursor-pointer ${
+                              soComparisonMetric === "amount"
+                                ? "bg-white text-[#0B57D0] shadow-xs font-bold"
+                                : "text-zinc-600 hover:text-zinc-950"
+                            }`}
+                          >
+                            $
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSoComparisonMetric("qty")}
+                            className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold transition-all cursor-pointer ${
+                              soComparisonMetric === "qty"
+                                ? "bg-white text-[#0B57D0] shadow-xs font-bold"
+                                : "text-zinc-600 hover:text-zinc-950"
+                            }`}
+                          >
+                            Qty
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Toggle Switch if Sell-Through Rate */}
+                    {item.id === "sell_through_rate" && (
+                      <div className="inline-flex p-0.5 rounded-full bg-[#F0F4F9] border border-slate-200/90 shadow-2xs gap-0.5 mr-1">
+                        <button
+                          type="button"
+                          onClick={() => setSellThroughGroup("buyer")}
+                          className={`px-2 py-0.5 rounded-full text-[10.5px] font-semibold transition-all cursor-pointer ${
+                            sellThroughGroup === "buyer"
+                              ? "bg-white text-[#0B57D0] shadow-xs font-bold"
+                              : "text-zinc-600 hover:text-zinc-950"
+                          }`}
+                        >
+                          Buyer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSellThroughGroup("brand")}
+                          className={`px-2 py-0.5 rounded-full text-[10.5px] font-semibold transition-all cursor-pointer ${
+                            sellThroughGroup === "brand"
+                              ? "bg-white text-[#0B57D0] shadow-xs font-bold"
+                              : "text-zinc-600 hover:text-zinc-950"
+                          }`}
+                        >
+                          Brand
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Toggle Switch if Product Movers */}
+                    {item.id === "sku_movers" && (
+                      <div className="inline-flex p-0.5 rounded-full bg-[#F0F4F9] border border-slate-200/90 shadow-2xs gap-0.5 mr-1">
+                        <button
+                          type="button"
+                          onClick={() => setSkuMoverTab("top")}
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition-all cursor-pointer ${
+                            skuMoverTab === "top"
+                              ? "bg-white text-emerald-600 shadow-xs font-bold"
+                              : "text-zinc-600 hover:text-zinc-950"
+                          }`}
+                        >
+                          Top 5
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSkuMoverTab("bottom")}
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-semibold transition-all cursor-pointer ${
+                            skuMoverTab === "bottom"
+                              ? "bg-white text-rose-600 shadow-xs font-bold"
+                              : "text-zinc-600 hover:text-zinc-950"
+                          }`}
+                        >
+                          Bottom 5
                         </button>
                       </div>
                     )}
@@ -1681,6 +2140,435 @@ export function DashboardAnalysisView() {
                                 <span className="text-zinc-900 font-semibold font-mono">
                                   ${formatCompactNum(activeTrendData.totalPerCategory.get(cat) || 0)}
                                 </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Card Body: 4. Sell-In vs Sell-Out Grouped Comparison Chart */}
+                {item.id === "sellin_vs_sellout" && (
+                  <div className="w-full flex flex-col justify-between flex-1 min-h-0 relative">
+                    {loadingSellOut || loading ? (
+                      <div className="w-full flex-1 min-h-[160px] flex flex-col items-center justify-center text-center gap-2">
+                        <div className="w-6 h-6 rounded-full border-2 border-slate-200 border-t-[#0B57D0] animate-spin" />
+                        <span className="text-xs text-zinc-400 font-medium">Comparing Sell-In & Sell-Out data...</span>
+                      </div>
+                    ) : comparisonData.items.length === 0 ? (
+                      <div className="w-full flex-1 min-h-[160px] flex flex-col items-center justify-center text-center p-6 gap-2">
+                        <div className="w-10 h-10 rounded-xl bg-slate-50 text-zinc-400 flex items-center justify-center border border-slate-200">
+                          <BarChart3 size={20} />
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-800">No Comparison Data</h4>
+                        <p className="text-[11px] text-zinc-400 leading-relaxed max-w-[200px]">
+                          No records found for period {selectedMonth}{selectedBrand !== "All Brands" ? ` under ${selectedBrand}` : ""}.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Summary Metrics Strip */}
+                        <div className="grid grid-cols-3 gap-2 px-1 py-1.5 mb-1 bg-[#F8F9FA] rounded-lg border border-slate-100 text-center shrink-0">
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-[#0B57D0]">
+                              Total Sell-In
+                            </span>
+                            <span className="text-xs font-bold text-zinc-900 font-mono">
+                              {soComparisonMetric === "amount"
+                                ? `$${formatCompactNum(comparisonData.totalInAmt)}`
+                                : `${comparisonData.totalInQty.toLocaleString()} pcs`}
+                            </span>
+                          </div>
+                          <div className="flex flex-col border-x border-slate-200/80">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-[#00838F]">
+                              Total Sell-Out
+                            </span>
+                            <span className="text-xs font-bold text-zinc-900 font-mono">
+                              {soComparisonMetric === "amount"
+                                ? `$${formatCompactNum(comparisonData.totalOutAmt)}`
+                                : `${comparisonData.totalOutQty.toLocaleString()} pcs`}
+                            </span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500">
+                              Absorption Gap
+                            </span>
+                            <span className={`text-xs font-bold font-mono ${
+                              (soComparisonMetric === "amount" ? comparisonData.gapAmt : comparisonData.gapQty) >= 0
+                                ? "text-amber-600"
+                                : "text-emerald-600"
+                            }`}>
+                              {soComparisonMetric === "amount"
+                                ? `${comparisonData.gapAmt >= 0 ? "+" : ""}$${formatCompactNum(comparisonData.gapAmt)}`
+                                : `${comparisonData.gapQty >= 0 ? "+" : ""}${comparisonData.gapQty.toLocaleString()} pcs`}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* SVG Grouped Bar Chart */}
+                        <div className="relative w-full flex-1 min-h-[160px] overflow-hidden">
+                          <svg viewBox="0 0 520 185" className="w-full h-full select-none overflow-visible">
+                            {/* Horizontal Gridlines */}
+                            {[1, 0.75, 0.5, 0.25, 0].map((ratio, idx) => {
+                              const y = 145 - ratio * 125;
+                              const val = comparisonData.maxVal * ratio;
+                              return (
+                                <g key={idx}>
+                                  <line
+                                    x1="45"
+                                    y1={y}
+                                    x2="512"
+                                    y2={y}
+                                    stroke="#e2e8f0"
+                                    strokeDasharray={ratio === 0 ? "none" : "3,3"}
+                                    strokeWidth={ratio === 0 ? "1" : "0.75"}
+                                  />
+                                  <text
+                                    x="40"
+                                    y={y + 3.5}
+                                    textAnchor="end"
+                                    className="text-[9px] fill-zinc-400 font-mono font-medium"
+                                  >
+                                    {soComparisonMetric === "amount" ? `$${formatCompactNum(val)}` : formatCompactNum(val)}
+                                  </text>
+                                </g>
+                              );
+                            })}
+
+                            {/* Grouped Bars per Category */}
+                            {comparisonData.items.map((catItem, idx) => {
+                              const slotWidth = (512 - 50) / comparisonData.items.length;
+                              const slotX = 50 + idx * slotWidth;
+                              const barWidth = Math.min(22, (slotWidth - 14) / 2);
+                              const groupCenterX = slotX + slotWidth / 2;
+
+                              const inVal = soComparisonMetric === "amount" ? catItem.sellInAmt : catItem.sellInQty;
+                              const outVal = soComparisonMetric === "amount" ? catItem.sellOutAmt : catItem.sellOutQty;
+
+                              const inHeight = comparisonData.maxVal > 0 ? (inVal / comparisonData.maxVal) * 125 : 0;
+                              const outHeight = comparisonData.maxVal > 0 ? (outVal / comparisonData.maxVal) * 125 : 0;
+
+                              const inY = 145 - inHeight;
+                              const outY = 145 - outHeight;
+
+                              const isHovered = hoveredComparisonBar === catItem.label;
+
+                              return (
+                                <g
+                                  key={catItem.label}
+                                  className="cursor-pointer"
+                                  onMouseEnter={() => setHoveredComparisonBar(catItem.label)}
+                                  onMouseLeave={() => setHoveredComparisonBar(null)}
+                                >
+                                  {/* Hover background column */}
+                                  {isHovered && (
+                                    <rect
+                                      x={slotX + 2}
+                                      y="15"
+                                      width={slotWidth - 4}
+                                      height="132"
+                                      rx="4"
+                                      fill="#0B57D0"
+                                      fillOpacity="0.04"
+                                    />
+                                  )}
+
+                                  {/* Sell-In Bar (Blue) */}
+                                  <rect
+                                    x={groupCenterX - barWidth - 1.5}
+                                    y={inY}
+                                    width={barWidth}
+                                    height={Math.max(2, inHeight)}
+                                    rx="3"
+                                    fill="#0B57D0"
+                                    className="transition-all duration-200"
+                                    opacity={hoveredComparisonBar && !isHovered ? 0.4 : 1}
+                                  />
+
+                                  {/* Sell-Out Bar (Teal) */}
+                                  <rect
+                                    x={groupCenterX + 1.5}
+                                    y={outY}
+                                    width={barWidth}
+                                    height={Math.max(2, outHeight)}
+                                    rx="3"
+                                    fill="#00838F"
+                                    className="transition-all duration-200"
+                                    opacity={hoveredComparisonBar && !isHovered ? 0.4 : 1}
+                                  />
+
+                                  {/* Category Label below */}
+                                  <text
+                                    x={groupCenterX}
+                                    y="164"
+                                    textAnchor="middle"
+                                    className={`text-[9px] transition-colors ${
+                                      isHovered ? "fill-[#0B57D0] font-bold" : "fill-zinc-600 font-medium"
+                                    }`}
+                                  >
+                                    {catItem.label.length > 10 ? `${catItem.label.slice(0, 9)}…` : catItem.label}
+                                  </text>
+                                </g>
+                              );
+                            })}
+                          </svg>
+
+                          {/* Hover Tooltip Float */}
+                          {hoveredComparisonBar && (() => {
+                            const target = comparisonData.items.find((it) => it.label === hoveredComparisonBar);
+                            if (!target) return null;
+                            const inV = soComparisonMetric === "amount" ? target.sellInAmt : target.sellInQty;
+                            const outV = soComparisonMetric === "amount" ? target.sellOutAmt : target.sellOutQty;
+                            const diff = inV - outV;
+
+                            return (
+                              <div className="absolute top-2 right-2 bg-zinc-900/95 text-white rounded-lg shadow-xl px-2.5 py-1.5 text-[11px] pointer-events-none z-30 animate-in fade-in duration-100 flex flex-col gap-0.5 border border-zinc-700/50">
+                                <span className="font-bold text-zinc-200 border-b border-zinc-700 pb-0.5 max-w-[150px] truncate">
+                                  {target.label}
+                                </span>
+                                <div className="flex items-center justify-between gap-3 text-[10px]">
+                                  <span className="text-blue-300 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-[#0B57D0]" />
+                                    Sell-In:
+                                  </span>
+                                  <span className="font-mono font-bold">
+                                    {soComparisonMetric === "amount" ? `$${formatCompactNum(inV)}` : inV.toLocaleString()}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3 text-[10px]">
+                                  <span className="text-teal-300 flex items-center gap-1">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-[#00838F]" />
+                                    Sell-Out:
+                                  </span>
+                                  <span className="font-mono font-bold">
+                                    {soComparisonMetric === "amount" ? `$${formatCompactNum(outV)}` : outV.toLocaleString()}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-3 text-[10px] pt-0.5 border-t border-zinc-700/80">
+                                  <span className="text-zinc-400">Net Gap:</span>
+                                  <span className={`font-mono font-bold ${diff >= 0 ? "text-amber-400" : "text-emerald-400"}`}>
+                                    {diff >= 0 ? "+" : ""}{soComparisonMetric === "amount" ? `$${formatCompactNum(diff)}` : diff.toLocaleString()}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        {/* Legend */}
+                        <div className="w-full flex items-center justify-center gap-4 pt-2 mt-1 border-t border-slate-100 text-[10.5px] shrink-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded bg-[#0B57D0] shadow-2xs" />
+                            <span className="text-zinc-600 font-medium">Sell-In (Wholesale)</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-2.5 h-2.5 rounded bg-[#00838F] shadow-2xs" />
+                            <span className="text-zinc-600 font-medium">Sell-Out (Retail POS)</span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Card Body: 5. Sell-Through Rate (%) Performance */}
+                {item.id === "sell_through_rate" && (
+                  <div className="w-full flex flex-col flex-1 min-h-0 relative">
+                    {loadingSellOut || loading ? (
+                      <div className="w-full flex-1 min-h-[160px] flex flex-col items-center justify-center text-center gap-2">
+                        <div className="w-6 h-6 rounded-full border-2 border-slate-200 border-t-[#0B57D0] animate-spin" />
+                        <span className="text-xs text-zinc-400 font-medium">Calculating Sell-Through Rate...</span>
+                      </div>
+                    ) : sellThroughData.items.length === 0 ? (
+                      <div className="w-full flex-1 min-h-[160px] flex flex-col items-center justify-center text-center p-6 gap-2">
+                        <div className="w-10 h-10 rounded-xl bg-slate-50 text-zinc-400 flex items-center justify-center border border-slate-200">
+                          <TrendingUp size={20} />
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-800">No Sell-Through Data</h4>
+                        <p className="text-[11px] text-zinc-400 leading-relaxed max-w-[180px]">
+                          Requires both Sell-In and Sell-Out data to compute velocity.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Overall Sell-Through KPI Header */}
+                        <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-blue-50/60 to-slate-50 rounded-lg border border-blue-100/60 mb-2 shrink-0">
+                          <div className="flex flex-col">
+                            <span className="text-[9.5px] font-bold text-zinc-500 uppercase tracking-wider">
+                              Average Sell-Through
+                            </span>
+                            <div className="flex items-baseline gap-1.5 mt-0.5">
+                              <span className="text-lg font-black text-zinc-950 font-mono">
+                                {sellThroughData.overallRate.toFixed(1)}%
+                              </span>
+                              <span className="text-[10px] text-zinc-500">
+                                ({sellThroughData.overallOutQty.toLocaleString()} / {sellThroughData.overallInQty.toLocaleString()} pcs)
+                              </span>
+                            </div>
+                          </div>
+
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${
+                            sellThroughData.overallRate >= 70
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : sellThroughData.overallRate >= 40
+                              ? "bg-amber-50 text-amber-700 border-amber-200"
+                              : "bg-red-50 text-red-700 border-red-200"
+                          }`}>
+                            {sellThroughData.overallRate >= 70
+                              ? "High Velocity"
+                              : sellThroughData.overallRate >= 40
+                              ? "Balanced"
+                              : "Slow / Overstock"}
+                          </span>
+                        </div>
+
+                        {/* Ranked Velocity Progress List */}
+                        <div className="w-full flex-1 min-h-0 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden flex flex-col divide-y divide-slate-100 pr-0.5">
+                          {sellThroughData.items.map((row) => {
+                            const isHigh = row.rate >= 70;
+                            const isMid = row.rate >= 40 && row.rate < 70;
+
+                            return (
+                              <div key={row.label} className="py-2 px-1 flex flex-col gap-1 hover:bg-slate-50 rounded-lg transition-colors">
+                                <div className="flex items-center justify-between text-xs">
+                                  <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-2">
+                                    <span className="text-xs font-semibold text-zinc-800 truncate">
+                                      {row.label}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[10px] text-zinc-400 font-mono">
+                                      {row.outQty.toLocaleString()} / {row.inQty.toLocaleString()} pcs
+                                    </span>
+                                    <span className={`px-1.5 py-0.2 rounded text-[10px] font-bold font-mono border ${
+                                      isHigh
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                        : isMid
+                                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                                        : "bg-rose-50 text-rose-700 border-rose-200"
+                                    }`}>
+                                      {row.rate.toFixed(1)}%
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Progress Bar */}
+                                <div className="w-full h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                                  <div
+                                    className={`h-full rounded-full transition-all duration-300 ${
+                                      isHigh ? "bg-emerald-500" : isMid ? "bg-amber-500" : "bg-rose-500"
+                                    }`}
+                                    style={{ width: `${Math.min(100, Math.max(0, row.rate))}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Card Body: 6. Product Movement (Top 5 & Bottom 5 SKUs) */}
+                {item.id === "sku_movers" && (
+                  <div className="w-full flex flex-col flex-1 min-h-0 relative">
+                    {loadingSellOut || loading ? (
+                      <div className="w-full flex-1 min-h-[160px] flex flex-col items-center justify-center text-center gap-2">
+                        <div className="w-6 h-6 rounded-full border-2 border-slate-200 border-t-[#0B57D0] animate-spin" />
+                        <span className="text-xs text-zinc-400 font-medium">Analyzing SKU movements...</span>
+                      </div>
+                    ) : skuMoversData.totalSkus === 0 ? (
+                      <div className="w-full flex-1 min-h-[160px] flex flex-col items-center justify-center text-center p-6 gap-2">
+                        <div className="w-10 h-10 rounded-xl bg-slate-50 text-zinc-400 flex items-center justify-center border border-slate-200">
+                          <Package size={20} />
+                        </div>
+                        <h4 className="text-xs font-bold text-zinc-800">No SKU Data</h4>
+                        <p className="text-[11px] text-zinc-400 leading-relaxed max-w-[180px]">
+                          No product movement records found for this period.
+                        </p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Tab Subtitle Header */}
+                        <div className="flex items-center justify-between px-2.5 py-1.5 bg-slate-50 rounded-lg border border-slate-100 mb-2 shrink-0">
+                          <div className="flex items-center gap-1.5">
+                            {skuMoverTab === "top" ? (
+                              <ArrowUpRight size={14} className="text-emerald-600 shrink-0" />
+                            ) : (
+                              <ArrowDownRight size={14} className="text-rose-600 shrink-0" />
+                            )}
+                            <span className="text-[11px] font-bold text-zinc-800">
+                              {skuMoverTab === "top" ? "Bestselling SKUs (High Demand)" : "Bottleneck SKUs (Overstock / Stagnant)"}
+                            </span>
+                          </div>
+                          <span className="text-[10px] text-zinc-400 font-medium">
+                            Ranked by {skuMoverTab === "top" ? "Sell-Out Qty" : "Inventory Gap"}
+                          </span>
+                        </div>
+
+                        {/* List of 5 Movers */}
+                        <div className="w-full flex-1 min-h-0 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden flex flex-col divide-y divide-slate-100 pr-0.5">
+                          {(skuMoverTab === "top" ? skuMoversData.topMovers : skuMoversData.bottomMovers).map((skuItem, rankIdx) => {
+                            const gap = skuItem.inQty - skuItem.outQty;
+                            const isTop = skuMoverTab === "top";
+
+                            return (
+                              <div
+                                key={skuItem.sku}
+                                className="py-2 px-1 flex items-center justify-between gap-2 hover:bg-slate-50 rounded-lg transition-colors"
+                              >
+                                <div className="flex items-center gap-2 min-w-0 flex-1">
+                                  {/* Rank Badge */}
+                                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                                    rankIdx === 0
+                                      ? "bg-amber-100 text-amber-800 border border-amber-300"
+                                      : rankIdx === 1
+                                      ? "bg-slate-200 text-slate-700"
+                                      : rankIdx === 2
+                                      ? "bg-amber-50 text-amber-900/70"
+                                      : "bg-slate-100 text-zinc-600"
+                                  }`}>
+                                    {rankIdx + 1}
+                                  </span>
+
+                                  {/* Product Description */}
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="text-xs font-semibold text-zinc-900 truncate">
+                                      {skuItem.name}
+                                    </span>
+                                    <div className="flex items-center gap-1.5 text-[10px] text-zinc-400 mt-0.5 truncate">
+                                      <span className="font-mono">{skuItem.sku}</span>
+                                      <span>·</span>
+                                      <span className="text-[#0B57D0] font-medium">{skuItem.brand}</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Right Stats */}
+                                <div className="flex flex-col items-end shrink-0 pl-1">
+                                  {isTop ? (
+                                    <>
+                                      <span className="text-xs font-bold text-zinc-900 font-mono">
+                                        {skuItem.outQty.toLocaleString()} sold
+                                      </span>
+                                      <span className="text-[10px] text-emerald-600 font-semibold font-mono">
+                                        ${formatCompactNum(skuItem.outAmt)} retail
+                                      </span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span className="text-xs font-bold text-rose-600 font-mono">
+                                        +{gap > 0 ? gap.toLocaleString() : 0} unsold
+                                      </span>
+                                      <span className="text-[10px] text-zinc-400 font-mono">
+                                        {skuItem.outQty.toLocaleString()} / {skuItem.inQty.toLocaleString()} pcs
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
                               </div>
                             );
                           })}

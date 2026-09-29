@@ -10,6 +10,7 @@ import { SponsorshipModule } from "../modules/SponsorshipModule";
 import { DirectOrderModule } from "../modules/DirectOrderModule";
 import { MarketPricingModule } from "../modules/MarketPricingModule";
 import { SellInModule } from "../modules/SellInModule";
+import { SellOutModule } from "../modules/SellOutModule";
 import { BuyersChannelsModule } from "../modules/BuyersChannelsModule";
 import { SaleInOutModule } from "../modules/SaleInOutModule";
 import { SaleProjectionModule } from "../modules/SaleProjectionModule";
@@ -75,6 +76,9 @@ export function SalesChannelsPage({ profile, breadcrumbPath }: SalesChannelsPage
       case "Sell-In":
       case "Sale In & Sale Out":
         return <SellInModule profile={profile} />;
+      case "Sell-Out":
+      case "Sell Out":
+        return <SellOutModule profile={profile} />;
       case "Buyers & Channels":
       case "Buyers and Channels":
       case "Buyers":

@@ -2685,11 +2685,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const badgeClass = getZoneBadgeClass(zone);
 
     return (
-      <div className="flex items-center justify-center gap-1.5">
-        <span className={`inline-flex items-center px-1.5 py-0.5 rounded border text-[9px] font-bold uppercase tracking-wider ${badgeClass}`}>
+      <div className="flex flex-col items-center justify-center gap-0.5">
+        <span className={`inline-flex items-center px-1.5 py-0.2 rounded border text-[8.5px] font-bold whitespace-nowrap leading-tight ${badgeClass}`}>
           {zone}
         </span>
-        <span className="font-normal text-zinc-500">{pStr}</span>
+        <span className="font-normal text-zinc-600 text-xs font-mono">{pStr}</span>
       </div>
     );
   };
@@ -8275,7 +8275,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                   </div>
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
-                                  <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold ${statusBadge}`}>
+                                  <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap ${statusBadge}`}>
                                     {order.status || "Ready to Pick"}
                                   </span>
                                 </td>
@@ -8511,11 +8511,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 </td>
                                 <td className="p-3 w-36 align-middle border-b border-zinc-200">
                                   {order.invoice_number ? (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap bg-blue-50 text-blue-700 border-blue-200">
                                       Invoiced
                                     </span>
                                   ) : (
-                                    <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-700 border-amber-200">
+                                    <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap bg-amber-50 text-amber-700 border-amber-200">
                                       Pending Invoice
                                     </span>
                                   )}
@@ -8868,11 +8868,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               </td>
                               <td className="p-3 w-36 align-middle border-b border-zinc-200">
                                 {order.credit_note_number ? (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-blue-50 text-blue-700 border-blue-200">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap bg-blue-50 text-blue-700 border-blue-200">
                                     Credit Noted
                                   </span>
                                 ) : (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold bg-amber-50 text-amber-700 border-amber-200">
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap bg-amber-50 text-amber-700 border-amber-200">
                                     Pending CN
                                   </span>
                                 )}
@@ -9074,7 +9074,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                                 {order.mark}
                               </td>
                               <td className="p-3 w-32 align-middle border-b border-zinc-200">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold ${statusBadge}`}>
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[10px] font-bold whitespace-nowrap ${statusBadge}`}>
                                   {order.status || "Pending"}
                                 </span>
                               </td>
@@ -9459,11 +9459,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             <td className="py-2.5 px-3">
                               <div className="font-semibold text-zinc-800 line-clamp-1">{order.deliver_to || "Address not provided"}</div>
                             </td>
-                            <td className="py-2.5 px-3">
-                              <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-zinc-700 text-[11px] font-medium mr-1">
-                                {zone}
-                              </span>
-                              <span className="text-[11px] text-zinc-400 font-mono">{order.poscode || "-"}</span>
+                            <td className="py-2.5 px-3 text-center">
+                              {renderPoscodeCell(order.poscode)}
                             </td>
                             <td className="py-2.5 px-3">
                               <span className="font-bold text-zinc-900">{totalQty} units</span>
@@ -9471,7 +9468,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             </td>
                             <td className="py-2.5 px-3">
                               <div className="flex flex-col gap-0.5 items-start">
-                                <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-zinc-700 text-[11px] font-semibold">
+                                <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-zinc-700 text-[11px] font-semibold whitespace-nowrap">
                                   {order.status || "Ready to Pick"}
                                 </span>
                                 {activeJob && (
