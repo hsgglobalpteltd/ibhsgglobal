@@ -19,7 +19,6 @@ import {
   FileSpreadsheet, 
   Sparkles, 
   Download,
-  ShoppingBag,
   ExternalLink,
   ChevronDown,
   ChevronLeft,
@@ -175,15 +174,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [newChannelDesc, setNewChannelDesc] = React.useState<string>("");
   const [savingChannel, setSavingChannel] = React.useState<boolean>(false);
 
-  // Modals
-  const [showMillionModal, setShowMillionModal] = React.useState<boolean>(false);
-  const [millionRows, setMillionRows] = React.useState<any[]>([]);
-  const [millionFile, setMillionFile] = React.useState<File | null>(null);
-  const [millionFileName, setMillionFileName] = React.useState<string>("");
-  const [uploadingMillion, setUploadingMillion] = React.useState<boolean>(false);
-
-  const [showTikTokModal, setShowTikTokModal] = React.useState<boolean>(false);
-  const [syncingTikTok, setSyncingTikTok] = React.useState<boolean>(false);
+  // Invoices PDF Parsing & Import States
+  const [parsingInvoices, setParsingInvoices] = React.useState<boolean>(false);
+  const [parsingStatusText, setParsingStatusText] = React.useState<string>("");
+  const [parsedInvoices, setParsedInvoices] = React.useState<any[]>([]);
+  const [showInvoicePreviewModal, setShowInvoicePreviewModal] = React.useState<boolean>(false);
+  const [uploadedPdfUrl, setUploadedPdfUrl] = React.useState<string>("");
+  const [uploadedPdfName, setUploadedPdfName] = React.useState<string>("");
+  const [detectedPeriod, setDetectedPeriod] = React.useState<string>("");
+  const [savingInvoices, setSavingInvoices] = React.useState<boolean>(false);
+  const [selectedInvoiceBreakdownRow, setSelectedInvoiceBreakdownRow] = React.useState<any | null>(null);
+  const [activeAssignBuyerInvoiceIndex, setActiveAssignBuyerInvoiceIndex] = React.useState<number | null>(null);
 
   const [showAddBuyerModal, setShowAddBuyerModal] = React.useState<boolean>(false);
   const [newBuyerCode, setNewBuyerCode] = React.useState<string>("");
@@ -417,182 +418,155 @@ export function SellInModule({ profile }: SellInModuleProps) {
     });
   }, [records, subFilterTab, channelFilter, brandFilter, searchTerm]);
 
-  // File Upload Handlers (Million Statement)
-  // Handle Million Excel File Upload (Row 1 & 2 ignored, Row 3 is Header, Row 4+ is Data)
-  const handleMillionFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Handle Tax Invoice PDF/Image Upload and AI Parsing
+  const handleInvoicePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
 
-    setMillionFile(file);
-    setMillionFileName(file.name);
+    setParsingInvoices(true);
+    setParsingStatusText(`Uploading ${files.length} invoice document(s)...`);
 
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const bstr = evt.target?.result;
-        const wb = XLSX.read(bstr, { type: "binary" });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
+    try {
+      const allExtractedInvoices: any[] = [];
+      let latestFileUrl = "";
+      let latestFileName = "";
+      let detectedPeriodStr = "";
 
-        // 2D Array inspection to detect header row (default to index 2 = Row 3)
-        const rows2D: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-        let headerRowIndex = 2; // Default: Row 3 (0-indexed 2)
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setParsingStatusText(`Analyzing invoice document (${i + 1}/${files.length}): ${file.name}...`);
 
-        for (let i = 0; i < Math.min(rows2D.length, 6); i++) {
-          const rowStr = (rows2D[i] || []).map((c) => String(c).toLowerCase().replace(/[^a-z0-9]/g, "")).join(" ");
-          if (
-            (rowStr.includes("custcode") || rowStr.includes("customercode") || rowStr.includes("accno") || rowStr.includes("customer")) &&
-            (rowStr.includes("prodcode") || rowStr.includes("productcode") || rowStr.includes("itemcode") || rowStr.includes("sku") || rowStr.includes("item"))
-          ) {
-            headerRowIndex = i;
-            break;
-          }
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("period", currentPeriod);
+
+        const res = await fetch(`${API_BASE}/api/sellin/parse-invoice-pdf`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Failed to parse ${file.name}`);
         }
 
-        // Parse sheet starting from detected header row (skips preceding title/banner rows)
-        const rawJson: any[] = XLSX.utils.sheet_to_json(ws, { range: headerRowIndex, defval: "" });
-
-        const parsedRows = rawJson.map((row) => {
-          const keys = Object.keys(row);
-          const getVal = (possibleKeys: string[]) => {
-            for (const k of keys) {
-              const cleanK = k.trim().toLowerCase().replace(/[^a-z0-9]/g, "");
-              for (const pk of possibleKeys) {
-                if (cleanK.includes(pk)) return row[k];
-              }
-            }
-            return "";
-          };
-
-          const custcode = String(getVal(["custcode", "customercode", "code", "accno", "customer"]) || row["custcode"] || "").trim();
-          const name = String(getVal(["name", "customername", "company", "custname"]) || row["name"] || custcode).trim();
-          const prodcode = String(getVal(["prodcode", "productcode", "itemcode", "sku", "itemno"]) || row["prodcode"] || "").trim();
-          const proddesp = String(getVal(["proddesp", "description", "itemdescription", "itemname", "desp", "proddesc"]) || row["proddesp"] || prodcode).trim();
-          const qty = Number(getVal(["qty", "quantity", "salesqty", "units"]) || row["qty"] || 0);
-          const totalsi = Number(getVal(["totalsi", "salesamount", "grossamount", "gross", "total_si", "amount"]) || row["totalsi"] || 0);
-          const totalcn = Number(getVal(["totalcn", "cnamount", "creditnote", "cn", "total_cn"]) || row["totalcn"] || 0);
-          const nett = Number(getVal(["nett", "netamount", "total", "net"]) || row["nett"] || (totalsi - totalcn));
-          const rawQty = Math.abs(qty);
-          let demand_qty = 0;
-          let reject_qty = 0;
-          let unit_price = 0;
-
-          if (totalsi > 0 && totalcn === 0) {
-            demand_qty = rawQty;
-            reject_qty = 0;
-            unit_price = rawQty > 0 ? totalsi / rawQty : 0;
-          } else if (totalsi === 0 && totalcn > 0) {
-            // User rule: if CN only, unit price = total CN / qty, demand is 0, reject is qty
-            demand_qty = 0;
-            reject_qty = rawQty;
-            unit_price = rawQty > 0 ? totalcn / rawQty : 0;
-          } else if (totalsi > 0 && totalcn > 0) {
-            demand_qty = rawQty;
-            reject_qty = 0;
-            unit_price = rawQty > 0 ? totalsi / rawQty : 0;
-          } else {
-            demand_qty = rawQty;
-            reject_qty = 0;
-            unit_price = 0;
+        const data = await res.json();
+        if (data.success && Array.isArray(data.invoices)) {
+          allExtractedInvoices.push(...data.invoices);
+          latestFileUrl = data.file_url || latestFileUrl;
+          latestFileName = data.file_name || latestFileName;
+          if (data.suggested_period && !detectedPeriodStr) {
+            detectedPeriodStr = data.suggested_period;
           }
-
-          return { custcode, name, prodcode, proddesp, qty: rawQty, demand_qty, reject_qty, unit_price, totalsi, totalcn, nett };
-        }).filter((r) => r.custcode.length > 0 && r.prodcode.length > 0);
-
-        if (parsedRows.length === 0) {
-          showToast("No valid Million statement rows found. Header must be on Row 3 (custcode, name, prodcode, qty, totalsi, totalcn)", "error");
-          setMillionFile(null);
-          setMillionFileName("");
-          return;
         }
-
-        setMillionRows(parsedRows);
-        setShowMillionModal(true);
-      } catch (err: any) {
-        showToast("Failed to read Excel file: " + err.message, "error");
-        setMillionFile(null);
-        setMillionFileName("");
       }
-    };
-    reader.readAsBinaryString(file);
-    e.target.value = "";
+
+      if (allExtractedInvoices.length === 0) {
+        showToast("No invoices or line items could be detected in the provided file(s).", "error");
+        return;
+      }
+
+      setParsedInvoices(allExtractedInvoices);
+      setUploadedPdfUrl(latestFileUrl);
+      setUploadedPdfName(latestFileName);
+      setDetectedPeriod(detectedPeriodStr || currentPeriod);
+      setShowInvoicePreviewModal(true);
+      showToast(`Detected ${allExtractedInvoices.length} invoice(s) with AI! Review items below.`, "success");
+    } catch (err: any) {
+      console.error("Invoice upload error:", err);
+      showToast(err.message || "Failed to process invoices", "error");
+    } finally {
+      setParsingInvoices(false);
+      setParsingStatusText("");
+      e.target.value = "";
+    }
   };
 
-  // Submit parsed Million data to backend with R2 file upload
-  const handleSubmitMillion = async () => {
-    if (millionRows.length === 0) return;
-    setUploadingMillion(true);
-    try {
-      let fileUrl = "";
-      if (millionFile) {
-        try {
-          const fd = new FormData();
-          fd.append("file", millionFile);
-          fd.append("period", currentPeriod);
-          const fRes = await fetch(`${API_BASE}/api/sellin/upload-file`, {
-            method: "POST",
-            body: fd
-          });
-          if (fRes.ok) {
-            const fData = await fRes.json();
-            fileUrl = fData.file_url || "";
-          }
-        } catch (fErr) {
-          console.warn("Million file R2 upload warning:", fErr);
+  // Assign SKU to a specific item in the Invoice preview modal
+  const handleAssignSkuInPreview = (invIdx: number, itemIdx: number, newSku: string) => {
+    setParsedInvoices((prev) => {
+      const updated = [...prev];
+      const targetInv = { ...updated[invIdx] };
+      const items = [...targetInv.items];
+      const targetItem = { ...items[itemIdx] };
+
+      targetItem.product_sku = newSku;
+      if (newSku) {
+        const prod = productsList.find((p) => p.sku === newSku || p.sku_number === newSku);
+        if (prod) {
+          targetItem.product_name = prod.display_name || targetItem.description;
+          targetItem.brand = prod.brands_id || prod.brand_name || "Unassigned Brand";
         }
+        targetItem.validation_status = targetInv.buyer_code ? "valid" : "unmapped_sku";
+      } else {
+        targetItem.validation_status = "unmapped_sku";
       }
 
-      const res = await fetch(`${API_BASE}/api/sellin/upload-million`, {
+      items[itemIdx] = targetItem;
+      targetInv.items = items;
+      updated[invIdx] = targetInv;
+      return updated;
+    });
+  };
+
+  // Assign existing Buyer to invoice in the preview modal
+  const handleAssignBuyerInPreview = (invIdx: number, buyer: any) => {
+    setParsedInvoices((prev) => {
+      const updated = [...prev];
+      const targetInv = { ...updated[invIdx] };
+      targetInv.buyer_code = buyer.buyer_code;
+      targetInv.buyer_name = buyer.buyer_name;
+      targetInv.channel = buyer.channel || "Retailer";
+      targetInv.is_unregistered = false;
+
+      targetInv.items = targetInv.items.map((it: any) => ({
+        ...it,
+        validation_status: it.product_sku ? "valid" : "unmapped_sku"
+      }));
+
+      updated[invIdx] = targetInv;
+      return updated;
+    });
+    setActiveAssignBuyerInvoiceIndex(null);
+    showToast(`Assigned buyer [${buyer.buyer_code}] ${buyer.buyer_name} to invoice ${parsedInvoices[invIdx]?.invoice_no}`, "success");
+  };
+
+  // Save parsed Invoices to database (Approach A)
+  const handleSaveInvoices = async () => {
+    if (parsedInvoices.length === 0) return;
+    setSavingInvoices(true);
+    try {
+      const savePeriod = detectedPeriod || currentPeriod;
+      const res = await fetch(`${API_BASE}/api/sellin/save-invoices`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          period: currentPeriod,
-          items: millionRows,
-          rows: millionRows,
-          filename: millionFileName || millionFile?.name || "million_statement.xlsx",
-          file_url: fileUrl
+          period: savePeriod,
+          source_file_name: uploadedPdfName || "invoice.pdf",
+          source_file_url: uploadedPdfUrl || "",
+          invoices: parsedInvoices
         })
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast(`Ingested ${data.count} Million records and uploaded spreadsheet to Storage!`, "success");
-        setShowMillionModal(false);
-        setMillionRows([]);
-        setMillionFile(null);
-        setMillionFileName("");
-        fetchBatchDetails(currentPeriod);
+        showToast(`Successfully imported ${data.count} demand rows from ${parsedInvoices.length} invoice(s)!`, "success");
+        setShowInvoicePreviewModal(false);
+        setParsedInvoices([]);
+        setUploadedPdfUrl("");
+        setUploadedPdfName("");
+        if (savePeriod !== currentPeriod) {
+          setCurrentPeriod(savePeriod);
+        } else {
+          fetchBatchDetails(currentPeriod, true);
+        }
       } else {
-        showToast(data.error || "Failed to process Million statement", "error");
+        showToast(data.error || "Failed to save invoices", "error");
       }
     } catch (e: any) {
-      showToast(e.message || "Upload failed", "error");
+      showToast(e.message || "Failed to save invoices", "error");
     } finally {
-      setUploadingMillion(false);
-    }
-  };
-
-  // TikTok Sync Action
-  const handleSyncTikTok = async () => {
-    setSyncingTikTok(true);
-    try {
-      const res = await fetch(`${API_BASE}/api/sellin/sync-tiktok`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ period: currentPeriod })
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        showToast(`Synced ${data.count} TikTok orders into Sell-In demand!`, "success");
-        setShowTikTokModal(false);
-        fetchBatchDetails(currentPeriod);
-      } else {
-        showToast(data.error || "Failed to sync TikTok orders", "error");
-      }
-    } catch (e: any) {
-      showToast(e.message || "TikTok sync failed", "error");
-    } finally {
-      setSyncingTikTok(false);
+      setSavingInvoices(false);
     }
   };
 
@@ -834,7 +808,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
     const exportRows = records.map((r, idx) => ({
       "No": idx + 1,
-      "Source": r.source_type?.toUpperCase() || "MILLION",
+      "Source": r.source_type?.toUpperCase() || "INVOICE",
       "Buyer Code": r.buyer_code,
       "Buyer Name": r.buyer_name,
       "Channel": r.channel || "Retailer",
@@ -1417,39 +1391,31 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 </button>
               )}
 
-              {/* Sync TikTok Orders Button */}
-              <button
-                type="button"
-                onClick={() => setShowTikTokModal(true)}
-                className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-              >
-                <ShoppingBag size={13} className="text-zinc-500" />
-                <span>Sync TikTok</span>
-              </button>
-
-              {/* Upload Million File Button */}
+              {/* Import Invoices PDF Button */}
               <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
-                <FileSpreadsheet size={13} className="text-zinc-500" />
-                <span>Upload Million</span>
+                {parsingInvoices ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
+                <span>{parsingInvoices ? "Parsing AI..." : "Import Invoices (PDF)"}</span>
                 <input
                   type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={handleMillionFileChange}
+                  accept=".pdf,.png,.jpg,.jpeg"
+                  multiple
+                  disabled={parsingInvoices}
+                  onChange={handleInvoicePdfUpload}
                   className="hidden"
                 />
               </label>
 
-              {/* Uploaded Million File Download Button if present */}
+              {/* Uploaded Invoices Document Download Button if present */}
               {batchData?.source_file_url && (
                 <a
                   href={batchData.source_file_url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="h-8 px-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
-                  title={`Download uploaded Million file: ${batchData.source_file_name || 'Million Statement'}`}
+                  title={`View uploaded invoice document: ${batchData.source_file_name || 'Invoice Document'}`}
                 >
-                  <FileSpreadsheet size={13} className="text-emerald-700 shrink-0" />
-                  <span className="truncate max-w-[130px]">{batchData.source_file_name || "Million File"}</span>
+                  <FileText size={13} className="text-emerald-700 shrink-0" />
+                  <span className="truncate max-w-[130px]">{batchData.source_file_name || "Invoice Document"}</span>
                   <ExternalLink size={11} className="text-emerald-600 opacity-80 shrink-0" />
                 </a>
               )}
@@ -1491,22 +1457,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <div>
                   <h3 className="text-sm font-semibold text-zinc-800">No Sell-In Records for {currentPeriod}</h3>
                   <p className="text-xs text-zinc-500 mt-0.5 max-w-sm leading-relaxed">
-                    Upload your Million statement Excel sheet or click Sync TikTok to load this month's demand.
+                    Upload your Tax Invoice PDF(s) to load this month's demand with AI.
                   </p>
                 </div>
                 <div className="flex items-center gap-2 mt-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowTikTokModal(true)}
-                    className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <ShoppingBag size={12} className="text-zinc-500" />
-                    <span>Sync TikTok Orders</span>
-                  </button>
-                  <label className="h-8 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer">
-                    <FileSpreadsheet size={12} className="text-blue-100" />
-                    <span>Upload Million File</span>
-                    <input type="file" accept=".xlsx,.xls,.csv" onChange={handleMillionFileChange} className="hidden" />
+                  <label className="h-8 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow-2xs">
+                    {parsingInvoices ? <RefreshCw size={12} className="animate-spin text-white" /> : <FileText size={12} className="text-blue-100" />}
+                    <span>{parsingInvoices ? "Parsing AI..." : "Import Invoices (PDF)"}</span>
+                    <input type="file" accept=".pdf,.png,.jpg,.jpeg" multiple disabled={parsingInvoices} onChange={handleInvoicePdfUpload} className="hidden" />
                   </label>
                 </div>
               </div>
@@ -1556,14 +1514,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-[#0B57D0] hover:underline inline-flex items-center gap-1 text-[10.5px] font-mono group"
-                              title={`Download source file: ${r.source_file_name || 'Million Excel'}`}
+                              title={`View source invoice: ${r.source_file_name || 'Invoice'}`}
                             >
-                              <FileSpreadsheet size={11} className="shrink-0 text-emerald-600 group-hover:scale-110 transition-transform" />
-                              <span className="truncate max-w-[85px]">{r.source_file_name || "MILLION"}</span>
+                              <FileText size={11} className="shrink-0 text-blue-600 group-hover:scale-110 transition-transform" />
+                              <span className="truncate max-w-[85px]">{r.source_file_name || "INVOICE"}</span>
                             </a>
                           ) : (
                             <span className="text-[10.5px] font-mono text-zinc-500">
-                              {r.source_type?.toUpperCase() || "MILLION"}
+                              {r.source_type?.toUpperCase() || "INVOICE"}
                             </span>
                           )}
                         </td>
@@ -1597,8 +1555,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         {/* Product SKU & Name */}
                         <td className="py-2 px-3">
                           <div className="flex flex-col min-w-0">
-                            <span className="text-zinc-800 truncate">{r.product_name || r.product_sku}</span>
-                            <span className="text-[10px] text-zinc-500 font-mono">{r.product_sku}</span>
+                            <span className="text-zinc-800 truncate">{r.product_name || r.product_sku || "(No Description)"}</span>
+                            <span className="text-[10px] text-zinc-500 font-mono">{r.product_sku || "(Blank SKU)"}</span>
                           </div>
                         </td>
 
@@ -1609,7 +1567,19 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                         {/* Demand Quantity */}
                         <td className="py-2 px-3 text-right text-zinc-800 font-mono">
-                          {Number(r.demand_qty ?? r.quantity ?? 0).toLocaleString()}
+                          <div className="flex items-center justify-end gap-1.5">
+                            <span>{Number(r.demand_qty ?? r.quantity ?? 0).toLocaleString()}</span>
+                            {Array.isArray(r.invoices) && r.invoices.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedInvoiceBreakdownRow(r)}
+                                className="p-1 rounded hover:bg-blue-50 text-[#0B57D0] transition-colors cursor-pointer inline-flex items-center justify-center"
+                                title={`Click to view invoice breakdown (${r.invoices.length} invoice${r.invoices.length === 1 ? '' : 's'})`}
+                              >
+                                <FileText size={13} />
+                              </button>
+                            )}
+                          </div>
                         </td>
 
                         {/* Editable Unit Price ($/pcs) */}
@@ -2005,135 +1975,332 @@ export function SellInModule({ profile }: SellInModuleProps) {
         </div>
       )}
 
-      {/* Modal: Million Import Confirmation */}
-      {showMillionModal && (
+      {/* Modal: Invoices AI Parsing Progress */}
+      {parsingInvoices && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
-            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
+          <div className="w-full max-w-sm bg-white rounded-xl border border-slate-200 shadow-2xl p-6 flex flex-col items-center justify-center gap-3 text-center">
+            <div className="w-12 h-12 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0B57D0]">
+              <RefreshCw size={24} className="animate-spin text-[#0B57D0]" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-zinc-900">AI Document Analysis in Progress</h3>
+              <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+                {parsingStatusText || "Extracting invoice numbers, customer details, and line items..."}
+              </p>
+            </div>
+            <span className="text-[11px] font-mono text-zinc-400 mt-1">Please keep this window open</span>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Tax Invoices AI Extraction Preview */}
+      {showInvoicePreviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-5xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
               <div>
-                <h2 className="text-sm font-semibold text-zinc-950">Million Statement Preview</h2>
-                <div className="text-xs text-zinc-500 flex items-center gap-1.5 mt-0.5">
-                  {millionFileName && (
-                    <span className="font-mono text-zinc-700 font-medium bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 truncate max-w-[240px]">
-                      {millionFileName}
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-zinc-950">Tax Invoices AI Extraction Review</h2>
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200 font-mono">
+                    {detectedPeriod || currentPeriod}
+                  </span>
+                </div>
+                <div className="text-xs text-zinc-500 flex items-center gap-2 mt-0.5">
+                  {uploadedPdfName && (
+                    <span className="font-mono text-zinc-700 font-medium bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 truncate max-w-[280px]">
+                      {uploadedPdfName}
                     </span>
                   )}
-                  <span>• Ready to upload to Storage & ingest {millionRows.length} demand rows for {currentPeriod}.</span>
+                  <span>• {parsedInvoices.length} invoice(s) detected • {parsedInvoices.reduce((acc, inv) => acc + (inv.items?.length || 0), 0)} total line items</span>
                 </div>
               </div>
               <button 
                 type="button" 
                 onClick={() => {
-                  setMillionFile(null);
-                  setMillionFileName("");
-                  setShowMillionModal(false);
+                  setShowInvoicePreviewModal(false);
+                  setParsedInvoices([]);
+                  setUploadedPdfUrl("");
+                  setUploadedPdfName("");
                 }} 
                 className="p-1 text-zinc-400 hover:text-zinc-700"
               >
-                <X size={16} />
+                <X size={18} />
               </button>
             </div>
 
-            <div className="p-4 flex-1 overflow-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50 text-zinc-500 font-medium border-b border-slate-200">
-                    <th className="py-1.5 px-2">Buyer</th>
-                    <th className="py-1.5 px-2">SKU</th>
-                    <th className="py-1.5 px-2 text-right">Demand Qty</th>
-                    <th className="py-1.5 px-2 text-right">Unit Price</th>
-                    <th className="py-1.5 px-2 text-right">Total SI</th>
-                    <th className="py-1.5 px-2 text-right">Reject Qty</th>
-                    <th className="py-1.5 px-2 text-right">Total CN</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 font-mono">
-                  {millionRows.slice(0, 15).map((row, idx) => (
-                    <tr key={idx}>
-                      <td className="py-1.5 px-2 text-zinc-800 font-sans font-medium">{row.name} ({row.custcode})</td>
-                      <td className="py-1.5 px-2 text-[#0B57D0]">{row.prodcode}</td>
-                      <td className="py-1.5 px-2 text-right font-medium">{row.demand_qty ?? (row.totalsi > 0 ? row.qty : 0)}</td>
-                      <td className="py-1.5 px-2 text-right">${Number(row.unit_price || 0).toFixed(2)}</td>
-                      <td className="py-1.5 px-2 text-right">${row.totalsi.toFixed(2)}</td>
-                      <td className="py-1.5 px-2 text-right text-amber-700">{row.reject_qty ?? (row.totalsi === 0 && row.totalcn > 0 ? row.qty : 0)}</td>
-                      <td className="py-1.5 px-2 text-right text-amber-700">${row.totalcn.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {millionRows.length > 15 && (
-                <div className="text-center py-2 text-xs text-zinc-400 font-medium">
-                  + {millionRows.length - 15} more rows...
+            <div className="p-4 flex-1 overflow-auto flex flex-col gap-4 bg-[#F8F9FA]">
+              {parsedInvoices.map((inv, invIdx) => (
+                <div key={invIdx} className="bg-white rounded-lg border border-slate-200 shadow-xs overflow-hidden">
+                  {/* Invoice Header */}
+                  <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-zinc-900 font-mono">
+                        Invoice No: {inv.invoice_no || "(Not specified)"}
+                      </span>
+                      <span className="text-xs text-zinc-500 font-medium">
+                        Date: {inv.invoice_date || "—"}
+                      </span>
+                      {inv.page_number && (
+                        <span className="text-[11px] text-zinc-400 font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                          Page {inv.page_number}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Customer Status & Matching */}
+                    <div className="flex items-center gap-2">
+                      {!inv.is_unregistered && inv.buyer_code ? (
+                        <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px] text-emerald-800">
+                          <Check size={11} className="text-emerald-600" />
+                          <span>Matched: <strong>[{inv.buyer_code}] {inv.buyer_name}</strong> ({inv.channel})</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px] text-amber-800 font-medium">
+                            <AlertTriangle size={11} className="text-amber-600" />
+                            <span>Unregistered: "{inv.customer_name}"</span>
+                          </div>
+
+                          {/* Quick Assign Buyer Button */}
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setActiveAssignBuyerInvoiceIndex(activeAssignBuyerInvoiceIndex === invIdx ? null : invIdx)}
+                              className="h-6 px-2 rounded bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-[11px] font-medium flex items-center gap-1 cursor-pointer"
+                            >
+                              <span>Assign Existing</span>
+                              <ChevronDown size={10} />
+                            </button>
+
+                            {activeAssignBuyerInvoiceIndex === invIdx && (
+                              <div className="absolute right-0 top-7 z-30 w-64 bg-white rounded-lg border border-slate-200 shadow-xl p-2 max-h-48 overflow-y-auto">
+                                <span className="text-[10px] text-zinc-400 font-semibold px-2 py-1 block">SELECT REGISTERED BUYER</span>
+                                {buyersList.map((b) => (
+                                  <button
+                                    key={b.id || b.buyer_code}
+                                    type="button"
+                                    onClick={() => handleAssignBuyerInPreview(invIdx, b)}
+                                    className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-50 text-xs text-zinc-800 flex flex-col cursor-pointer"
+                                  >
+                                    <span className="font-medium truncate">{b.buyer_name}</span>
+                                    <span className="text-[10px] text-zinc-400 font-mono">[{b.buyer_code}] • {b.channel}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Quick Create Buyer Button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewBuyerName(inv.customer_name);
+                              setNewBuyerCode(inv.customer_name.replace(/[^a-zA-Z0-9]/g, "").substring(0, 10).toUpperCase());
+                              setNewBuyerChannel("Retailer");
+                              setShowAddBuyerModal(true);
+                            }}
+                            className="h-6 px-2 rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-medium flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus size={10} />
+                            <span>Register New</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Items Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50/60 text-zinc-500 font-medium border-b border-slate-200 text-[11px]">
+                          <th className="py-2 px-3 w-10 text-center">#</th>
+                          <th className="py-2 px-3 min-w-[120px]">Code (Invoice)</th>
+                          <th className="py-2 px-3 min-w-[150px]">SKU Assigned</th>
+                          <th className="py-2 px-3 min-w-[200px]">Description</th>
+                          <th className="py-2 px-3 text-right w-24">Qty</th>
+                          <th className="py-2 px-3 text-right w-24">Unit Price</th>
+                          <th className="py-2 px-3 text-right w-28">Amount</th>
+                          <th className="py-2 px-3 text-center w-28">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {inv.items.map((it: any, itemIdx: number) => {
+                          const isUnmapped = !it.product_sku;
+                          return (
+                            <tr key={itemIdx} className="hover:bg-slate-50/50">
+                              <td className="py-2 px-3 text-center text-zinc-400 font-mono text-[11px]">
+                                {itemIdx + 1}
+                              </td>
+                              <td className="py-2 px-3 font-mono text-zinc-700">
+                                {it.product_code ? (
+                                  <span className="font-semibold text-zinc-800">{it.product_code}</span>
+                                ) : (
+                                  <span className="text-zinc-400 italic text-[11px]">(No Code)</span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3">
+                                {it.product_sku ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono font-semibold text-[#0B57D0]">{it.product_sku}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAssignSkuInPreview(invIdx, itemIdx, "")}
+                                      className="text-zinc-400 hover:text-red-500 text-[10px] cursor-pointer"
+                                      title="Clear assigned SKU"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1">
+                                    <select
+                                      value=""
+                                      onChange={(e) => handleAssignSkuInPreview(invIdx, itemIdx, e.target.value)}
+                                      className="h-6 px-1.5 border border-amber-300 rounded text-[11px] bg-amber-50 text-amber-900 focus:outline-none cursor-pointer max-w-[130px]"
+                                    >
+                                      <option value="">(Blank SKU)</option>
+                                      {productsList.map((p) => (
+                                        <option key={p.sku} value={p.sku}>
+                                          {p.sku} - {p.display_name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-zinc-800">
+                                <span className="font-medium">{it.description}</span>
+                                {it.product_name && it.product_name !== it.description && (
+                                  <span className="text-[10px] text-zinc-400 block">{it.product_name}</span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono text-zinc-800">
+                                {it.qty} {it.uom}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono text-zinc-800">
+                                ${Number(it.unit_price || 0).toFixed(2)}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono font-medium text-zinc-900">
+                                ${Number(it.amount || 0).toFixed(2)}
+                              </td>
+                              <td className="py-2 px-3 text-center">
+                                {it.validation_status === "valid" ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    Valid
+                                  </span>
+                                ) : it.validation_status === "unregistered_buyer" ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                    Unreg Buyer
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                    Unmapped SKU
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              )}
+              ))}
             </div>
 
-            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setMillionFile(null);
-                  setMillionFileName("");
-                  setShowMillionModal(false);
-                }}
-                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={uploadingMillion}
-                onClick={handleSubmitMillion}
-                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs cursor-pointer"
-              >
-                {uploadingMillion ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                <span>{uploadingMillion ? "Uploading to Storage..." : "Confirm & Ingest"}</span>
-              </button>
+            <div className="px-5 py-3 bg-white border-t border-slate-200 flex items-center justify-between shrink-0">
+              <div className="text-xs text-zinc-500 font-medium">
+                Review all lines. Unmapped SKUs will be recorded with their original description preserved.
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowInvoicePreviewModal(false);
+                    setParsedInvoices([]);
+                    setUploadedPdfUrl("");
+                    setUploadedPdfName("");
+                  }}
+                  className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={savingInvoices}
+                  onClick={handleSaveInvoices}
+                  className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  {savingInvoices ? <RefreshCw size={13} className="animate-spin text-white" /> : <Check size={13} />}
+                  <span>{savingInvoices ? "Saving Invoices..." : `Confirm & Ingest ${parsedInvoices.length} Invoices`}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: TikTok Sync */}
-      {showTikTokModal && (
+      {/* Modal: Individual Row Invoice Breakdown */}
+      {selectedInvoiceBreakdownRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden">
+          <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col">
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-zinc-950">Sync TikTok Orders</h2>
-                <p className="text-xs text-zinc-500">Period: {formatPeriodLabel(currentPeriod)}</p>
+                <h2 className="text-sm font-semibold text-zinc-950">Invoice Breakdown</h2>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  {selectedInvoiceBreakdownRow.buyer_name} • {selectedInvoiceBreakdownRow.product_sku || selectedInvoiceBreakdownRow.product_name}
+                </p>
               </div>
-              <button type="button" onClick={() => setShowTikTokModal(false)} className="p-1 text-zinc-400 hover:text-zinc-700">
+              <button 
+                type="button" 
+                onClick={() => setSelectedInvoiceBreakdownRow(null)} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+              >
                 <X size={16} />
               </button>
             </div>
 
-            <div className="p-5 flex flex-col gap-3 text-xs text-zinc-600">
-              <p className="leading-relaxed">
-                This will query live orders from all connected TikTok shop accounts for the month of <strong>{currentPeriod}</strong>, aggregate SKU quantities, auto-map against your listing sheet, and generate demand rows.
-              </p>
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex items-center gap-2">
-                <ShoppingBag size={16} className="text-zinc-800" />
-                <span className="font-medium text-zinc-800">Channel assigned: TikTok</span>
-              </div>
+            <div className="p-4 overflow-auto max-h-72">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 text-zinc-500 font-medium border-b border-slate-200 text-[11px]">
+                    <th className="py-1.5 px-2">Invoice No</th>
+                    <th className="py-1.5 px-2">Date</th>
+                    <th className="py-1.5 px-2 text-right">Qty</th>
+                    <th className="py-1.5 px-2 text-right">Unit Price</th>
+                    <th className="py-1.5 px-2 text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 font-mono">
+                  {Array.isArray(selectedInvoiceBreakdownRow.invoices) && selectedInvoiceBreakdownRow.invoices.length > 0 ? (
+                    selectedInvoiceBreakdownRow.invoices.map((inv: any, idx: number) => (
+                      <tr key={idx}>
+                        <td className="py-2 px-2 text-[#0B57D0] font-semibold">{inv.invoice_no}</td>
+                        <td className="py-2 px-2 text-zinc-600">{inv.invoice_date}</td>
+                        <td className="py-2 px-2 text-right text-zinc-800 font-semibold">{inv.qty}</td>
+                        <td className="py-2 px-2 text-right text-zinc-600">${Number(inv.unit_price || 0).toFixed(2)}</td>
+                        <td className="py-2 px-2 text-right text-zinc-900 font-semibold">${Number(inv.amount || 0).toFixed(2)}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="py-4 text-center text-zinc-400 text-xs">
+                        No invoice breakdown details available.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
 
-            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end">
               <button
                 type="button"
-                onClick={() => setShowTikTokModal(false)}
-                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100"
+                onClick={() => setSelectedInvoiceBreakdownRow(null)}
+                className="h-8 px-4 rounded-lg bg-zinc-900 hover:bg-black text-white text-xs font-medium cursor-pointer"
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={syncingTikTok}
-                onClick={handleSyncTikTok}
-                className="h-8 px-4 rounded-lg bg-zinc-900 hover:bg-black text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs"
-              >
-                {syncingTikTok ? <RefreshCw size={13} className="animate-spin" /> : <ShoppingBag size={13} />}
-                <span>{syncingTikTok ? "Syncing..." : "Start Sync"}</span>
+                Close
               </button>
             </div>
           </div>
@@ -2578,7 +2745,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <CustomSelect
                   value={resetBuyer}
                   onChange={(val) => setResetBuyer(val)}
-                  options={existingDataBuyers.map((b) => ({ label: b.label, value: b.value }))}
+                  options={[
+                    { label: `⚠️ All Retailers (Entire Month: ${currentPeriod})`, value: "__all__" },
+                    ...existingDataBuyers.map((b) => ({ label: b.label, value: b.value }))
+                  ]}
                   placeholder={existingDataBuyers.length === 0 ? "No buyers with data in this period" : "Select Buyer with data..."}
                   className="w-full"
                 />
@@ -2587,7 +2757,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
               <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 space-y-1">
                 <p className="font-bold">⚠️ Warning: Irreversible Action</p>
                 <p className="text-[11px]">
-                  All sell-in records for <span className="font-semibold">{resetBuyer || "the selected buyer"}</span> in {currentPeriod} will be permanently removed.
+                  All sell-in records {resetBuyer === "__all__" ? `for all buyers in ${currentPeriod} and uploaded PDF document(s)` : <>for <span className="font-semibold">{resetBuyer || "the selected buyer"}</span> in {currentPeriod}</>} will be permanently removed.
                 </p>
               </div>
 

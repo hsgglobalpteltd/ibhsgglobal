@@ -66,6 +66,8 @@ import {
   Save,
   Undo2,
   Redo2,
+  LogOut,
+  Bot,
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import {
@@ -81,6 +83,8 @@ import {
   deleteWfeMember,
   saveWfeShare,
   verifyWfePin,
+  getWfeAiToken,
+  regenerateWfeAiToken,
   uploadWfeFile,
   deleteWfeFile,
   WfeTaskAttachment,
@@ -162,10 +166,46 @@ interface RegisteredUser {
 }
 
 const STATUS_COLUMNS = [
-  { id: "To-do", label: "To-do", color: "bg-purple-100 text-purple-700 border-purple-200", dot: "bg-purple-500" },
-  { id: "In progress", label: "In progress", color: "bg-amber-100 text-amber-700 border-amber-200", dot: "bg-amber-500" },
-  { id: "In review", label: "In review", color: "bg-sky-100 text-sky-700 border-sky-200", dot: "bg-sky-500" },
-  { id: "Complete", label: "Complete", color: "bg-emerald-100 text-emerald-700 border-emerald-200", dot: "bg-emerald-500" },
+  {
+    id: "To-do",
+    label: "To-do",
+    color: "bg-purple-100 text-purple-700 border-purple-200",
+    dot: "bg-purple-500",
+    containerBg: "bg-[#FAF7FD]",
+    containerBorder: "border-[#EDE4F8]",
+    badge: "bg-[#F3EAFD] text-purple-800",
+    cardBorder: "border-[#ECE5F4] hover:border-purple-300",
+  },
+  {
+    id: "In progress",
+    label: "In progress",
+    color: "bg-amber-100 text-amber-700 border-amber-200",
+    dot: "bg-amber-500",
+    containerBg: "bg-[#FFFBF2]",
+    containerBorder: "border-[#FCECD0]",
+    badge: "bg-[#FEF3DC] text-amber-800",
+    cardBorder: "border-[#F4ECD9] hover:border-amber-300",
+  },
+  {
+    id: "In review",
+    label: "In review",
+    color: "bg-sky-100 text-sky-700 border-sky-200",
+    dot: "bg-sky-500",
+    containerBg: "bg-[#F4F9FF]",
+    containerBorder: "border-[#D9EAFF]",
+    badge: "bg-[#E5F2FF] text-blue-800",
+    cardBorder: "border-[#DFEAF7] hover:border-blue-300",
+  },
+  {
+    id: "Complete",
+    label: "Complete",
+    color: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    dot: "bg-emerald-500",
+    containerBg: "bg-[#F3FAF5]",
+    containerBorder: "border-[#D6F0DE]",
+    badge: "bg-[#E2F7E9] text-emerald-800",
+    cardBorder: "border-[#DBECE0] hover:border-emerald-300",
+  },
 ];
 
 function safeParseArray<T = any>(val: any): T[] {
@@ -259,6 +299,7 @@ export default function WorkspaceStandalonePage() {
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [memberSource, setMemberSource] = useState<"database" | "email">("database");
   const [selectedDbUserEmail, setSelectedDbUserEmail] = useState("");
+  const [memberSearchQuery, setMemberSearchQuery] = useState("");
   const [newMemberName, setNewMemberName] = useState("");
   const [newMemberEmail, setNewMemberEmail] = useState("");
   const [newMemberRole, setNewMemberRole] = useState("Member");
@@ -270,6 +311,8 @@ export default function WorkspaceStandalonePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingUploadStage, setPendingUploadStage] = useState<string>("To-do");
   const [replacingFileId, setReplacingFileId] = useState<string | null>(null);
+  const [isTaskPropertiesOpen, setIsTaskPropertiesOpen] = useState(false);
+  const skipSilentSyncUntilRef = useRef<number>(0);
 
   const toggleStageCollapse = (stageName: string) => {
     setCollapsedStages((prev) => ({ ...prev, [stageName]: !prev[stageName] }));
@@ -297,6 +340,78 @@ export default function WorkspaceStandalonePage() {
   const [showSearchModal, setShowSearchModal] = useState(false);
   const [globalSearchInput, setGlobalSearchInput] = useState("");
 
+  // AI Bridge Integration Modal
+  const [showAiModal, setShowAiModal] = useState(false);
+  const [aiToken, setAiToken] = useState("");
+  const [aiTokenLoading, setAiTokenLoading] = useState(false);
+  const [aiRegenerating, setAiRegenerating] = useState(false);
+  const [copiedAiLink, setCopiedAiLink] = useState(false);
+  const [copiedAiPrompt, setCopiedAiPrompt] = useState(false);
+  const [copiedOpenApi, setCopiedOpenApi] = useState(false);
+
+  const resolveUserEmail = () => {
+    if (currentUser?.email) return currentUser.email;
+    if (typeof window !== "undefined") {
+      try {
+        const p = localStorage.getItem("ib_user_profile");
+        if (p) {
+          const parsed = JSON.parse(p);
+          if (parsed?.email) return parsed.email;
+        }
+      } catch {}
+    }
+    return "admin@hsgglobal.com";
+  };
+
+  const handleOpenAiBridgeModal = async () => {
+    setShowAiModal(true);
+    const emailToUse = resolveUserEmail();
+    if (!aiToken && emailToUse) {
+      try {
+        setAiTokenLoading(true);
+        const res = await getWfeAiToken(emailToUse);
+        if (res && res.success && res.token) {
+          setAiToken(res.token);
+        }
+      } catch (err: any) {
+        showToast("Failed to load AI Token: " + (err.message || err), "error");
+      } finally {
+        setAiTokenLoading(false);
+      }
+    }
+  };
+
+  const handleRegenerateAiToken = async () => {
+    const emailToUse = resolveUserEmail();
+    if (!emailToUse) return;
+    try {
+      setAiRegenerating(true);
+      const res = await regenerateWfeAiToken(emailToUse);
+      if (res && res.success && res.token) {
+        setAiToken(res.token);
+        showToast("New AI token generated!", "success");
+      }
+    } catch (err: any) {
+      showToast("Failed to regenerate token: " + (err.message || err), "error");
+    } finally {
+      setAiRegenerating(false);
+    }
+  };
+
+  // Prefetch AI token in background
+  useEffect(() => {
+    const emailToUse = resolveUserEmail();
+    if (emailToUse && !aiToken) {
+      getWfeAiToken(emailToUse)
+        .then((res) => {
+          if (res && res.success && res.token) {
+            setAiToken(res.token);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [currentUser?.email]);
+
   // Keyboard shortcuts (⌘K / Ctrl+K & Escape)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -309,6 +424,7 @@ export default function WorkspaceStandalonePage() {
         setShowShareModal(false);
         setShowNewTeamspaceModal(false);
         setShowNewPageModal(false);
+        setShowAiModal(false);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -317,6 +433,28 @@ export default function WorkspaceStandalonePage() {
 
   // Active Task Card / Full Page Editor
   const [editingTask, setEditingTask] = useState<WfeTask | null>(null);
+  const initialEditingTaskRef = useRef<string | null>(null);
+
+  const isTaskDirty = Boolean(
+    editingTask &&
+    initialEditingTaskRef.current &&
+    JSON.stringify(editingTask) !== initialEditingTaskRef.current
+  );
+
+  const handleOpenEditingTask = (task: WfeTask) => {
+    const cloned = JSON.parse(JSON.stringify(task));
+    initialEditingTaskRef.current = JSON.stringify(cloned);
+    setEditingTask(cloned);
+  };
+
+  const handleAttemptCloseTask = () => {
+    if (isTaskDirty) {
+      showToast("You have unsaved changes! Please click 'Save Changes' to save.", "warning");
+      return;
+    }
+    setEditingTask(null);
+    initialEditingTaskRef.current = null;
+  };
   const [quickAddColumn, setQuickAddColumn] = useState<string | null>(null);
   const [quickAddTitle, setQuickAddTitle] = useState("");
 
@@ -478,6 +616,11 @@ export default function WorkspaceStandalonePage() {
           }
         }
 
+        if (silent && Date.now() < skipSilentSyncUntilRef.current) {
+          // Skip silent background sync while user has in-flight optimistic mutations
+          return;
+        }
+
         const liveTeamspaces: WfeTeamspace[] = res.teamspaces || [];
         const livePages: WfePage[] = (res.pages || []).map(normalizeWfePage).map((p: WfePage) => {
           if (typeof window !== "undefined") {
@@ -506,11 +649,13 @@ export default function WorkspaceStandalonePage() {
         setProjectMembers(res.projectMembers || []);
         setRegisteredUsers(res.registeredUsers || []);
 
-        // Only restore active page if present in URL or already selected
-        const currentUrlParams = new URLSearchParams(window.location.search);
-        const urlPageParam = currentUrlParams.get("page");
-        if (urlPageParam && livePages.some((p) => p.id === urlPageParam)) {
-          setActivePageId(urlPageParam);
+        // Only restore or adjust active page on explicit user load or if active page no longer exists
+        if (!silent) {
+          const currentUrlParams = new URLSearchParams(window.location.search);
+          const urlPageParam = currentUrlParams.get("page");
+          if (urlPageParam && livePages.some((p) => p.id === urlPageParam)) {
+            setActivePageId(urlPageParam);
+          }
         }
       }
     } catch (err: any) {
@@ -528,12 +673,12 @@ export default function WorkspaceStandalonePage() {
   useEffect(() => {
     if (accessDenied || (!currentUser?.email && !isGuest)) return;
 
-    // 1. Periodic background silent polling every 3 seconds
+    // 1. Periodic background silent polling (every 8 seconds, skipped during optimistic user mutations)
     const interval = setInterval(() => {
-      if (currentUser?.email) {
+      if (currentUser?.email && Date.now() >= skipSilentSyncUntilRef.current) {
         loadLiveDatabase(currentUser.email, targetWorkspaceId, true);
       }
-    }, 3000);
+    }, 8000);
 
     // 2. Global refresh button event ("db-refresh")
     const handleGlobalRefresh = () => {
@@ -543,7 +688,7 @@ export default function WorkspaceStandalonePage() {
 
     // 3. Tab focus & visibility change auto-refresh
     const handleWindowFocus = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && Date.now() >= skipSilentSyncUntilRef.current) {
         loadLiveDatabase(currentUser?.email, targetWorkspaceId, true);
       }
     };
@@ -592,7 +737,7 @@ export default function WorkspaceStandalonePage() {
   };
 
   // Active Page & Teamspace references
-  const activePage = pages.find((p) => p.id === activePageId) || pages[0] || null;
+  const activePage = activePageId ? pages.find((p) => p.id === activePageId) || null : null;
   const activeDocBlocks: WfeBlock[] = safeParseArray<WfeBlock>(activePage?.content_blocks);
   const currentTeamspace = teamspaces.find((ts) => ts.id === activePage?.teamspace_id);
   const rawMembers = projectMembers.filter((m) => m.teamspace_id === currentTeamspace?.id);
@@ -765,27 +910,43 @@ export default function WorkspaceStandalonePage() {
     let emailToAdd = newMemberEmail.trim().toLowerCase();
 
     if (memberSource === "database") {
+      if (!selectedDbUserEmail) {
+        showToast("Please search and select a user from the database list.", "warning");
+        return;
+      }
       const foundUser = registeredUsers.find((u) => u.email.toLowerCase() === selectedDbUserEmail.toLowerCase());
       if (!foundUser) {
-        showToast("Please select a user from the database list.", "error");
+        showToast("Selected user not found in the database list.", "error");
         return;
       }
       nameToAdd = foundUser.name;
       emailToAdd = foundUser.email.toLowerCase();
     } else {
-      if (!nameToAdd || !emailToAdd) {
-        showToast("Both Name and Email are required to invite a collaborator.", "error");
+      if (!nameToAdd) {
+        showToast("Please enter the full name of the collaborator.", "warning");
+        return;
+      }
+      if (!emailToAdd) {
+        showToast("Please enter the email address of the collaborator.", "warning");
+        return;
+      }
+      if (!emailToAdd.includes("@") || !emailToAdd.includes(".")) {
+        showToast("Please enter a valid email address.", "warning");
         return;
       }
     }
 
-    // Check duplicate
-    if (projectMembers.some((m) => m.teamspace_id === currentTeamspace.id && m.email.toLowerCase() === emailToAdd)) {
-      showToast(`User ${nameToAdd} (${emailToAdd}) is already in this project.`, "info");
+    // Check duplicate in active project
+    const isAlreadyInProject = currentTeamspaceMembers.some(
+      (m) => (m.email || "").toLowerCase() === emailToAdd
+    );
+    if (isAlreadyInProject) {
+      showToast(`User ${nameToAdd} (${emailToAdd}) is already a member of this project.`, "info");
       return;
     }
 
     setSavingMember(true);
+    showToast(`Adding ${nameToAdd} to ${currentTeamspace.name}...`, "info");
     try {
       const res = await saveWfeMember({
         teamspace_id: currentTeamspace.id,
@@ -794,18 +955,53 @@ export default function WorkspaceStandalonePage() {
         role: newMemberRole,
       });
 
-      if (res && res.success) {
-        setProjectMembers([...projectMembers, res.member]);
-        showToast(`Added ${nameToAdd} to ${currentTeamspace.name}`, "success");
+      if (res && res.success && res.member) {
+        setProjectMembers((prev) => [...prev.filter((m) => m.id !== res.member.id), res.member]);
+        showToast(`Successfully added ${nameToAdd} (${newMemberRole}) to project!`, "success");
         setNewMemberName("");
         setNewMemberEmail("");
         setSelectedDbUserEmail("");
+        setMemberSearchQuery("");
+      } else {
+        showToast("Failed to save member: " + (res?.error || "Unknown error"), "error");
       }
     } catch (err: any) {
-      showToast(err.message || "Failed to add member", "error");
+      showToast(err.message || "Failed to add collaborator to project", "error");
     } finally {
       setSavingMember(false);
     }
+  };
+
+  const handleAutoAddMemberToProject = async (personName: string, personEmail?: string) => {
+    if (!currentTeamspace?.id) return;
+    const resolvedEmail = personEmail?.toLowerCase() || 
+      registeredUsers.find((u) => u.name.toLowerCase() === personName.toLowerCase())?.email?.toLowerCase() || 
+      (personName.includes("@") ? personName.toLowerCase() : "");
+
+    // Check if already a project member
+    const alreadyMember = projectMembers.some(
+      (m) => m.teamspace_id === currentTeamspace.id && (
+        (resolvedEmail && m.email?.toLowerCase() === resolvedEmail) ||
+        m.name?.toLowerCase() === personName.toLowerCase()
+      )
+    );
+
+    const isCreator = (currentTeamspace.created_by || "").toLowerCase() === (resolvedEmail || "").toLowerCase();
+    if (alreadyMember || isCreator) return;
+
+    try {
+      const res = await saveWfeMember({
+        teamspace_id: currentTeamspace.id,
+        name: personName,
+        email: resolvedEmail || `${personName.toLowerCase().replace(/\s+/g, ".")}@workspace.local`,
+        role: "Member",
+      });
+
+      if (res && res.success && res.member) {
+        setProjectMembers((prev) => [...prev.filter((m) => m.id !== res.member.id), res.member]);
+        showToast(`Added ${personName} to project`, "info");
+      }
+    } catch {}
   };
 
   const handleDeleteMember = async (memberId: string, memberName: string) => {
@@ -814,9 +1010,10 @@ export default function WorkspaceStandalonePage() {
       return;
     }
     try {
+      showToast(`Removing ${memberName}...`, "info");
       await deleteWfeMember(memberId);
-      setProjectMembers(projectMembers.filter((m) => m.id !== memberId));
-      showToast(`Removed ${memberName} from project`, "info");
+      setProjectMembers((prev) => prev.filter((m) => m.id !== memberId));
+      showToast(`Removed ${memberName} from project`, "success");
     } catch (err: any) {
       showToast("Failed to remove member: " + err.message, "error");
     }
@@ -842,58 +1039,93 @@ export default function WorkspaceStandalonePage() {
   const handleSaveTeamspace = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTeamspaceName.trim()) return;
-    setSavingTeamspace(true);
+    skipSilentSyncUntilRef.current = Date.now() + 8000;
 
-    try {
-      if (editingTeamspace) {
-        // Edit existing teamspace
-        const res = await saveWfeTeamspace({
+    const tsName = newTeamspaceName.trim();
+    const tsIcon = newTeamspaceIcon || "🏢";
+    setShowNewTeamspaceModal(false);
+    setNewTeamspaceName("");
+
+    if (editingTeamspace) {
+      // Instant optimistic rename
+      const updatedTs: WfeTeamspace = { ...editingTeamspace, name: tsName, icon: tsIcon, updated_at: Date.now() };
+      setTeamspaces((prev) => prev.map((t) => (t.id === editingTeamspace.id ? updatedTs : t)));
+      setEditingTeamspace(null);
+      showToast(`Teamspace renamed to "${tsName}"`, "success");
+
+      try {
+        await saveWfeTeamspace({
           id: editingTeamspace.id,
-          name: newTeamspaceName.trim(),
-          icon: newTeamspaceIcon,
+          name: tsName,
+          icon: tsIcon,
           created_by: editingTeamspace.created_by || currentUser?.email || "user",
         });
-        if (res && res.success) {
-          setTeamspaces(teamspaces.map((t) => (t.id === editingTeamspace.id ? res.teamspace : t)));
-          setShowNewTeamspaceModal(false);
-          setEditingTeamspace(null);
-          showToast(`Teamspace renamed to "${res.teamspace.name}"`, "success");
-        }
-      } else {
-        // Create new teamspace
+      } catch (err: any) {
+        showToast(err.message || "Failed to save teamspace changes", "error");
+      }
+    } else {
+      // Instant optimistic create project teamspace & default board page
+      const tempTsId = `ts_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+      const tempPageId = `page_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+
+      const newTs: WfeTeamspace = {
+        id: tempTsId,
+        name: tsName,
+        icon: tsIcon,
+        created_by: currentUser?.email || "user",
+        is_archived: 0,
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      };
+
+      const defaultPage: WfePage = {
+        id: tempPageId,
+        teamspace_id: tempTsId,
+        title: "Tasks & Docs",
+        icon: "📋",
+        type: "database",
+        content_blocks: [],
+        attachments: [],
+        is_private: 0,
+        created_by: currentUser?.email || "user",
+        created_at: Date.now(),
+        updated_at: Date.now(),
+      };
+
+      // Instant UI update
+      setTeamspaces((prev) => [...prev, newTs]);
+      setPages((prev) => [...prev, defaultPage]);
+      setActivePageId(tempPageId);
+      showToast(`Teamspace "${tsName}" created`, "success");
+
+      try {
         const res = await saveWfeTeamspace({
-          name: newTeamspaceName.trim(),
-          icon: newTeamspaceIcon,
+          id: tempTsId,
+          name: tsName,
+          icon: tsIcon,
           created_by: currentUser?.email || "user",
           creator_name: currentUser?.name || (currentUser?.email ? currentUser.email.split("@")[0] : "Manager"),
         });
 
-        if (res && res.success) {
-          const created = res.teamspace;
-          setTeamspaces([...teamspaces, created]);
-          setShowNewTeamspaceModal(false);
-          setNewTeamspaceName("");
-          showToast(`Teamspace "${created.name}" created`, "success");
+        const actualTs = res?.teamspace || newTs;
 
-          // Automatically create a default task board page inside this new teamspace
-          const pageRes = await saveWfePage({
-            teamspace_id: created.id,
-            title: "Tasks & Docs",
-            icon: "📋",
-            type: "database",
-            created_by: currentUser?.email || "user",
-          });
-          if (pageRes && pageRes.success) {
-            const normalizedDefaultPage = normalizeWfePage(pageRes.page);
-            setPages((prev) => [...prev, normalizedDefaultPage]);
-            setActivePageId(normalizedDefaultPage.id);
-          }
+        const pageRes = await saveWfePage({
+          id: tempPageId,
+          teamspace_id: actualTs.id,
+          title: "Tasks & Docs",
+          icon: "📋",
+          type: "database",
+          created_by: currentUser?.email || "user",
+        });
+
+        if (pageRes && pageRes.success) {
+          const normalizedPage = normalizeWfePage(pageRes.page);
+          setPages((prev) => prev.map((p) => (p.id === tempPageId ? normalizedPage : p)));
+          setActivePageId(normalizedPage.id);
         }
+      } catch (err: any) {
+        showToast(err.message || "Failed to save teamspace", "error");
       }
-    } catch (err: any) {
-      showToast(err.message || "Failed to save teamspace", "error");
-    } finally {
-      setSavingTeamspace(false);
     }
   };
 
@@ -952,6 +1184,8 @@ export default function WorkspaceStandalonePage() {
           setShowArchiveModal(false);
           setEditingTeamspace(null);
           setConfirmDelete(null);
+          setActivePageId("");
+          window.history.replaceState(null, "", "/workspace");
           showToast(`Deleted teamspace "${ts.name}"`, "info");
         } catch (err: any) {
           showToast("Delete failed: " + err.message, "error");
@@ -1062,8 +1296,9 @@ export default function WorkspaceStandalonePage() {
           const remaining = pages.filter((p) => p.id !== pageId);
           setPages(remaining);
           setTasks(tasks.filter((t) => t.page_id !== pageId));
-          if (activePageId === pageId && remaining.length > 0) {
-            setActivePageId(remaining[0].id);
+          if (activePageId === pageId) {
+            setActivePageId("");
+            window.history.replaceState(null, "", "/workspace");
           }
           setConfirmDelete(null);
           showToast(`"${pageTitle}" deleted`, "info");
@@ -1077,9 +1312,88 @@ export default function WorkspaceStandalonePage() {
   };
 
   // -------------------------------------------------------------
+  // PERMISSION HELPER: TASK STATUS MOVE & DRAG PERMISSION
+  // -------------------------------------------------------------
+  const isAssigneeCurrentUser = (personName: string): boolean => {
+    if (!personName) return false;
+    const p = personName.trim().toLowerCase();
+    const userName = (currentUser?.name || "").toLowerCase().trim();
+    const userEmail = (currentUser?.email || "").toLowerCase().trim();
+    const userPrefix = userEmail.includes("@") ? userEmail.split("@")[0] : "";
+
+    return Boolean(
+      (userName && p === userName) ||
+      (userEmail && p === userEmail) ||
+      (userPrefix && p === userPrefix) ||
+      (userName && userName.split(" ").some((part) => part.length >= 2 && p.includes(part)))
+    );
+  };
+
+  const formatAssigneeDisplayName = (personName: string): string => {
+    return isAssigneeCurrentUser(personName) ? "Me" : personName;
+  };
+
+  const isTaskAssignedToCurrentUser = (task: WfeTask | null | undefined): boolean => {
+    if (!task || !task.assigned_to) return false;
+    const assigned = task.assigned_to.toLowerCase();
+    const userName = (currentUser?.name || "").toLowerCase().trim();
+    const userEmail = (currentUser?.email || "").toLowerCase().trim();
+    const userPrefix = userEmail.includes("@") ? userEmail.split("@")[0] : "";
+
+    const assignedNames = task.assigned_to.split(",").map((s) => s.trim().toLowerCase());
+
+    return Boolean(
+      (userName && (assigned.includes(userName) || assignedNames.includes(userName))) ||
+      (userEmail && (assigned.includes(userEmail) || assignedNames.includes(userEmail))) ||
+      (userPrefix && (assigned.includes(userPrefix) || assignedNames.includes(userPrefix))) ||
+      (userName && userName.split(" ").some((part) => part.length >= 2 && assigned.includes(part)))
+    );
+  };
+
+  const canUserMoveTask = (task: WfeTask | null | undefined): { canMove: boolean; reason?: string } => {
+    if (!task) return { canMove: false, reason: "No task selected." };
+
+    // 0. Locked cards cannot be dragged or moved by anyone (including Manager / Admin)
+    if (task.is_locked === 1) {
+      return {
+        canMove: false,
+        reason: "🔒 This card is locked. Unlock it first to move or change its status.",
+      };
+    }
+
+    // 1. Project Manager / System Admin can move unlocked tasks
+    if (isProjectAdmin) {
+      return { canMove: true };
+    }
+
+    // 2. Viewer cannot move any tasks
+    if (currentMemberRecord?.role === "Viewer") {
+      return { canMove: false, reason: "⚠️ Viewers have read-only access and cannot change task status." };
+    }
+
+    // 3. Member can only move tasks assigned to them
+    const isAssigned = isTaskAssignedToCurrentUser(task);
+    if (isAssigned) {
+      return { canMove: true };
+    }
+
+    return {
+      canMove: false,
+      reason: "⚠️ Only assigned members or Project Managers can change this task's status.",
+    };
+  };
+
+  // -------------------------------------------------------------
   // KANBAN DRAG & DROP & REAL DATABASE PERSISTENCE
   // -------------------------------------------------------------
   const handleDragStart = (e: React.DragEvent, taskId: string) => {
+    const task = tasks.find((t) => t.id === taskId);
+    const check = canUserMoveTask(task);
+    if (!check.canMove) {
+      e.preventDefault();
+      showToast(check.reason || "You cannot move this card.", "error");
+      return;
+    }
     setDraggedTaskId(taskId);
     e.dataTransfer.setData("text/plain", taskId);
     e.dataTransfer.effectAllowed = "move";
@@ -1125,7 +1439,16 @@ export default function WorkspaceStandalonePage() {
     const existingTask = tasks.find((t) => t.id === taskId);
     if (!existingTask) return;
 
+    const check = canUserMoveTask(existingTask);
+    if (!check.canMove) {
+      showToast(check.reason || "You cannot move this card.", "error");
+      return;
+    }
+
     if (existingTask.custom_status === targetColId) return;
+
+    // Pause silent background sync to prevent snap-back collisions
+    skipSilentSyncUntilRef.current = Date.now() + 6000;
 
     const oldStatus = existingTask.custom_status || "To-do";
     const authorName = currentUser?.name || (currentUser?.email ? currentUser.email.split("@")[0] : "Collaborator");
@@ -1135,13 +1458,17 @@ export default function WorkspaceStandalonePage() {
       `Moved from "${oldStatus}" to "${targetColId}"`
     );
 
-    // Optimistic UI
-    const updated = tasks.map((t) =>
-      t.id === taskId ? { ...t, custom_status: targetColId, logs: updatedLogs } : t
-    );
-    setTasks(updated);
+    const updatedTask: WfeTask = {
+      ...existingTask,
+      custom_status: targetColId,
+      logs: updatedLogs,
+      updated_at: Date.now(),
+    };
 
-    // Save to live DB
+    // Instant Optimistic UI Update (Immediate visual response)
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? updatedTask : t)));
+
+    // Save to live DB in background
     try {
       await saveWfeTask({
         id: existingTask.id,
@@ -1157,7 +1484,11 @@ export default function WorkspaceStandalonePage() {
         logs: updatedLogs,
         is_locked: existingTask.is_locked,
       });
-    } catch {}
+    } catch (err: any) {
+      // Rollback on network failure
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? existingTask : t)));
+      showToast("Sync failed. Card returned to previous column.", "error");
+    }
   };
 
   // -------------------------------------------------------------
@@ -1169,10 +1500,17 @@ export default function WorkspaceStandalonePage() {
       return;
     }
 
+    skipSilentSyncUntilRef.current = Date.now() + 6000;
+
     const resolvedPage = activePage || pages[0] || null;
     const resolvedPageId = resolvedPage?.id || activePageId || "page_root";
     const tempId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`;
+    const taskTitle = quickAddTitle.trim();
     
+    // Immediate UI reset
+    setQuickAddTitle("");
+    setQuickAddColumn(null);
+
     const authorName = currentUser?.name || (currentUser?.email ? currentUser.email.split("@")[0] : "Collaborator");
     const initialLog: WfeTaskLog = {
       id: `log_${Date.now()}_init`,
@@ -1186,10 +1524,10 @@ export default function WorkspaceStandalonePage() {
       id: tempId,
       page_id: resolvedPageId,
       teamspace_id: resolvedPage?.teamspace_id || currentTeamspace?.id || null,
-      title: quickAddTitle.trim(),
+      title: taskTitle,
       custom_status: statusCol,
       priority: "Medium",
-      assigned_to: null,
+      assigned_to: authorName,
       tags: ["General"],
       blocks: [
         { id: `b_${Date.now()}_note`, type: "paragraph", content: "" },
@@ -1202,9 +1540,8 @@ export default function WorkspaceStandalonePage() {
     };
 
     // Immediate optimistic state update
-    setTasks((prev) => [...prev, newTaskObj]);
-    setQuickAddTitle("");
-    setQuickAddColumn(null);
+    setTasks((prev) => [newTaskObj, ...prev]);
+    showToast(`Added card "${taskTitle}"`, "success");
 
     try {
       const res = await saveWfeTask({
@@ -1214,6 +1551,7 @@ export default function WorkspaceStandalonePage() {
         title: newTaskObj.title,
         custom_status: newTaskObj.custom_status,
         priority: newTaskObj.priority,
+        assigned_to: newTaskObj.assigned_to,
         tags: newTaskObj.tags,
         blocks: newTaskObj.blocks,
         attachments: newTaskObj.attachments,
@@ -1223,9 +1561,9 @@ export default function WorkspaceStandalonePage() {
 
       if (res && res.success && res.task) {
         setTasks((prev) => prev.map((t) => (t.id === tempId ? { ...res.task, tags: newTaskObj.tags, blocks: newTaskObj.blocks, attachments: newTaskObj.attachments, logs: newTaskObj.logs } : t)));
-        showToast("Task created", "success");
       }
     } catch (err: any) {
+      setTasks((prev) => prev.filter((t) => t.id !== tempId));
       showToast("Failed to save task to backend: " + (err.message || err), "error");
     }
   };
@@ -1264,10 +1602,11 @@ export default function WorkspaceStandalonePage() {
         is_locked: editingTask.is_locked,
       });
       showToast("Changes saved", "success");
+      setEditingTask(updatedTaskWithLogs);
+      initialEditingTaskRef.current = JSON.stringify(updatedTaskWithLogs);
     } catch (err: any) {
       showToast("Save failed: " + err.message, "error");
     }
-    setEditingTask(null);
   };
 
   // Toggle Lock/Unlock Card (Admin & Co-Admin only)
@@ -1348,6 +1687,7 @@ export default function WorkspaceStandalonePage() {
 
         const updatedTask = { ...editingTask, attachments: updatedFiles, logs: updatedLogs };
         setEditingTask(updatedTask);
+        initialEditingTaskRef.current = JSON.stringify(updatedTask);
         setTasks(tasks.map((t) => (t.id === editingTask.id ? updatedTask : t)));
 
         await saveWfeTask({
@@ -1391,6 +1731,7 @@ export default function WorkspaceStandalonePage() {
 
       const updatedTask = { ...editingTask, attachments: remaining, logs: updatedLogs };
       setEditingTask(updatedTask);
+      initialEditingTaskRef.current = JSON.stringify(updatedTask);
       setTasks(tasks.map((t) => (t.id === editingTask.id ? updatedTask : t)));
 
       await saveWfeTask({
@@ -1441,6 +1782,7 @@ export default function WorkspaceStandalonePage() {
     } catch (err: any) {
       showToast("Delete failed: " + err.message, "error");
     }
+    initialEditingTaskRef.current = null;
     setEditingTask(null);
   };
 
@@ -2103,37 +2445,50 @@ export default function WorkspaceStandalonePage() {
   }, [activePage, handleSaveDoc, handleDocRedo]);
 
   // -------------------------------------------------------------
-  // FILTERED TASKS
+  // FILTERED & SORTED TASKS (Nearest due date at the top)
   // -------------------------------------------------------------
-  const filteredTasks = tasks.filter((t) => {
-    if (activePageId && t.page_id && t.page_id !== activePageId) return false;
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      if (!t.title.toLowerCase().includes(q)) return false;
-    }
-    if (activeTab === "my") {
-      const assigned = (t.assigned_to || "").toLowerCase();
-      if (!assigned) return false;
-      const userName = (currentUser?.name || "").toLowerCase().trim();
-      const userEmail = (currentUser?.email || "").toLowerCase().trim();
-      const userPrefix = userEmail.includes("@") ? userEmail.split("@")[0] : "";
-      
-      const isAssigned =
-        (userName && assigned.includes(userName)) ||
-        (userEmail && assigned.includes(userEmail)) ||
-        (userPrefix && assigned.includes(userPrefix)) ||
-        (userName && userName.split(" ").some((part) => part.length >= 2 && assigned.includes(part)));
+  const filteredTasks = tasks
+    .filter((t) => {
+      if (activePageId && t.page_id && t.page_id !== activePageId) return false;
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        if (!t.title.toLowerCase().includes(q)) return false;
+      }
+      if (activeTab === "my") {
+        const assigned = (t.assigned_to || "").toLowerCase();
+        if (!assigned) return false;
+        const userName = (currentUser?.name || "").toLowerCase().trim();
+        const userEmail = (currentUser?.email || "").toLowerCase().trim();
+        const userPrefix = userEmail.includes("@") ? userEmail.split("@")[0] : "";
+        
+        const isAssigned =
+          (userName && assigned.includes(userName)) ||
+          (userEmail && assigned.includes(userEmail)) ||
+          (userPrefix && assigned.includes(userPrefix)) ||
+          (userName && userName.split(" ").some((part) => part.length >= 2 && assigned.includes(part)));
 
-      return Boolean(isAssigned);
-    }
-    if (activeTab === "sprint") {
-      // Current Sprint: Active items currently being worked on (In Progress, In Review, or Urgent/High priority not yet complete)
-      const isActiveStatus = t.custom_status === "In progress" || t.custom_status === "In review";
-      const isHighPriorityTodo = t.custom_status === "To-do" && (t.priority === "Urgent" || t.priority === "High");
-      return isActiveStatus || isHighPriorityTodo;
-    }
-    return true;
-  });
+        return Boolean(isAssigned);
+      }
+      if (activeTab === "sprint") {
+        // Current Sprint: Active items currently being worked on (In Progress, In Review, or Urgent/High priority not yet complete)
+        const isActiveStatus = t.custom_status === "In progress" || t.custom_status === "In review";
+        const isHighPriorityTodo = t.custom_status === "To-do" && (t.priority === "Urgent" || t.priority === "High");
+        return isActiveStatus || isHighPriorityTodo;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      const aDue = a.due_date ? Number(a.due_date) : Infinity;
+      const bDue = b.due_date ? Number(b.due_date) : Infinity;
+
+      // 1. Both have due dates -> earliest / nearest due date comes first
+      if (aDue !== bDue) {
+        return aDue - bDue;
+      }
+
+      // 2. Fallback: Newer created tasks first
+      return (b.created_at || 0) - (a.created_at || 0);
+    });
 
   const activeTeamspaces = teamspaces.filter((ts) => ts.is_archived !== 1);
   const archivedTeamspaces = teamspaces.filter((ts) => ts.is_archived === 1);
@@ -2233,10 +2588,10 @@ export default function WorkspaceStandalonePage() {
       {/* ========================================================= */}
       {/* 1. LEFT NOTION NAVIGATION SIDEBAR (100% FUNCTIONAL)       */}
       {/* ========================================================= */}
-      <aside className="w-64 flex-shrink-0 bg-[#F7F7F5] border-r border-[#E9E9E7] flex flex-col justify-between select-none">
+      <aside className="w-64 flex-shrink-0 bg-[#FBFBFC] border-r border-slate-200/90 flex flex-col justify-between select-none font-primary shadow-[inset_-1px_0_0_rgba(0,0,0,0.02)]">
         <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
           {/* Workspace Switcher */}
-          <div className="p-3 border-b border-[#E9E9E7]/60 flex items-center justify-between group hover:bg-[#EBEBEA]/70 transition-colors">
+          <div className="p-3 border-b border-slate-200/80 flex items-center justify-between group transition-colors bg-white/70">
             <div className="flex items-center gap-2.5 min-w-0">
               <img
                 src="/favicon.ico"
@@ -2246,58 +2601,75 @@ export default function WorkspaceStandalonePage() {
                   (e.currentTarget as HTMLElement).style.display = 'none';
                 }}
               />
-              <div className="truncate">
-                <div className="text-xs font-bold text-zinc-900 truncate">HSG Global Workspace</div>
-                <div className="text-[10px] text-zinc-500 truncate">
-                  {isGuest ? "Guest Access" : "Workspace for Everyone"}
+              <div className="truncate min-w-0">
+                <div className="text-xs font-bold text-zinc-950 truncate tracking-tight leading-tight">HSG Global Workspace</div>
+                <div className="text-[10.5px] font-medium text-zinc-500 truncate leading-tight mt-0.5">
+                  {isGuest ? "Guest Access" : "Internal Bridge"}
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Search & Quick Share Action Bar */}
-          <div className="px-2 py-2 space-y-0.5 border-b border-[#E9E9E7]/60">
+          {/* Search & Action Bar */}
+          <div className="p-2.5 border-b border-slate-200/80 space-y-1.5">
             <button
               onClick={() => {
                 setShowSearchModal(true);
                 setGlobalSearchInput("");
               }}
-              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-md text-xs font-medium text-zinc-600 hover:bg-[#EBEBEA] transition-colors text-left cursor-pointer"
+              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-600 bg-white border border-slate-200/90 hover:border-blue-400 hover:text-zinc-950 hover:shadow-2xs transition-all text-left cursor-pointer group shadow-xs"
             >
-              <span>Search / Quick Find</span>
-              <kbd className="text-[10px] bg-white border border-zinc-200 px-1.5 py-0.5 rounded text-zinc-500 font-mono shadow-2xs font-semibold">Ctrl+K</kbd>
+              <div className="flex items-center gap-2 truncate">
+                <Search className="w-3.5 h-3.5 text-zinc-400 group-hover:text-blue-600 transition-colors shrink-0" />
+                <span className="font-medium truncate">Search / Quick Find</span>
+              </div>
+              <kbd className="text-[10px] bg-zinc-50 border border-slate-200 px-1.5 py-0.5 rounded text-zinc-500 font-mono shadow-2xs font-semibold shrink-0">Ctrl+K</kbd>
             </button>
+
+            {/* Archive Folder under Search button */}
+            {!isGuest && (
+              <button
+                onClick={() => setShowArchiveModal(true)}
+                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50 transition-colors text-left cursor-pointer"
+              >
+                <Archive className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                <span>Archive Folder</span>
+              </button>
+            )}
           </div>
 
           {/* TEAMSPACES / PROJECTS SECTION (100% INTERACTIVE) */}
           <div className="px-3 pt-3">
-            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider uppercase text-zinc-400 mb-1">
-              <span>{isGuest ? "Shared Project" : `Projects / Teamspaces (${activeTeamspaces.length})`}</span>
+            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider uppercase text-zinc-400 px-1 mb-1.5">
+              <span className="flex items-center gap-1.5">
+                <span className="w-1 h-3 rounded-full bg-blue-500 shrink-0" />
+                <span>{isGuest ? "Shared Project" : `Projects / Teamspaces (${activeTeamspaces.length})`}</span>
+              </span>
               {!isGuest && (
                 <button
                   onClick={() => setShowNewTeamspaceModal(true)}
                   title="Create New Teamspace"
-                  className="hover:text-zinc-900 p-0.5 rounded hover:bg-[#EBEBEA] text-zinc-500 transition-colors"
+                  className="p-1 rounded-md hover:bg-slate-200/70 text-zinc-500 hover:text-zinc-900 transition-colors cursor-pointer"
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
               )}
             </div>
 
-            <div className="space-y-1.5 mt-1">
+            <div className="space-y-1 mt-1">
               {visibleTeamspaces.map((ts) => {
                 const tsPages = publicPages.filter((p) => p.teamspace_id === ts.id);
                 return (
                   <div key={ts.id} className="space-y-0.5 group/ts">
                     {/* Teamspace Header Row */}
-                    <div className={`flex items-center justify-between py-1 px-1.5 rounded-md hover:bg-[#EBEBEA] cursor-pointer text-xs font-semibold group/tsrow ${
-                      ts.is_archived === 1 ? "opacity-60 text-zinc-500 italic" : "text-zinc-800"
+                    <div className={`flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-slate-200/60 cursor-pointer text-xs font-bold group/tsrow transition-colors ${
+                      ts.is_archived === 1 ? "opacity-60 text-zinc-500 italic" : "text-zinc-800 hover:text-zinc-950"
                     }`}>
-                      <div className="flex items-center gap-1.5 truncate">
-                        <span className="text-xs">{ts.icon || "📁"}</span>
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="text-sm shrink-0">{ts.icon || "📁"}</span>
                         <span className="truncate">{ts.name}</span>
                         {ts.is_archived === 1 && (
-                          <span className="text-[9px] not-italic font-bold px-1 py-0.2 bg-amber-100 text-amber-800 border border-amber-200 rounded shrink-0">
+                          <span className="text-[9px] not-italic font-bold px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-200 rounded shrink-0">
                             Archived
                           </span>
                         )}
@@ -2309,7 +2681,7 @@ export default function WorkspaceStandalonePage() {
                             handleOpenEditTeamspaceModal(ts);
                           }}
                           title={`Settings & Edit ${ts.name}`}
-                          className="p-0.5 hover:bg-zinc-300 rounded text-zinc-600"
+                          className="p-1 hover:bg-white rounded text-zinc-500 hover:text-zinc-900 shadow-2xs transition-colors"
                         >
                           <Pencil className="w-3 h-3" />
                         </button>
@@ -2319,7 +2691,7 @@ export default function WorkspaceStandalonePage() {
                             handleOpenNewPageModal(ts.id, false);
                           }}
                           title={`Add page to ${ts.name}`}
-                          className="p-0.5 hover:bg-zinc-300 rounded text-zinc-600"
+                          className="p-1 hover:bg-white rounded text-zinc-500 hover:text-zinc-900 shadow-2xs transition-colors"
                         >
                           <Plus className="w-3 h-3" />
                         </button>
@@ -2327,19 +2699,19 @@ export default function WorkspaceStandalonePage() {
                     </div>
 
                     {/* Pages inside this Teamspace */}
-                    <div className="pl-3 space-y-0.5 border-l border-zinc-200 ml-2">
+                    <div className="pl-3 space-y-0.5 border-l-2 border-slate-200 ml-3.5 my-0.5">
                       {tsPages.map((p) => (
                         <div
                           key={p.id}
-                          className={`flex items-center justify-between py-1 px-2 rounded-md text-xs transition-colors group/p cursor-pointer ${
+                          className={`flex items-center justify-between py-1.5 px-2.5 rounded-lg text-xs transition-all group/p cursor-pointer ${
                             activePageId === p.id
-                              ? "bg-[#EAEAEA] text-zinc-950 font-bold"
-                              : "text-zinc-600 hover:bg-[#EBEBEA]"
+                              ? "bg-gradient-to-r from-blue-50 to-indigo-50/60 text-[#0B57D0] font-bold border border-blue-200/70 shadow-2xs"
+                              : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50 font-medium"
                           }`}
                           onClick={() => handleSelectPage(p.id)}
                         >
-                          <div className="flex items-center gap-1.5 truncate min-w-0">
-                            <span>{p.icon || "📄"}</span>
+                          <div className="flex items-center gap-2 truncate min-w-0">
+                            <span className="text-xs shrink-0">{p.icon || "📄"}</span>
                             <span className="truncate">{p.title}</span>
                           </div>
                           <div className="flex items-center gap-0.5 opacity-0 group-hover/p:opacity-100 transition-opacity shrink-0">
@@ -2349,7 +2721,7 @@ export default function WorkspaceStandalonePage() {
                                 handleOpenEditPageModal(p);
                               }}
                               title="Edit"
-                              className="p-0.5 text-zinc-400 hover:text-zinc-800 hover:bg-zinc-300 rounded"
+                              className="p-1 text-zinc-400 hover:text-zinc-800 hover:bg-white rounded shadow-2xs transition-colors"
                             >
                               <Pencil className="w-3 h-3" />
                             </button>
@@ -2364,10 +2736,10 @@ export default function WorkspaceStandalonePage() {
                               }}
                               disabled={!isProjectAdmin}
                               title={!isProjectAdmin ? "Only Project Managers can delete pages" : "Delete"}
-                              className={`p-0.5 rounded ${
+                              className={`p-1 rounded ${
                                 !isProjectAdmin
                                   ? "opacity-35 cursor-not-allowed text-zinc-400"
-                                  : "text-zinc-400 hover:text-rose-600 hover:bg-rose-100 cursor-pointer"
+                                  : "text-zinc-400 hover:text-rose-600 hover:bg-rose-50 shadow-2xs cursor-pointer transition-colors"
                               }`}
                             >
                               <Trash2 className="w-3 h-3" />
@@ -2379,7 +2751,7 @@ export default function WorkspaceStandalonePage() {
                       {tsPages.length === 0 && (
                         <button
                           onClick={() => handleOpenNewPageModal(ts.id, false)}
-                          className="text-[11px] text-zinc-400 hover:text-zinc-700 py-0.5 px-2 flex items-center gap-1 cursor-pointer"
+                          className="text-[11px] text-zinc-400 hover:text-[#0B57D0] py-1 px-2 flex items-center gap-1.5 cursor-pointer font-medium hover:bg-blue-50/50 rounded-md transition-colors"
                         >
                           <Plus className="w-3 h-3" /> <span>Add note / doc</span>
                         </button>
@@ -2393,12 +2765,15 @@ export default function WorkspaceStandalonePage() {
 
           {/* PRIVATE SECTION (100% INTERACTIVE) */}
           <div className="px-3 pt-4 pb-2">
-            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider uppercase text-zinc-400 mb-1">
-              <span>Private ({privatePages.length})</span>
+            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider uppercase text-zinc-400 px-1 mb-1.5">
+              <span className="flex items-center gap-1.5">
+                <span className="w-1 h-3 rounded-full bg-purple-500 shrink-0" />
+                <span>Private ({privatePages.length})</span>
+              </span>
               <button
                 onClick={() => handleOpenNewPageModal(null, true)}
                 title="Create Private Note"
-                className="hover:text-zinc-900 p-0.5 rounded hover:bg-[#EBEBEA] text-zinc-500 transition-colors cursor-pointer"
+                className="p-1 rounded-md hover:bg-slate-200/70 text-zinc-500 hover:text-zinc-900 transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
@@ -2408,13 +2783,15 @@ export default function WorkspaceStandalonePage() {
               {privatePages.map((p) => (
                 <div
                   key={p.id}
-                  className={`flex items-center justify-between py-1 px-2 rounded-md text-xs transition-colors group/priv cursor-pointer ${
-                    activePageId === p.id ? "bg-[#EAEAEA] text-zinc-950 font-bold" : "text-zinc-600 hover:bg-[#EBEBEA]"
+                  className={`flex items-center justify-between py-1.5 px-2.5 rounded-lg text-xs transition-all group/priv cursor-pointer ${
+                    activePageId === p.id
+                      ? "bg-gradient-to-r from-purple-50 to-pink-50/60 text-purple-900 font-bold border border-purple-200/70 shadow-2xs"
+                      : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50 font-medium"
                   }`}
                   onClick={() => handleSelectPage(p.id)}
                 >
-                  <div className="flex items-center gap-1.5 truncate min-w-0">
-                    <span>{p.icon || "👤"}</span>
+                  <div className="flex items-center gap-2 truncate min-w-0">
+                    <span className="text-xs shrink-0">{p.icon || "👤"}</span>
                     <span className="truncate">{p.title}</span>
                   </div>
                   <div className="flex items-center gap-0.5 opacity-0 group-hover/priv:opacity-100 transition-opacity shrink-0">
@@ -2424,7 +2801,7 @@ export default function WorkspaceStandalonePage() {
                         handleOpenEditPageModal(p);
                       }}
                       title="Edit"
-                      className="p-0.5 text-zinc-400 hover:text-zinc-800 hover:bg-zinc-300 rounded"
+                      className="p-1 text-zinc-400 hover:text-zinc-800 hover:bg-white rounded shadow-2xs transition-colors"
                     >
                       <Pencil className="w-3 h-3" />
                     </button>
@@ -2434,7 +2811,7 @@ export default function WorkspaceStandalonePage() {
                         handleDeletePage(p.id, p.title);
                       }}
                       title="Delete"
-                      className="p-0.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-100 rounded"
+                      className="p-1 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded shadow-2xs transition-colors"
                     >
                       <Trash2 className="w-3 h-3" />
                     </button>
@@ -2445,7 +2822,7 @@ export default function WorkspaceStandalonePage() {
               {privatePages.length === 0 && (
                 <button
                   onClick={() => handleOpenNewPageModal(null, true)}
-                  className="text-[11px] text-zinc-400 hover:text-zinc-700 py-0.5 px-2 flex items-center gap-1 cursor-pointer"
+                  className="text-[11px] text-zinc-400 hover:text-purple-700 py-1 px-2 flex items-center gap-1.5 cursor-pointer font-medium hover:bg-purple-50/50 rounded-md transition-colors"
                 >
                   <Plus className="w-3 h-3" /> <span>Add private note</span>
                 </button>
@@ -2454,34 +2831,57 @@ export default function WorkspaceStandalonePage() {
           </div>
         </div>
 
-        {/* Archived Projects Button in Sidebar */}
+        {/* Connect AI Button in Sidebar */}
         {!isGuest && (
-          <div className="px-2 py-1.5 border-t border-[#E9E9E7]/60">
+          <div className="px-3 py-2 border-t border-slate-200/80 bg-white/40">
             <button
-              onClick={() => setShowArchiveModal(true)}
-              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs font-medium text-zinc-600 hover:bg-[#EBEBEA] transition-colors text-left cursor-pointer"
+              onClick={handleOpenAiBridgeModal}
+              className="w-full flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-[#0B57D0] bg-blue-50/80 hover:bg-blue-100 hover:text-[#0842A0] border border-blue-200/90 transition-all cursor-pointer shadow-2xs active:scale-[0.98]"
             >
-              <Archive className="w-3.5 h-3.5 text-zinc-400" />
-              <span>Archived Projects</span>
+              <Bot className="w-3.5 h-3.5 text-[#0B57D0]" />
+              <span>Connect AI</span>
             </button>
           </div>
         )}
 
         {/* Sidebar Footer */}
-        <div className="p-3 border-t border-[#E9E9E7] flex items-center justify-between text-xs text-zinc-600 bg-[#F7F7F5]">
-          <div className="flex items-center gap-2 truncate">
-            <div className="w-5 h-5 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-[10px]">
+        <div className="p-3 border-t border-slate-200 bg-white flex items-center justify-between text-xs text-zinc-600">
+          <div className="flex items-center gap-2.5 truncate min-w-0">
+            <div className="w-7 h-7 rounded-full bg-[#0B57D0] text-white flex items-center justify-center font-bold text-xs shadow-2xs shrink-0">
               {currentUser?.name ? currentUser.name[0].toUpperCase() : "U"}
             </div>
-            <span className="truncate font-medium">{currentUser?.name || "Collaborator"}</span>
+            <div className="truncate min-w-0">
+              <div className="truncate font-bold text-zinc-900 leading-tight">{currentUser?.name || "Collaborator"}</div>
+              <div className="truncate text-[10px] text-zinc-400 font-medium leading-tight mt-0.5">{currentUser?.email || ""}</div>
+            </div>
           </div>
-          <button
-            onClick={() => (window.location.href = "/")}
-            title="Back to iB HSG Global"
-            className="p-1 rounded hover:bg-[#EBEBEA] text-zinc-500 hover:text-zinc-900 transition-colors"
-          >
-            <Home className="w-3.5 h-3.5" />
-          </button>
+          {isGuest ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (targetWorkspaceId) {
+                  localStorage.removeItem(`wfe_guest_session_${targetWorkspaceId}`);
+                }
+                setCurrentUser(null);
+                setIsGuest(false);
+                setShowGateModal(true);
+                showToast("Logged out of guest workspace", "info");
+              }}
+              title="Log Out of Project"
+              className="p-1.5 rounded-lg hover:bg-rose-50 text-zinc-400 hover:text-rose-600 transition-colors shrink-0 ml-1 cursor-pointer border border-transparent hover:border-rose-200"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => (window.location.href = "/")}
+              title="Back to iB HSG Global Console"
+              className="p-1.5 rounded-lg hover:bg-slate-100 text-zinc-400 hover:text-zinc-800 transition-colors shrink-0 ml-1 cursor-pointer border border-transparent hover:border-slate-200"
+            >
+              <Home className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </aside>
 
@@ -2626,7 +3026,8 @@ export default function WorkspaceStandalonePage() {
                   <>
                     <button
                       onClick={() => {
-                        setSelectedDbUserEmail(registeredUsers[0]?.email || "");
+                        setSelectedDbUserEmail("");
+                        setMemberSearchQuery("");
                         setNewMemberName("");
                         setNewMemberEmail("");
                         setShowMembersModal(true);
@@ -3417,17 +3818,27 @@ export default function WorkspaceStandalonePage() {
                   </button>
                 </div>
 
-                {/* Filter Search */}
-                <div className="flex items-center gap-1">
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 absolute left-2 top-2 text-zinc-400" />
+                {/* Filter Search Pill */}
+                <div className="flex items-center gap-1.5 mb-1">
+                  <div className="relative flex items-center">
+                    <Search className="w-3.5 h-3.5 absolute left-2.5 text-zinc-400 pointer-events-none" />
                     <input
                       type="text"
                       placeholder="Filter cards..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-7 pr-2 py-1 text-xs bg-[#F7F7F5] border border-zinc-200 rounded-md focus:outline-none focus:ring-1 focus:ring-zinc-400 w-36"
+                      className="pl-8 pr-7 py-1 h-7.5 text-xs bg-white hover:bg-slate-50 border border-slate-200 hover:border-slate-300 focus:border-[#0B57D0] rounded-full focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/15 w-44 transition-all shadow-2xs font-medium placeholder:text-zinc-400 text-zinc-800"
                     />
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery("")}
+                        className="absolute right-2 p-0.5 text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+                        title="Clear filter"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -3507,7 +3918,7 @@ export default function WorkspaceStandalonePage() {
                   return (
                     <div
                       key={task.id}
-                      onClick={() => setEditingTask(JSON.parse(JSON.stringify(task)))}
+                      onClick={() => handleOpenEditingTask(task)}
                       className="py-3 px-3 hover:bg-[#F9F9F8] rounded-lg transition-colors cursor-pointer space-y-2 group"
                     >
                       <div className="flex items-center justify-between text-xs">
@@ -3528,31 +3939,46 @@ export default function WorkspaceStandalonePage() {
                           >
                             {task.custom_status}
                           </span>
-                          {task.is_locked ? (
-                            <Lock className="w-3 h-3 text-amber-600" />
-                          ) : null}
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setActiveLogDrawerTask(task);
-                            }}
-                            className="text-zinc-300 hover:text-zinc-500 transition-colors cursor-pointer bg-transparent border-none p-0 inline-flex items-center justify-center"
-                            title="Activity Timeline"
-                          >
-                            <History className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            {task.is_locked ? (
+                              <span title="Locked by Admin" className="inline-flex items-center justify-center text-amber-600">
+                                <Lock className="w-3.5 h-3.5" />
+                              </span>
+                            ) : null}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setActiveLogDrawerTask(task);
+                              }}
+                              className="text-zinc-300 hover:text-zinc-500 transition-colors cursor-pointer bg-transparent border-none p-0 inline-flex items-center justify-center"
+                              title="Activity Timeline"
+                            >
+                              <History className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
 
                         {/* Assignee & Dates info */}
                         <div className="flex items-center gap-3 text-[11px] text-zinc-500 flex-wrap">
                           {task.assigned_to ? (
                             <div className="flex items-center gap-1 flex-wrap">
-                              {task.assigned_to.split(",").map((s) => s.trim()).filter(Boolean).map((person) => (
-                                <span key={person} className="text-zinc-700 font-medium flex items-center gap-1 bg-zinc-100 px-2 py-0.5 rounded text-[11px]">
-                                  <UserIcon className="w-3 h-3 text-blue-600" /> {person}
-                                </span>
-                              ))}
+                              {task.assigned_to.split(",").map((s) => s.trim()).filter(Boolean).map((person) => {
+                                const isMe = isAssigneeCurrentUser(person);
+                                return (
+                                  <span
+                                    key={person}
+                                    className={`font-medium flex items-center gap-1 px-2 py-0.5 rounded text-[11px] border ${
+                                      isMe
+                                        ? "bg-blue-50 text-[#0B57D0] border-blue-200/80 font-bold"
+                                        : "bg-zinc-100 text-zinc-700 border-zinc-200/60"
+                                    }`}
+                                  >
+                                    <UserIcon className={`w-3 h-3 ${isMe ? "text-[#0B57D0]" : "text-zinc-500"}`} />
+                                    <span>{isMe ? "Me" : person}</span>
+                                  </span>
+                                );
+                              })}
                             </div>
                           ) : (
                             <span className="text-zinc-400 italic">Unassigned</span>
@@ -3607,8 +4033,8 @@ export default function WorkspaceStandalonePage() {
                     onDragOver={(e) => handleDragOver(e, col.id)}
                     onDragLeave={handleDragLeave}
                     onDrop={(e) => handleDrop(e, col.id)}
-                    className={`w-72 flex-shrink-0 flex flex-col bg-[#F7F7F5]/80 rounded-xl p-2.5 transition-colors border ${
-                      isOver ? "border-blue-400 bg-blue-50/40" : "border-transparent"
+                    className={`w-72 flex-shrink-0 flex flex-col ${col.containerBg} rounded-xl p-2.5 transition-all border ${
+                      isOver ? "border-blue-500 ring-2 ring-blue-400/30 shadow-sm" : col.containerBorder
                     }`}
                   >
                     {/* Header */}
@@ -3616,7 +4042,7 @@ export default function WorkspaceStandalonePage() {
                       <div className="flex items-center gap-2">
                         <span className={`w-2 h-2 rounded-full ${col.dot}`} />
                         <span className="text-xs font-bold text-zinc-800">{col.label}</span>
-                        <span className="text-[11px] font-semibold text-zinc-400 bg-zinc-200/60 px-1.5 py-0.2 rounded-full">
+                        <span className={`text-[11px] font-bold px-1.5 py-0.2 rounded-full ${col.badge}`}>
                           {colTasks.length}
                         </span>
                       </div>
@@ -3625,7 +4051,7 @@ export default function WorkspaceStandalonePage() {
                           setQuickAddColumn(col.id);
                           setQuickAddTitle("");
                         }}
-                        className="p-1 text-zinc-400 hover:text-zinc-800 hover:bg-[#EBEBEA] rounded"
+                        className="p-1 text-zinc-400 hover:text-zinc-800 hover:bg-white/60 active:bg-white/80 rounded transition-all cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
                       </button>
@@ -3635,17 +4061,21 @@ export default function WorkspaceStandalonePage() {
                     <div className="flex-1 space-y-2 overflow-y-auto min-h-[150px]">
                       {colTasks.map((task) => {
                         const isPendingDelete = !!task.pending_deletion;
+                        const moveCheck = canUserMoveTask(task);
+                        const isCardDraggable = !isPendingDelete && moveCheck.canMove;
 
                         return (
                           <div
                             key={task.id}
-                            draggable={!isPendingDelete}
+                            draggable={isCardDraggable}
                             onDragStart={(e) => handleDragStart(e, task.id)}
-                            onClick={() => setEditingTask(JSON.parse(JSON.stringify(task)))}
-                            className={`p-3 rounded-lg border transition-all cursor-pointer group relative ${
+                            onClick={() => handleOpenEditingTask(task)}
+                            className={`p-3 rounded-lg border transition-all relative ${
                               isPendingDelete
-                                ? "bg-rose-50/40 border-rose-200 opacity-70"
-                                : "bg-white border-[#E9E9E7] shadow-2xs hover:shadow-xs hover:border-zinc-400"
+                                ? "bg-rose-50/40 border-rose-200 opacity-70 cursor-pointer"
+                                : isCardDraggable
+                                ? `bg-white ${col.cardBorder} shadow-2xs hover:shadow-xs cursor-grab active:cursor-grabbing`
+                                : `bg-white ${col.cardBorder} shadow-2xs hover:shadow-xs cursor-pointer`
                             }`}
                           >
                             {/* Deletion Warning Banner */}
@@ -3684,10 +4114,10 @@ export default function WorkspaceStandalonePage() {
                               }`}
                             >
                               <span className="flex-1">{task.title}</span>
-                              <div className="flex items-center gap-1 shrink-0">
+                              <div className="flex items-center gap-1.5 shrink-0">
                                 {task.is_locked ? (
-                                  <span title="Locked by Admin">
-                                    <Lock className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+                                  <span title="Locked by Admin" className="inline-flex items-center justify-center text-amber-600">
+                                    <Lock className="w-3.5 h-3.5" />
                                   </span>
                                 ) : null}
                                 <button
@@ -3704,25 +4134,35 @@ export default function WorkspaceStandalonePage() {
                               </div>
                             </div>
 
-                            <div className={`flex items-center flex-wrap gap-1.5 mt-2 ${isPendingDelete ? "opacity-60" : ""}`}>
+                            <div className={`flex items-center flex-wrap gap-1 mt-1.5 ${isPendingDelete ? "opacity-60" : ""}`}>
                               {task.priority === "Urgent" && (
-                                <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                                <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-1 py-0.2 rounded border border-rose-100/90 leading-tight">
                                   Urgent
                                 </span>
                               )}
                               {task.priority === "High" && (
-                                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
+                                <span className="text-[9px] font-bold text-amber-600 bg-amber-50 px-1 py-0.2 rounded border border-amber-100/90 leading-tight">
                                   High
                                 </span>
                               )}
                               {task.assigned_to && (
                                 <div className="flex items-center gap-1 flex-wrap">
-                                  {task.assigned_to.split(",").map((s) => s.trim()).filter(Boolean).map((person) => (
-                                    <span key={person} className="text-[10px] font-medium text-zinc-600 bg-zinc-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                                      <UserIcon className="w-2.5 h-2.5 text-blue-600" />
-                                      {person}
-                                    </span>
-                                  ))}
+                                  {task.assigned_to.split(",").map((s) => s.trim()).filter(Boolean).map((person) => {
+                                    const isMe = isAssigneeCurrentUser(person);
+                                    return (
+                                      <span
+                                        key={person}
+                                        className={`text-[9.5px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1 border leading-none ${
+                                          isMe
+                                            ? "bg-blue-50/90 text-[#0B57D0] border-blue-200/80 font-bold"
+                                            : "bg-zinc-100/80 text-zinc-600 border-zinc-200/60"
+                                        }`}
+                                      >
+                                        <UserIcon className={`w-2.5 h-2.5 ${isMe ? "text-[#0B57D0]" : "text-zinc-400"}`} />
+                                        <span>{isMe ? "Me" : person}</span>
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                               )}
                               {task.due_date && (
@@ -3735,25 +4175,25 @@ export default function WorkspaceStandalonePage() {
                                   });
                                   return (
                                     <span
-                                      className={`text-[10px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1 border ${
+                                      className={`text-[9.5px] font-medium px-1.5 py-0.5 rounded flex items-center gap-1 border leading-none ${
                                         isOverdue
                                           ? "bg-rose-50 text-rose-700 border-rose-200 font-bold"
                                           : isDone
                                           ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-                                          : "bg-zinc-100 text-zinc-600 border-zinc-200"
+                                          : "bg-zinc-100/80 text-zinc-600 border-zinc-200/60"
                                       }`}
                                     >
                                       <Calendar className={`w-2.5 h-2.5 ${isOverdue ? "text-rose-600" : "text-zinc-400"}`} />
                                       <span>{dateStr}</span>
-                                      {isOverdue && <span className="text-[9px] font-bold text-rose-600">!</span>}
+                                      {isOverdue && <span className="text-[8px] font-bold text-rose-600">!</span>}
                                     </span>
                                   );
                                 })()
                               )}
                               {(task.attachments || []).length > 0 && (
-                                <span className="text-[10px] font-medium text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded flex items-center gap-1 border border-blue-100/60">
+                                <span className="text-[9.5px] font-medium text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded flex items-center gap-1 border border-blue-100/60 leading-none">
                                   <Paperclip className="w-2.5 h-2.5" />
-                                  {(task.attachments || []).length}
+                                  <span>{(task.attachments || []).length}</span>
                                 </span>
                               )}
                             </div>
@@ -3801,7 +4241,7 @@ export default function WorkspaceStandalonePage() {
                             setQuickAddColumn(col.id);
                             setQuickAddTitle("");
                           }}
-                          className="w-full flex items-center gap-1.5 py-1.5 px-2 text-xs font-semibold text-zinc-400 hover:text-zinc-800 hover:bg-[#EBEBEA] rounded-lg transition-colors text-left cursor-pointer"
+                          className="w-full flex items-center gap-1.5 py-1.5 px-2 text-xs font-semibold text-zinc-500/80 hover:text-zinc-900 hover:bg-white/60 active:bg-white/80 rounded-lg transition-all text-left cursor-pointer"
                         >
                           <Plus className="w-3.5 h-3.5" />
                           <span>New Task</span>
@@ -3829,11 +4269,17 @@ export default function WorkspaceStandalonePage() {
 
       {/* ========================================================= */}
       {/* ========================================================= */}
-      {/* 4. NOTION CARD / DOCUMENT EDITOR MODAL (2-COLUMN 65/35)   */}
+      {/* 4. NOTION CARD / DOCUMENT EDITOR (FULL-HEIGHT RIGHT DRAWER) */}
       {/* ========================================================= */}
       {editingTask && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-5xl h-[88vh] rounded-xl shadow-2xl flex flex-col overflow-hidden border border-slate-200 animate-in fade-in zoom-in-95 font-primary">
+        <div
+          className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex justify-end animate-in fade-in duration-200 cursor-pointer"
+          onClick={handleAttemptCloseTask}
+        >
+          <div
+            className="bg-white w-full max-w-4xl lg:max-w-5xl h-full shadow-2xl flex flex-col overflow-hidden border-l border-slate-200 animate-in slide-in-from-right duration-200 font-primary cursor-default"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Top Bar */}
             <div className="px-6 py-3 border-b border-slate-200 flex items-center justify-between text-xs text-zinc-500 bg-white shrink-0">
               <div className="flex items-center gap-2">
@@ -3846,7 +4292,7 @@ export default function WorkspaceStandalonePage() {
                   </span>
                 ) : null}
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-1.5">
                 {/* Icon-Only Lock / Unlock Toggle for Admin & Co-Admin */}
                 {isProjectAdmin && (
                   <button
@@ -3877,12 +4323,27 @@ export default function WorkspaceStandalonePage() {
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
+
+                <div className="w-[1px] h-4 bg-slate-200 mx-1 shrink-0" />
+
                 <button
-                  onClick={() => setEditingTask(null)}
-                  className="p-1.5 text-zinc-400 hover:text-zinc-800 hover:bg-zinc-100 rounded-md transition-colors"
-                  title="Close"
+                  type="button"
+                  onClick={handleAttemptCloseTask}
+                  className="px-3.5 py-1.5 text-xs font-semibold text-zinc-700 bg-white hover:bg-zinc-100 border border-slate-200 rounded-md transition-colors cursor-pointer"
                 >
-                  <X className="w-4 h-4" />
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditingTask}
+                  disabled={!isTaskDirty}
+                  className={`px-4 py-1.5 text-xs font-bold rounded-md shadow-xs transition-all ${
+                    isTaskDirty
+                      ? "bg-[#0B57D0] hover:bg-[#0842A0] text-white cursor-pointer active:scale-95"
+                      : "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-200 shadow-none"
+                  }`}
+                >
+                  Save Changes
                 </button>
               </div>
             </div>
@@ -3892,33 +4353,33 @@ export default function WorkspaceStandalonePage() {
               {/* ======================================================= */}
               {/* LEFT COLUMN (65%): TASK TITLE & PAGE CONTENT EDITOR     */}
               {/* ======================================================= */}
-              <div className="w-[65%] flex flex-col overflow-y-auto p-6 space-y-6">
-                <div>
+              <div className="w-[65%] flex flex-col overflow-y-auto p-4 space-y-3">
+                <div className="pb-1 border-b border-slate-100">
                   <input
                     type="text"
                     value={editingTask.title}
                     disabled={!!editingTask.is_locked && !isProjectAdmin}
                     onChange={(e) => setEditingTask({ ...editingTask, title: e.target.value })}
                     placeholder="Task title..."
-                    className="w-full text-xl font-bold text-zinc-950 placeholder-zinc-300 focus:outline-none tracking-tight disabled:opacity-75"
+                    className="w-full text-lg font-bold text-zinc-950 placeholder-zinc-300 focus:outline-none tracking-tight disabled:opacity-75 bg-transparent"
                   />
-                  <div className="text-[11px] text-zinc-400 font-medium mt-1">
+                  <div className="text-[10px] text-zinc-400 font-normal mt-0.5">
                     Created: {new Date(editingTask.created_at || Date.now()).toLocaleDateString("en-SG", { day: "numeric", month: "short", year: "numeric" })}
                   </div>
                 </div>
 
                 {/* Block Content Editor */}
-                <div className="space-y-3">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 pb-1 border-b border-slate-100">
+                <div className="space-y-2">
+                  <div className="text-[10.5px] font-bold uppercase tracking-wider text-zinc-500 pb-0.5">
                     Task Description & Notes
                   </div>
 
-                  <div className="space-y-2">
+                  <div className="space-y-1.5">
                     {/* Empty state: Show default description note block ready to type */}
                     {(editingTask.blocks || []).length === 0 && (
-                      <div className="p-1">
+                      <div>
                         <textarea
-                          rows={4}
+                          rows={3}
                           disabled={!!editingTask.is_locked && !isProjectAdmin}
                           placeholder="Write task description, notes, or instructions..."
                           onChange={(e) => {
@@ -3930,7 +4391,7 @@ export default function WorkspaceStandalonePage() {
                             };
                             setEditingTask({ ...editingTask, blocks: [newBlock] });
                           }}
-                          className="w-full text-xs text-zinc-700 resize-none focus:outline-none leading-relaxed disabled:opacity-75 p-2.5 rounded-md bg-zinc-50 border border-slate-200 focus:border-[#0B57D0] focus:bg-white transition-colors"
+                          className="w-full text-xs text-zinc-700 resize-none focus:outline-none leading-relaxed disabled:opacity-75 p-2 rounded-md bg-zinc-50 border border-slate-200 focus:border-[#0B57D0] focus:bg-white transition-colors"
                         />
                       </div>
                     )}
@@ -4051,10 +4512,123 @@ export default function WorkspaceStandalonePage() {
               </div>
 
               {/* ======================================================= */}
-              {/* RIGHT COLUMN (35%): CLEAN ATTACHMENTS & SETTINGS        */}
+              {/* ======================================================= */}
+              {/* RIGHT COLUMN (35%): TASK PROPERTIES & ATTACHMENTS       */}
               {/* ======================================================= */}
               <div className="w-[35%] flex flex-col overflow-y-auto p-5 bg-white space-y-5">
-                {/* 1. ATTACHMENTS (UNIFIED & CLEAN) */}
+                {/* DUE DATE & PRIORITY (ALWAYS DISPLAYED, CLEAN RADIO CAPSULES) */}
+                <div className="space-y-4 pb-4 border-b border-slate-100">
+                  {/* 1. Due Date */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                      <span>Due Date</span>
+                    </label>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="date"
+                          disabled={!!editingTask.is_locked && !isProjectAdmin}
+                          value={editingTask.due_date ? new Date(editingTask.due_date).toISOString().split("T")[0] : ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditingTask({
+                              ...editingTask,
+                              due_date: val ? new Date(val).getTime() : null,
+                            });
+                          }}
+                          className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-zinc-800 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-semibold disabled:opacity-75 shadow-2xs"
+                        />
+                        {editingTask.due_date && !editingTask.is_locked && (
+                          <button
+                            type="button"
+                            onClick={() => setEditingTask({ ...editingTask, due_date: null })}
+                            className="text-xs font-semibold text-rose-500 hover:text-rose-700 hover:bg-rose-50 px-2 py-1 rounded transition-colors cursor-pointer"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Quick Presets */}
+                      {!editingTask.is_locked && (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const today = new Date();
+                              today.setHours(23, 59, 59, 999);
+                              setEditingTask({ ...editingTask, due_date: today.getTime() });
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-zinc-700 rounded-md transition-colors cursor-pointer"
+                          >
+                            Today
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const tom = new Date();
+                              tom.setDate(tom.getDate() + 1);
+                              tom.setHours(23, 59, 59, 999);
+                              setEditingTask({ ...editingTask, due_date: tom.getTime() });
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-zinc-700 rounded-md transition-colors cursor-pointer"
+                          >
+                            Tomorrow
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const nextW = new Date();
+                              nextW.setDate(nextW.getDate() + 7);
+                              nextW.setHours(23, 59, 59, 999);
+                              setEditingTask({ ...editingTask, due_date: nextW.getTime() });
+                            }}
+                            className="px-2.5 py-1 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-zinc-700 rounded-md transition-colors cursor-pointer"
+                          >
+                            +1 Week
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 2. Priority Radio Button Capsules */}
+                  <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                    <label className="text-xs font-semibold text-zinc-700 flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                      <span>Priority</span>
+                    </label>
+                    <div className="grid grid-cols-4 gap-1.5 p-1 bg-slate-100/90 rounded-lg border border-slate-200/80">
+                      {(["Low", "Medium", "High", "Urgent"] as const).map((pLevel) => {
+                        const isSelected = (editingTask.priority || "Medium") === pLevel;
+                        return (
+                          <button
+                            key={pLevel}
+                            type="button"
+                            disabled={!!editingTask.is_locked && !isProjectAdmin}
+                            onClick={() => setEditingTask({ ...editingTask, priority: pLevel })}
+                            className={`py-1.5 px-2 rounded-md text-xs font-semibold text-center transition-all cursor-pointer disabled:cursor-not-allowed ${
+                              isSelected
+                                ? pLevel === "Urgent"
+                                  ? "bg-rose-600 text-white shadow-xs"
+                                  : pLevel === "High"
+                                  ? "bg-amber-600 text-white shadow-xs"
+                                  : pLevel === "Medium"
+                                  ? "bg-blue-600 text-white shadow-xs"
+                                  : "bg-slate-700 text-white shadow-xs"
+                                : "text-zinc-600 hover:text-zinc-950 hover:bg-white/60"
+                            }`}
+                          >
+                            {pLevel}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. ATTACHMENTS (UNIFIED & CLEAN, PLACED BELOW PROPERTIES) */}
                 {(() => {
                   const attachments = editingTask.attachments || [];
                   const isEditableStatus = editingTask.custom_status === "To-do" || editingTask.custom_status === "In progress";
@@ -4079,14 +4653,14 @@ export default function WorkspaceStandalonePage() {
                             type="button"
                             onClick={() => handleTriggerUpload()}
                             disabled={!!uploadingStage}
-                            className="px-2.5 py-1 text-[11px] font-semibold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-md flex items-center gap-1 shadow-2xs transition-colors cursor-pointer"
+                            className="p-1 text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 rounded-md transition-colors cursor-pointer"
+                            title="Upload attachment"
                           >
                             {uploadingStage ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
+                              <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
                             ) : (
-                              <Upload className="w-3 h-3" />
+                              <Upload className="w-3.5 h-3.5" />
                             )}
-                            <span>Upload</span>
                           </button>
                         )}
                       </div>
@@ -4185,321 +4759,207 @@ export default function WorkspaceStandalonePage() {
                     </div>
                   );
                 })()}
-
-                {/* 2. TASK PROPERTIES (CLEAN LEFT-ALIGNED 2-COLUMN GRID) */}
-                <div className="space-y-3 pt-2">
-                  <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 pb-1 border-b border-slate-100">
-                    Task Properties
-                  </div>
-
-                  <div className="space-y-3 text-xs">
-                    {/* 1. Due Date */}
-                    <div className="grid grid-cols-[85px_1fr] items-start gap-2.5 pt-1">
-                      <label className="text-[11px] font-semibold text-zinc-500 flex items-center gap-1.5 pt-1.5">
-                        <Calendar className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                        <span>Due Date</span>
-                      </label>
-                      <div className="space-y-1.5">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="date"
-                            disabled={!!editingTask.is_locked && !isProjectAdmin}
-                            value={editingTask.due_date ? new Date(editingTask.due_date).toISOString().split("T")[0] : ""}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setEditingTask({
-                                ...editingTask,
-                                due_date: val ? new Date(val).getTime() : null,
-                              });
-                            }}
-                            className="flex-1 bg-white border border-slate-200 rounded-md px-2 py-1 text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] font-semibold disabled:opacity-75"
-                          />
-                          {editingTask.due_date && !editingTask.is_locked && (
-                            <button
-                              type="button"
-                              onClick={() => setEditingTask({ ...editingTask, due_date: null })}
-                              className="text-[10px] font-semibold text-rose-500 hover:text-rose-700 hover:underline px-1 py-0.5 cursor-pointer"
-                            >
-                              Clear
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Quick Presets */}
-                        {!editingTask.is_locked && (
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const today = new Date();
-                                today.setHours(23, 59, 59, 999);
-                                setEditingTask({ ...editingTask, due_date: today.getTime() });
-                              }}
-                              className="px-1.5 py-0.5 text-[10px] font-medium bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded transition-colors cursor-pointer"
-                            >
-                              Today
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const tom = new Date();
-                                tom.setDate(tom.getDate() + 1);
-                                tom.setHours(23, 59, 59, 999);
-                                setEditingTask({ ...editingTask, due_date: tom.getTime() });
-                              }}
-                              className="px-1.5 py-0.5 text-[10px] font-medium bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded transition-colors cursor-pointer"
-                            >
-                              Tomorrow
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const nextW = new Date();
-                                nextW.setDate(nextW.getDate() + 7);
-                                nextW.setHours(23, 59, 59, 999);
-                                setEditingTask({ ...editingTask, due_date: nextW.getTime() });
-                              }}
-                              className="px-1.5 py-0.5 text-[10px] font-medium bg-zinc-100 hover:bg-zinc-200 text-zinc-600 rounded transition-colors cursor-pointer"
-                            >
-                              +1 Week
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* 2. Status */}
-                    <div className="grid grid-cols-[85px_1fr] items-center gap-2.5 pt-2 border-t border-slate-100">
-                      <label className="text-[11px] font-semibold text-zinc-500 flex items-center gap-1.5">
-                        <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                        <span>Status</span>
-                      </label>
-                      <select
-                        value={editingTask.custom_status}
-                        disabled={!!editingTask.is_locked && !isProjectAdmin}
-                        onChange={(e) => setEditingTask({ ...editingTask, custom_status: e.target.value as any })}
-                        className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] disabled:opacity-75 text-xs cursor-pointer"
-                      >
-                        <option value="To-do">To-do</option>
-                        <option value="In progress">In progress</option>
-                        <option value="In review">In review</option>
-                        <option value="Complete">Complete</option>
-                      </select>
-                    </div>
-
-                    {/* 3. Priority */}
-                    <div className="grid grid-cols-[85px_1fr] items-center gap-2.5 pt-2 border-t border-slate-100">
-                      <label className="text-[11px] font-semibold text-zinc-500 flex items-center gap-1.5">
-                        <Tag className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                        <span>Priority</span>
-                      </label>
-                      <select
-                        value={editingTask.priority || "Medium"}
-                        disabled={!!editingTask.is_locked && !isProjectAdmin}
-                        onChange={(e) => setEditingTask({ ...editingTask, priority: e.target.value as any })}
-                        className="w-full bg-white border border-slate-200 rounded-md px-2 py-1 font-semibold text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] disabled:opacity-75 text-xs cursor-pointer"
-                      >
-                        <option value="Low">Low</option>
-                        <option value="Medium">Medium</option>
-                        <option value="High">High</option>
-                        <option value="Urgent">Urgent</option>
-                      </select>
-                    </div>
-
-                    {/* 4. Assignee (Interactive Input Tag with Live Search) */}
-                    <div className="grid grid-cols-[85px_1fr] items-start gap-2.5 pt-2 border-t border-slate-100">
-                      <label className="text-[11px] font-semibold text-zinc-500 flex items-center gap-1.5 pt-1.5">
-                        <UserIcon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                        <span>Assignee</span>
-                      </label>
-
-                      {(() => {
-                        const selectedAssignees = (editingTask.assigned_to || "")
-                          .split(",")
-                          .map((s) => s.trim())
-                          .filter(Boolean);
-
-                        const candidateMap = new Map<string, { id: string; name: string; email?: string; role?: string }>();
-                        currentTeamspaceMembers.forEach((m) => {
-                          if (m.name) candidateMap.set(m.name.toLowerCase(), { id: m.id, name: m.name, email: m.email, role: m.role });
-                        });
-                        registeredUsers.forEach((u) => {
-                          if (u.name && !candidateMap.has(u.name.toLowerCase())) {
-                            candidateMap.set(u.name.toLowerCase(), { id: u.id, name: u.name, email: u.email, role: u.role });
-                          }
-                        });
-                        const allCandidates = Array.from(candidateMap.values());
-
-                        const query = assigneeSearchQuery.trim().toLowerCase();
-                        const filteredPeople = allCandidates.filter((p) => {
-                          if (!query) return true;
-                          return p.name.toLowerCase().includes(query) || (p.email && p.email.toLowerCase().includes(query));
-                        });
-
-                        return (
-                          <div className="space-y-1.5 relative">
-                            {/* Chips + Search Input Tag Box */}
-                            <div 
-                              onClick={() => setIsAssigneeDropdownOpen(true)}
-                              className="min-h-[34px] p-1 bg-white border border-slate-200 rounded-md focus-within:ring-1 focus-within:ring-[#0B57D0] focus-within:border-[#0B57D0] flex flex-wrap items-center gap-1 cursor-text"
-                            >
-                              {selectedAssignees.map((name) => (
-                                <span
-                                  key={name}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200/80"
-                                >
-                                  <UserIcon className="w-2.5 h-2.5" />
-                                  <span>{name}</span>
-                                  {!editingTask.is_locked && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        const next = selectedAssignees.filter((n) => n !== name);
-                                        setEditingTask({
-                                          ...editingTask,
-                                          assigned_to: next.length > 0 ? next.join(", ") : null,
-                                        });
-                                      }}
-                                      className="hover:text-blue-900 text-blue-500 font-bold ml-0.5 text-xs cursor-pointer"
-                                      title={`Remove ${name}`}
-                                    >
-                                      ×
-                                    </button>
-                                  )}
-                                </span>
-                              ))}
-
-                              {!editingTask.is_locked && (
-                                <input
-                                  type="text"
-                                  placeholder={selectedAssignees.length === 0 ? "Type person name..." : "+ Add..."}
-                                  value={assigneeSearchQuery}
-                                  onFocus={() => setIsAssigneeDropdownOpen(true)}
-                                  onChange={(e) => {
-                                    setAssigneeSearchQuery(e.target.value);
-                                    setIsAssigneeDropdownOpen(true);
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" && assigneeSearchQuery.trim()) {
-                                      e.preventDefault();
-                                      const customName = assigneeSearchQuery.trim();
-                                      if (!selectedAssignees.includes(customName)) {
-                                        const next = [...selectedAssignees, customName];
-                                        setEditingTask({
-                                          ...editingTask,
-                                          assigned_to: next.join(", "),
-                                        });
-                                      }
-                                      setAssigneeSearchQuery("");
-                                    } else if (e.key === "Backspace" && !assigneeSearchQuery && selectedAssignees.length > 0) {
-                                      const next = selectedAssignees.slice(0, -1);
-                                      setEditingTask({
-                                        ...editingTask,
-                                        assigned_to: next.length > 0 ? next.join(", ") : null,
-                                      });
-                                    } else if (e.key === "Escape") {
-                                      setIsAssigneeDropdownOpen(false);
-                                    }
-                                  }}
-                                  className="flex-1 min-w-[100px] px-1.5 py-0.5 text-xs text-zinc-800 bg-transparent focus:outline-none placeholder:text-zinc-400"
-                                />
-                              )}
-                            </div>
-
-                            {/* Live Suggestions Dropdown */}
-                            {isAssigneeDropdownOpen && !editingTask.is_locked && (
-                              <>
-                                <div 
-                                  className="fixed inset-0 z-10" 
-                                  onClick={() => setIsAssigneeDropdownOpen(false)}
-                                />
-                                <div className="absolute top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-20 max-h-48 overflow-y-auto py-1 animate-in fade-in zoom-in-95">
-                                  <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400 flex items-center justify-between">
-                                    <span>People &amp; Members</span>
-                                    <span>{filteredPeople.length}</span>
-                                  </div>
-                                  {filteredPeople.map((person) => {
-                                    const isSelected = selectedAssignees.includes(person.name);
-                                    return (
-                                      <button
-                                        key={person.id || person.email || person.name}
-                                        type="button"
-                                        onClick={() => {
-                                          const next = isSelected
-                                            ? selectedAssignees.filter((n) => n !== person.name)
-                                            : [...selectedAssignees, person.name];
-                                          setEditingTask({
-                                            ...editingTask,
-                                            assigned_to: next.length > 0 ? next.join(", ") : null,
-                                          });
-                                          setAssigneeSearchQuery("");
-                                        }}
-                                        className={`w-full px-2.5 py-1.5 text-left text-xs flex items-center justify-between transition-colors cursor-pointer ${
-                                          isSelected ? "bg-blue-50 text-blue-900 font-semibold" : "hover:bg-zinc-50 text-zinc-700"
-                                        }`}
-                                      >
-                                        <div className="flex items-center gap-2 truncate">
-                                          <div className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
-                                            {person.name[0]?.toUpperCase() || "U"}
-                                          </div>
-                                          <div className="truncate">
-                                            <div className="font-semibold text-zinc-900 truncate">{person.name}</div>
-                                            {person.email && <div className="text-[10px] text-zinc-400 truncate">{person.email}</div>}
-                                          </div>
-                                        </div>
-                                        {isSelected && <Check className="w-3.5 h-3.5 text-blue-600 shrink-0 ml-1" />}
-                                      </button>
-                                    );
-                                  })}
-
-                                  {assigneeSearchQuery.trim() && !filteredPeople.some(p => p.name.toLowerCase() === assigneeSearchQuery.trim().toLowerCase()) && (
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        const customName = assigneeSearchQuery.trim();
-                                        if (!selectedAssignees.includes(customName)) {
-                                          const next = [...selectedAssignees, customName];
-                                          setEditingTask({
-                                            ...editingTask,
-                                            assigned_to: next.join(", "),
-                                          });
-                                        }
-                                        setAssigneeSearchQuery("");
-                                      }}
-                                      className="w-full px-2.5 py-1.5 text-left text-xs text-[#0B57D0] font-semibold hover:bg-blue-50 flex items-center gap-1.5 border-t border-slate-100 cursor-pointer"
-                                    >
-                                      <Plus className="w-3.5 h-3.5" />
-                                      <span>Add &quot;{assigneeSearchQuery.trim()}&quot; as assignee</span>
-                                    </button>
-                                  )}
-
-                                  {filteredPeople.length === 0 && !assigneeSearchQuery.trim() && (
-                                    <div className="px-3 py-2 text-center text-xs text-zinc-400">
-                                      No members available. Type a name to assign.
-                                    </div>
-                                  )}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
 
             {/* Modal Footer */}
-            <div className="px-6 py-3 border-t border-slate-200 bg-zinc-50 flex items-center justify-between shrink-0">
-              <span className="text-[11px] text-zinc-400">All changes live synced to database</span>
-              <button
-                onClick={handleSaveEditingTask}
-                className="px-5 py-1.5 text-xs font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-md shadow-xs active:scale-95 transition-all cursor-pointer"
-              >
-                Save
-              </button>
+            <div className="px-6 py-2.5 border-t border-slate-200 bg-zinc-50 flex items-center justify-between gap-4 shrink-0 relative">
+              {/* Left: Assignee Tag & Selector Input */}
+              <div className="flex-1 max-w-xl flex items-center gap-2">
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-600 shrink-0">
+                  <UserIcon className="w-3.5 h-3.5 text-zinc-400" />
+                  <span>Assignee:</span>
+                </div>
+                {(() => {
+                  const selectedAssignees = (editingTask.assigned_to || "")
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+
+                  // Strictly show only members in this teamspace project
+                  const allCandidates = currentTeamspaceMembers;
+
+                  const query = assigneeSearchQuery.trim().toLowerCase();
+                  const filteredPeople = allCandidates.filter((p) => {
+                    if (!query) return true;
+                    return (p.name || "").toLowerCase().includes(query) || (p.email && p.email.toLowerCase().includes(query));
+                  });
+
+                  return (
+                    <div className="flex-1 relative min-w-0">
+                      <div 
+                        onClick={() => setIsAssigneeDropdownOpen(true)}
+                        className="min-h-[32px] px-2 py-1 bg-white border border-slate-200 rounded-md focus-within:ring-1 focus-within:ring-[#0B57D0] focus-within:border-[#0B57D0] flex flex-wrap items-center gap-1 cursor-text"
+                      >
+                        {selectedAssignees.map((name) => {
+                          const isMe = isAssigneeCurrentUser(name);
+                          return (
+                            <span
+                              key={name}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200/80"
+                            >
+                              <UserIcon className="w-2.5 h-2.5 text-[#0B57D0]" />
+                              <span>{isMe ? "Me" : name}</span>
+                              {!editingTask.is_locked && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const next = selectedAssignees.filter((n) => n !== name);
+                                    setEditingTask({
+                                      ...editingTask,
+                                      assigned_to: next.length > 0 ? next.join(", ") : null,
+                                    });
+                                  }}
+                                  className="hover:text-blue-900 text-blue-500 font-bold ml-0.5 text-xs cursor-pointer"
+                                  title={`Remove ${name}`}
+                                >
+                                  ×
+                                </button>
+                              )}
+                            </span>
+                          );
+                        })}
+
+                        {!editingTask.is_locked && (
+                          <input
+                            type="text"
+                            placeholder={selectedAssignees.length === 0 ? "Assign to project member..." : "+ Add..."}
+                            value={assigneeSearchQuery}
+                            onFocus={() => setIsAssigneeDropdownOpen(true)}
+                            onChange={(e) => {
+                              setAssigneeSearchQuery(e.target.value);
+                              setIsAssigneeDropdownOpen(true);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Backspace" && !assigneeSearchQuery && selectedAssignees.length > 0) {
+                                const next = selectedAssignees.slice(0, -1);
+                                setEditingTask({
+                                  ...editingTask,
+                                  assigned_to: next.length > 0 ? next.join(", ") : null,
+                                });
+                              } else if (e.key === "Escape") {
+                                setIsAssigneeDropdownOpen(false);
+                              }
+                            }}
+                            className="flex-1 min-w-[90px] text-xs text-zinc-800 bg-transparent focus:outline-none placeholder:text-zinc-400"
+                          />
+                        )}
+                      </div>
+
+                      {/* Live Suggestions Dropdown (Opens Above the Footer) */}
+                      {isAssigneeDropdownOpen && !editingTask.is_locked && (
+                        <>
+                          <div 
+                            className="fixed inset-0 z-40" 
+                            onClick={() => setIsAssigneeDropdownOpen(false)}
+                          />
+                          <div className="absolute bottom-full left-0 right-0 mb-1.5 bg-white border border-slate-200 rounded-lg shadow-xl z-50 max-h-56 overflow-y-auto py-1 animate-in fade-in slide-in-from-bottom-2">
+                            <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400 flex items-center justify-between border-b border-slate-100">
+                              <span>Project People ({currentTeamspace?.name || "Teamspace"})</span>
+                              <span>{filteredPeople.length}</span>
+                            </div>
+                            {filteredPeople.map((person) => {
+                              const isSelected = selectedAssignees.some(
+                                (n) => n.toLowerCase() === (person.name || "").toLowerCase() || (isAssigneeCurrentUser(person.name) && isAssigneeCurrentUser(n))
+                              );
+                              const isMe = isAssigneeCurrentUser(person.name);
+
+                              return (
+                                <button
+                                  key={person.id || person.email || person.name}
+                                  type="button"
+                                  onClick={() => {
+                                    const next = isSelected
+                                      ? selectedAssignees.filter(
+                                          (n) => n.toLowerCase() !== (person.name || "").toLowerCase() && (!isMe || !isAssigneeCurrentUser(n))
+                                        )
+                                      : [...selectedAssignees, person.name];
+                                    setEditingTask({
+                                      ...editingTask,
+                                      assigned_to: next.length > 0 ? next.join(", ") : null,
+                                    });
+                                    setAssigneeSearchQuery("");
+                                  }}
+                                  className={`w-full px-2.5 py-1.5 text-left text-xs flex items-center justify-between transition-colors cursor-pointer ${
+                                    isSelected ? "bg-blue-50 text-blue-900 font-semibold" : "hover:bg-zinc-50 text-zinc-700"
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 truncate">
+                                    <div className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center shrink-0">
+                                      {person.name ? person.name[0]?.toUpperCase() : "U"}
+                                    </div>
+                                    <div className="truncate">
+                                      <div className="font-semibold text-zinc-900 truncate flex items-center gap-1.5">
+                                        <span>{isMe ? `${person.name} (You)` : person.name}</span>
+                                        {person.role && (
+                                          <span className="text-[9px] font-normal px-1 py-0.2 bg-zinc-100 border border-zinc-200 rounded text-zinc-500">
+                                            {person.role}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {person.email && <div className="text-[10px] text-zinc-400 truncate">{person.email}</div>}
+                                    </div>
+                                  </div>
+                                  {isSelected && <Check className="w-3.5 h-3.5 text-blue-600 shrink-0 ml-1" />}
+                                </button>
+                              );
+                            })}
+
+                            {filteredPeople.length === 0 && (
+                              <div className="px-3 py-2 text-center text-xs text-zinc-400">
+                                No matching members found in this project.
+                              </div>
+                            )}
+
+                            {/* Button to Add More People into this Project */}
+                            <div className="p-1 border-t border-slate-100 bg-slate-50/70">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsAssigneeDropdownOpen(false);
+                                  setSelectedDbUserEmail("");
+                                  setMemberSearchQuery("");
+                                  setNewMemberName("");
+                                  setNewMemberEmail("");
+                                  setShowMembersModal(true);
+                                }}
+                                className="w-full px-2.5 py-1.5 text-left text-xs text-[#0B57D0] hover:text-[#0842A0] hover:bg-blue-50/80 font-semibold rounded-md flex items-center gap-1.5 transition-colors cursor-pointer"
+                              >
+                                <UserPlus className="w-3.5 h-3.5 text-[#0B57D0]" />
+                                <span>Add New Person to Project...</span>
+                              </button>
+                            </div>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Right: Close & Save Changes Buttons */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleAttemptCloseTask}
+                  className="px-4 py-1.5 text-xs font-semibold text-zinc-700 bg-white hover:bg-zinc-100 border border-slate-200 rounded-md transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveEditingTask}
+                  disabled={!isTaskDirty}
+                  className={`px-4 py-1.5 text-xs font-bold rounded-md shadow-xs transition-all ${
+                    isTaskDirty
+                      ? "bg-[#0B57D0] hover:bg-[#0842A0] text-white cursor-pointer active:scale-95"
+                      : "bg-zinc-200 text-zinc-400 cursor-not-allowed border border-zinc-200 shadow-none"
+                  }`}
+                >
+                  Save Changes
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -4936,9 +5396,9 @@ export default function WorkspaceStandalonePage() {
       {/* ========================================================= */}
       {showMembersModal && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-2xl shadow-2xl p-6 border border-zinc-200 space-y-5 animate-in fade-in zoom-in-95">
+          <div className="bg-white w-full max-w-4xl h-[520px] max-h-[520px] min-h-[520px] rounded-2xl shadow-2xl p-6 border border-zinc-200 flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-zinc-100 pb-3">
+            <div className="flex items-center justify-between border-b border-zinc-100 pb-3 shrink-0">
               <div className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-blue-600" />
                 <div>
@@ -4950,172 +5410,292 @@ export default function WorkspaceStandalonePage() {
                   </p>
                 </div>
               </div>
-              <button onClick={() => setShowMembersModal(false)} className="p-1 text-zinc-400 hover:text-zinc-700 rounded">
+              <button onClick={() => setShowMembersModal(false)} className="p-1 text-zinc-400 hover:text-zinc-700 rounded cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Add Member Tabs (Admin / Manager Only) */}
-            {isProjectAdmin && (
-              <div className="bg-zinc-50 p-3.5 rounded-xl border border-zinc-200/80 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-zinc-800">Add Person into Project</span>
-                  <div className="flex items-center bg-zinc-200/80 p-0.5 rounded-lg text-[11px] font-semibold">
-                    <button
-                      type="button"
-                      onClick={() => setMemberSource("database")}
-                      className={`px-2.5 py-1 rounded-md transition-all ${
-                        memberSource === "database" ? "bg-white text-zinc-950 shadow-2xs" : "text-zinc-500 hover:text-zinc-900"
-                      }`}
-                    >
-                      From User Database
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMemberSource("email")}
-                      className={`px-2.5 py-1 rounded-md transition-all ${
-                        memberSource === "email" ? "bg-white text-zinc-950 shadow-2xs" : "text-zinc-500 hover:text-zinc-900"
-                      }`}
-                    >
-                      Add by Email
-                    </button>
-                  </div>
-                </div>
-
-                <form onSubmit={handleSaveMember} className="space-y-3">
-                  {memberSource === "database" ? (
-                    <div>
-                      <label className="text-[11px] font-semibold text-zinc-600 block mb-1">
-                        Select Registered User
-                      </label>
-                      <select
-                        value={selectedDbUserEmail}
-                        onChange={(e) => setSelectedDbUserEmail(e.target.value)}
-                        className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
-                      >
-                        {registeredUsers.map((u) => (
-                          <option key={u.id} value={u.email}>
-                            {u.name} — {u.email} ({u.role})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="text-[11px] font-semibold text-zinc-600 block mb-1">Full Name</label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="e.g. John Tan"
-                          value={newMemberName}
-                          onChange={(e) => setNewMemberName(e.target.value)}
-                          className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
-                        />
-                      </div>
-                      <div>
-                        <label className="text-[11px] font-semibold text-zinc-600 block mb-1">Email Address</label>
-                        <input
-                          type="email"
-                          required
-                          placeholder="collab@partner.com"
-                          value={newMemberEmail}
-                          onChange={(e) => setNewMemberEmail(e.target.value)}
-                          className="w-full px-3 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-between pt-1">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-zinc-500 font-medium">Role:</span>
-                      {(() => {
-                        const managersCount = currentTeamspaceMembers.filter((m) => m.role === "Manager").length;
-                        return (
-                          <select
-                            value={newMemberRole}
-                            onChange={(e) => setNewMemberRole(e.target.value)}
-                            className="px-2 py-1 text-[11px] bg-white border border-zinc-300 rounded font-semibold text-zinc-700 outline-none"
+            {/* 2-Column Body */}
+            <div className="flex-1 min-h-0 grid grid-cols-2 gap-4 mt-3 overflow-hidden">
+              {/* Left Column: Add Person Form */}
+              <div className="bg-zinc-50 p-4 rounded-xl border border-zinc-200/80 flex flex-col justify-between h-full min-h-0 overflow-hidden">
+                {isProjectAdmin ? (
+                  <form onSubmit={handleSaveMember} className="flex flex-col justify-between h-full">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-zinc-800">Add Person into Project</span>
+                        <div className="flex items-center bg-zinc-200/80 p-0.5 rounded-lg text-[11px] font-semibold">
+                          <button
+                            type="button"
+                            onClick={() => setMemberSource("database")}
+                            className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                              memberSource === "database" ? "bg-white text-zinc-950 shadow-2xs" : "text-zinc-500 hover:text-zinc-900"
+                            }`}
                           >
-                            <option value="Manager" disabled={managersCount >= 3}>
-                              Manager {managersCount >= 3 ? "(Max 3 reached)" : `(${managersCount}/3)`}
-                            </option>
-                            <option value="Member">Member</option>
-                            <option value="Viewer">Viewer</option>
-                          </select>
-                        );
-                      })()}
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={savingMember}
-                      className="px-3 py-1.5 text-xs font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg shadow-xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                    >
-                      <UserPlus className="w-3.5 h-3.5" />
-                      <span>{savingMember ? "Adding..." : "Add to Project"}</span>
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            {/* Current Project Members List */}
-            <div className="space-y-2">
-              <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
-                Assigned Team Members ({currentTeamspaceMembers.length})
-              </div>
-
-              <div className="max-h-52 overflow-y-auto space-y-1.5 pr-1">
-                {currentTeamspaceMembers.map((m) => (
-                  <div
-                    key={m.id}
-                    className="flex items-center justify-between p-2 rounded-lg bg-zinc-50/80 border border-zinc-200/60 text-xs"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="w-7 h-7 rounded-full bg-blue-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
-                        {m.name ? m.name[0].toUpperCase() : "U"}
-                      </div>
-                      <div className="truncate">
-                        <div className="font-bold text-zinc-900 truncate flex items-center gap-1.5">
-                          <span>{m.name}</span>
-                          <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded border ${
-                            m.role === "Manager" ? "bg-purple-100 text-purple-800 border-purple-200 font-bold" :
-                            m.role === "Viewer" ? "bg-zinc-100 text-zinc-600 border-zinc-200" :
-                            "bg-blue-50 text-blue-700 border-blue-100"
-                          }`}>
-                            {m.role}
-                          </span>
+                            From User Database
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setMemberSource("email")}
+                            className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                              memberSource === "email" ? "bg-white text-zinc-950 shadow-2xs" : "text-zinc-500 hover:text-zinc-900"
+                            }`}
+                          >
+                            Add by Email
+                          </button>
                         </div>
-                        <div className="text-[11px] text-zinc-400 truncate">{m.email}</div>
                       </div>
+
+                      {memberSource === "database" ? (
+                        <div>
+                          <label className="text-[11px] font-semibold text-zinc-600 block mb-1">
+                            Select Registered User
+                          </label>
+                          {selectedDbUserEmail ? (
+                            <div className="flex items-center justify-between p-2.5 bg-blue-50/60 border border-blue-200 rounded-lg">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="w-7 h-7 rounded-full bg-[#0B57D0] text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs">
+                                  {((registeredUsers.find((u) => u.email.toLowerCase() === selectedDbUserEmail.toLowerCase())?.name || selectedDbUserEmail)[0] || "U").toUpperCase()}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-zinc-900 truncate">
+                                    {registeredUsers.find((u) => u.email.toLowerCase() === selectedDbUserEmail.toLowerCase())?.name || selectedDbUserEmail}
+                                  </p>
+                                  <p className="text-[11px] text-zinc-500 truncate">{selectedDbUserEmail}</p>
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedDbUserEmail("");
+                                  setMemberSearchQuery("");
+                                }}
+                                className="px-2 py-0.5 text-[11px] font-semibold text-zinc-600 hover:text-zinc-950 bg-white hover:bg-zinc-100 rounded border border-zinc-200/80 transition-colors shrink-0 cursor-pointer shadow-2xs"
+                              >
+                                Change
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="relative">
+                              <div className="relative flex items-center">
+                                <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 pointer-events-none" />
+                                <input
+                                  type="text"
+                                  placeholder="Type at least 4 characters to search..."
+                                  value={memberSearchQuery}
+                                  onChange={(e) => setMemberSearchQuery(e.target.value)}
+                                  className="w-full pl-8 pr-7 py-2 text-xs bg-white border border-zinc-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 font-medium"
+                                  autoFocus
+                                />
+                                {memberSearchQuery && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setMemberSearchQuery("")}
+                                    className="absolute right-2 p-0.5 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Floating Filtered Dropdown Results */}
+                              {memberSearchQuery.trim().length > 0 && memberSearchQuery.trim().length < 4 && (
+                                <div className="absolute left-0 right-0 top-full mt-1 z-30 px-3 py-1.5 bg-white border border-zinc-200 rounded-lg shadow-lg text-[11px] text-amber-600 font-medium">
+                                  Type at least 4 characters ({memberSearchQuery.trim().length}/4)
+                                </div>
+                              )}
+
+                              {memberSearchQuery.trim().length >= 4 && (() => {
+                                const query = memberSearchQuery.trim().toLowerCase();
+                                const matches = registeredUsers.filter(
+                                  (u) =>
+                                    (u.name || "").toLowerCase().includes(query) ||
+                                    (u.email || "").toLowerCase().includes(query)
+                                );
+
+                                if (matches.length === 0) {
+                                  return (
+                                    <div className="absolute left-0 right-0 top-full mt-1 z-30 p-2.5 bg-white border border-zinc-200 rounded-lg text-center text-xs text-zinc-500 shadow-lg">
+                                      No registered users found matching "{memberSearchQuery}"
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div className="absolute left-0 right-0 top-full mt-1 z-30 max-h-44 overflow-y-auto bg-white border border-zinc-200 rounded-lg shadow-xl divide-y divide-zinc-100">
+                                    {matches.map((u) => {
+                                      const isAlreadyMember = currentTeamspaceMembers.some(
+                                        (m) => m.email.toLowerCase() === u.email.toLowerCase()
+                                      );
+                                      return (
+                                        <button
+                                          key={u.id || u.email}
+                                          type="button"
+                                          disabled={isAlreadyMember}
+                                          onClick={() => {
+                                            setSelectedDbUserEmail(u.email);
+                                            setMemberSearchQuery("");
+                                          }}
+                                          className={`w-full px-3 py-2 text-left flex items-center justify-between transition-colors ${
+                                            isAlreadyMember
+                                              ? "opacity-50 cursor-not-allowed bg-zinc-50/80"
+                                              : "hover:bg-blue-50/70 cursor-pointer"
+                                          }`}
+                                        >
+                                          <div className="min-w-0 pr-2">
+                                            <p className="text-xs font-semibold text-zinc-900 truncate">{u.name}</p>
+                                            <p className="text-[11px] text-zinc-500 truncate">{u.email}</p>
+                                          </div>
+                                          <div className="shrink-0 flex items-center gap-1">
+                                            {isAlreadyMember ? (
+                                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 border border-zinc-200">
+                                                Already Member
+                                              </span>
+                                            ) : (
+                                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-[#0B57D0] border border-blue-100">
+                                                {u.role || "User"}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          <div>
+                            <label className="text-[11px] font-semibold text-zinc-600 block mb-1">Full Name</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="e.g. John Tan"
+                              value={newMemberName}
+                              onChange={(e) => setNewMemberName(e.target.value)}
+                              className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[11px] font-semibold text-zinc-600 block mb-1">Email Address</label>
+                            <input
+                              type="email"
+                              required
+                              placeholder="collab@partner.com"
+                              value={newMemberEmail}
+                              onChange={(e) => setNewMemberEmail(e.target.value)}
+                              className="w-full px-3 py-2 text-xs bg-white border border-zinc-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600"
+                            />
+                          </div>
+                        </div>
+                      )}
                     </div>
 
-                    {isProjectAdmin && (m.email || "").toLowerCase() !== projectCreatorEmail.toLowerCase() && (
-                      <button
-                        onClick={() => handleDeleteMember(m.id, m.name)}
-                        className="p-1 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors cursor-pointer"
-                        title="Remove member from project"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                    <div className="flex items-center justify-between pt-3 border-t border-zinc-200/80">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-zinc-600 font-semibold">Role:</span>
+                        {(() => {
+                          const managersCount = currentTeamspaceMembers.filter((m) => m.role === "Manager").length;
+                          return (
+                            <select
+                              value={newMemberRole}
+                              onChange={(e) => setNewMemberRole(e.target.value)}
+                              className="px-2.5 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg font-semibold text-zinc-700 outline-none"
+                            >
+                              <option value="Manager" disabled={managersCount >= 3}>
+                                Manager {managersCount >= 3 ? "(Max 3)" : `(${managersCount}/3)`}
+                              </option>
+                              <option value="Member">Member</option>
+                              <option value="Viewer">Viewer</option>
+                            </select>
+                          );
+                        })()}
+                      </div>
 
-                {currentTeamspaceMembers.length === 0 && (
-                  <div className="py-6 text-center text-zinc-400 text-xs">
-                    No members added to this project yet. Add team members from the database or invite by email.
+                      <button
+                        type="submit"
+                        disabled={savingMember}
+                        className="px-4 py-2 text-xs font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all"
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>{savingMember ? "Adding..." : "Add to Project"}</span>
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-center p-4 text-zinc-500">
+                    <Users className="w-8 h-8 text-zinc-300 mb-2" />
+                    <p className="text-xs font-semibold text-zinc-700">Read-only Access</p>
+                    <p className="text-[11px] text-zinc-400 mt-1">
+                      Only Project Managers and Admins can invite new members to this project.
+                    </p>
                   </div>
                 )}
               </div>
+
+              {/* Right Column: Assigned Team Members List */}
+              <div className="border border-zinc-200/80 rounded-xl p-3.5 bg-white flex flex-col h-full min-h-0 overflow-hidden">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500 pb-2 border-b border-zinc-100 shrink-0 flex items-center justify-between">
+                  <span>Assigned Team Members</span>
+                  <span className="px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-700 text-[10px] font-bold">
+                    {currentTeamspaceMembers.length}
+                  </span>
+                </div>
+
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1 mt-2.5">
+                  {currentTeamspaceMembers.map((m) => (
+                    <div
+                      key={m.id}
+                      className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-50/80 hover:bg-zinc-50 border border-zinc-200/70 text-xs transition-colors"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-full bg-[#0B57D0] text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                          {m.name ? m.name[0].toUpperCase() : "U"}
+                        </div>
+                        <div className="min-w-0 pr-1">
+                          <div className="font-bold text-zinc-900 truncate flex items-center gap-1.5">
+                            <span className="truncate">{m.name}</span>
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded border shrink-0 ${
+                              m.role === "Manager" ? "bg-purple-100 text-purple-800 border-purple-200 font-bold" :
+                              m.role === "Viewer" ? "bg-zinc-100 text-zinc-600 border-zinc-200" :
+                              "bg-blue-50 text-blue-700 border-blue-100"
+                            }`}>
+                              {m.role}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-zinc-500 truncate">{m.email}</div>
+                        </div>
+                      </div>
+
+                      {isProjectAdmin && (m.email || "").toLowerCase() !== projectCreatorEmail.toLowerCase() && (
+                        <button
+                          onClick={() => handleDeleteMember(m.id, m.name)}
+                          className="p-1.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer shrink-0 ml-1"
+                          title="Remove member from project"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+
+                  {currentTeamspaceMembers.length === 0 && (
+                    <div className="py-12 text-center text-zinc-400 text-xs">
+                      No members added to this project yet. Use the form on the left to add team members.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="pt-3 border-t border-zinc-100 flex items-center justify-end">
+            {/* Modal Footer */}
+            <div className="pt-3 border-t border-zinc-100 flex items-center justify-end shrink-0 mt-3">
               <button
                 onClick={() => setShowMembersModal(false)}
-                className="px-4 py-1.5 text-xs font-bold bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg"
+                className="px-5 py-2 text-xs font-bold bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg cursor-pointer transition-all shadow-2xs"
               >
                 Done
               </button>
@@ -5313,7 +5893,7 @@ export default function WorkspaceStandalonePage() {
                           key={t.id}
                           onClick={() => {
                             if (t.page_id) setActivePageId(t.page_id);
-                            setEditingTask(JSON.parse(JSON.stringify(t)));
+                            handleOpenEditingTask(t);
                             setShowSearchModal(false);
                           }}
                           className="flex items-center justify-between p-2 rounded-lg hover:bg-zinc-100/80 cursor-pointer group transition-colors"
@@ -5666,6 +6246,199 @@ export default function WorkspaceStandalonePage() {
                 className="px-4 py-1.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 rounded-lg cursor-pointer"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 13. CONNECT WORKSPACE TO AGENT AI MODAL                   */}
+      {/* ========================================================= */}
+      {showAiModal && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+          onClick={() => setShowAiModal(false)}
+        >
+          <div
+            className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl p-6 border border-slate-200 space-y-4 animate-in fade-in zoom-in-95 font-primary cursor-default max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-zinc-950">Connect Workspace to Agent AI</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Choose your connection method to read and manage your live workspace with AI.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowAiModal(false)}
+                className="p-1 text-zinc-400 hover:text-zinc-700 rounded-lg hover:bg-zinc-100 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Body: 2-Column Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
+              {/* LEFT COLUMN: ChatGPT Plus (Custom GPT Actions) */}
+              <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-zinc-900">ChatGPT Plus</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100/80 text-blue-700 border border-blue-200">Custom GPT Action</span>
+                      </div>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        Native 2-way tools to Read, Create, Move & Update cards.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Tutorial Steps */}
+                  <div className="space-y-1.5">
+                    <span className="text-xs font-semibold text-zinc-700 block">How to connect:</span>
+                    <ol className="text-[11.5px] text-zinc-600 space-y-1.5 bg-white p-3 rounded-lg border border-slate-200 list-decimal list-inside leading-relaxed">
+                      <li>In ChatGPT, click <strong>Explore GPTs</strong> &rarr; <strong>+ Create</strong>.</li>
+                      <li>Open the <strong>Configure</strong> tab &rarr; scroll to <strong>Actions</strong>.</li>
+                      <li>Click <strong>Create new action</strong> &rarr; <strong>Import from URL</strong>.</li>
+                      <li>Paste the <strong>OpenAPI Schema URL</strong> below and Save!</li>
+                    </ol>
+                  </div>
+
+                  {/* OpenAPI Schema URL with Copy */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-zinc-700 flex items-center justify-between">
+                      <span>OpenAPI Schema URL</span>
+                      {aiTokenLoading && (
+                        <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+                          <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-600" /> Loading...
+                        </span>
+                      )}
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type="text"
+                        readOnly
+                        value={`https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge/openapi.json?token=${aiToken || "..."}`}
+                        className="w-full h-8 pl-2.5 pr-20 text-[11px] font-mono bg-white border border-slate-200 rounded-lg select-all focus:outline-none text-zinc-800"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const openApiUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge/openapi.json?token=${aiToken}`;
+                          navigator.clipboard.writeText(openApiUrl);
+                          setCopiedOpenApi(true);
+                          setTimeout(() => setCopiedOpenApi(false), 2000);
+                          showToast("OpenAPI Schema URL copied!", "success");
+                        }}
+                        className="absolute right-1 px-2 py-1 text-[10.5px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        {copiedOpenApi ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedOpenApi ? "Copied" : "Copy"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* RIGHT COLUMN: Other AI Agents & Direct Prompts */}
+              <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-4 flex flex-col justify-between space-y-3">
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-zinc-900">AI Agents & Direct Prompts</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100/80 text-emerald-700 border border-emerald-200">GET & POST Tools</span>
+                      </div>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        For Claude, Cursor, LangChain, n8n, or AI with HTTP tools.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Field 1: Live AI Endpoint URL */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-zinc-700 flex items-center justify-between">
+                      <span>1. Your Live AI Endpoint Link</span>
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type="text"
+                        readOnly
+                        value={`https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge?token=${aiToken || "..."}`}
+                        className="w-full h-8 pl-2.5 pr-20 text-[11px] font-mono bg-white border border-slate-200 rounded-lg select-all focus:outline-none text-zinc-800"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const link = `https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge?token=${aiToken}`;
+                          navigator.clipboard.writeText(link);
+                          setCopiedAiLink(true);
+                          setTimeout(() => setCopiedAiLink(false), 2000);
+                          showToast("AI Endpoint Link copied!", "success");
+                        }}
+                        className="absolute right-1 px-2 py-1 text-[10.5px] font-semibold text-zinc-700 bg-zinc-100 hover:bg-zinc-200 rounded border border-zinc-300/80 transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        {copiedAiLink ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedAiLink ? "Copied" : "Copy"}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Field 2: Pre-Prompt */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <label className="font-semibold text-zinc-700">
+                        2. Pre-Prompt (Copy & Paste to AI Chat / Agent)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const promptText = `You are my iB Workspace AI Assistant.\nLive API: https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge?token=${aiToken}\n\n- READ: HTTP GET to the endpoint above.\n- WRITE (Create/Update/Delete projects, boards, tasks, docs): Execute HTTP POST to the endpoint above using JSON body: {"action": "<name>", ...params}.\n- Guardrails: You cannot assign people to tasks or manage members.\n\nFetch my live workspace data from the endpoint now and summarize my active tasks.`;
+                          navigator.clipboard.writeText(promptText);
+                          setCopiedAiPrompt(true);
+                          setTimeout(() => setCopiedAiPrompt(false), 2000);
+                          showToast("Pre-prompt copied to clipboard!", "success");
+                        }}
+                        className="flex items-center gap-1 text-[11px] font-semibold text-[#0B57D0] hover:text-[#0842A0] cursor-pointer"
+                      >
+                        {copiedAiPrompt ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                        <span>{copiedAiPrompt ? "Copied!" : "Copy Pre-Prompt"}</span>
+                      </button>
+                    </div>
+                    <textarea
+                      readOnly
+                      rows={4}
+                      value={`You are my iB Workspace AI Assistant.\nLive API: https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge?token=${aiToken}\n\n- READ: HTTP GET to the endpoint above.\n- WRITE (Create/Update/Delete projects, boards, tasks, docs): Execute HTTP POST to the endpoint above using JSON body: {"action": "<name>", ...params}.\n- Guardrails: You cannot assign people to tasks or manage members.\n\nFetch my live workspace data from the endpoint now and summarize my active tasks.`}
+                      className="w-full p-2.5 text-[11px] leading-relaxed font-mono bg-white border border-slate-200 rounded-lg select-all focus:outline-none text-zinc-800 resize-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={handleRegenerateAiToken}
+                disabled={aiRegenerating || aiTokenLoading}
+                className="text-xs font-semibold text-zinc-600 hover:text-rose-600 flex items-center gap-1.5 py-1.5 px-2.5 rounded-md hover:bg-zinc-100 transition-colors disabled:opacity-40 cursor-pointer"
+                title="Invalidates current token and generates a new one"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${aiRegenerating ? "animate-spin text-blue-600" : ""}`} />
+                <span>{aiRegenerating ? "Generating..." : "Regenerate Token"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowAiModal(false)}
+                className="px-4 py-1.5 text-xs font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg shadow-xs transition-all cursor-pointer"
+              >
+                Done
               </button>
             </div>
           </div>

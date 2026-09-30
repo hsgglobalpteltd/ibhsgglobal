@@ -1736,4 +1736,22 @@ export async function verifyWfePin(target_id: string, email: string, pin: string
   return handleResponse(res, "Verify WFE PIN");
 }
 
+export async function getWfeAiToken(email: string) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/ai-token?email=${encodeURIComponent(email)}`, {
+    method: "GET",
+    headers: { ...getSessionIdHeader() },
+  });
+  return handleResponse(res, "Get AI Token");
+}
+
+export async function regenerateWfeAiToken(email: string) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/ai-token/regenerate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify({ email }),
+  });
+  return handleResponse(res, "Regenerate AI Token");
+}
+
+
 

@@ -4,7 +4,6 @@ import * as React from "react";
 import { SidePanel } from "@/components/side-panel";
 import { TopBar } from "@/components/top-bar";
 import { menuConfig } from "@/config/menu-config";
-import { ToastContainer } from "@/components/toast-container";
 import { auth, googleProvider, signInWithPopup, signOut } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { syncUserProfile, fetchMyProfile, fetchLatestContract, loginWithPin, logoutUser, UserProfile } from "@/lib/api";
@@ -1000,7 +999,6 @@ export default function Home() {
   return (
     <>
       {renderMainContent()}
-      <ToastContainer />
       <PwaInstallModal />
 
       {/* Custom Popup Modal for Session Conflict */}

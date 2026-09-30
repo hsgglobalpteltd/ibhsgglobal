@@ -32,6 +32,7 @@ import { PwaRegister } from "@/components/pwa-register";
 import { PwaUpdateManager } from "@/components/pwa-update-manager";
 import { DeviceGuard } from "@/components/device-guard";
 import { NetworkGuard } from "@/components/network-guard";
+import { ToastContainer } from "@/components/toast-container";
 
 export const metadata: Metadata = {
   title: "iB - HSG Global Internal Bridge",
@@ -68,6 +69,7 @@ export default function RootLayout({
           <DeviceGuard>
             {children}
           </DeviceGuard>
+          <ToastContainer />
         </NetworkGuard>
       </body>
     </html>

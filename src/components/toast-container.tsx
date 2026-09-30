@@ -58,7 +58,7 @@ export function ToastContainer() {
   };
 
   return (
-    <div className="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none max-w-sm w-full">
+    <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[999999] flex flex-col items-center gap-2 pointer-events-none max-w-lg w-full px-4">
       {toasts.map((toast) => {
         let bgClass = "";
         let borderClass = "";
@@ -102,25 +102,25 @@ export function ToastContainer() {
           <div
             key={toast.id}
             className={`
-              pointer-events-auto flex items-start gap-3 p-4 rounded-lg border shadow-md font-toast text-sm transition-all duration-500 ease-in-out
+              pointer-events-auto flex items-center justify-center gap-2.5 px-5 py-2.5 rounded-lg border shadow-lg font-toast text-sm transition-all duration-300 ease-in-out text-center mx-auto
               ${bgClass} ${borderClass} ${textClass}
               ${
                 toast.isExiting
-                  ? "opacity-0 max-h-0 py-0 my-0 border-y-0 overflow-hidden"
-                  : "opacity-100 max-h-24"
+                  ? "opacity-0 -translate-y-2 max-h-0 py-0 my-0 border-y-0 overflow-hidden"
+                  : "opacity-100 translate-y-0 max-h-24"
               }
             `}
             style={{
-              transitionProperty: "opacity, max-height, padding, margin, border-width",
+              transitionProperty: "opacity, transform, max-height, padding, margin, border-width",
             }}
           >
-            <Icon className={`w-5 h-5 shrink-0 ${iconColorClass}`} />
-            <div className="flex-1 font-semibold leading-snug">{toast.message}</div>
+            <Icon className={`w-4 h-4 shrink-0 ${iconColorClass}`} />
+            <div className="font-semibold leading-snug text-center">{toast.message}</div>
             <button
               onClick={() => handleDismiss(toast.id)}
-              className="text-zinc-400 hover:text-zinc-600 transition-colors pointer-events-auto"
+              className="text-zinc-400 hover:text-zinc-600 transition-colors pointer-events-auto ml-1 shrink-0"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         );
