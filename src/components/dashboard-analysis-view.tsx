@@ -36,18 +36,20 @@ export interface ChartLayoutItem {
   id: ChartCardId;
   title: string;
   visible: boolean;
-  width: number;
-  height: number;
-  order: number;
+  x: number;       // Exact pixel X coordinate on canvas
+  y: number;       // Exact pixel Y coordinate on canvas
+  width: number;   // Exact pixel width
+  height: number;  // Exact pixel height
+  zIndex?: number; // Layering order (Photoshop layers)
 }
 
 const DEFAULT_LAYOUT: ChartLayoutItem[] = [
-  { id: "channel_pie", title: "Sell In by Channel", visible: true, width: 300, height: 420, order: 0 },
-  { id: "buyer_pie", title: "Sell In by Buyers", visible: true, width: 300, height: 420, order: 1 },
-  { id: "trend_12m", title: "12-Month Performance Trend", visible: true, width: 550, height: 420, order: 2 },
-  { id: "sellin_vs_sellout", title: "Sell-In vs Sell-Out Comparison", visible: true, width: 560, height: 420, order: 3 },
-  { id: "sell_through_rate", title: "Sell-Through Rate (%)", visible: true, width: 360, height: 420, order: 4 },
-  { id: "sku_movers", title: "Product Movement (Top & Bottom)", visible: true, width: 440, height: 420, order: 5 },
+  { id: "channel_pie", title: "Sell In by Channel", visible: true, x: 20, y: 20, width: 350, height: 440, zIndex: 1 },
+  { id: "buyer_pie", title: "Sell In by Buyers", visible: true, x: 390, y: 20, width: 350, height: 440, zIndex: 2 },
+  { id: "sell_through_rate", title: "Sell-Through Rate (%)", visible: true, x: 760, y: 20, width: 360, height: 440, zIndex: 3 },
+  { id: "trend_12m", title: "12-Month Performance Trend", visible: true, x: 20, y: 480, width: 550, height: 460, zIndex: 4 },
+  { id: "sellin_vs_sellout", title: "Sell-In vs Sell-Out Comparison", visible: true, x: 590, y: 480, width: 530, height: 460, zIndex: 5 },
+  { id: "sku_movers", title: "Product Movement (Top & Bottom)", visible: true, x: 20, y: 960, width: 1100, height: 480, zIndex: 6 },
 ];
 
 const API_BASE = "https://ib-v2.hsgglobalpteltd.workers.dev";
@@ -159,7 +161,11 @@ function generatePieSlices(
   });
 }
 
-export function DashboardAnalysisView() {
+export interface DashboardAnalysisViewProps {
+  onBack?: () => void;
+}
+
+export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {}) {
   // Global Month Filter initialized to previous month (matching sales cycle)
   const [selectedMonth, setSelectedMonth] = React.useState<string>(() => {
     const now = new Date();
@@ -202,26 +208,28 @@ export function DashboardAnalysisView() {
   // Chart D (Product Movement) toggles
   const [skuMoverTab, setSkuMoverTab] = React.useState<"top" | "bottom">("top");
 
-  // 📐 Custom Dashboard Layout State with LocalStorage Persistence
+  // 📐 Photoshop-style Free-Form Canvas Layout State with LocalStorage Persistence
   const [layout, setLayout] = React.useState<ChartLayoutItem[]>(() => {
     if (typeof window !== "undefined") {
       try {
-        const saved = localStorage.getItem("ib_dashboard_analysis_layout_v1");
+        const saved = localStorage.getItem("ib_dashboard_analysis_canvas_v2");
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed) && parsed.length > 0) {
-            const merged = DEFAULT_LAYOUT.map((def) => {
+            const merged = DEFAULT_LAYOUT.map((def, idx) => {
               const found = parsed.find((p: any) => p.id === def.id);
-              return found
-                ? {
-                    ...def,
-                    ...found,
-                    width: typeof found.width === "number" && found.width >= 240 ? found.width : def.width,
-                    height: typeof found.height === "number" && found.height >= 240 ? found.height : def.height,
-                  }
-                : def;
+              if (!found) return def;
+              return {
+                ...def,
+                ...found,
+                x: typeof found.x === "number" ? Math.max(0, Math.round(found.x)) : def.x,
+                y: typeof found.y === "number" ? Math.max(0, Math.round(found.y)) : def.y,
+                width: typeof found.width === "number" && found.width >= 240 ? Math.round(found.width) : def.width,
+                height: typeof found.height === "number" && found.height >= 220 ? Math.round(found.height) : def.height,
+                zIndex: typeof found.zIndex === "number" ? found.zIndex : idx + 1,
+              };
             });
-            return merged.sort((a, b) => a.order - b.order);
+            return merged;
           }
         }
       } catch {}
@@ -232,101 +240,198 @@ export function DashboardAnalysisView() {
   const updateLayout = React.useCallback((newLayout: ChartLayoutItem[]) => {
     setLayout(newLayout);
     try {
-      localStorage.setItem("ib_dashboard_analysis_layout_v1", JSON.stringify(newLayout));
+      localStorage.setItem("ib_dashboard_analysis_canvas_v2", JSON.stringify(newLayout));
     } catch {}
   }, []);
 
-  // Drag-and-drop reorder state
-  const [draggedId, setDraggedId] = React.useState<string | null>(null);
+  // 🎨 Active Selected Widget & Photoshop Layer Ordering (Z-Index)
+  const [selectedWidgetId, setSelectedWidgetId] = React.useState<string | null>(null);
 
-  const handleDragStart = (id: string) => {
-    setDraggedId(id);
-  };
+  const bringToFront = React.useCallback((id: string) => {
+    setSelectedWidgetId(id);
+    setLayout((prev) => {
+      const maxZ = Math.max(...prev.map((it) => it.zIndex || 1), 1);
+      const current = prev.find((it) => it.id === id);
+      if (current && current.zIndex === maxZ) return prev;
+      const nextLayout = prev.map((it) => (it.id === id ? { ...it, zIndex: maxZ + 1 } : it));
+      try {
+        localStorage.setItem("ib_dashboard_analysis_canvas_v2", JSON.stringify(nextLayout));
+      } catch {}
+      return nextLayout;
+    });
+  }, []);
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = (targetId: string) => {
-    if (!draggedId || draggedId === targetId) return;
-    const sourceIndex = layout.findIndex((it) => it.id === draggedId);
-    const targetIndex = layout.findIndex((it) => it.id === targetId);
-    if (sourceIndex === -1 || targetIndex === -1) return;
-
-    const newLayout = [...layout];
-    const [removed] = newLayout.splice(sourceIndex, 1);
-    newLayout.splice(targetIndex, 0, removed);
-    const updated = newLayout.map((it, idx) => ({ ...it, order: idx }));
-    updateLayout(updated);
-    setDraggedId(null);
-  };
-
-  // Interactive Drag-to-Resize on right border (width), bottom border (height), and corner (both)
-  const [resizing, setResizing] = React.useState<{
+  // 🖱️ Free-Form Unconstrained Drag-and-Drop (Photoshop Object Move)
+  const [draggingWidget, setDraggingWidget] = React.useState<{
     id: string;
-    direction: "horizontal" | "vertical" | "both";
+    startX: number;
+    startY: number;
+    initialX: number;
+    initialY: number;
   } | null>(null);
-  const resizeStartPos = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const resizeStartDimensions = React.useRef<{ width: number; height: number }>({ width: 0, height: 0 });
+
+  const handleDragStart = (id: string, e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    bringToFront(id);
+
+    const currentItem = layout.find((it) => it.id === id);
+    if (!currentItem) return;
+
+    setDraggingWidget({
+      id,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialX: currentItem.x,
+      initialY: currentItem.y,
+    });
+  };
+
+  // 📐 Free-Form 8-Point Bounding Box Resizing (Photoshop Transform Handles)
+  type ResizeHandleType = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+  const [resizingWidget, setResizingWidget] = React.useState<{
+    id: string;
+    handle: ResizeHandleType;
+    startX: number;
+    startY: number;
+    initialX: number;
+    initialY: number;
+    initialWidth: number;
+    initialHeight: number;
+  } | null>(null);
 
   const handleResizeStart = (
     id: string,
-    direction: "horizontal" | "vertical" | "both",
+    handle: ResizeHandleType,
     e: React.MouseEvent
   ) => {
+    if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
-    setResizing({ id, direction });
-    resizeStartPos.current = { x: e.clientX, y: e.clientY };
+    bringToFront(id);
+
     const currentItem = layout.find((it) => it.id === id);
-    resizeStartDimensions.current = {
-      width: currentItem?.width || (id === "trend_12m" ? 550 : 300),
-      height: currentItem?.height || 420,
-    };
+    if (!currentItem) return;
+
+    setResizingWidget({
+      id,
+      handle,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialX: currentItem.x,
+      initialY: currentItem.y,
+      initialWidth: currentItem.width,
+      initialHeight: currentItem.height,
+    });
   };
 
+  // 🌐 Global Window Event Listeners for Unconstrained Dragging and Resizing
   React.useEffect(() => {
+    if (!draggingWidget && !resizingWidget) return;
+
     const handleMouseMove = (e: MouseEvent) => {
-      if (!resizing) return;
-      const deltaX = e.clientX - resizeStartPos.current.x;
-      const deltaY = e.clientY - resizeStartPos.current.y;
+      // 1. Free Drag Move without Grid Lock or Snapback
+      if (draggingWidget) {
+        const deltaX = e.clientX - draggingWidget.startX;
+        const deltaY = e.clientY - draggingWidget.startY;
+        const newX = Math.max(0, Math.round(draggingWidget.initialX + deltaX));
+        const newY = Math.max(0, Math.round(draggingWidget.initialY + deltaY));
 
-      setLayout((prev) =>
-        prev.map((it) => {
-          if (it.id !== resizing.id) return it;
-          let newWidth = it.width;
-          let newHeight = it.height || 420;
+        setLayout((prev) =>
+          prev.map((it) => (it.id === draggingWidget.id ? { ...it, x: newX, y: newY } : it))
+        );
+      }
 
-          if (resizing.direction === "horizontal" || resizing.direction === "both") {
-            newWidth = Math.max(260, Math.min(1200, resizeStartDimensions.current.width + deltaX));
+      // 2. Free Bounding Box Resizing without Grid Snap
+      if (resizingWidget) {
+        const deltaX = e.clientX - resizingWidget.startX;
+        const deltaY = e.clientY - resizingWidget.startY;
+        const { handle, initialX, initialY, initialWidth, initialHeight } = resizingWidget;
+
+        const MIN_W = 260;
+        const MIN_H = 220;
+
+        let newX = initialX;
+        let newY = initialY;
+        let newW = initialWidth;
+        let newH = initialHeight;
+
+        // Horizontal sizing
+        if (handle.includes("e")) {
+          newW = Math.max(MIN_W, Math.round(initialWidth + deltaX));
+        } else if (handle.includes("w")) {
+          const calculatedW = Math.round(initialWidth - deltaX);
+          if (calculatedW >= MIN_W) {
+            newW = calculatedW;
+            newX = Math.round(initialX + deltaX);
+          } else {
+            newW = MIN_W;
+            newX = Math.round(initialX + (initialWidth - MIN_W));
           }
-          if (resizing.direction === "vertical" || resizing.direction === "both") {
-            newHeight = Math.max(260, Math.min(900, resizeStartDimensions.current.height + deltaY));
-          }
+        }
 
-          return { ...it, width: newWidth, height: newHeight };
-        })
-      );
+        // Vertical sizing
+        if (handle.includes("s")) {
+          newH = Math.max(MIN_H, Math.round(initialHeight + deltaY));
+        } else if (handle.includes("n")) {
+          const calculatedH = Math.round(initialHeight - deltaY);
+          if (calculatedH >= MIN_H) {
+            newH = calculatedH;
+            newY = Math.round(initialY + deltaY);
+          } else {
+            newH = MIN_H;
+            newY = Math.round(initialY + (initialHeight - MIN_H));
+          }
+        }
+
+        setLayout((prev) =>
+          prev.map((it) =>
+            it.id === resizingWidget.id
+              ? {
+                  ...it,
+                  x: Math.max(0, newX),
+                  y: Math.max(0, newY),
+                  width: newW,
+                  height: newH,
+                }
+              : it
+          )
+        );
+      }
     };
 
     const handleMouseUp = () => {
-      if (resizing) {
-        setResizing(null);
+      if (draggingWidget || resizingWidget) {
+        setDraggingWidget(null);
+        setResizingWidget(null);
         try {
-          localStorage.setItem("ib_dashboard_analysis_layout_v1", JSON.stringify(layout));
+          localStorage.setItem("ib_dashboard_analysis_canvas_v2", JSON.stringify(layout));
         } catch {}
       }
     };
 
-    if (resizing) {
-      window.addEventListener("mousemove", handleMouseMove);
-      window.addEventListener("mouseup", handleMouseUp);
-    }
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
     };
-  }, [resizing, layout]);
+  }, [draggingWidget, resizingWidget, layout]);
+
+  // 📏 Auto-Expanding Canvas Board Dimensions
+  const canvasBounds = React.useMemo(() => {
+    let maxX = 1380;
+    let maxY = 1580;
+    layout.forEach((it) => {
+      if (it.visible) {
+        if (it.x + it.width + 150 > maxX) maxX = it.x + it.width + 150;
+        if (it.y + it.height + 150 > maxY) maxY = it.y + it.height + 150;
+      }
+    });
+    return { width: maxX, height: maxY };
+  }, [layout]);
 
   // Remove / Add / Reset Cards
   const removeCard = (id: string) => {
@@ -343,7 +448,7 @@ export function DashboardAnalysisView() {
 
   const resetLayout = () => {
     updateLayout(DEFAULT_LAYOUT);
-    showToast("Dashboard layout reset to default", "success");
+    showToast("Dashboard canvas reset to default", "success");
   };
 
   // Add Chart Dropdown Menu
@@ -1218,10 +1323,22 @@ export function DashboardAnalysisView() {
   };
 
   return (
-    <div className="relative flex flex-col flex-1 h-full min-h-0 select-none font-primary animate-in fade-in duration-200">
+    <div className="relative flex flex-col flex-1 h-full w-full min-h-0 select-none font-primary animate-in fade-in duration-200 p-0 m-0 overflow-hidden">
       {/* 🚀 Top Header Toolbar: Centered Brand & Month Filters, with Add Chart / Reset on right */}
-      <div className="w-full flex items-center justify-between pb-3 pt-0 shrink-0 z-30">
-        <div className="w-24 hidden md:block" />
+      <div className="w-full flex items-center justify-between px-4 py-2 bg-white border-b border-slate-200 shrink-0 z-30">
+        <div className="flex items-center gap-2">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-slate-200 text-xs font-semibold text-zinc-700 hover:text-zinc-950 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+            >
+              <ChevronLeft size={14} />
+              <span>Back</span>
+            </button>
+          )}
+          {!onBack && <div className="w-24 hidden md:block" />}
+        </div>
 
         {/* Center: Brand Dropdown & Month Filter Capsules (Directly centered under Workspace/Analysis/Forecast tabs) */}
         <div className="flex items-center justify-center gap-2.5">
@@ -1403,33 +1520,67 @@ export function DashboardAnalysisView() {
         </div>
       </div>
 
-      {/* Main Analysis Body Area - Customizable Widget Board */}
-      <div className="flex flex-row gap-4 flex-1 min-h-0 overflow-x-auto overflow-y-auto items-start pb-4">
-        {layout
-          .filter((it) => it.visible)
-          .map((item) => {
-            const isDragging = draggedId === item.id;
-            return (
-              <div
-                key={item.id}
-                draggable
-                onDragStart={() => handleDragStart(item.id)}
-                onDragOver={handleDragOver}
-                onDrop={() => handleDrop(item.id)}
-                style={{ width: `${item.width}px`, height: `${item.height || 420}px` }}
-                className={`shrink-0 flex flex-col bg-white rounded-xl border shadow-2xs p-3.5 relative select-none transition-shadow hover:shadow-xs group overflow-hidden ${
-                  isDragging ? "opacity-40 border-dashed border-[#0B57D0]" : "border-slate-200/90"
-                }`}
-              >
-                {/* Card Header with Drag Handle, Toggle (if 12m), and Remove Button */}
-                <div className="w-full flex items-center justify-between pb-2 mb-2 border-b border-slate-100 select-none shrink-0">
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1">
-                    <div
-                      className="cursor-grab active:cursor-grabbing text-zinc-300 hover:text-zinc-600 p-0.5 rounded hover:bg-slate-100 transition-colors shrink-0"
-                      title="Drag to reorder card"
-                    >
-                      <GripVertical size={14} />
-                    </div>
+      {/* 🎨 Photoshop Free-Form Canvas Area */}
+      <div
+        onClick={() => setSelectedWidgetId(null)}
+        className="flex-1 min-h-0 overflow-auto bg-[#F4F6F9] rounded-none border-none select-none relative w-full h-full p-0 m-0"
+      >
+        <div
+          className="relative"
+          style={{
+            width: `${canvasBounds.width}px`,
+            height: `${canvasBounds.height}px`,
+            minWidth: "100%",
+            minHeight: "100%",
+          }}
+        >
+          {/* Subtle Canvas Dot Grid Pattern (Photoshop / Figma Blank Board style) */}
+          <div
+            className="absolute inset-0 pointer-events-none opacity-40 [background-image:radial-gradient(#CBD5E1_1.2px,transparent_1.2px)] [background-size:24px_24px]"
+            aria-hidden="true"
+          />
+
+          {/* Freely Positioned Widgets on Canvas */}
+          {layout
+            .filter((it) => it.visible)
+            .map((item) => {
+              const isSelected = selectedWidgetId === item.id;
+              const isDraggingThis = draggingWidget?.id === item.id;
+
+              return (
+                <div
+                  key={item.id}
+                  data-chart-card
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    bringToFront(item.id);
+                  }}
+                  style={{
+                    position: "absolute",
+                    left: `${item.x}px`,
+                    top: `${item.y}px`,
+                    width: `${item.width}px`,
+                    height: `${item.height}px`,
+                    zIndex: item.zIndex || 1,
+                  }}
+                  className={`flex flex-col bg-white rounded-xl border shadow-sm p-3.5 select-none transition-shadow duration-100 group ${
+                    isSelected
+                      ? "ring-2 ring-[#0B57D0] border-[#0B57D0] shadow-xl"
+                      : "border-slate-200/90 hover:border-slate-300 hover:shadow-md"
+                  } ${isDraggingThis ? "cursor-grabbing opacity-90 shadow-2xl" : ""}`}
+                >
+                  {/* Card Header (Acts as primary free move drag handle) */}
+                  <div
+                    onMouseDown={(e) => handleDragStart(item.id, e)}
+                    className="w-full flex items-center justify-between pb-2 mb-2 border-b border-slate-100 select-none shrink-0 cursor-grab active:cursor-grabbing"
+                  >
+                    <div className="flex items-center gap-1.5 min-w-0 flex-1 pr-1 pointer-events-none">
+                      <div
+                        className="text-zinc-400 group-hover:text-zinc-600 p-0.5 rounded transition-colors shrink-0"
+                        title="Drag to move freely on canvas"
+                      >
+                        <GripVertical size={14} />
+                      </div>
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-1.5">
                         <h3 className="text-xs font-bold text-zinc-900 tracking-tight truncate">
@@ -1469,8 +1620,11 @@ export function DashboardAnalysisView() {
                     </div>
                   </div>
 
-                  {/* Actions Group */}
-                  <div className="flex items-center gap-1 shrink-0">
+                  {/* Actions Group inside Card Header */}
+                  <div
+                    onMouseDown={(e) => e.stopPropagation()}
+                    className="flex items-center gap-1 shrink-0"
+                  >
                     {/* Toggle Switch if 12m trend */}
                     {item.id === "trend_12m" && (
                       <div className="inline-flex p-0.5 rounded-full bg-[#F0F4F9] border border-slate-200/90 shadow-2xs gap-0.5 mr-1">
@@ -2578,53 +2732,134 @@ export function DashboardAnalysisView() {
                   </div>
                 )}
 
-                {/* ↔️ Drag-to-Resize Right Border Handle (Width) */}
+                {/* 🎨 Photoshop 8-Point Bounding Box Transform Handles */}
+                {/* Top Edge */}
                 <div
-                  onMouseDown={(e) => handleResizeStart(item.id, "horizontal", e)}
-                  className="absolute right-0 top-0 bottom-3 w-2 cursor-ew-resize hover:bg-[#0B57D0]/25 transition-colors z-20 group-hover:bg-slate-200/40"
-                  title="Drag right edge to resize width"
-                />
-
-                {/* ↕️ Drag-to-Resize Bottom Border Handle (Height) */}
-                <div
-                  onMouseDown={(e) => handleResizeStart(item.id, "vertical", e)}
-                  className="absolute left-0 right-3 bottom-0 h-2 cursor-ns-resize hover:bg-[#0B57D0]/25 transition-colors z-20 group-hover:bg-slate-200/40"
-                  title="Drag bottom edge to resize height"
-                />
-
-                {/* ⤡ Drag-to-Resize Bottom-Right Corner Handle (Both Width & Height) */}
-                <div
-                  onMouseDown={(e) => handleResizeStart(item.id, "both", e)}
-                  className="absolute right-0 bottom-0 w-3.5 h-3.5 cursor-se-resize flex items-end justify-end p-0.5 text-zinc-300 hover:text-[#0B57D0] z-30 transition-colors group-hover:text-zinc-400"
-                  title="Drag corner to resize width and height"
+                  onMouseDown={(e) => handleResizeStart(item.id, "n", e)}
+                  className="absolute -top-1 left-2 right-2 h-2.5 cursor-n-resize z-30 flex items-center justify-center group/handle"
+                  title="Resize Top"
                 >
-                  <svg viewBox="0 0 10 10" className="w-2.5 h-2.5 fill-current">
-                    <path d="M8 2L2 8M8 5L5 8M8 8H8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                  </svg>
+                  <div
+                    className={`w-2 h-1 bg-white border border-[#0B57D0] rounded-2xs shadow-xs transition-opacity ${
+                      isSelected ? "opacity-100" : "opacity-0 group-hover/handle:opacity-100"
+                    }`}
+                  />
+                </div>
+
+                {/* Bottom Edge */}
+                <div
+                  onMouseDown={(e) => handleResizeStart(item.id, "s", e)}
+                  className="absolute -bottom-1 left-2 right-2 h-2.5 cursor-s-resize z-30 flex items-center justify-center group/handle"
+                  title="Resize Bottom"
+                >
+                  <div
+                    className={`w-2 h-1 bg-white border border-[#0B57D0] rounded-2xs shadow-xs transition-opacity ${
+                      isSelected ? "opacity-100" : "opacity-0 group-hover/handle:opacity-100"
+                    }`}
+                  />
+                </div>
+
+                {/* Left Edge */}
+                <div
+                  onMouseDown={(e) => handleResizeStart(item.id, "w", e)}
+                  className="absolute -left-1 top-2 bottom-2 w-2.5 cursor-w-resize z-30 flex items-center justify-center group/handle"
+                  title="Resize Left"
+                >
+                  <div
+                    className={`w-1 h-2 bg-white border border-[#0B57D0] rounded-2xs shadow-xs transition-opacity ${
+                      isSelected ? "opacity-100" : "opacity-0 group-hover/handle:opacity-100"
+                    }`}
+                  />
+                </div>
+
+                {/* Right Edge */}
+                <div
+                  onMouseDown={(e) => handleResizeStart(item.id, "e", e)}
+                  className="absolute -right-1 top-2 bottom-2 w-2.5 cursor-e-resize z-30 flex items-center justify-center group/handle"
+                  title="Resize Right"
+                >
+                  <div
+                    className={`w-1 h-2 bg-white border border-[#0B57D0] rounded-2xs shadow-xs transition-opacity ${
+                      isSelected ? "opacity-100" : "opacity-0 group-hover/handle:opacity-100"
+                    }`}
+                  />
+                </div>
+
+                {/* Top-Left Corner */}
+                <div
+                  onMouseDown={(e) => handleResizeStart(item.id, "nw", e)}
+                  className="absolute -top-1.5 -left-1.5 w-3.5 h-3.5 cursor-nwse-resize z-30 flex items-center justify-center"
+                  title="Resize Corner (Top-Left)"
+                >
+                  <div
+                    className={`w-2 h-2 bg-white border border-[#0B57D0] rounded-2xs shadow-xs ${
+                      isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    }`}
+                  />
+                </div>
+
+                {/* Top-Right Corner */}
+                <div
+                  onMouseDown={(e) => handleResizeStart(item.id, "ne", e)}
+                  className="absolute -top-1.5 -right-1.5 w-3.5 h-3.5 cursor-nesw-resize z-30 flex items-center justify-center"
+                  title="Resize Corner (Top-Right)"
+                >
+                  <div
+                    className={`w-2 h-2 bg-white border border-[#0B57D0] rounded-2xs shadow-xs ${
+                      isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    }`}
+                  />
+                </div>
+
+                {/* Bottom-Left Corner */}
+                <div
+                  onMouseDown={(e) => handleResizeStart(item.id, "sw", e)}
+                  className="absolute -bottom-1.5 -left-1.5 w-3.5 h-3.5 cursor-nesw-resize z-30 flex items-center justify-center"
+                  title="Resize Corner (Bottom-Left)"
+                >
+                  <div
+                    className={`w-2 h-2 bg-white border border-[#0B57D0] rounded-2xs shadow-xs ${
+                      isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    }`}
+                  />
+                </div>
+
+                {/* Bottom-Right Corner */}
+                <div
+                  onMouseDown={(e) => handleResizeStart(item.id, "se", e)}
+                  className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 cursor-nwse-resize z-30 flex items-center justify-center"
+                  title="Resize Corner (Bottom-Right)"
+                >
+                  <div
+                    className={`w-2 h-2 bg-white border border-[#0B57D0] rounded-2xs shadow-xs ${
+                      isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+                    }`}
+                  />
                 </div>
               </div>
             );
           })}
 
-        {/* Empty State when all charts are removed */}
-        {layout.every((it) => !it.visible) && (
-          <div className="flex flex-col items-center justify-center p-12 bg-white rounded-xl border border-slate-200 border-dashed text-center mx-auto my-12 gap-3">
-            <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-zinc-400">
-              <Layers size={22} />
+          {/* Empty State when all charts are removed */}
+          {layout.every((it) => !it.visible) && (
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center justify-center p-12 bg-white rounded-xl border border-slate-200 border-dashed text-center mx-auto gap-3 shadow-sm">
+              <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-zinc-400">
+                <Layers size={22} />
+              </div>
+              <h4 className="text-sm font-bold text-zinc-800">No Charts Currently Visible</h4>
+              <p className="text-xs text-zinc-500 max-w-sm">
+                All charts have been hidden. You can add them back individually from "+ Charts" or reset the layout.
+              </p>
+              <button
+                type="button"
+                onClick={resetLayout}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] text-white text-xs font-semibold hover:bg-[#0842A0] cursor-pointer"
+              >
+                Reset All Charts
+              </button>
             </div>
-            <h4 className="text-sm font-bold text-zinc-800">No Charts Currently Visible</h4>
-            <p className="text-xs text-zinc-500 max-w-sm">
-              All charts have been hidden. You can add them back individually from "+ Charts" or reset the layout.
-            </p>
-            <button
-              type="button"
-              onClick={resetLayout}
-              className="h-8 px-4 rounded-lg bg-[#0B57D0] text-white text-xs font-semibold hover:bg-[#0842A0] cursor-pointer"
-            >
-              Reset All Charts
-            </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

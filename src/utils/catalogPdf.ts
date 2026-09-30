@@ -125,6 +125,15 @@ export async function generateExportCatalogPdf(
     brandGroups[bId].push(prod);
   });
 
+  // Category sorting order priority (1: Cooking/Paste/Sauce/Food, 2: Beverage/Drink, 3: Snack/Confectionery, 4: Others)
+  const getCategoryPriority = (catName: string): number => {
+    const lower = (catName || "").toLowerCase();
+    if (lower.includes("cook") || lower.includes("paste") || lower.includes("sauce") || lower.includes("culinary") || lower.includes("food") || lower.includes("meal") || lower.includes("ambient")) return 1;
+    if (lower.includes("beverage") || lower.includes("drink") || lower.includes("soda") || lower.includes("juice") || lower.includes("water") || lower.includes("tea") || lower.includes("coffee")) return 2;
+    if (lower.includes("snack") || lower.includes("confection") || lower.includes("chip") || lower.includes("biscuit") || lower.includes("cracker") || lower.includes("crisp")) return 3;
+    return 4;
+  };
+
   // Helper to determine primary category of a brand based on its products
   const getBrandPrimaryCategory = (brandId: string): string => {
     const prods = brandGroups[brandId] || [];
@@ -135,12 +144,15 @@ export async function generateExportCatalogPdf(
     return "General";
   };
 
-  // Sort brands primarily by Category, then by Rank or Name
+  // Sort brands primarily by Category (Cooking -> Beverage -> Snack), then by Rank or Name
   const sortedBrandIds = Object.keys(brandGroups).sort((a, b) => {
-    const catA = getBrandPrimaryCategory(a).toLowerCase();
-    const catB = getBrandPrimaryCategory(b).toLowerCase();
-    if (catA !== catB) {
-      return catA.localeCompare(catB);
+    const catA = getBrandPrimaryCategory(a);
+    const catB = getBrandPrimaryCategory(b);
+    const prioA = getCategoryPriority(catA);
+    const prioB = getCategoryPriority(catB);
+    if (prioA !== prioB) return prioA - prioB;
+    if (catA.toLowerCase() !== catB.toLowerCase()) {
+      return catA.toLowerCase().localeCompare(catB.toLowerCase());
     }
     const brandA = brandMap.get(a);
     const brandB = brandMap.get(b);
@@ -154,10 +166,13 @@ export async function generateExportCatalogPdf(
 
   for (const bId of sortedBrandIds) {
     brandGroups[bId].sort((a, b) => {
-      const catA = (a.product_meta?.Category || a.category || "General").trim().toLowerCase();
-      const catB = (b.product_meta?.Category || b.category || "General").trim().toLowerCase();
-      if (catA !== catB) {
-        return catA.localeCompare(catB);
+      const catA = (a.product_meta?.Category || a.category || "General").trim();
+      const catB = (b.product_meta?.Category || b.category || "General").trim();
+      const prioA = getCategoryPriority(catA);
+      const prioB = getCategoryPriority(catB);
+      if (prioA !== prioB) return prioA - prioB;
+      if (catA.toLowerCase() !== catB.toLowerCase()) {
+        return catA.toLowerCase().localeCompare(catB.toLowerCase());
       }
       const nameA = (a.product_meta?.Short_Title || a.product_meta?.Title || a.display_name || a.sku).toLowerCase();
       const nameB = (b.product_meta?.Short_Title || b.product_meta?.Title || b.display_name || b.sku).toLowerCase();
@@ -211,7 +226,7 @@ export async function generateExportCatalogPdf(
   // Subtitle / Expo Badge
   const headerTitle =
     customOptions?.headerTitle ||
-    "FINE FOOD AUSTRALIA 2026 • OFFICIAL EXPORT PRODUCT CATALOG";
+    "OFFICIAL EXPORT PRODUCT CATALOG";
   doc.setFontSize(8.5);
   doc.setFont("helvetica", "bold");
   doc.setTextColor(180, 140, 45); // Deep Gold
@@ -220,7 +235,7 @@ export async function generateExportCatalogPdf(
   // Contact Info & Export Terms
   const subtext =
     customOptions?.subtext ||
-    "Contact: sales@hsg-global.com | hsgglobal.sg\nSingapore • Malaysia • Australia • Global Foodservice & Retail FMCG | FOB / CIF Terms";
+    "Contact: sales@hsg-global.com | hsgglobal.sg\nSingapore • Malaysia • Global Foodservice & Retail FMCG | FOB / CIF Terms";
   doc.setFontSize(7.5);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(71, 85, 105); // Slate 600
@@ -510,7 +525,7 @@ export async function generateExportCatalogPdf(
   const totalPages = doc.internal.pages.length - 1;
   const footerLabel =
     customOptions?.footerText ||
-    "Fine Food Australia 2026 Official Export Catalog";
+    "Official Export Catalog";
 
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);

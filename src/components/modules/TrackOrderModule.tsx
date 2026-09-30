@@ -1119,7 +1119,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   };
 
   // Resolve Store ID Helper
-  const resolveStoreById = (cleanStoreId: string): { storeId: string; deliverTo: string; poscode: string } | null => {
+  const resolveStoreById = (cleanStoreId: string): { storeId: string; deliverTo: string; poscode: string; latitude?: number; longitude?: number } | null => {
     if (!cleanStoreId) return null;
     const query = cleanStoreId.trim().toLowerCase();
     const matchedStore = stores.find(
@@ -1135,11 +1135,34 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     const deliverTo = storeName ? (prefix + storeName) : "";
     const poscode = String(matchedStore.poscode || matchedStore["Postal Code"] || "").trim();
 
+    let latitude: number | undefined = undefined;
+    let longitude: number | undefined = undefined;
+    const pinLoc = matchedStore["Pin Locations"] || matchedStore.pin_locations || matchedStore.pinLocations;
+    if (pinLoc && typeof pinLoc === "string" && pinLoc.includes(",")) {
+      const parts = pinLoc.split(",").map((p: string) => parseFloat(p.trim()));
+      if (parts.length >= 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[0] !== 0 && parts[1] !== 0) {
+        latitude = parts[0];
+        longitude = parts[1];
+      }
+    }
+
     return {
       storeId: String(matchedStore.id || cleanStoreId).trim(),
       deliverTo,
-      poscode
+      poscode,
+      latitude,
+      longitude
     };
+  };
+
+  // Helper to get coordinates directly from store ID or display name
+  const getStoreCoordsById = (cleanStoreId?: string): { lat: number; lng: number } | null => {
+    if (!cleanStoreId) return null;
+    const resolved = resolveStoreById(cleanStoreId);
+    if (resolved && resolved.latitude !== undefined && resolved.longitude !== undefined) {
+      return { lat: resolved.latitude, lng: resolved.longitude };
+    }
+    return null;
   };
 
   // Helper to generate Job Loading Sheet & Route PDF
@@ -1504,24 +1527,33 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     let updatedDeliverTo = order.deliver_to;
     let updatedPoscode = order.poscode;
+    let updatedLat: number | string = order.latitude || "";
+    let updatedLng: number | string = order.longitude || "";
 
     if (cleanStoreId) {
-      const matchedStore = stores.find(
-        (s) => String(s.id || "").toLowerCase() === cleanStoreId.toLowerCase()
-      );
-      if (matchedStore) {
-        const retailerId = matchedStore["Retailers ID"] !== undefined ? matchedStore["Retailers ID"] : matchedStore["Retailer ID"];
-        const retailer = retailers.find((r) => String(r.id) === String(retailerId));
-        const retailerName = retailer ? (retailer["Display Name"] || "") : "";
-        const prefix = retailerName ? (retailerName.substring(0, 5) + " - ") : "";
-        const storeName = matchedStore["Display Name"] || matchedStore.name || "";
-        if (storeName) {
-          updatedDeliverTo = prefix + storeName;
+      const resolved = resolveStoreById(cleanStoreId);
+      if (resolved) {
+        if (resolved.deliverTo) {
+          updatedDeliverTo = resolved.deliverTo;
         }
-        if (matchedStore.poscode || matchedStore["Postal Code"]) {
-          updatedPoscode = String(matchedStore.poscode || matchedStore["Postal Code"]).trim();
+        if (resolved.poscode) {
+          updatedPoscode = resolved.poscode;
+        }
+        if (resolved.latitude !== undefined && resolved.longitude !== undefined) {
+          updatedLat = resolved.latitude;
+          updatedLng = resolved.longitude;
+        } else if (updatedPoscode) {
+          // If store does not have pin_locations, fallback to postal code
+          const fallbackCoords = getSingaporeLatLng(updatedPoscode);
+          updatedLat = fallbackCoords.lat;
+          updatedLng = fallbackCoords.lng;
         }
       }
+    } else if (updatedPoscode) {
+      // If store is cleared, resolve coordinates by postal code
+      const fallbackCoords = getSingaporeLatLng(updatedPoscode);
+      updatedLat = fallbackCoords.lat;
+      updatedLng = fallbackCoords.lng;
     }
 
     // Optimistically update local state
@@ -1532,7 +1564,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               ...o,
               link_store: cleanStoreId,
               deliver_to: updatedDeliverTo,
-              poscode: updatedPoscode
+              poscode: updatedPoscode,
+              latitude: updatedLat,
+              longitude: updatedLng
             }
           : o
       )
@@ -1546,7 +1580,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           id: order.id,
           link_store: cleanStoreId,
           deliver_to: updatedDeliverTo,
-          poscode: updatedPoscode
+          poscode: updatedPoscode,
+          latitude: updatedLat,
+          longitude: updatedLng
         }
       };
 
@@ -2923,7 +2959,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         let lat = Number(o.latitude);
         let lng = Number(o.longitude);
 
-        // Fallback to static mapping if exact coords not saved or invalid
+        // 1. If order has a linked store, prioritize store's exact pin_locations
+        if (o.link_store) {
+          const storeCoords = getStoreCoordsById(o.link_store);
+          if (storeCoords) {
+            lat = storeCoords.lat;
+            lng = storeCoords.lng;
+          }
+        }
+
+        // 2. Fallback to static mapping if exact coords not saved or invalid
         if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
           const coords = getSingaporeLatLng(o.poscode);
           lat = coords.lat;
@@ -2991,20 +3036,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         let lat = Number(o.latitude);
         let lng = Number(o.longitude);
 
+        // 1. If return has a linked store or poscode is store ID, look up in stores directory
+        const storeKey = o.link_store || o.poscode;
+        if (storeKey) {
+          const storeCoords = getStoreCoordsById(storeKey);
+          if (storeCoords) {
+            lat = storeCoords.lat;
+            lng = storeCoords.lng;
+          }
+        }
+
         if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-          // Try to look up in stores directory
-          const matchedStore = stores.find(s => String(s.id).trim() === String(o.poscode).trim());
-          if (matchedStore && matchedStore["Pin Locations"]) {
-            const parts = matchedStore["Pin Locations"].split(",");
-            lat = Number(parts[0]);
-            lng = Number(parts[1]);
-          }
-          
-          if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-            const coords = getSingaporeLatLng(o.poscode);
-            lat = coords.lat;
-            lng = coords.lng;
-          }
+          const coords = getSingaporeLatLng(o.poscode);
+          lat = coords.lat;
+          lng = coords.lng;
         }
 
         // Return status colors & labels
@@ -4508,6 +4553,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           let finalPoscode = rawPoscode;
           let linkStoreVal = "";
           let isUnregisteredStore = false;
+          let storeLat: number | undefined = undefined;
+          let storeLng: number | undefined = undefined;
 
           if (extractedStoreId) {
             const matchedStoreInfo = resolveStoreById(extractedStoreId);
@@ -4516,6 +4563,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               finalDeliverTo = matchedStoreInfo.deliverTo;
               if (!finalPoscode && matchedStoreInfo.poscode) {
                 finalPoscode = matchedStoreInfo.poscode;
+              }
+              if (matchedStoreInfo.latitude !== undefined && matchedStoreInfo.longitude !== undefined) {
+                storeLat = matchedStoreInfo.latitude;
+                storeLng = matchedStoreInfo.longitude;
               }
             } else {
               isUnregisteredStore = true;
@@ -4545,7 +4596,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             appointmentTimeWindow: undefined,
             deliverMethod: deliverMethod,
             pdfImages: [],
-            link_store: linkStoreVal
+            photo_do_paper: "",
+            link_store: linkStoreVal,
+            latitude: storeLat,
+            longitude: storeLng
           };
 
           uniqueNewDrafts.push(newDraft);
@@ -4816,6 +4870,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             let finalPoscode = rawPoscode;
             let linkStoreVal = "";
             let isUnregisteredStore = false;
+            let storeLat: number | undefined = undefined;
+            let storeLng: number | undefined = undefined;
 
             if (extractedStoreId) {
               const matchedStoreInfo = resolveStoreById(extractedStoreId);
@@ -4824,6 +4880,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 finalDeliverTo = matchedStoreInfo.deliverTo;
                 if (!finalPoscode && matchedStoreInfo.poscode) {
                   finalPoscode = matchedStoreInfo.poscode;
+                }
+                if (matchedStoreInfo.latitude !== undefined && matchedStoreInfo.longitude !== undefined) {
+                  storeLat = matchedStoreInfo.latitude;
+                  storeLng = matchedStoreInfo.longitude;
                 }
               } else {
                 // Store ID exists in DO but NOT in store database
@@ -4852,7 +4912,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               appointmentTimeWindow: undefined,
               deliverMethod: "Company Delivery",
               photo_do_paper: orderPhotoUrls.length > 0 ? JSON.stringify(orderPhotoUrls) : "",
-              link_store: linkStoreVal
+              link_store: linkStoreVal,
+              latitude: storeLat,
+              longitude: storeLng
             };
 
             uniqueNewDrafts.push(newDraft);
@@ -5307,6 +5369,10 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               if (resolved.poscode) {
                 newDraft.poscode = resolved.poscode;
               }
+              if (resolved.latitude !== undefined && resolved.longitude !== undefined) {
+                newDraft.latitude = resolved.latitude;
+                newDraft.longitude = resolved.longitude;
+              }
             }
           }
         }
@@ -5470,24 +5536,37 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     // --- SILENT BACKGROUND UPDATE ---
     (async () => {
-      // Fetch exact coordinates from OneMap API in background
+      // Fetch exact coordinates from Store Pin Locations (if linked) or OneMap API in background
       let lat: number | string = order.latitude || "";
       let lng: number | string = order.longitude || "";
-      try {
-        const coords = await fetchPostcodeCoordinates(order.poscode, oneMapUrl, oneMapToken);
-        if (coords) {
-          lat = coords.lat;
-          lng = coords.lng;
-        } else if (!lat || !lng) {
-          const fallback = getSingaporeLatLng(order.poscode);
-          lat = fallback.lat;
-          lng = fallback.lng;
+
+      // 1. If order has linked store, prioritize store's coordinates
+      if (order.link_store) {
+        const storeCoords = getStoreCoordsById(order.link_store);
+        if (storeCoords) {
+          lat = storeCoords.lat;
+          lng = storeCoords.lng;
         }
-      } catch (_) {
-        if (!lat || !lng) {
-          const fallback = getSingaporeLatLng(order.poscode);
-          lat = fallback.lat;
-          lng = fallback.lng;
+      }
+
+      // 2. Otherwise fetch from OneMap API or postal fallback
+      if (!lat || !lng) {
+        try {
+          const coords = await fetchPostcodeCoordinates(order.poscode, oneMapUrl, oneMapToken);
+          if (coords) {
+            lat = coords.lat;
+            lng = coords.lng;
+          } else if (!lat || !lng) {
+            const fallback = getSingaporeLatLng(order.poscode);
+            lat = fallback.lat;
+            lng = fallback.lng;
+          }
+        } catch (_) {
+          if (!lat || !lng) {
+            const fallback = getSingaporeLatLng(order.poscode);
+            lat = fallback.lat;
+            lng = fallback.lng;
+          }
         }
       }
 
@@ -5576,7 +5655,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       type: (order.type as any) || "Normal",
       deliverTo: order.deliver_to,
       poscode: order.poscode,
-      items: parsedItems
+      items: parsedItems,
+      deadline: order.deadline ? Number(order.deadline) : undefined,
+      deliverMethod: order.deliver_method,
+      latitude: order.latitude ? Number(order.latitude) : undefined,
+      longitude: order.longitude ? Number(order.longitude) : undefined,
+      link_store: order.link_store,
+      photo_do_paper: order.photo_do_paper
     };
 
     const previousDbOrders = [...dbOrders];
@@ -5585,7 +5670,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     setDbOrders((prev) => prev.filter((o) => o.id !== order.id));
     saveDraftsToStorage([...drafts, restoredDraft]);
 
-    showToast(`Order ${order.do_number} revoked.`, "info");
+    showToast(`${order.type === "Return" ? "Return order" : "Order"} ${order.do_number} revoked and returned to Drafts.`, "info");
 
     // --- SILENT BACKGROUND UPDATE ---
     const payload = {
@@ -5604,7 +5689,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         const result = await res.json();
         if (!result.success) throw new Error(result.error || "Failed to delete record");
 
-        fetchDatabaseOrders(); // refresh cache quietly
+        fetchDatabaseOrders(true); // refresh cache quietly
+        fetchJobHistory();
       })
       .catch((err) => {
         // Rollback
@@ -6864,6 +6950,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const getOrderLatLng = (o: DbOrder): [number, number] => {
     let lat = Number(o.latitude);
     let lng = Number(o.longitude);
+
+    // 1. If order has a linked store, prioritize store's exact pin_locations
+    if (o.link_store) {
+      const storeCoords = getStoreCoordsById(o.link_store);
+      if (storeCoords) {
+        lat = storeCoords.lat;
+        lng = storeCoords.lng;
+      }
+    }
+
     if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
       const coords = getSingaporeLatLng(o.poscode);
       lat = coords.lat;
@@ -9177,11 +9273,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                               <td className="p-3 w-44 align-middle flex items-center gap-1.5 h-14 border-b border-zinc-200">
                                 <button
                                   type="button"
-                                  onClick={() => handleDeleteReturnOrder(order)}
-                                  title="Delete Return"
-                                  className="w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 bg-white hover:bg-red-50 text-zinc-600 hover:text-red-600 hover:border-red-200 cursor-pointer transition-all shadow-2xs outline-none"
+                                  onClick={() => handleRevokeOrder(order)}
+                                  title={order.status === "Collected" || order.status === "Return Collected" ? "Cannot revoke a collected return order" : "Revoke and send back to drafts"}
+                                  disabled={order.status === "Collected" || order.status === "Return Collected"}
+                                  className={`w-7 h-7 flex-shrink-0 aspect-square flex items-center justify-center rounded-md border border-slate-200 shadow-2xs transition-all outline-none ${
+                                    order.status === "Collected" || order.status === "Return Collected"
+                                      ? "bg-slate-50 text-zinc-300 border-slate-200 cursor-not-allowed opacity-40"
+                                      : "bg-white hover:bg-red-50 text-zinc-600 hover:text-red-600 hover:border-red-200 cursor-pointer"
+                                  }`}
                                 >
-                                  <Trash2 size={12} />
+                                  <RotateCcw size={12} />
                                 </button>
                                 <button
                                   type="button"
@@ -10165,8 +10266,12 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       <ConfirmDialog
         open={isConfirmRevokeOpen}
         onOpenChange={setIsConfirmRevokeOpen}
-        title="Revoke Order Confirmation"
-        description={`This order (${pendingRevokeOrder?.do_number || "N/A"}) is currently "${pendingRevokeOrder?.status || ""}" (in progress or completed by picker). Revoking it will delete the order and return it to Drafts. Are you sure you want to revoke this order?`}
+        title={pendingRevokeOrder?.type === "Return" ? "Revoke Return Order Confirmation" : "Revoke Order Confirmation"}
+        description={
+          pendingRevokeOrder?.type === "Return"
+            ? `This return order (${pendingRevokeOrder?.do_number || pendingRevokeOrder?.ref_number || "N/A"}) is currently "${pendingRevokeOrder?.status || "Pending"}". Revoking it will remove it from active database and return it back to Drafts. Are you sure you want to revoke this return order?`
+            : `This order (${pendingRevokeOrder?.do_number || "N/A"}) is currently "${pendingRevokeOrder?.status || ""}" (in progress or completed by picker). Revoking it will delete the order and return it to Drafts. Are you sure you want to revoke this order?`
+        }
         confirmText="Revoke Order"
         cancelText="Keep Order"
         variant="danger"

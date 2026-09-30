@@ -178,6 +178,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
   // Modals
   const [showMillionModal, setShowMillionModal] = React.useState<boolean>(false);
   const [millionRows, setMillionRows] = React.useState<any[]>([]);
+  const [millionFile, setMillionFile] = React.useState<File | null>(null);
+  const [millionFileName, setMillionFileName] = React.useState<string>("");
   const [uploadingMillion, setUploadingMillion] = React.useState<boolean>(false);
 
   const [showTikTokModal, setShowTikTokModal] = React.useState<boolean>(false);
@@ -421,6 +423,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setMillionFile(file);
+    setMillionFileName(file.name);
+
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
@@ -496,6 +501,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
         if (parsedRows.length === 0) {
           showToast("No valid Million statement rows found. Header must be on Row 3 (custcode, name, prodcode, qty, totalsi, totalcn)", "error");
+          setMillionFile(null);
+          setMillionFileName("");
           return;
         }
 
@@ -503,32 +510,57 @@ export function SellInModule({ profile }: SellInModuleProps) {
         setShowMillionModal(true);
       } catch (err: any) {
         showToast("Failed to read Excel file: " + err.message, "error");
+        setMillionFile(null);
+        setMillionFileName("");
       }
     };
     reader.readAsBinaryString(file);
     e.target.value = "";
   };
 
-  // Submit parsed Million data to backend
+  // Submit parsed Million data to backend with R2 file upload
   const handleSubmitMillion = async () => {
     if (millionRows.length === 0) return;
     setUploadingMillion(true);
     try {
+      let fileUrl = "";
+      if (millionFile) {
+        try {
+          const fd = new FormData();
+          fd.append("file", millionFile);
+          fd.append("period", currentPeriod);
+          const fRes = await fetch(`${API_BASE}/api/sellin/upload-file`, {
+            method: "POST",
+            body: fd
+          });
+          if (fRes.ok) {
+            const fData = await fRes.json();
+            fileUrl = fData.file_url || "";
+          }
+        } catch (fErr) {
+          console.warn("Million file R2 upload warning:", fErr);
+        }
+      }
+
       const res = await fetch(`${API_BASE}/api/sellin/upload-million`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           period: currentPeriod,
           items: millionRows,
-          rows: millionRows
+          rows: millionRows,
+          filename: millionFileName || millionFile?.name || "million_statement.xlsx",
+          file_url: fileUrl
         })
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast(`Ingested ${data.count} Million records successfully!`, "success");
+        showToast(`Ingested ${data.count} Million records and uploaded spreadsheet to Storage!`, "success");
         setShowMillionModal(false);
         setMillionRows([]);
+        setMillionFile(null);
+        setMillionFileName("");
         fetchBatchDetails(currentPeriod);
       } else {
         showToast(data.error || "Failed to process Million statement", "error");
@@ -1407,6 +1439,21 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 />
               </label>
 
+              {/* Uploaded Million File Download Button if present */}
+              {batchData?.source_file_url && (
+                <a
+                  href={batchData.source_file_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="h-8 px-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title={`Download uploaded Million file: ${batchData.source_file_name || 'Million Statement'}`}
+                >
+                  <FileSpreadsheet size={13} className="text-emerald-700 shrink-0" />
+                  <span className="truncate max-w-[130px]">{batchData.source_file_name || "Million File"}</span>
+                  <ExternalLink size={11} className="text-emerald-600 opacity-80 shrink-0" />
+                </a>
+              )}
+
               {/* Export Excel Button */}
               <button
                 type="button"
@@ -1503,9 +1550,22 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                         {/* Source */}
                         <td className="py-2 px-3">
-                          <span className="text-[10.5px] font-mono text-zinc-500">
-                            {r.source_type?.toUpperCase() || "MILLION"}
-                          </span>
+                          {r.source_file_url ? (
+                            <a
+                              href={r.source_file_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#0B57D0] hover:underline inline-flex items-center gap-1 text-[10.5px] font-mono group"
+                              title={`Download source file: ${r.source_file_name || 'Million Excel'}`}
+                            >
+                              <FileSpreadsheet size={11} className="shrink-0 text-emerald-600 group-hover:scale-110 transition-transform" />
+                              <span className="truncate max-w-[85px]">{r.source_file_name || "MILLION"}</span>
+                            </a>
+                          ) : (
+                            <span className="text-[10.5px] font-mono text-zinc-500">
+                              {r.source_type?.toUpperCase() || "MILLION"}
+                            </span>
+                          )}
                         </td>
 
                         {/* Buyer Code & Name */}
@@ -1952,9 +2012,24 @@ export function SellInModule({ profile }: SellInModuleProps) {
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
               <div>
                 <h2 className="text-sm font-semibold text-zinc-950">Million Statement Preview</h2>
-                <p className="text-xs text-zinc-500">Ready to ingest {millionRows.length} demand rows for {currentPeriod}.</p>
+                <div className="text-xs text-zinc-500 flex items-center gap-1.5 mt-0.5">
+                  {millionFileName && (
+                    <span className="font-mono text-zinc-700 font-medium bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 truncate max-w-[240px]">
+                      {millionFileName}
+                    </span>
+                  )}
+                  <span>• Ready to upload to Storage & ingest {millionRows.length} demand rows for {currentPeriod}.</span>
+                </div>
               </div>
-              <button type="button" onClick={() => setShowMillionModal(false)} className="p-1 text-zinc-400 hover:text-zinc-700">
+              <button 
+                type="button" 
+                onClick={() => {
+                  setMillionFile(null);
+                  setMillionFileName("");
+                  setShowMillionModal(false);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700"
+              >
                 <X size={16} />
               </button>
             </div>
@@ -1996,7 +2071,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
             <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setShowMillionModal(false)}
+                onClick={() => {
+                  setMillionFile(null);
+                  setMillionFileName("");
+                  setShowMillionModal(false);
+                }}
                 className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100"
               >
                 Cancel
@@ -2005,10 +2084,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 type="button"
                 disabled={uploadingMillion}
                 onClick={handleSubmitMillion}
-                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs"
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs cursor-pointer"
               >
                 {uploadingMillion ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                <span>Confirm Ingest</span>
+                <span>{uploadingMillion ? "Uploading to Storage..." : "Confirm & Ingest"}</span>
               </button>
             </div>
           </div>

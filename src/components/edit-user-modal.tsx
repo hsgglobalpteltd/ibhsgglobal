@@ -62,17 +62,16 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
       page.modules.forEach((mod) => {
         if (Array.isArray(modAccess)) {
           const has = modAccess.includes(mod.title);
-          initial[mod.title] = { view: has, edit: has, delete: has, console: false };
+          initial[mod.title] = { view: has, edit: has, delete: has };
         } else if (modAccess && typeof modAccess === "object" && modAccess[mod.title]) {
           const p = modAccess[mod.title];
           initial[mod.title] = {
             view: !!p.view,
             edit: !!p.edit,
             delete: !!p.delete,
-            console: !!p.console,
           };
         } else {
-          initial[mod.title] = { view: false, edit: false, delete: false, console: false };
+          initial[mod.title] = { view: false, edit: false, delete: false };
         }
       });
     });
@@ -112,11 +111,11 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
 
   const handleTogglePermission = (
     moduleTitle: string,
-    action: "view" | "edit" | "delete" | "console",
+    action: "view" | "edit" | "delete",
     checked: boolean
   ) => {
     setPermissions((prev) => {
-      const current = prev[moduleTitle] || { view: false, edit: false, delete: false, console: false };
+      const current = prev[moduleTitle] || { view: false, edit: false, delete: false };
       const updated: ModulePermission = { ...current };
 
       if (action === "view") {
@@ -138,8 +137,6 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
         if (checked) {
           updated.view = true;
         }
-      } else if (action === "console") {
-        updated.console = checked;
       }
 
       return {
@@ -156,13 +153,12 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
     setPermissions((prev) => {
       const updated = { ...prev };
       pageObj.modules.forEach((mod) => {
-        const prevConsole = prev[mod.title]?.console || false;
         if (actionType === "all") {
-          updated[mod.title] = { view: true, edit: true, delete: true, console: prevConsole };
+          updated[mod.title] = { view: true, edit: true, delete: true };
         } else if (actionType === "view_only") {
-          updated[mod.title] = { view: true, edit: false, delete: false, console: prevConsole };
+          updated[mod.title] = { view: true, edit: false, delete: false };
         } else {
-          updated[mod.title] = { view: false, edit: false, delete: false, console: false };
+          updated[mod.title] = { view: false, edit: false, delete: false };
         }
       });
       return updated;
@@ -341,7 +337,6 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                       <th className="py-2.5 px-3 text-center w-20">View</th>
                       <th className="py-2.5 px-3 text-center w-24">Create / Edit</th>
                       <th className="py-2.5 px-3 text-center w-20">Delete</th>
-                      <th className="py-2.5 px-3 text-center w-20">Console</th>
                       <th className="py-2.5 px-4 text-right w-44">Quick Actions</th>
                     </tr>
                   </thead>
@@ -350,7 +345,7 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                       <React.Fragment key={page.id}>
                         {/* Page Category Header Row */}
                         <tr className="bg-slate-50/80 border-t border-slate-200">
-                          <td colSpan={5} className="py-2 px-4 font-bold text-zinc-900 text-xs">
+                          <td colSpan={4} className="py-2 px-4 font-bold text-zinc-900 text-xs">
                             {page.label}
                           </td>
                           <td className="py-1 px-4 text-right">
@@ -382,7 +377,7 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
 
                         {/* Modules under this page */}
                         {page.modules.map((mod) => {
-                          const perm = permissions[mod.title] || { view: false, edit: false, delete: false, console: false };
+                          const perm = permissions[mod.title] || { view: false, edit: false, delete: false };
                           return (
                             <tr key={mod.title} className="hover:bg-slate-50/60 transition-colors">
                               <td className="py-2.5 px-6">
@@ -394,7 +389,7 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                               {/* View Checkbox */}
                               <td className="py-2.5 px-3 text-center">
                                 <input
-                                  type="checkbox"
+                                   type="checkbox"
                                   checked={perm.view}
                                   onChange={(e) => handleTogglePermission(mod.title, "view", e.target.checked)}
                                   className="w-3.5 h-3.5 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
@@ -415,15 +410,6 @@ export function EditUserModal({ user, onClose, onSave }: EditUserModalProps) {
                                   type="checkbox"
                                   checked={perm.delete}
                                   onChange={(e) => handleTogglePermission(mod.title, "delete", e.target.checked)}
-                                  className="w-3.5 h-3.5 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
-                                />
-                              </td>
-                              {/* Console Checkbox */}
-                              <td className="py-2.5 px-3 text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={!!perm.console}
-                                  onChange={(e) => handleTogglePermission(mod.title, "console", e.target.checked)}
                                   className="w-3.5 h-3.5 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0]/20 cursor-pointer accent-[#0B57D0]"
                                 />
                               </td>

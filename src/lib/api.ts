@@ -668,154 +668,8 @@ export async function deleteSnapDeal(
 }
 
 // ---------------------------------------------------------------------------
-// PROJECT WORKSPACE PM API
+// BRAIN CELLS / DASHBOARD API
 // ---------------------------------------------------------------------------
-
-let cachedWorkspaceData: any = null;
-let workspaceDashboardPromise: Promise<any> | null = null;
-
-export function getCachedWorkspaceData() {
-  if (cachedWorkspaceData) return cachedWorkspaceData;
-  if (typeof window !== "undefined") {
-    try {
-      const cached = localStorage.getItem("ib_workspace_cache");
-      if (cached) {
-        cachedWorkspaceData = JSON.parse(cached);
-        return cachedWorkspaceData;
-      }
-    } catch {}
-  }
-  return null;
-}
-
-export function prefetchWorkspaceDashboard(): Promise<any> {
-  if (workspaceDashboardPromise) return workspaceDashboardPromise;
-  workspaceDashboardPromise = fetchWorkspaceDashboard()
-    .then((res) => {
-      workspaceDashboardPromise = null;
-      return res;
-    })
-    .catch((err) => {
-      workspaceDashboardPromise = null;
-      throw err;
-    });
-  return workspaceDashboardPromise;
-}
-
-export function setCachedWorkspaceData(updater: (prev: any) => any) {
-  if (typeof window !== "undefined") {
-    try {
-      const current = getCachedWorkspaceData() || { success: true, projects: [], milestones: [], actions: [], pendingDelays: [], pipelines: [], systemUsers: [] };
-      const updated = updater(current);
-      cachedWorkspaceData = updated;
-      localStorage.setItem("ib_workspace_cache", JSON.stringify(updated));
-    } catch (e) {
-      console.error("Failed to update workspace cache:", e);
-    }
-  }
-}
-
-export async function fetchWorkspaceDashboard(forceFresh = false): Promise<{
-  success: boolean;
-  projects: any[];
-  milestones: any[];
-  actions: any[];
-  pendingDelays: any[];
-  pipelines: any[];
-  systemUsers: any[];
-}> {
-  const url = forceFresh
-    ? `${WORKER_URL}/api/projects/dashboard?_t=${Date.now()}`
-    : `${WORKER_URL}/api/projects/dashboard`;
-  const res = await fetch(url);
-  const data = await handleResponse(res, "Fetch workspace dashboard");
-  if (data && data.success) {
-    cachedWorkspaceData = data;
-    if (typeof window !== "undefined") {
-      try {
-        localStorage.setItem("ib_workspace_cache", JSON.stringify(data));
-      } catch {}
-    }
-  }
-  return data;
-}
-
-export async function savePMProject(data: any): Promise<{ success: boolean; project: any }> {
-  const res = await fetch(`${WORKER_URL}/api/projects/project/save`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  return handleResponse(res, "Save project");
-}
-
-export async function savePMMilestone(data: any): Promise<{ success: boolean; milestone: any }> {
-  const res = await fetch(`${WORKER_URL}/api/projects/milestone/save`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  return handleResponse(res, "Save milestone");
-}
-
-export async function savePMAction(data: any): Promise<{ success: boolean; action: any }> {
-  const res = await fetch(`${WORKER_URL}/api/projects/action/save`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  return handleResponse(res, "Save action");
-}
-
-export async function addPMActionLog(actionId: string, log: any): Promise<{ success: boolean; logs: any[] }> {
-  const res = await fetch(`${WORKER_URL}/api/projects/action/log`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action_id: actionId, log }),
-  });
-  return handleResponse(res, "Add action progress log");
-}
-
-export async function deletePMEntity(type: "project" | "milestone" | "action", id: string): Promise<{ success: boolean }> {
-  const res = await fetch(`${WORKER_URL}/api/projects/delete`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type, id }),
-  });
-  return handleResponse(res, "Delete PM entity");
-}
-
-export async function submitPMDelayRequest(data: {
-  action_id?: string;
-  milestone_id: string;
-  project_id: string;
-  requested_by?: string;
-  requested_by_name?: string;
-  current_end_date: number;
-  requested_end_date: number;
-  reason: string;
-}): Promise<{ success: boolean; request: any }> {
-  const res = await fetch(`${WORKER_URL}/api/projects/delay-request`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  return handleResponse(res, "Submit delay request");
-}
-
-export async function approvePMDelayRequest(data: {
-  request_id: string;
-  approved: boolean;
-  reviewer_notes?: string;
-  reviewer_name?: string;
-}): Promise<{ success: boolean; approved: boolean }> {
-  const res = await fetch(`${WORKER_URL}/api/projects/delay-approve`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  return handleResponse(res, "Process delay request");
-}
 
 export interface BrainCellMapping {
   table: string;
@@ -1668,3 +1522,218 @@ export async function revokeUserSession(
   });
   return handleResponse(res, "Revoke session");
 }
+
+// ---------------------------------------------------------------------------
+// DEDICATED WFE (WORKSPACE FOR EVERYONE) 100% REAL DATABASE CLIENT API
+// ---------------------------------------------------------------------------
+export async function fetchWfeBootstrap(email?: string, targetId?: string) {
+  const params = new URLSearchParams();
+  if (email) params.append("email", email);
+  if (targetId) params.append("target_id", targetId);
+  const q = params.toString() ? `?${params.toString()}` : "";
+
+  const res = await fetch(`${WORKER_URL}/api/wfe/bootstrap${q}`, {
+    method: "GET",
+    headers: { ...getSessionIdHeader() },
+  });
+  return handleResponse(res, "Fetch WFE Workspace");
+}
+
+export async function saveWfeTeamspace(payload: { id?: string; name: string; icon?: string; color?: string; is_archived?: number; created_by?: string; creator_name?: string }) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/teamspace/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse(res, "Save Teamspace");
+}
+
+export async function archiveWfeTeamspace(id: string, is_archived: boolean) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/teamspace/archive`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify({ id, is_archived }),
+  });
+  return handleResponse(res, "Archive Teamspace");
+}
+
+export async function deleteWfeTeamspace(id: string) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/teamspace/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify({ id }),
+  });
+  return handleResponse(res, "Delete Teamspace");
+}
+
+export async function saveWfePage(payload: {
+  id?: string;
+  teamspace_id?: string | null;
+  parent_id?: string | null;
+  title: string;
+  icon?: string;
+  cover_image?: string | null;
+  type?: "database" | "doc";
+  content_blocks?: any;
+  attachments?: any;
+  is_private?: number;
+  created_by?: string;
+}) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/page/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse(res, "Save Page");
+}
+
+export async function deleteWfePage(id: string) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/page/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify({ id }),
+  });
+  return handleResponse(res, "Delete Page");
+}
+
+export interface WfeTaskAttachment {
+  id: string;
+  name: string;
+  size: string;
+  mimeType?: string;
+  type?: string;
+  stage?: string;
+  r2Key: string;
+  url: string;
+  created_at?: number;
+  updated_at?: number;
+  uploaded_at?: number;
+  uploaded_by?: string;
+}
+
+export interface WfeTaskLog {
+  id?: string;
+  action: string;
+  actionBy: string;
+  remark?: string;
+  timestamp: number;
+  photoUrl?: string;
+}
+
+export async function saveWfeTask(payload: {
+  id?: string;
+  page_id?: string | null;
+  teamspace_id?: string | null;
+  title: string;
+  custom_status?: string;
+  priority?: string;
+  assigned_to?: string | null;
+  due_date?: number | null;
+  tags?: any;
+  blocks?: any;
+  attachments?: WfeTaskAttachment[] | string;
+  logs?: WfeTaskLog[] | string;
+  is_locked?: number;
+  pending_deletion?: number | null;
+  deleted_by?: string | null;
+}) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/task/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse(res, "Save Task");
+}
+
+export async function uploadWfeFile(
+  file: File,
+  stage: string,
+  taskId?: string
+): Promise<{ success: boolean; file: WfeTaskAttachment }> {
+  const arrayBuffer = await file.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(arrayBuffer);
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  const base64Data = btoa(binary);
+
+  const res = await fetch(`${WORKER_URL}/api/wfe/file/upload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileSize: `${(file.size / 1024).toFixed(1)} KB`,
+      mimeType: file.type || "application/octet-stream",
+      base64Data,
+      stage,
+      taskId,
+    }),
+  });
+  return handleResponse(res, "Upload Workspace File");
+}
+
+export async function deleteWfeFile(r2Key: string, url?: string) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/file/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify({ r2Key, url }),
+  });
+  return handleResponse(res, "Delete Workspace File");
+}
+
+export async function deleteWfeTask(
+  id: string,
+  meta?: { user_email?: string; is_owner?: boolean; is_admin?: boolean; is_co_admin?: boolean }
+) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/task/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify({ id, ...meta }),
+  });
+  return handleResponse(res, "Delete Task");
+}
+
+export async function saveWfeMember(payload: {
+  id?: string;
+  teamspace_id: string;
+  name: string;
+  email: string;
+  role?: string;
+}) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/member/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse(res, "Save Project Member");
+}
+
+export async function deleteWfeMember(id: string) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/member/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify({ id }),
+  });
+  return handleResponse(res, "Delete Project Member");
+}
+
+export async function saveWfeShare(payload: { target_id: string; security_pin: string; allowed_emails: string }) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/share/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify(payload),
+  });
+  return handleResponse(res, "Save Share Settings");
+}
+
+export async function verifyWfePin(target_id: string, email: string, pin: string) {
+  const res = await fetch(`${WORKER_URL}/api/wfe/verify-pin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...getSessionIdHeader() },
+    body: JSON.stringify({ target_id, email, pin }),
+  });
+  return handleResponse(res, "Verify WFE PIN");
+}
+
+

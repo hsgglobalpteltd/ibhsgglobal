@@ -1643,34 +1643,32 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
     }
   };
 
-  // Export Excel
+  // Export Excel for Specific Month (Separated Product Name & SKU, No Diagnostic Status)
   const handleExportExcel = () => {
-    if (filteredRecords.length === 0) {
-      showToast("No records to export", "error");
+    const dataToExport = filteredRecords.length > 0 ? filteredRecords : records;
+    if (dataToExport.length === 0) {
+      showToast(`No records found to export for period ${currentPeriod}`, "error");
       return;
     }
 
-    const exportData = filteredRecords.map((r, idx) => ({
+    const exportData = dataToExport.map((r, idx) => ({
       "#": idx + 1,
-      "Period": r.period || currentPeriod,
-      "Retailer": r.buyer_name || "",
+      "Import": r.source_file_name || "Excel",
+      "Buyer": r.buyer_name || "",
       "Store Code": r.outlet_code || "",
       "Store Name": r.store_name || r.outlet_name || "",
-      "Store Status": r.store_status || "unregistered",
-      "Brand": r.brand || "",
+      "Brand": r.brand || "Unassigned",
       "Product Name": r.product_name || r.raw_product_description || "",
-      "Standard SKU": r.product_sku || "",
+      "SKU": r.product_sku || "",
       "Qty Sold": Number(r.sales_quantity || 0),
-      "Sales Amount ($)": Number(r.sales_amount || 0),
-      "Diagnostic Status": r.validation_status === "valid" ? "Valid" : "Needs Review",
-      "Source File": r.source_file_name || ""
+      "Sales ($)": Number(r.sales_amount || 0)
     }));
 
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "SellOut_Records");
-    XLSX.writeFile(wb, `SellOut_${currentPeriod}_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    showToast("Exported Excel file successfully!", "success");
+    XLSX.utils.book_append_sheet(wb, ws, `SellOut_${currentPeriod}`);
+    XLSX.writeFile(wb, `SellOut_${currentPeriod}.xlsx`);
+    showToast(`Exported ${exportData.length} Sell-Out records for ${currentPeriod}!`, "success");
   };
 
   return (
@@ -1886,14 +1884,16 @@ export function SellOutModule({ profile }: SellOutModuleProps) {
               <span>Import Excel</span>
             </button>
 
-            {/* Export Excel Button */}
+            {/* Export / Download Excel Button */}
             <button
               type="button"
               onClick={handleExportExcel}
-              className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-              title="Export current Sell-Out rows to Excel"
+              disabled={records.length === 0}
+              className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed"
+              title={`Download all Sell-Out data for ${currentPeriod} as Excel`}
             >
               <Download size={13} className="text-zinc-500" />
+              <span>Download Excel</span>
             </button>
 
             {/* Publish Snapshot Button */}
