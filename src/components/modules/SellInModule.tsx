@@ -17,7 +17,6 @@ import {
   Building2, 
   Search, 
   FileSpreadsheet, 
-  Sparkles, 
   Download,
   ExternalLink,
   ChevronDown,
@@ -29,8 +28,82 @@ import {
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import * as XLSX from "xlsx";
+import { PDFDocument } from "pdf-lib";
 
 const API_BASE = "https://ib-v2.hsgglobalpteltd.workers.dev";
+
+interface PdfChunk {
+  blob: Blob;
+  fileName: string;
+  startPage: number;
+  endPage: number;
+  totalPages: number;
+}
+
+// Split large multi-page PDFs into batches of 8 pages to prevent AI timeouts & token overflow
+async function splitPdfIntoChunks(
+  file: File,
+  chunkSize: number = 8
+): Promise<PdfChunk[]> {
+  const isPdf = file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
+  if (!isPdf) {
+    return [{
+      blob: file,
+      fileName: file.name,
+      startPage: 1,
+      endPage: 1,
+      totalPages: 1
+    }];
+  }
+
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdfDoc = await PDFDocument.load(arrayBuffer);
+    const totalPages = pdfDoc.getPageCount();
+
+    if (totalPages <= chunkSize) {
+      return [{
+        blob: file,
+        fileName: file.name,
+        startPage: 1,
+        endPage: totalPages,
+        totalPages
+      }];
+    }
+
+    const chunks: PdfChunk[] = [];
+    for (let i = 0; i < totalPages; i += chunkSize) {
+      const end = Math.min(i + chunkSize, totalPages);
+      const subDoc = await PDFDocument.create();
+      const pageIndices: number[] = [];
+      for (let p = i; p < end; p++) {
+        pageIndices.push(p);
+      }
+      const copiedPages = await subDoc.copyPages(pdfDoc, pageIndices);
+      copiedPages.forEach((page) => subDoc.addPage(page));
+      const subPdfBytes = await subDoc.save();
+      const subBlob = new Blob([subPdfBytes as any], { type: "application/pdf" });
+      chunks.push({
+        blob: subBlob,
+        fileName: `${file.name.replace(/\.pdf$/i, "")}_p${i + 1}-${end}.pdf`,
+        startPage: i + 1,
+        endPage: end,
+        totalPages
+      });
+    }
+
+    return chunks;
+  } catch (err) {
+    console.warn("Failed to split PDF with pdf-lib, falling back to full file:", err);
+    return [{
+      blob: file,
+      fileName: file.name,
+      startPage: 1,
+      endPage: 1,
+      totalPages: 1
+    }];
+  }
+}
 
 // Reusable Custom Dropdown Component (No Native Browser Select)
 interface CustomSelectProps {
@@ -228,6 +301,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [buyerDrafts, setBuyerDrafts] = React.useState<Record<string, { buyer_code: string; buyer_name: string; channel: string }>>({});
   const [savingBuyers, setSavingBuyers] = React.useState<boolean>(false);
 
+  // Edit Buyer Modal State
+  const [showEditBuyerModal, setShowEditBuyerModal] = React.useState<boolean>(false);
+  const [editingBuyer, setEditingBuyer] = React.useState<any | null>(null);
+  const [editBuyerCode, setEditBuyerCode] = React.useState<string>("");
+  const [editBuyerName, setEditBuyerName] = React.useState<string>("");
+  const [editBuyerChannel, setEditBuyerChannel] = React.useState<string>("");
+  const [editBuyerPaymentTerm, setEditBuyerPaymentTerm] = React.useState<string>("90");
+  const [editBuyerStoreGroups, setEditBuyerStoreGroups] = React.useState<Array<{ group_name: string; store_count: number }>>([
+    { group_name: "", store_count: 1 }
+  ]);
+  const [savingEditBuyer, setSavingEditBuyer] = React.useState<boolean>(false);
+
   // Channels Management Modal
   const [showChannelModal, setShowChannelModal] = React.useState<boolean>(false);
   const [newChannelName, setNewChannelName] = React.useState<string>("");
@@ -237,6 +322,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   // Invoices PDF Parsing & Import States
   const [parsingInvoices, setParsingInvoices] = React.useState<boolean>(false);
   const [parsingStatusText, setParsingStatusText] = React.useState<string>("");
+  const [parsingProgress, setParsingProgress] = React.useState<number>(0);
   const [parsedInvoices, setParsedInvoices] = React.useState<any[]>([]);
   const [showInvoicePreviewModal, setShowInvoicePreviewModal] = React.useState<boolean>(false);
   const [uploadedPdfUrl, setUploadedPdfUrl] = React.useState<string>("");
@@ -249,6 +335,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   // Credit Notes PDF Parsing & Import States
   const [parsingCreditNotes, setParsingCreditNotes] = React.useState<boolean>(false);
   const [parsingCnStatusText, setParsingCnStatusText] = React.useState<string>("");
+  const [parsingCnProgress, setParsingCnProgress] = React.useState<number>(0);
   const [parsedCreditNotes, setParsedCreditNotes] = React.useState<any[]>([]);
   const [showCreditNotePreviewModal, setShowCreditNotePreviewModal] = React.useState<boolean>(false);
   const [uploadedCnPdfUrl, setUploadedCnPdfUrl] = React.useState<string>("");
@@ -298,6 +385,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [selectedAssignChannel, setSelectedAssignChannel] = React.useState<string>("");
   const [applyChannelToAllBuyerRows, setApplyChannelToAllBuyerRows] = React.useState<boolean>(true);
   const [savingAssignChannel, setSavingAssignChannel] = React.useState<boolean>(false);
+
+  // Assign Master Product SKU Modal State
+  const [showAssignProductModal, setShowAssignProductModal] = React.useState<boolean>(false);
+  const [assignProductTarget, setAssignProductTarget] = React.useState<any | null>(null);
+  const [selectedMasterSku, setSelectedMasterSku] = React.useState<string>("");
+  const [applyProductToAllMatchingRows, setApplyProductToAllMatchingRows] = React.useState<boolean>(true);
+  const [productSearchTerm, setProductSearchTerm] = React.useState<string>("");
+  const [savingAssignProduct, setSavingAssignProduct] = React.useState<boolean>(false);
 
   // Confirmation dialog
   const [confirmConfig, setConfirmConfig] = React.useState<{
@@ -490,13 +585,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
     });
   }, [records, subFilterTab, channelFilter, brandFilter, searchTerm]);
 
-  // Handle Tax Invoice PDF/Image Upload and AI Parsing
+  // Handle Tax Invoice PDF/Image Upload and AI Parsing with 8-page batching
   const handleInvoicePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     setParsingInvoices(true);
-    setParsingStatusText(`Uploading ${files.length} invoice document(s)...`);
+    setParsingProgress(0);
+    setParsingStatusText(`Preparing ${files.length} document(s)...`);
 
     try {
       const allExtractedInvoices: any[] = [];
@@ -504,32 +600,70 @@ export function SellInModule({ profile }: SellInModuleProps) {
       let latestFileName = "";
       let detectedPeriodStr = "";
 
+      // 1. Inspect files and split multi-page PDFs into 8-page batches
+      const filePlans: { file: File; chunks: PdfChunk[] }[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        setParsingStatusText(`Analyzing invoice document (${i + 1}/${files.length}): ${file.name}...`);
+        setParsingStatusText(`Inspecting ${file.name}...`);
+        const chunks = await splitPdfIntoChunks(file, 8);
+        filePlans.push({ file, chunks });
+      }
 
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("period", currentPeriod);
+      const totalChunksAcrossFiles = filePlans.reduce((sum, fp) => sum + fp.chunks.length, 0);
+      let completedChunks = 0;
 
-        const res = await fetch(`${API_BASE}/api/sellin/parse-invoice-pdf`, {
-          method: "POST",
-          body: formData
-        });
+      // 2. Process each 8-page batch sequentially
+      for (const { file, chunks } of filePlans) {
+        const totalPages = chunks[0]?.totalPages || 1;
+        let fileOriginalUrl = "";
 
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `Failed to parse ${file.name}`);
-        }
+        for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+          const chunk = chunks[cIdx];
+          const progressPercent = Math.round(((completedChunks) / totalChunksAcrossFiles) * 100);
+          setParsingProgress(progressPercent);
 
-        const data = await res.json();
-        if (data.success && Array.isArray(data.invoices)) {
-          allExtractedInvoices.push(...data.invoices);
-          latestFileUrl = data.file_url || latestFileUrl;
-          latestFileName = data.file_name || latestFileName;
-          if (data.suggested_period && !detectedPeriodStr) {
-            detectedPeriodStr = data.suggested_period;
+          if (totalPages > 1) {
+            setParsingStatusText(
+              `Analyzing ${file.name}: Processing pages ${chunk.startPage}–${chunk.endPage} of ${totalPages} (${progressPercent}%)...`
+            );
+          } else {
+            setParsingStatusText(
+              `Analyzing document ${completedChunks + 1} of ${totalChunksAcrossFiles}: ${file.name}...`
+            );
           }
+
+          const formData = new FormData();
+          formData.append("file", chunk.blob, chunk.fileName);
+          formData.append("period", currentPeriod);
+          if (fileOriginalUrl) {
+            formData.append("original_file_url", fileOriginalUrl);
+          }
+
+          const res = await fetch(`${API_BASE}/api/sellin/parse-invoice-pdf`, {
+            method: "POST",
+            body: formData
+          });
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Failed to parse pages ${chunk.startPage}–${chunk.endPage} of ${file.name}`);
+          }
+
+          const data = await res.json();
+          if (data.success && Array.isArray(data.invoices)) {
+            allExtractedInvoices.push(...data.invoices);
+            if (!fileOriginalUrl && data.file_url) {
+              fileOriginalUrl = data.file_url;
+            }
+            latestFileUrl = fileOriginalUrl || data.file_url || latestFileUrl;
+            latestFileName = file.name;
+            if (data.suggested_period && !detectedPeriodStr) {
+              detectedPeriodStr = data.suggested_period;
+            }
+          }
+
+          completedChunks++;
+          setParsingProgress(Math.round((completedChunks / totalChunksAcrossFiles) * 100));
         }
       }
 
@@ -538,17 +672,32 @@ export function SellInModule({ profile }: SellInModuleProps) {
         return;
       }
 
-      setParsedInvoices(allExtractedInvoices);
+      // 3. Merge multi-page invoices with same invoice_no across chunks
+      const mergedInvoicesMap = new Map<string, any>();
+      for (const inv of allExtractedInvoices) {
+        const key = inv.invoice_no ? String(inv.invoice_no).trim() : `${inv.customer_name}_${inv.invoice_date}_${Math.random()}`;
+        if (mergedInvoicesMap.has(key)) {
+          const existing = mergedInvoicesMap.get(key);
+          existing.items = [...(existing.items || []), ...(inv.items || [])];
+          existing.page_number = `${existing.page_number}, ${inv.page_number}`;
+        } else {
+          mergedInvoicesMap.set(key, { ...inv });
+        }
+      }
+      const finalInvoices = Array.from(mergedInvoicesMap.values());
+
+      setParsedInvoices(finalInvoices);
       setUploadedPdfUrl(latestFileUrl);
       setUploadedPdfName(latestFileName);
       setDetectedPeriod(detectedPeriodStr || currentPeriod);
       setShowInvoicePreviewModal(true);
-      showToast(`Detected ${allExtractedInvoices.length} invoice(s) with AI! Review items below.`, "success");
+      showToast(`Detected ${finalInvoices.length} invoice(s) with AI! Review items below.`, "success");
     } catch (err: any) {
       console.error("Invoice upload error:", err);
       showToast(err.message || "Failed to process invoices", "error");
     } finally {
       setParsingInvoices(false);
+      setParsingProgress(0);
       setParsingStatusText("");
       e.target.value = "";
     }
@@ -642,13 +791,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   };
 
-  // Upload and parse Credit Notes (PDF / Image) with Gemini AI
+  // Upload and parse Credit Notes (PDF / Image) with Gemini AI in 8-page batches
   const handleCreditNotePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
     setParsingCreditNotes(true);
-    setParsingCnStatusText("Uploading credit note files to secure storage...");
+    setParsingCnProgress(0);
+    setParsingCnStatusText(`Preparing ${files.length} credit note document(s)...`);
 
     try {
       const allExtractedCns: any[] = [];
@@ -656,32 +806,70 @@ export function SellInModule({ profile }: SellInModuleProps) {
       let latestFileName = "";
       let detectedPeriodStr = "";
 
+      // 1. Inspect files and split multi-page PDFs into 8-page batches
+      const filePlans: { file: File; chunks: PdfChunk[] }[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        setParsingCnStatusText(`Analyzing credit note ${i + 1} of ${files.length} (${file.name}) with AI...`);
+        setParsingCnStatusText(`Inspecting ${file.name}...`);
+        const chunks = await splitPdfIntoChunks(file, 8);
+        filePlans.push({ file, chunks });
+      }
 
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("period", currentPeriod);
+      const totalChunksAcrossFiles = filePlans.reduce((sum, fp) => sum + fp.chunks.length, 0);
+      let completedChunks = 0;
 
-        const res = await fetch(`${API_BASE}/api/sellin/parse-creditnote-pdf`, {
-          method: "POST",
-          body: formData
-        });
+      // 2. Process each 8-page batch sequentially
+      for (const { file, chunks } of filePlans) {
+        const totalPages = chunks[0]?.totalPages || 1;
+        let fileOriginalUrl = "";
 
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          throw new Error(errData.error || `Failed to parse ${file.name}`);
-        }
+        for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
+          const chunk = chunks[cIdx];
+          const progressPercent = Math.round((completedChunks / totalChunksAcrossFiles) * 100);
+          setParsingCnProgress(progressPercent);
 
-        const data = await res.json();
-        if (data.success && Array.isArray(data.credit_notes)) {
-          allExtractedCns.push(...data.credit_notes);
-          latestFileUrl = data.file_url || latestFileUrl;
-          latestFileName = data.file_name || latestFileName;
-          if (data.suggested_period && !detectedPeriodStr) {
-            detectedPeriodStr = data.suggested_period;
+          if (totalPages > 1) {
+            setParsingCnStatusText(
+              `Analyzing ${file.name}: Processing pages ${chunk.startPage}–${chunk.endPage} of ${totalPages} (${progressPercent}%)...`
+            );
+          } else {
+            setParsingCnStatusText(
+              `Analyzing credit note ${completedChunks + 1} of ${totalChunksAcrossFiles}: ${file.name}...`
+            );
           }
+
+          const formData = new FormData();
+          formData.append("file", chunk.blob, chunk.fileName);
+          formData.append("period", currentPeriod);
+          if (fileOriginalUrl) {
+            formData.append("original_file_url", fileOriginalUrl);
+          }
+
+          const res = await fetch(`${API_BASE}/api/sellin/parse-creditnote-pdf`, {
+            method: "POST",
+            body: formData
+          });
+
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Failed to parse pages ${chunk.startPage}–${chunk.endPage} of ${file.name}`);
+          }
+
+          const data = await res.json();
+          if (data.success && Array.isArray(data.credit_notes)) {
+            allExtractedCns.push(...data.credit_notes);
+            if (!fileOriginalUrl && data.file_url) {
+              fileOriginalUrl = data.file_url;
+            }
+            latestFileUrl = fileOriginalUrl || data.file_url || latestFileUrl;
+            latestFileName = file.name;
+            if (data.suggested_period && !detectedPeriodStr) {
+              detectedPeriodStr = data.suggested_period;
+            }
+          }
+
+          completedChunks++;
+          setParsingCnProgress(Math.round((completedChunks / totalChunksAcrossFiles) * 100));
         }
       }
 
@@ -690,17 +878,32 @@ export function SellInModule({ profile }: SellInModuleProps) {
         return;
       }
 
-      setParsedCreditNotes(allExtractedCns);
+      // 3. Merge multi-page credit notes with same cn_no across chunks
+      const mergedCnMap = new Map<string, any>();
+      for (const cn of allExtractedCns) {
+        const key = cn.cn_no ? String(cn.cn_no).trim() : `${cn.customer_name}_${cn.cn_date}_${Math.random()}`;
+        if (mergedCnMap.has(key)) {
+          const existing = mergedCnMap.get(key);
+          existing.items = [...(existing.items || []), ...(cn.items || [])];
+          existing.page_number = `${existing.page_number}, ${cn.page_number}`;
+        } else {
+          mergedCnMap.set(key, { ...cn });
+        }
+      }
+      const finalCns = Array.from(mergedCnMap.values());
+
+      setParsedCreditNotes(finalCns);
       setUploadedCnPdfUrl(latestFileUrl);
       setUploadedCnPdfName(latestFileName);
       setDetectedCnPeriod(detectedPeriodStr || currentPeriod);
       setShowCreditNotePreviewModal(true);
-      showToast(`Detected ${allExtractedCns.length} credit note(s) with AI! Review return items below.`, "success");
+      showToast(`Detected ${finalCns.length} credit note(s) with AI! Review return items below.`, "success");
     } catch (err: any) {
       console.error("Credit Note upload error:", err);
       showToast(err.message || "Failed to process credit notes", "error");
     } finally {
       setParsingCreditNotes(false);
+      setParsingCnProgress(0);
       setParsingCnStatusText("");
       e.target.value = "";
     }
@@ -1264,12 +1467,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
     setSavingAssignChannel(true);
     try {
+      const matchedBuyer = buyersList.find((b) => 
+        (assignChannelTarget.buyer_code && (b.buyer_code === assignChannelTarget.buyer_code || b.id === assignChannelTarget.buyer_code)) ||
+        (b.buyer_name && assignChannelTarget.buyer_name && b.buyer_name.trim().toLowerCase() === assignChannelTarget.buyer_name.trim().toLowerCase())
+      );
+      const resolvedBuyerCode = assignChannelTarget.buyer_code || matchedBuyer?.buyer_code || "";
+
       const res = await fetch(`${API_BASE}/api/sellin/assign-channel`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: assignChannelTarget.id,
-          buyer_code: assignChannelTarget.buyer_code,
+          buyer_code: resolvedBuyerCode,
           buyer_name: assignChannelTarget.buyer_name,
           period: currentPeriod,
           channel: selectedAssignChannel,
@@ -1289,6 +1498,55 @@ export function SellInModule({ profile }: SellInModuleProps) {
       showToast(e.message || "Assign channel error", "error");
     } finally {
       setSavingAssignChannel(false);
+    }
+  };
+
+  // Open Assign Product Modal
+  const handleOpenAssignProductModal = (row: any) => {
+    setAssignProductTarget(row);
+    const existingMaster = productsList.find((p) => p.sku === row.product_sku || p.sku_number === row.product_sku);
+    setSelectedMasterSku(existingMaster ? existingMaster.sku : (row.product_sku || ""));
+    setApplyProductToAllMatchingRows(true);
+    setProductSearchTerm("");
+    setShowAssignProductModal(true);
+  };
+
+  // Save Assign Master Product
+  const handleSaveAssignProduct = async () => {
+    if (!assignProductTarget || !selectedMasterSku) {
+      showToast("Please select a master product SKU", "error");
+      return;
+    }
+    setSavingAssignProduct(true);
+    try {
+      const chosenProduct = productsList.find((p) => p.sku === selectedMasterSku || p.sku_number === selectedMasterSku);
+      const res = await fetch(`${API_BASE}/api/sellin/assign-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: assignProductTarget.id,
+          period: currentPeriod,
+          product_sku: selectedMasterSku,
+          product_name: chosenProduct?.display_name || chosenProduct?.name || assignProductTarget.product_name,
+          brand: chosenProduct?.brand_name || chosenProduct?.brand || assignProductTarget.brand,
+          target_description: assignProductTarget.product_name,
+          target_sku: assignProductTarget.product_sku,
+          apply_to_all_matching_desc: applyProductToAllMatchingRows
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(data.message || `Master SKU "${selectedMasterSku}" assigned successfully!`, "success");
+        setShowAssignProductModal(false);
+        setAssignProductTarget(null);
+        fetchBatchDetails(currentPeriod, true);
+      } else {
+        showToast(data.error || "Failed to assign master product", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Assign product error", "error");
+    } finally {
+      setSavingAssignProduct(false);
     }
   };
 
@@ -1482,6 +1740,61 @@ export function SellInModule({ profile }: SellInModuleProps) {
       }
     } catch (e: any) {
       showToast(e.message, "error");
+    }
+  };
+
+  // Open Edit Buyer Modal
+  const handleOpenEditBuyer = (buyer: any) => {
+    setEditingBuyer(buyer);
+    setEditBuyerCode(buyer.buyer_code || "");
+    setEditBuyerName(buyer.buyer_name || "");
+    setEditBuyerChannel(buyer.channel || channelsList[0]?.channel_name || "Retailer");
+    setEditBuyerPaymentTerm(String(buyer.payment_term || "90").replace(/[^0-9]/g, "") || "90");
+    setEditBuyerStoreGroups(
+      Array.isArray(buyer.store_groups) && buyer.store_groups.length > 0
+        ? buyer.store_groups.map((g: any) => ({ group_name: g.group_name || "", store_count: Number(g.store_count) || 1 }))
+        : [{ group_name: "", store_count: 1 }]
+    );
+    setShowEditBuyerModal(true);
+  };
+
+  // Save Edit Buyer Modal
+  const handleSaveEditBuyer = async () => {
+    if (!editingBuyer || !editBuyerCode.trim() || !editBuyerName.trim()) {
+      showToast("Buyer Code and Name are required", "error");
+      return;
+    }
+    setSavingEditBuyer(true);
+    try {
+      const validGroups = editBuyerStoreGroups
+        .filter((g) => g.group_name && g.group_name.trim().length > 0)
+        .map((g) => ({ group_name: g.group_name.trim(), store_count: Number(g.store_count) || 1 }));
+
+      const res = await fetch(`${API_BASE}/api/sellin/buyers/${encodeURIComponent(editingBuyer.id)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          buyer_code: editBuyerCode.trim(),
+          buyer_name: editBuyerName.trim(),
+          channel: editBuyerChannel || "Retailer",
+          payment_term: editBuyerPaymentTerm.replace(/[^0-9]/g, "") || "90",
+          store_groups: validGroups,
+          period: currentPeriod
+        })
+      });
+      if (res.ok) {
+        showToast(`Buyer "${editBuyerName.trim()}" updated successfully!`, "success");
+        setShowEditBuyerModal(false);
+        setEditingBuyer(null);
+        await fetchBatchDetails(currentPeriod, true);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(data.error || "Failed to update buyer", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Failed to update buyer", "error");
+    } finally {
+      setSavingEditBuyer(false);
     }
   };
 
@@ -1894,20 +2207,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
             {/* Right Action Buttons */}
             <div className="flex items-center gap-2 shrink-0">
-              {/* Recalculate Month Demand & Reject Qty */}
-              {records.length > 0 && (
-                <button
-                  type="button"
-                  onClick={handleRecalculateMonth}
-                  disabled={recalculating}
-                  className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
-                  title={`Recalculate Demand Qty & Reject Qty for ${currentPeriod}`}
-                >
-                  <RefreshCw size={13} className={`text-zinc-500 ${recalculating ? "animate-spin" : ""}`} />
-                  <span>Recalc Qty</span>
-                </button>
-              )}
-
               {/* Reset Month Button */}
               {records.length > 0 && (
                 <button
@@ -1937,7 +2236,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
               {/* Import Credit Notes PDF Button */}
               <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
-                {parsingCreditNotes ? <RefreshCw size={13} className="animate-spin text-[#0B57D0]" /> : <FileText size={13} className="text-[#0B57D0]" />}
+                {parsingCreditNotes ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
                 <span>{parsingCreditNotes ? "Parsing CN..." : "Import Credit Notes (PDF)"}</span>
                 <input
                   type="file"
@@ -1964,9 +2263,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
               <button
                 type="button"
                 onClick={handlePublishBatch}
-                className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-98"
+                className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center justify-center transition-all cursor-pointer shadow-2xs active:scale-98"
               >
-                <Sparkles size={13} className="text-blue-100" />
                 <span>Publish</span>
               </button>
             </div>
@@ -2023,8 +2321,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     const isNoListing = r.validation_status === "no_listing";
                     const isUnmappedSku = r.validation_status === "unmapped_sku";
                     const isValid = r.validation_status === "valid" || (!isUnregistered && !isNoListing && !isUnmappedSku);
-
-                    const isEditingPrice = editingPriceRowId === r.id;
 
                     return (
                       <tr 
@@ -2114,10 +2410,27 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                         {/* Buyer Code & Name */}
                         <td className="py-2 px-3">
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-zinc-800 font-medium truncate">{r.buyer_name || r.buyer_code}</span>
-                            <span className="text-[10px] text-zinc-400 font-mono">{r.buyer_code}</span>
-                          </div>
+                          {(() => {
+                            const matchedBuyer = buyersList.find((b) => 
+                              (r.buyer_code && (b.buyer_code === r.buyer_code || b.id === r.buyer_code)) ||
+                              (b.buyer_name && r.buyer_name && b.buyer_name.trim().toLowerCase() === r.buyer_name.trim().toLowerCase())
+                            );
+                            const displayCode = r.buyer_code || matchedBuyer?.buyer_code || "";
+                            const displayName = r.buyer_name || matchedBuyer?.buyer_name || displayCode || "Unknown Buyer";
+
+                            return (
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-zinc-800 font-medium truncate" title={displayName}>
+                                  {displayName}
+                                </span>
+                                {displayCode ? (
+                                  <span className="text-[10px] text-zinc-500 font-mono font-medium">{displayCode}</span>
+                                ) : (
+                                  <span className="text-[10px] text-amber-600 font-medium italic">Unregistered Buyer</span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </td>
 
                         {/* Channel */}
@@ -2141,8 +2454,22 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         {/* Product SKU & Name */}
                         <td className="py-2 px-3">
                           <div className="flex flex-col min-w-0">
-                            <span className="text-zinc-800 truncate">{r.product_name || r.product_sku || "(No Description)"}</span>
-                            <span className="text-[10px] text-zinc-500 font-mono">{r.product_sku || "(Blank SKU)"}</span>
+                            <span className="text-zinc-800 truncate" title={r.product_name || r.product_sku || ""}>
+                              {r.product_name || r.product_sku || "(No Description)"}
+                            </span>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className={`text-[10px] font-mono ${!r.product_sku ? "text-amber-600 font-semibold" : "text-zinc-500"}`}>
+                                {r.product_sku || "(Blank SKU)"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAssignProductModal(r)}
+                                className="p-0.5 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer inline-flex items-center justify-center group"
+                                title="Click to assign master product SKU"
+                              >
+                                <Edit2 size={10} className="group-hover:scale-110 transition-transform" />
+                              </button>
+                            </div>
                           </div>
                         </td>
 
@@ -2168,41 +2495,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           </div>
                         </td>
 
-                        {/* Editable Unit Price ($/pcs) */}
-                        <td className="py-2 px-3 text-right">
-                          {isEditingPrice ? (
-                            <div className="flex items-center justify-end gap-1">
-                              <input
-                                type="number"
-                                step="0.01"
-                                autoFocus
-                                value={editingPriceVal}
-                                onChange={(e) => setEditingPriceVal(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    handleSaveUnitPrice(r.id, Number(editingPriceVal || 0));
-                                  } else if (e.key === "Escape") {
-                                    setEditingPriceRowId(null);
-                                  }
-                                }}
-                                onBlur={() => handleSaveUnitPrice(r.id, Number(editingPriceVal || 0))}
-                                className="w-20 h-6 text-right px-1.5 bg-white border border-[#0B57D0] rounded text-xs font-mono text-zinc-800 focus:outline-none"
-                              />
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditingPriceRowId(r.id);
-                                setEditingPriceVal(String(r.unit_price || 0));
-                              }}
-                              className="px-1 py-0.5 rounded hover:bg-slate-100 text-zinc-800 font-mono hover:text-[#0B57D0] transition-colors cursor-pointer text-right group"
-                              title="Click to edit unit cost price"
-                            >
-                              <span>${Number(r.unit_price || 0).toFixed(2)}</span>
-                              <Edit2 size={10} className="inline ml-1 text-zinc-400 group-hover:text-[#0B57D0]" />
-                            </button>
-                          )}
+                        {/* Unit Price ($/pcs) - 100% from Invoice, non-editable */}
+                        <td className="py-2 px-3 text-right text-zinc-800 font-mono">
+                          ${Number(r.unit_price || 0).toFixed(2)}
                         </td>
 
                         {/* Total Gross Demand ($) */}
@@ -2365,12 +2660,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 shadow-2xs">
                   <tr className="text-[11px] font-semibold text-zinc-600">
-                    <th className="py-2.5 px-3 w-12 text-center">#</th>
-                    <th className="py-2.5 px-3 w-36">Buyer Code</th>
-                    <th className="py-2.5 px-3 min-w-[220px]">Buyer / Retailer Name</th>
-                    <th className="py-2.5 px-3 w-48">Assigned Sales Channel</th>
-                    <th className="py-2.5 px-3 w-32 text-center">Registered Date</th>
-                    <th className="py-2.5 px-3 w-16 text-center">Action</th>
+                    <th className="py-2.5 px-3 w-10 text-center">#</th>
+                    <th className="py-2.5 px-3 w-32">Buyer Code</th>
+                    <th className="py-2.5 px-3 min-w-[180px]">Buyer / Retailer Name</th>
+                    <th className="py-2.5 px-3 w-36">Assigned Sales Channel</th>
+                    <th className="py-2.5 px-3 min-w-[200px]">Store Name</th>
+                    <th className="py-2.5 px-3 w-24 text-center">Total Stores</th>
+                    <th className="py-2.5 px-3 w-28 text-center">Registered Date</th>
+                    <th className="py-2.5 px-3 w-20 text-center">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -2440,27 +2737,91 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           )}
                         </td>
 
+                        {/* Store Name / Groups with (qty) */}
+                        <td className="py-2 px-3">
+                          {(() => {
+                            const groups = (Array.isArray(b.store_groups) ? b.store_groups : [])
+                              .filter((g: any) => g.group_name && g.group_name.trim().length > 0);
+
+                            if (groups.length === 0) {
+                              return (
+                                <span className="text-zinc-400 italic text-[11px]">
+                                  {b.buyer_name || "Main Store"} (1)
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <div className="flex flex-wrap items-center gap-1.5 max-w-md">
+                                {groups.map((g: any, gIdx: number) => (
+                                  <span
+                                    key={gIdx}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-zinc-700 border border-slate-200/80 text-[11px]"
+                                  >
+                                    <span className="font-medium text-zinc-800">{g.group_name}</span>
+                                    <span className="font-mono text-zinc-500 font-semibold">({g.store_count || 1})</span>
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </td>
+
+                        {/* Total Stores */}
+                        <td className="py-2 px-3 text-center">
+                          {(() => {
+                            const groups = Array.isArray(b.store_groups) ? b.store_groups : [];
+                            const computedCount = groups.reduce((acc: number, curr: any) => acc + (Number(curr.store_count) || 0), 0);
+                            const storeCount = computedCount > 0 ? computedCount : 1;
+                            const validGroupsCount = groups.filter((g: any) => g.group_name && g.group_name.trim().length > 0).length;
+
+                            return (
+                              <div className="flex flex-col items-center justify-center">
+                                <span className="font-mono font-semibold text-zinc-900">
+                                  {storeCount.toLocaleString()}
+                                </span>
+                                {validGroupsCount > 1 && (
+                                  <span className="text-[10px] text-zinc-400" title={`${validGroupsCount} store groups configured`}>
+                                    ({validGroupsCount} groups)
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </td>
+
                         {/* Registered Date */}
                         <td className="py-2 px-3 text-center text-zinc-400 font-mono text-[11px]">
                           {b.created_at ? new Date(Number(b.created_at)).toLocaleDateString() : "-"}
                         </td>
 
-                        {/* Delete Button */}
+                        {/* Action Buttons: Edit Pen & Trash */}
                         <td className="py-2 px-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setConfirmConfig({
-                                open: true,
-                                title: "Remove Buyer Master",
-                                description: `Are you sure you want to remove ${b.buyer_name} (${b.buyer_code})?`,
-                                onConfirm: () => handleDeleteBuyer(b.id)
-                              });
-                            }}
-                            className="p-1 rounded text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditBuyer(b)}
+                              className="p-1 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer"
+                              title={`Edit Buyer: ${b.buyer_name}`}
+                            >
+                              <Edit2 size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setConfirmConfig({
+                                  open: true,
+                                  title: "Remove Buyer Master",
+                                  description: `Are you sure you want to remove ${b.buyer_name} (${b.buyer_code})?`,
+                                  onConfirm: () => handleDeleteBuyer(b.id)
+                                });
+                              }}
+                              className="p-1 rounded text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                              title={`Delete Buyer: ${b.buyer_name}`}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2701,18 +3062,38 @@ export function SellInModule({ profile }: SellInModuleProps) {
         </div>
       )}
 
-      {/* Modal: Invoices AI Parsing Progress */}
-      {parsingInvoices && (
+      {/* Modal: AI Parsing Progress Overlay */}
+      {(parsingInvoices || parsingCreditNotes) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-sm bg-white rounded-xl border border-slate-200 shadow-2xl p-6 flex flex-col items-center justify-center gap-3 text-center">
             <div className="w-12 h-12 rounded-full bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0B57D0]">
               <RefreshCw size={24} className="animate-spin text-[#0B57D0]" />
             </div>
-            <div>
-              <h3 className="text-sm font-semibold text-zinc-900">AI Document Analysis in Progress</h3>
-              <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
-                {parsingStatusText || "Extracting invoice numbers, customer details, and line items..."}
+            <div className="w-full">
+              <h3 className="text-sm font-semibold text-zinc-900">
+                {parsingCreditNotes ? "AI Credit Note Analysis in Progress" : "AI Document Analysis in Progress"}
+              </h3>
+              <p className="text-xs text-zinc-600 mt-1 leading-relaxed break-words">
+                {(parsingCreditNotes ? parsingCnStatusText : parsingStatusText) || "Extracting document data with Gemini Vision..."}
               </p>
+
+              {/* Real-time Progress Bar */}
+              {((parsingCreditNotes ? parsingCnProgress : parsingProgress) > 0) && (
+                <div className="w-full mt-3">
+                  <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
+                    <div
+                      className="bg-[#0B57D0] h-full transition-all duration-300 rounded-full"
+                      style={{ width: `${parsingCreditNotes ? parsingCnProgress : parsingProgress}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[10.5px] font-mono text-zinc-500 mt-1.5">
+                    <span>Processing Pages</span>
+                    <span className="font-semibold text-[#0B57D0]">
+                      {parsingCreditNotes ? parsingCnProgress : parsingProgress}%
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
             <span className="text-[11px] font-mono text-zinc-400 mt-1">Please keep this window open</span>
           </div>
@@ -2754,9 +3135,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </button>
             </div>
 
-            <div className="p-4 flex-1 overflow-auto flex flex-col gap-4 bg-[#F8F9FA]">
+            <div className="p-4 flex-1 overflow-y-auto space-y-4 bg-[#F8F9FA] min-h-0">
               {parsedInvoices.map((inv, invIdx) => (
-                <div key={invIdx} className="bg-white rounded-lg border border-slate-200 shadow-xs overflow-hidden">
+                <div key={invIdx} className="bg-white rounded-lg border border-slate-200 shadow-xs overflow-hidden shrink-0">
                   {/* Invoice Header */}
                   <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -3002,9 +3383,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </button>
             </div>
 
-            <div className="p-4 flex-1 overflow-auto flex flex-col gap-4 bg-[#F8F9FA]">
+            <div className="p-4 flex-1 overflow-y-auto space-y-4 bg-[#F8F9FA] min-h-0">
               {parsedCreditNotes.map((cn, cnIdx) => (
-                <div key={cnIdx} className="bg-white rounded-lg border border-slate-200 shadow-xs overflow-hidden">
+                <div key={cnIdx} className="bg-white rounded-lg border border-slate-200 shadow-xs overflow-hidden shrink-0">
                   {/* Credit Note Header */}
                   <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
@@ -3476,6 +3857,178 @@ export function SellInModule({ profile }: SellInModuleProps) {
         </div>
       )}
 
+      {/* Modal: Edit Buyer Master */}
+      {showEditBuyerModal && editingBuyer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-visible flex flex-col animate-in zoom-in-95 duration-100">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-950">Edit Buyer Master</h2>
+                <p className="text-xs text-zinc-500">Update customer codes, sales channel, payment terms, and store groups.</p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowEditBuyerModal(false);
+                  setEditingBuyer(null);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4 flex flex-col gap-3 text-xs">
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-medium text-zinc-700 block mb-1">Buyer Code / CustCode <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    value={editBuyerCode}
+                    onChange={(e) => setEditBuyerCode(e.target.value)}
+                    placeholder="e.g. 3000/F011 or TIKTOK_SHOP1"
+                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-mono font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                <div>
+                  <label className="font-medium text-zinc-700 block mb-1">Payment Term</label>
+                  <div className="relative flex items-center">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={editBuyerPaymentTerm}
+                      onChange={(e) => setEditBuyerPaymentTerm(e.target.value.replace(/[^0-9]/g, ""))}
+                      placeholder="90"
+                      className="w-full h-8 pl-2.5 pr-12 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                    />
+                    <span className="absolute right-2.5 text-xs text-zinc-400 pointer-events-none select-none">
+                      days
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-medium text-zinc-700 block mb-1">Buyer / Company Name <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={editBuyerName}
+                  onChange={(e) => setEditBuyerName(e.target.value)}
+                  placeholder="e.g. FairPrice Supermarket"
+                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                />
+              </div>
+
+              {/* Sales Channel Dropdown with ample z-index */}
+              <div className="relative z-30">
+                <label className="font-medium text-zinc-700 block mb-1">Sales Channel</label>
+                <CustomSelect
+                  value={editBuyerChannel}
+                  onChange={setEditBuyerChannel}
+                  options={buyersChannelSelectOptions}
+                  className="w-full"
+                  minWidth="w-full"
+                />
+              </div>
+
+              {/* Store Groups & Outlets Dynamic Builder */}
+              <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/60 flex flex-col gap-2.5 mt-1">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-semibold text-zinc-800 text-xs">Store Groups & Outlets</span>
+                    <p className="text-[11px] text-zinc-500">Edit retail banners & outlet counts (e.g. Cheers, FairPrice Supermarket)</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEditBuyerStoreGroups((prev) => [...prev, { group_name: "", store_count: 1 }])}
+                    className="h-6 px-2 rounded-md bg-white border border-slate-300 hover:bg-slate-100 text-[#0B57D0] text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                  >
+                    <Plus size={11} />
+                    <span>Add Group</span>
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2 max-h-40 overflow-y-auto pr-0.5">
+                  {editBuyerStoreGroups.map((grp, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-white p-1.5 rounded-lg border border-slate-200">
+                      <input
+                        type="text"
+                        value={grp.group_name}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setEditBuyerStoreGroups((prev) => {
+                            const copy = [...prev];
+                            copy[idx] = { ...copy[idx], group_name: val };
+                            return copy;
+                          });
+                        }}
+                        placeholder="Group / Banner (e.g. Cheers, FairPrice Finest)"
+                        className="flex-1 h-7 px-2 border border-slate-200 rounded text-xs text-zinc-800 focus:outline-none focus:border-[#0B57D0]"
+                      />
+                      <div className="flex items-center gap-1 shrink-0">
+                        <span className="text-[11px] text-zinc-400">Stores:</span>
+                        <input
+                          type="number"
+                          min="1"
+                          value={grp.store_count}
+                          onChange={(e) => {
+                            const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                            setEditBuyerStoreGroups((prev) => {
+                              const copy = [...prev];
+                              copy[idx] = { ...copy[idx], store_count: val };
+                              return copy;
+                            });
+                          }}
+                          className="w-16 h-7 px-1.5 border border-slate-200 rounded text-xs font-mono text-center text-zinc-800 focus:outline-none focus:border-[#0B57D0]"
+                        />
+                      </div>
+                      {editBuyerStoreGroups.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setEditBuyerStoreGroups((prev) => prev.filter((_, i) => i !== idx))}
+                          className="p-1 text-zinc-400 hover:text-red-600 rounded cursor-pointer"
+                          title="Remove Group"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="text-[11px] text-zinc-500 flex items-center justify-between pt-1 border-t border-slate-200/80">
+                  <span>Total Groups: <strong>{editBuyerStoreGroups.filter(g => g.group_name.trim().length > 0).length || 1}</strong></span>
+                  <span>Total Outlets: <strong>{editBuyerStoreGroups.reduce((acc, curr) => acc + (Number(curr.store_count) || 1), 0)} stores</strong></span>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEditBuyerModal(false);
+                  setEditingBuyer(null);
+                }}
+                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={savingEditBuyer || !editBuyerCode.trim() || !editBuyerName.trim()}
+                onClick={handleSaveEditBuyer}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+              >
+                {savingEditBuyer ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                <span>Save Changes</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: Assign Sales Channel */}
       {showAssignChannelModal && assignChannelTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
@@ -3504,12 +4057,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   <span className="text-zinc-500 font-medium text-[11px]">Buyer:</span>
                   <span className="font-semibold text-zinc-900">{assignChannelTarget.buyer_name || assignChannelTarget.buyer_code}</span>
                 </div>
-                {assignChannelTarget.buyer_code && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-zinc-500 font-medium text-[11px]">Buyer Code / ID:</span>
-                    <span className="font-mono text-zinc-700">{assignChannelTarget.buyer_code}</span>
-                  </div>
-                )}
+                {(() => {
+                  const bCode = assignChannelTarget.buyer_code || buyersList.find((b) => 
+                    (b.buyer_name && assignChannelTarget.buyer_name && b.buyer_name.trim().toLowerCase() === assignChannelTarget.buyer_name.trim().toLowerCase())
+                  )?.buyer_code;
+                  return (
+                    <div className="flex items-center justify-between">
+                      <span className="text-zinc-500 font-medium text-[11px]">Buyer Code / ID:</span>
+                      <span className="font-mono text-zinc-700">{bCode || "(Unregistered Buyer)"}</span>
+                    </div>
+                  );
+                })()}
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-500 font-medium text-[11px]">Current Channel:</span>
                   <span className="text-zinc-700 font-medium">{assignChannelTarget.channel || "Retailer"}</span>
@@ -3577,6 +4135,170 @@ export function SellInModule({ profile }: SellInModuleProps) {
               >
                 {savingAssignChannel ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
                 <span>Save Channel</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Assign Master Product SKU */}
+      {showAssignProductModal && assignProductTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col max-h-[90vh]">
+            {/* Modal Header */}
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-950">Assign Master Product SKU</h2>
+                <p className="text-xs text-zinc-500">Map this invoice item description to an official master product.</p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowAssignProductModal(false);
+                  setAssignProductTarget(null);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 flex flex-col gap-3.5 text-xs overflow-y-auto">
+              {/* Target Line Item Context Card */}
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex flex-col gap-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-zinc-500 font-medium text-[11px] shrink-0">Item Description:</span>
+                  <span className="font-semibold text-zinc-900 text-right break-words">{assignProductTarget.product_name || assignProductTarget.product_sku || "(No Description)"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium text-[11px]">Current SKU:</span>
+                  <span className="font-mono text-zinc-700">{assignProductTarget.product_sku || "(Blank SKU)"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium text-[11px]">Current Brand:</span>
+                  <span className="text-zinc-700 font-medium">{assignProductTarget.brand || "(Unassigned)"}</span>
+                </div>
+              </div>
+
+              {/* Master Product Selection */}
+              <div className="flex flex-col gap-1.5">
+                <label className="font-medium text-zinc-700 flex items-center justify-between">
+                  <span>Select Master Product <span className="text-red-500">*</span></span>
+                  <span className="text-[11px] text-zinc-400 font-normal">
+                    {productsList.length} products available
+                  </span>
+                </label>
+
+                {/* Search input */}
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={productSearchTerm}
+                    onChange={(e) => setProductSearchTerm(e.target.value)}
+                    placeholder="Search master product by SKU, name, or brand..."
+                    className="w-full h-8 pl-8 pr-3 border border-slate-300 rounded-lg text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none focus:border-[#0B57D0]"
+                  />
+                  <Search size={13} className="absolute left-2.5 top-2.5 text-zinc-400" />
+                </div>
+
+                {/* Products List */}
+                <div className="mt-1 border border-slate-200 rounded-lg max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white">
+                  {productsList
+                    .filter((p) => {
+                      if (!productSearchTerm.trim()) return true;
+                      const q = productSearchTerm.toLowerCase();
+                      return (
+                        (p.sku && p.sku.toLowerCase().includes(q)) ||
+                        (p.sku_number && p.sku_number.toLowerCase().includes(q)) ||
+                        (p.name && p.name.toLowerCase().includes(q)) ||
+                        (p.display_name && p.display_name.toLowerCase().includes(q)) ||
+                        (p.brand_name && p.brand_name.toLowerCase().includes(q)) ||
+                        (p.brand && p.brand.toLowerCase().includes(q))
+                      );
+                    })
+                    .slice(0, 100)
+                    .map((p) => {
+                      const isSelected = selectedMasterSku === p.sku || selectedMasterSku === p.sku_number;
+                      const brandLabel = p.brand_name || p.brand || "";
+                      return (
+                        <button
+                          key={p.id || p.sku}
+                          type="button"
+                          onClick={() => setSelectedMasterSku(p.sku || p.sku_number)}
+                          className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 transition-colors cursor-pointer ${
+                            isSelected
+                              ? "bg-blue-50/80 text-[#0B57D0]"
+                              : "hover:bg-slate-50 text-zinc-800"
+                          }`}
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono font-semibold text-xs text-zinc-900">{p.sku || p.sku_number}</span>
+                              {brandLabel && (
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-medium">
+                                  {brandLabel}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-xs text-zinc-600 truncate mt-0.5">{p.display_name || p.name}</span>
+                          </div>
+                          {isSelected && <Check size={14} className="text-[#0B57D0] shrink-0" />}
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+
+              {/* Checkbox Option: Apply to all matching rows */}
+              {(() => {
+                const targetDesc = assignProductTarget.product_name || assignProductTarget.product_sku || "";
+                const matchingCount = records.filter(r => 
+                  (targetDesc && (r.product_name === targetDesc || r.product_sku === targetDesc)) ||
+                  (assignProductTarget.product_sku && r.product_sku === assignProductTarget.product_sku)
+                ).length;
+
+                return (
+                  <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-blue-50/50 border border-blue-100 cursor-pointer text-zinc-700">
+                    <input
+                      type="checkbox"
+                      checked={applyProductToAllMatchingRows}
+                      onChange={(e) => setApplyProductToAllMatchingRows(e.target.checked)}
+                      className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 mt-0.5"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-xs font-semibold text-zinc-800">
+                        Also assign to all matching records in {formatPeriodLabel(currentPeriod)} ({matchingCount} record{matchingCount === 1 ? '' : 's'})
+                      </span>
+                      <span className="text-[11px] text-zinc-500 leading-tight mt-0.5">
+                        Applies this master SKU and brand to all line items with description "{targetDesc}".
+                      </span>
+                    </div>
+                  </label>
+                );
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAssignProductModal(false);
+                  setAssignProductTarget(null);
+                }}
+                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={savingAssignProduct || !selectedMasterSku}
+                onClick={handleSaveAssignProduct}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+              >
+                {savingAssignProduct ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                <span>Assign Master Product</span>
               </button>
             </div>
           </div>
