@@ -23,7 +23,8 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  AlertCircle
+  AlertCircle,
+  Printer
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -128,6 +129,29 @@ function CustomSelect({
   );
 }
 
+const YEAR_OPTIONS = [
+  { label: "2024", value: "2024" },
+  { label: "2025", value: "2025" },
+  { label: "2026", value: "2026" },
+  { label: "2027", value: "2027" },
+  { label: "2028", value: "2028" },
+];
+
+const MONTH_OPTIONS = [
+  { label: "01 - January", value: 1, short: "Jan" },
+  { label: "02 - February", value: 2, short: "Feb" },
+  { label: "03 - March", value: 3, short: "Mar" },
+  { label: "04 - April", value: 4, short: "Apr" },
+  { label: "05 - May", value: 5, short: "May" },
+  { label: "06 - June", value: 6, short: "Jun" },
+  { label: "07 - July", value: 7, short: "Jul" },
+  { label: "08 - August", value: 8, short: "Aug" },
+  { label: "09 - September", value: 9, short: "Sep" },
+  { label: "10 - October", value: 10, short: "Oct" },
+  { label: "11 - November", value: 11, short: "Nov" },
+  { label: "12 - December", value: 12, short: "Dec" },
+];
+
 interface SellInModuleProps {
   profile?: any;
 }
@@ -142,8 +166,44 @@ export function SellInModule({ profile }: SellInModuleProps) {
     return `${y}-${m}`;
   });
 
-  // TopBar Tab Switcher State: "sellin" | "buyers"
-  const [activeMainTab, setActiveMainTab] = React.useState<"sellin" | "buyers">("sellin");
+  // TopBar Tab Switcher State: "sellin" | "buyers" | "reports"
+  const [activeMainTab, setActiveMainTab] = React.useState<"sellin" | "buyers" | "reports">("sellin");
+
+  // Print Reports State
+  const [reportSelectedYear, setReportSelectedYear] = React.useState<number>(() => {
+    const parts = (currentPeriod || "2026-08").split("-");
+    return parseInt(parts[0], 10) || 2026;
+  });
+  const [reportSelectedMonth, setReportSelectedMonth] = React.useState<number>(() => {
+    const parts = (currentPeriod || "2026-08").split("-");
+    return parseInt(parts[1], 10) || 8;
+  });
+  const [reportDurationMonths, setReportDurationMonths] = React.useState<number>(3); // 3, 6, 12
+  const [reportBrandFilter, setReportBrandFilter] = React.useState<string>("all");
+  const [generatingPdf, setGeneratingPdf] = React.useState<boolean>(false);
+  const [exportingExcel, setExportingExcel] = React.useState<boolean>(false);
+
+  const reportAsOfPeriod = React.useMemo(() => {
+    return `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
+  }, [reportSelectedYear, reportSelectedMonth]);
+
+  const calculatedReportPeriods = React.useMemo(() => {
+    const list: { period: string; label: string; year: number; month: number }[] = [];
+    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    for (let i = reportDurationMonths - 1; i >= 0; i--) {
+      const d = new Date(reportSelectedYear, reportSelectedMonth - 1 - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const p = `${y}-${String(m).padStart(2, "0")}`;
+      list.push({
+        period: p,
+        label: `${monthNames[m - 1]} ${y}`,
+        year: y,
+        month: m
+      });
+    }
+    return list;
+  }, [reportSelectedYear, reportSelectedMonth, reportDurationMonths]);
 
   // Data States
   const [loading, setLoading] = React.useState<boolean>(false);
@@ -185,6 +245,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [savingInvoices, setSavingInvoices] = React.useState<boolean>(false);
   const [selectedInvoiceBreakdownRow, setSelectedInvoiceBreakdownRow] = React.useState<any | null>(null);
   const [activeAssignBuyerInvoiceIndex, setActiveAssignBuyerInvoiceIndex] = React.useState<number | null>(null);
+
+  // Credit Notes PDF Parsing & Import States
+  const [parsingCreditNotes, setParsingCreditNotes] = React.useState<boolean>(false);
+  const [parsingCnStatusText, setParsingCnStatusText] = React.useState<string>("");
+  const [parsedCreditNotes, setParsedCreditNotes] = React.useState<any[]>([]);
+  const [showCreditNotePreviewModal, setShowCreditNotePreviewModal] = React.useState<boolean>(false);
+  const [uploadedCnPdfUrl, setUploadedCnPdfUrl] = React.useState<string>("");
+  const [uploadedCnPdfName, setUploadedCnPdfName] = React.useState<string>("");
+  const [detectedCnPeriod, setDetectedCnPeriod] = React.useState<string>("");
+  const [savingCreditNotes, setSavingCreditNotes] = React.useState<boolean>(false);
+  const [activeAssignBuyerCnIndex, setActiveAssignBuyerCnIndex] = React.useState<number | null>(null);
 
   const [showAddBuyerModal, setShowAddBuyerModal] = React.useState<boolean>(false);
   const [newBuyerCode, setNewBuyerCode] = React.useState<string>("");
@@ -285,6 +356,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
           tabs: [
             { id: "sellin", label: "Sell-In Demand" },
             { id: "buyers", label: "Buyers & Channels" },
+            { id: "reports", label: "Print Report" },
           ],
           activeTabId: activeMainTab,
         },
@@ -299,8 +371,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
   React.useEffect(() => {
     const handleSelectTab = (e: Event) => {
       const customEvent = e as CustomEvent<string>;
-      if (customEvent.detail === "sellin" || customEvent.detail === "buyers") {
-        setActiveMainTab(customEvent.detail as "sellin" | "buyers");
+      if (customEvent.detail === "sellin" || customEvent.detail === "buyers" || customEvent.detail === "reports") {
+        setActiveMainTab(customEvent.detail as "sellin" | "buyers" | "reports");
       }
     };
     window.addEventListener("topbar-select-tab", handleSelectTab);
@@ -570,6 +642,158 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   };
 
+  // Upload and parse Credit Notes (PDF / Image) with Gemini AI
+  const handleCreditNotePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setParsingCreditNotes(true);
+    setParsingCnStatusText("Uploading credit note files to secure storage...");
+
+    try {
+      const allExtractedCns: any[] = [];
+      let latestFileUrl = "";
+      let latestFileName = "";
+      let detectedPeriodStr = "";
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setParsingCnStatusText(`Analyzing credit note ${i + 1} of ${files.length} (${file.name}) with AI...`);
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("period", currentPeriod);
+
+        const res = await fetch(`${API_BASE}/api/sellin/parse-creditnote-pdf`, {
+          method: "POST",
+          body: formData
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Failed to parse ${file.name}`);
+        }
+
+        const data = await res.json();
+        if (data.success && Array.isArray(data.credit_notes)) {
+          allExtractedCns.push(...data.credit_notes);
+          latestFileUrl = data.file_url || latestFileUrl;
+          latestFileName = data.file_name || latestFileName;
+          if (data.suggested_period && !detectedPeriodStr) {
+            detectedPeriodStr = data.suggested_period;
+          }
+        }
+      }
+
+      if (allExtractedCns.length === 0) {
+        showToast("No credit notes or returned goods could be detected in the provided file(s).", "error");
+        return;
+      }
+
+      setParsedCreditNotes(allExtractedCns);
+      setUploadedCnPdfUrl(latestFileUrl);
+      setUploadedCnPdfName(latestFileName);
+      setDetectedCnPeriod(detectedPeriodStr || currentPeriod);
+      setShowCreditNotePreviewModal(true);
+      showToast(`Detected ${allExtractedCns.length} credit note(s) with AI! Review return items below.`, "success");
+    } catch (err: any) {
+      console.error("Credit Note upload error:", err);
+      showToast(err.message || "Failed to process credit notes", "error");
+    } finally {
+      setParsingCreditNotes(false);
+      setParsingCnStatusText("");
+      e.target.value = "";
+    }
+  };
+
+  // Assign SKU to a specific item in the Credit Note preview modal
+  const handleAssignSkuInCnPreview = (cnIdx: number, itemIdx: number, newSku: string) => {
+    setParsedCreditNotes((prev) => {
+      const updated = [...prev];
+      const targetCn = { ...updated[cnIdx] };
+      const items = [...targetCn.items];
+      const targetItem = { ...items[itemIdx] };
+
+      targetItem.product_sku = newSku;
+      if (newSku) {
+        const prod = productsList.find((p) => p.sku === newSku || p.sku_number === newSku);
+        if (prod) {
+          targetItem.product_name = prod.display_name || targetItem.description;
+          targetItem.brand = prod.brands_id || prod.brand_name || "Unassigned Brand";
+        }
+        targetItem.validation_status = targetCn.buyer_code ? "valid" : "unmapped_sku";
+      } else {
+        targetItem.validation_status = "unmapped_sku";
+      }
+
+      items[itemIdx] = targetItem;
+      targetCn.items = items;
+      updated[cnIdx] = targetCn;
+      return updated;
+    });
+  };
+
+  // Assign existing Buyer to credit note in the preview modal
+  const handleAssignBuyerInCnPreview = (cnIdx: number, buyer: any) => {
+    setParsedCreditNotes((prev) => {
+      const updated = [...prev];
+      const targetCn = { ...updated[cnIdx] };
+      targetCn.buyer_code = buyer.buyer_code;
+      targetCn.buyer_name = buyer.buyer_name;
+      targetCn.channel = buyer.channel || "Retailer";
+      targetCn.is_unregistered = false;
+
+      targetCn.items = targetCn.items.map((it: any) => ({
+        ...it,
+        validation_status: it.product_sku ? "valid" : "unmapped_sku"
+      }));
+
+      updated[cnIdx] = targetCn;
+      return updated;
+    });
+    setActiveAssignBuyerCnIndex(null);
+    showToast(`Assigned buyer [${buyer.buyer_code}] ${buyer.buyer_name} to credit note ${parsedCreditNotes[cnIdx]?.cn_no}`, "success");
+  };
+
+  // Save parsed Credit Notes to database
+  const handleSaveCreditNotes = async () => {
+    if (parsedCreditNotes.length === 0) return;
+    setSavingCreditNotes(true);
+    try {
+      const savePeriod = detectedCnPeriod || currentPeriod;
+      const res = await fetch(`${API_BASE}/api/sellin/save-credit-notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: savePeriod,
+          source_file_name: uploadedCnPdfName || "credit_note.pdf",
+          source_file_url: uploadedCnPdfUrl || "",
+          credit_notes: parsedCreditNotes
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`Successfully ingested ${data.count} return item(s) from ${parsedCreditNotes.length} credit note(s)!`, "success");
+        setShowCreditNotePreviewModal(false);
+        setParsedCreditNotes([]);
+        setUploadedCnPdfUrl("");
+        setUploadedCnPdfName("");
+        if (savePeriod !== currentPeriod) {
+          setCurrentPeriod(savePeriod);
+        } else {
+          fetchBatchDetails(currentPeriod, true);
+        }
+      } else {
+        showToast(data.error || "Failed to save credit notes", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Failed to save credit notes", "error");
+    } finally {
+      setSavingCreditNotes(false);
+    }
+  };
+
   // 1-Click Register Buyer
   const handleQuickRegisterBuyer = async (
     code: string, 
@@ -763,6 +987,275 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   };
 
+  // Generate & Open Brand Sales Report PDF in New Tab (Blob URL, Landscape)
+  const handleGenerateReportPdf = async () => {
+    if (generatingPdf) return;
+    setGeneratingPdf(true);
+
+    // Open a blank new tab immediately on user click to avoid popup blocker
+    const newTab = typeof window !== "undefined" ? window.open("", "_blank") : null;
+    if (newTab) {
+      newTab.document.title = "Generating Sales Report PDF...";
+      newTab.document.body.innerHTML = `
+        <div style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: #334155;">
+          <div style="width: 32px; height: 32px; border: 3px solid #cbd5e1; border-top-color: #0B57D0; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+          <p style="margin-top: 16px; font-size: 14px; font-weight: 500;">Compiling Landscape Sales Report PDF...</p>
+          <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+        </div>
+      `;
+    }
+
+    try {
+      const endPeriod = `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
+      const res = await fetch(
+        `${API_BASE}/api/sellin/report-by-brands?end_period=${encodeURIComponent(endPeriod)}&months=${reportDurationMonths}&brand=${encodeURIComponent(reportBrandFilter)}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        if (newTab) newTab.close();
+        showToast(data.error || "Failed to load report data", "error");
+        return;
+      }
+
+      if (!data.brands || data.brands.length === 0) {
+        if (newTab) newTab.close();
+        showToast("No sales records found for this period range", "error");
+        return;
+      }
+
+      const { jsPDF } = await import("jspdf");
+      const autoTable = (await import("jspdf-autotable")).default;
+
+      const doc = new jsPDF({
+        orientation: "landscape",
+        unit: "mm",
+        format: "a4"
+      });
+
+      const periods = data.period_columns || [];
+      const yearText = String(data.year || reportSelectedYear);
+
+      data.brands.forEach((brand: any, bIdx: number) => {
+        if (bIdx > 0) {
+          doc.addPage("a4", "landscape");
+        }
+
+        // Brand Header (matching template bold title)
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(13);
+        doc.setTextColor(24, 24, 27);
+        doc.text(brand.brand_name.toUpperCase(), 14, 15);
+
+        // Header Row 1 & Row 2
+        const headRow1: any[] = [
+          { content: "CHANNEL", rowSpan: 2, styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold" } },
+          { content: "BUYERS", rowSpan: 2, styles: { halign: "left", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold" } },
+          { content: "TOTAL STORE\nCARRY BRANDS", rowSpan: 2, styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold" } },
+          { content: yearText, colSpan: periods.length * 2, styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold" } }
+        ];
+
+        const headRow2: any[] = periods.map((p: any) => ({
+          content: p.label,
+          colSpan: 2,
+          styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold", fontSize: 7.5 }
+        }));
+
+        // Group buyers by channel for clean rowSpan merging
+        const channelGroups = new Map<string, any[]>();
+        (brand.buyers || []).forEach((b: any) => {
+          const ch = (b.channel || "Retailer").trim();
+          if (!channelGroups.has(ch)) channelGroups.set(ch, []);
+          channelGroups.get(ch)!.push(b);
+        });
+
+        const bodyRows: any[] = [];
+        channelGroups.forEach((buyersInCh, chName) => {
+          buyersInCh.forEach((b: any, bSubIdx: number) => {
+            const row: any[] = [];
+            if (bSubIdx === 0) {
+              row.push({
+                content: chName,
+                rowSpan: buyersInCh.length,
+                styles: { valign: "middle", halign: "center", fontStyle: "bold", fillColor: [255, 255, 255] }
+              });
+            }
+            row.push({ content: b.buyer_name, styles: { halign: "left" } });
+            row.push({ content: String(b.total_store || 1), styles: { halign: "center" } });
+
+            periods.forEach((p: any) => {
+              const m = b.monthly_data?.[p.period] || { qty: 0, amount: 0 };
+              row.push({
+                content: m.qty > 0 ? m.qty.toLocaleString() : "-",
+                styles: { halign: "right" }
+              });
+              row.push({
+                content: m.amount > 0 ? `$ ${m.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$ 0.00",
+                styles: { halign: "right" }
+              });
+            });
+
+            bodyRows.push(row);
+          });
+        });
+
+        // Summary Total Row: TOTAL SALE PCS / AMOUNT
+        const totRow: any[] = [
+          { content: "TOTAL SALE PCS / AMOUNT", colSpan: 3, styles: { fontStyle: "bold", halign: "left", fillColor: [245, 247, 250] } }
+        ];
+        periods.forEach((p: any) => {
+          const tot = brand.totals_by_period?.[p.period] || { qty: 0, amount: 0 };
+          totRow.push({
+            content: tot.qty > 0 ? tot.qty.toLocaleString() : "-",
+            styles: { fontStyle: "bold", halign: "right", fillColor: [245, 247, 250] }
+          });
+          totRow.push({
+            content: tot.amount > 0 ? `$ ${tot.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$ 0.00",
+            styles: { fontStyle: "bold", halign: "right", fillColor: [245, 247, 250] }
+          });
+        });
+        bodyRows.push(totRow);
+
+        autoTable(doc, {
+          startY: 19,
+          head: [headRow1, headRow2],
+          body: bodyRows,
+          theme: "grid",
+          styles: {
+            font: "helvetica",
+            fontSize: 7.5,
+            cellPadding: 2,
+            lineColor: [180, 185, 195],
+            lineWidth: 0.2,
+            textColor: [30, 41, 59]
+          },
+          headStyles: {
+            fillColor: [248, 250, 252],
+            textColor: [15, 23, 42],
+            fontStyle: "bold"
+          },
+          margin: { left: 14, right: 14 }
+        });
+
+        // YTD summary below table (matching img1 layout)
+        const finalY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 6 : 160;
+        doc.setFontSize(8.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 41, 59);
+
+        doc.text("YTD", 14, finalY);
+        doc.setFont("helvetica", "normal");
+        doc.text(`${brand.ytd_days || data.ytd_days || 0} DAY`, 50, finalY);
+
+        doc.setFont("helvetica", "bold");
+        doc.text("TOTAL SALE TY", 14, finalY + 4.5);
+        doc.setFont("helvetica", "normal");
+        doc.text(`$ ${(brand.ytd_total_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 50, finalY + 4.5);
+
+        doc.setFont("helvetica", "bold");
+        doc.text("TOTAL QTY TY", 14, finalY + 9);
+        doc.setFont("helvetica", "normal");
+        doc.text(`${(brand.ytd_total_qty || 0).toLocaleString()}`, 50, finalY + 9);
+      });
+
+      const pdfBlob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(pdfBlob);
+
+      if (newTab) {
+        newTab.location.href = blobUrl;
+      } else {
+        window.open(blobUrl, "_blank");
+      }
+
+      showToast("Sales Report PDF opened in new tab", "success");
+    } catch (err: any) {
+      console.error("PDF generation failed:", err);
+      if (newTab) newTab.close();
+      showToast("Failed to compile PDF: " + err.message, "error");
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
+  // Export Brand Sales Report to Excel matching img1 format
+  const handleExportBrandReportExcel = async () => {
+    if (exportingExcel) return;
+    setExportingExcel(true);
+    try {
+      const endPeriod = `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
+      const res = await fetch(
+        `${API_BASE}/api/sellin/report-by-brands?end_period=${encodeURIComponent(endPeriod)}&months=${reportDurationMonths}&brand=${encodeURIComponent(reportBrandFilter)}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.brands || data.brands.length === 0) {
+        showToast("No report data available to export for this period", "error");
+        return;
+      }
+
+      const rows: any[] = [];
+      const periods = data.period_columns || [];
+
+      data.brands.forEach((brand: any) => {
+        // 1. Brand Section Header (Bold, uppercase)
+        rows.push([brand.brand_name.toUpperCase()]);
+
+        // 2. Table Header Row 1: CHANNEL, BUYERS, TOTAL STORE CARRY BRANDS, Year spanning all months
+        const row1: any[] = ["CHANNEL", "BUYERS", "TOTAL STORE CARRY BRANDS"];
+        row1.push(data.year || reportSelectedYear);
+        rows.push(row1);
+
+        // 3. Table Header Row 2: Month Names spanning Qty & Amount
+        const row2: any[] = ["", "", ""];
+        periods.forEach((p: any) => {
+          row2.push(p.label);
+          row2.push("");
+        });
+        rows.push(row2);
+
+        // 4. Data Rows for each buyer
+        brand.buyers.forEach((b: any) => {
+          const bRow: any[] = [b.channel || "Retailer", b.buyer_name, b.total_store || 1];
+          periods.forEach((p: any) => {
+            const m = b.monthly_data?.[p.period] || { qty: 0, amount: 0 };
+            bRow.push(m.qty || 0);
+            bRow.push(m.amount || 0);
+          });
+          rows.push(bRow);
+        });
+
+        // 5. Total Row: TOTAL SALE PCS / AMOUNT
+        const totRow: any[] = ["TOTAL SALE PCS / AMOUNT", "", ""];
+        periods.forEach((p: any) => {
+          const tot = brand.totals_by_period?.[p.period] || { qty: 0, amount: 0 };
+          totRow.push(tot.qty || 0);
+          totRow.push(tot.amount || 0);
+        });
+        rows.push(totRow);
+
+        // 6. Blank separator
+        rows.push([]);
+
+        // 7. YTD Rows (matching img1)
+        rows.push(["YTD", `${brand.ytd_days || data.ytd_days || 0} DAY`]);
+        rows.push(["TOTAL SALE TY", brand.ytd_total_amount || 0]);
+        rows.push(["TOTAL QTY TY", brand.ytd_total_qty || 0]);
+
+        // Blank spacing before next brand
+        rows.push([]);
+        rows.push([]);
+      });
+
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Sales_By_Brand");
+      XLSX.writeFile(wb, `Sale_Report_By_Brands_${reportDurationMonths}M_${endPeriod}.xlsx`);
+      showToast(`Exported Sales Report by Brands for ${endPeriod}!`, "success");
+    } catch (e: any) {
+      showToast("Excel export error: " + e.message, "error");
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   // Assign Sales Channel to Record(s)
   const handleSaveAssignChannel = async () => {
     if (!assignChannelTarget || !selectedAssignChannel) {
@@ -808,7 +1301,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
     const exportRows = records.map((r, idx) => ({
       "No": idx + 1,
-      "Source": r.source_type?.toUpperCase() || "INVOICE",
+      "Source": (() => {
+        const isCnOnly = r.source_type === "pdf_credit_note";
+        const hasInv = !isCnOnly && (Number(r.quantity || 0) > 0 || Number(r.total_demand || 0) > 0 || !!r.source_file_url);
+        const hasCn = (Array.isArray(r.credit_notes) && r.credit_notes.length > 0) || Number(r.cn_quantity || 0) > 0 || isCnOnly;
+        if (hasInv && hasCn) return "INVOICE + CN";
+        if (hasCn) return "CREDIT NOTE";
+        return r.source_type?.toUpperCase() || "INVOICE";
+      })(),
       "Buyer Code": r.buyer_code,
       "Buyer Name": r.buyer_name,
       "Channel": r.channel || "Retailer",
@@ -1177,7 +1677,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </div>
             </div>
           </>
-        ) : (
+        ) : activeMainTab === "buyers" ? (
           <>
             <div>
               <h1 className="text-base font-semibold text-zinc-900">Buyers & Channels Directory</h1>
@@ -1272,6 +1772,36 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <Plus size={13} />
                 <span>Add Buyer</span>
               </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <h1 className="text-base font-semibold text-zinc-900">Print Reports</h1>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                Generate and print landscape executive reports and multi-month sales summaries.
+              </p>
+            </div>
+
+            {/* Year & Month End Selector in Header Bar */}
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="text-xs font-semibold text-zinc-600">Month End:</span>
+              <div className="flex items-center gap-1.5">
+                <CustomSelect
+                  value={String(reportSelectedYear)}
+                  onChange={(val) => setReportSelectedYear(Number(val))}
+                  options={YEAR_OPTIONS}
+                  className="w-24 text-xs"
+                  minWidth="min-w-[85px]"
+                />
+                <CustomSelect
+                  value={String(reportSelectedMonth)}
+                  onChange={(val) => setReportSelectedMonth(Number(val))}
+                  options={MONTH_OPTIONS.map((m) => ({ label: m.label, value: String(m.value) }))}
+                  className="w-38 text-xs"
+                  minWidth="min-w-[135px]"
+                />
+              </div>
             </div>
           </>
         )}
@@ -1405,20 +1935,20 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 />
               </label>
 
-              {/* Uploaded Invoices Document Download Button if present */}
-              {batchData?.source_file_url && (
-                <a
-                  href={batchData.source_file_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="h-8 px-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
-                  title={`View uploaded invoice document: ${batchData.source_file_name || 'Invoice Document'}`}
-                >
-                  <FileText size={13} className="text-emerald-700 shrink-0" />
-                  <span className="truncate max-w-[130px]">{batchData.source_file_name || "Invoice Document"}</span>
-                  <ExternalLink size={11} className="text-emerald-600 opacity-80 shrink-0" />
-                </a>
-              )}
+              {/* Import Credit Notes PDF Button */}
+              <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
+                {parsingCreditNotes ? <RefreshCw size={13} className="animate-spin text-[#0B57D0]" /> : <FileText size={13} className="text-[#0B57D0]" />}
+                <span>{parsingCreditNotes ? "Parsing CN..." : "Import Credit Notes (PDF)"}</span>
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg"
+                  multiple
+                  disabled={parsingCreditNotes}
+                  onChange={handleCreditNotePdfUpload}
+                  className="hidden"
+                />
+              </label>
+
 
               {/* Export Excel Button */}
               <button
@@ -1508,22 +2038,78 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                         {/* Source */}
                         <td className="py-2 px-3">
-                          {r.source_file_url ? (
-                            <a
-                              href={r.source_file_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[#0B57D0] hover:underline inline-flex items-center gap-1 text-[10.5px] font-mono group"
-                              title={`View source invoice: ${r.source_file_name || 'Invoice'}`}
-                            >
-                              <FileText size={11} className="shrink-0 text-blue-600 group-hover:scale-110 transition-transform" />
-                              <span className="truncate max-w-[85px]">{r.source_file_name || "INVOICE"}</span>
-                            </a>
-                          ) : (
-                            <span className="text-[10.5px] font-mono text-zinc-500">
-                              {r.source_type?.toUpperCase() || "INVOICE"}
-                            </span>
-                          )}
+                          {(() => {
+                            const isCnOnly = r.source_type === "pdf_credit_note";
+                            const hasInvoices = !isCnOnly && (!!r.source_file_url || (Array.isArray(r.invoices) && r.invoices.length > 0));
+                            const invoiceUrl = !isCnOnly ? r.source_file_url : (r.invoices?.[0]?.source_file_url || "");
+                            
+                            const hasCns = (Array.isArray(r.credit_notes) && r.credit_notes.length > 0) || isCnOnly;
+                            const cnUrl = r.credit_notes?.find((c: any) => c.source_file_url)?.source_file_url || (isCnOnly ? r.source_file_url : "");
+
+                            if (hasInvoices && hasCns && invoiceUrl && cnUrl) {
+                              return (
+                                <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                  <a
+                                    href={invoiceUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-[#0B57D0] hover:bg-blue-100 text-[10.5px] font-mono font-medium transition-colors"
+                                    title={`View Invoice: ${r.source_file_name || 'Invoice'}`}
+                                  >
+                                    <FileText size={10} className="text-[#0B57D0]" />
+                                    <span>INV</span>
+                                  </a>
+                                  <span className="text-zinc-300">•</span>
+                                  <a
+                                    href={cnUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-zinc-700 hover:bg-slate-200 text-[10.5px] font-mono font-medium transition-colors"
+                                    title="View Credit Note"
+                                  >
+                                    <FileText size={10} className="text-zinc-500" />
+                                    <span>CN</span>
+                                  </a>
+                                </div>
+                              );
+                            }
+
+                            if (hasCns && cnUrl) {
+                              return (
+                                <a
+                                  href={cnUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-zinc-700 hover:bg-slate-200 text-[10.5px] font-mono font-medium transition-colors"
+                                  title={`View Credit Note: ${r.source_file_name || 'Credit Note'}`}
+                                >
+                                  <FileText size={10} className="text-zinc-500" />
+                                  <span className="truncate max-w-[85px]">{r.source_file_name || "CN"}</span>
+                                </a>
+                              );
+                            }
+
+                            if (hasInvoices && invoiceUrl) {
+                              return (
+                                <a
+                                  href={invoiceUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[#0B57D0] hover:underline inline-flex items-center gap-1 text-[10.5px] font-mono group"
+                                  title={`View source invoice: ${r.source_file_name || 'Invoice'}`}
+                                >
+                                  <FileText size={11} className="shrink-0 text-blue-600 group-hover:scale-110 transition-transform" />
+                                  <span className="truncate max-w-[85px]">{r.source_file_name || "INVOICE"}</span>
+                                </a>
+                              );
+                            }
+
+                            return (
+                              <span className="text-[10.5px] font-mono text-zinc-500">
+                                {r.source_type?.toUpperCase() || "INVOICE"}
+                              </span>
+                            );
+                          })()}
                         </td>
 
                         {/* Buyer Code & Name */}
@@ -1887,7 +2473,147 @@ export function SellInModule({ profile }: SellInModuleProps) {
       )}
 
       {/* ========================================================================= */}
-      {/* 4. MODALS & POPUPS                                                        */}
+      {/* 4. TAB 3: PRINT REPORTS VIEW                                              */}
+      {/* ========================================================================= */}
+      {activeMainTab === "reports" && (
+        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto p-5 bg-[#F8F9FA]">
+          <div className="max-w-5xl mx-auto w-full space-y-6">
+            <div>
+              <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider">Available Reports</h2>
+              <p className="text-xs text-zinc-500 mt-0.5">Select a report below to configure timeframes and generate printable landscape documents.</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl">
+              {/* Card 1: Sale Report By Brands */}
+              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
+                <div>
+                  {/* Clean Minimal Header */}
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-md bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0B57D0]">
+                        <Printer size={15} />
+                      </div>
+                      <h3 className="text-sm font-bold text-zinc-900">Sale Report By Brands</h3>
+                    </div>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-[#0B57D0] border border-blue-200">
+                      Landscape PDF
+                    </span>
+                  </div>
+
+                  {/* Clean Form Controls (Flat, No Container Over-nesting) */}
+                  <div className="py-3 space-y-3">
+                    {/* Year & Month End Selectors */}
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                          Select Year
+                        </label>
+                        <CustomSelect
+                          value={String(reportSelectedYear)}
+                          onChange={(val) => setReportSelectedYear(Number(val))}
+                          options={YEAR_OPTIONS}
+                          className="w-full text-xs"
+                          minWidth="w-full"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                          Select Month End
+                        </label>
+                        <CustomSelect
+                          value={String(reportSelectedMonth)}
+                          onChange={(val) => setReportSelectedMonth(Number(val))}
+                          options={MONTH_OPTIONS.map((m) => ({ label: m.label, value: String(m.value) }))}
+                          className="w-full text-xs"
+                          minWidth="w-full"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Reporting Duration (Equal Width, Single Text) */}
+                    <div>
+                      <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                        Reporting Duration
+                      </label>
+                      <div className="grid grid-cols-3 gap-2 w-full">
+                        {[
+                          { label: "3 Months", val: 3 },
+                          { label: "6 Months", val: 6 },
+                          { label: "12 Months", val: 12 },
+                        ].map((opt) => (
+                          <button
+                            key={opt.val}
+                            type="button"
+                            onClick={() => setReportDurationMonths(opt.val)}
+                            className={`h-8 w-full rounded-lg text-xs font-medium text-center border transition-all cursor-pointer flex items-center justify-center ${
+                              reportDurationMonths === opt.val
+                                ? "bg-[#0B57D0] text-white border-[#0B57D0] font-semibold shadow-2xs"
+                                : "bg-white text-zinc-700 border-slate-200 hover:bg-slate-50"
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Brand Filter */}
+                    <div>
+                      <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                        Brand Filter
+                      </label>
+                      <CustomSelect
+                        value={reportBrandFilter}
+                        onChange={setReportBrandFilter}
+                        options={[
+                          { label: "All Brands (Separate Tables)", value: "all" },
+                          ...availableBrands.map((b) => ({ label: b, value: b })),
+                        ]}
+                        className="w-full text-xs"
+                        minWidth="w-full"
+                      />
+                    </div>
+
+                    {/* Minimal Date Range Indicator */}
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-zinc-500">
+                      <span>Generated Range:</span>
+                      <span className="font-semibold text-zinc-800 font-mono text-[11px]">
+                        {calculatedReportPeriods[0]?.label} → {calculatedReportPeriods[calculatedReportPeriods.length - 1]?.label} ({reportDurationMonths}M)
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Card Action Buttons */}
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleExportBrandReportExcel()}
+                    disabled={exportingExcel || generatingPdf}
+                    className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                  >
+                    {exportingExcel ? <RefreshCw size={13} className="animate-spin text-emerald-600" /> : <FileSpreadsheet size={13} className="text-emerald-600" />}
+                    <span>{exportingExcel ? "Exporting..." : "Download Excel"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleGenerateReportPdf}
+                    disabled={generatingPdf || exportingExcel}
+                    className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-98 disabled:opacity-50"
+                  >
+                    {generatingPdf ? <RefreshCw size={13} className="animate-spin text-white" /> : <Printer size={13} className="text-white" />}
+                    <span>{generatingPdf ? "Compiling..." : "Print PDF (New Tab)"}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 5. MODALS & POPUPS                                                        */}
       {/* ========================================================================= */}
 
       {/* Modal: Channels Management */}
@@ -2241,13 +2967,260 @@ export function SellInModule({ profile }: SellInModuleProps) {
         </div>
       )}
 
+      {/* Modal: Credit Notes AI Extraction Preview */}
+      {showCreditNotePreviewModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-5xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-base font-semibold text-zinc-950">Credit Notes AI Extraction Review</h2>
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200 font-mono">
+                    {detectedCnPeriod || currentPeriod}
+                  </span>
+                </div>
+                <div className="text-xs text-zinc-500 flex items-center gap-2 mt-0.5">
+                  {uploadedCnPdfName && (
+                    <span className="font-mono text-zinc-700 font-medium bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 truncate max-w-[280px]">
+                      {uploadedCnPdfName}
+                    </span>
+                  )}
+                  <span>• {parsedCreditNotes.length} credit note(s) detected • {parsedCreditNotes.reduce((acc, cn) => acc + (cn.items?.length || 0), 0)} total return line items</span>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowCreditNotePreviewModal(false);
+                  setParsedCreditNotes([]);
+                  setUploadedCnPdfUrl("");
+                  setUploadedCnPdfName("");
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-4 flex-1 overflow-auto flex flex-col gap-4 bg-[#F8F9FA]">
+              {parsedCreditNotes.map((cn, cnIdx) => (
+                <div key={cnIdx} className="bg-white rounded-lg border border-slate-200 shadow-xs overflow-hidden">
+                  {/* Credit Note Header */}
+                  <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-zinc-900 font-mono">
+                        CN No: {cn.cn_no || "(Not specified)"}
+                      </span>
+                      <span className="text-xs text-zinc-500 font-medium">
+                        Date: {cn.cn_date || "—"}
+                      </span>
+                      {cn.page_number && (
+                        <span className="text-[11px] text-zinc-400 font-mono bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                          Page {cn.page_number}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Customer Status & Matching */}
+                    <div className="flex items-center gap-2">
+                      {!cn.is_unregistered && cn.buyer_code ? (
+                        <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px] text-emerald-800">
+                          <Check size={11} className="text-emerald-600" />
+                          <span>Matched: <strong>[{cn.buyer_code}] {cn.buyer_name}</strong> ({cn.channel})</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px] text-amber-800 font-medium">
+                            <AlertTriangle size={11} className="text-amber-600" />
+                            <span>Unregistered: "{cn.customer_name}"</span>
+                          </div>
+
+                          {/* Quick Assign Buyer Button */}
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setActiveAssignBuyerCnIndex(activeAssignBuyerCnIndex === cnIdx ? null : cnIdx)}
+                              className="h-6 px-2 rounded bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-[11px] font-medium flex items-center gap-1 cursor-pointer"
+                            >
+                              <span>Assign Existing</span>
+                              <ChevronDown size={10} />
+                            </button>
+
+                            {activeAssignBuyerCnIndex === cnIdx && (
+                              <div className="absolute right-0 top-7 z-30 w-64 bg-white rounded-lg border border-slate-200 shadow-xl p-2 max-h-48 overflow-y-auto">
+                                <span className="text-[10px] text-zinc-400 font-semibold px-2 py-1 block">SELECT REGISTERED BUYER</span>
+                                {buyersList.map((b) => (
+                                  <button
+                                    key={b.id || b.buyer_code}
+                                    type="button"
+                                    onClick={() => handleAssignBuyerInCnPreview(cnIdx, b)}
+                                    className="w-full text-left px-2 py-1.5 rounded hover:bg-blue-50 text-xs text-zinc-800 flex flex-col cursor-pointer"
+                                  >
+                                    <span className="font-medium truncate">{b.buyer_name}</span>
+                                    <span className="text-[10px] text-zinc-400 font-mono">[{b.buyer_code}] • {b.channel}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Quick Create Buyer Button */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewBuyerName(cn.customer_name);
+                              setNewBuyerCode(cn.customer_name.replace(/[^a-zA-Z0-9]/g, "").substring(0, 10).toUpperCase());
+                              setNewBuyerChannel("Retailer");
+                              setShowAddBuyerModal(true);
+                            }}
+                            className="h-6 px-2 rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-medium flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus size={10} />
+                            <span>Register New</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Items Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50/60 text-zinc-500 font-medium border-b border-slate-200 text-[11px]">
+                          <th className="py-2 px-3 w-10 text-center">#</th>
+                          <th className="py-2 px-3 min-w-[120px]">Code (Credit Note)</th>
+                          <th className="py-2 px-3 min-w-[150px]">SKU Assigned</th>
+                          <th className="py-2 px-3 min-w-[200px]">Description</th>
+                          <th className="py-2 px-3 text-right w-24">Reject Qty</th>
+                          <th className="py-2 px-3 text-right w-24">Unit Price</th>
+                          <th className="py-2 px-3 text-right w-28">CN Amount</th>
+                          <th className="py-2 px-3 text-center w-28">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {cn.items.map((it: any, itemIdx: number) => {
+                          return (
+                            <tr key={itemIdx} className="hover:bg-slate-50/50">
+                              <td className="py-2 px-3 text-center text-zinc-400 font-mono text-[11px]">
+                                {itemIdx + 1}
+                              </td>
+                              <td className="py-2 px-3 font-mono text-zinc-700">
+                                {it.product_code ? (
+                                  <span className="font-semibold text-zinc-800">{it.product_code}</span>
+                                ) : (
+                                  <span className="text-zinc-400 italic text-[11px]">(No Code)</span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3">
+                                {it.product_sku ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono font-semibold text-[#0B57D0]">{it.product_sku}</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAssignSkuInCnPreview(cnIdx, itemIdx, "")}
+                                      className="text-zinc-400 hover:text-red-500 text-[10px] cursor-pointer"
+                                      title="Clear assigned SKU"
+                                    >
+                                      ✕
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1">
+                                    <select
+                                      value=""
+                                      onChange={(e) => handleAssignSkuInCnPreview(cnIdx, itemIdx, e.target.value)}
+                                      className="h-6 px-1.5 border border-slate-300 rounded text-[11px] bg-white text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] cursor-pointer max-w-[130px]"
+                                    >
+                                      <option value="">(Blank SKU)</option>
+                                      {productsList.map((p) => (
+                                        <option key={p.sku} value={p.sku}>
+                                          {p.sku} - {p.display_name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-zinc-800">
+                                <span className="font-medium">{it.description}</span>
+                                {it.product_name && it.product_name !== it.description && (
+                                  <span className="text-[10px] text-zinc-400 block">{it.product_name}</span>
+                                )}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono text-zinc-800 font-semibold">
+                                {it.qty} {it.uom}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono text-zinc-800">
+                                ${Number(it.unit_price || 0).toFixed(2)}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono font-medium text-zinc-900">
+                                -${Number(it.amount || 0).toFixed(2)}
+                              </td>
+                              <td className="py-2 px-3 text-center">
+                                {it.validation_status === "valid" ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    Valid
+                                  </span>
+                                ) : it.validation_status === "unregistered_buyer" ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                    Unreg Buyer
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                                    Unmapped SKU
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="px-5 py-3 bg-white border-t border-slate-200 flex items-center justify-between shrink-0">
+              <div className="text-xs text-zinc-500 font-medium">
+                Reject returns deduct from demand and are strictly excluded from Sales by Brand reports.
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreditNotePreviewModal(false);
+                    setParsedCreditNotes([]);
+                    setUploadedCnPdfUrl("");
+                    setUploadedCnPdfName("");
+                  }}
+                  className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={savingCreditNotes}
+                  onClick={handleSaveCreditNotes}
+                  className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                >
+                  {savingCreditNotes ? <RefreshCw size={13} className="animate-spin text-white" /> : <Check size={13} />}
+                  <span>{savingCreditNotes ? "Ingesting..." : `Confirm & Ingest ${parsedCreditNotes.length} Credit Notes`}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal: Individual Row Invoice Breakdown */}
       {selectedInvoiceBreakdownRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col">
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
               <div>
-                <h2 className="text-sm font-semibold text-zinc-950">Invoice Breakdown</h2>
+                <h2 className="text-sm font-semibold text-zinc-950">Invoice & CN Breakdown</h2>
                 <p className="text-xs text-zinc-500 mt-0.5">
                   {selectedInvoiceBreakdownRow.buyer_name} • {selectedInvoiceBreakdownRow.product_sku || selectedInvoiceBreakdownRow.product_name}
                 </p>
@@ -2261,7 +3234,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </button>
             </div>
 
-            <div className="p-4 overflow-auto max-h-72">
+            <div className="p-4 overflow-auto max-h-80">
+              <div className="text-xs font-semibold text-zinc-700 mb-2">Demand Invoices</div>
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-50 text-zinc-500 font-medium border-b border-slate-200 text-[11px]">
@@ -2285,13 +3259,46 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={5} className="py-4 text-center text-zinc-400 text-xs">
+                      <td colSpan={5} className="py-3 text-center text-zinc-400 text-xs">
                         No invoice breakdown details available.
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
+
+              {Array.isArray(selectedInvoiceBreakdownRow.credit_notes) && selectedInvoiceBreakdownRow.credit_notes.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-slate-200">
+                  <div className="text-xs font-semibold text-zinc-900 mb-2 flex items-center gap-1.5">
+                    <span>Credit Notes / Rejects</span>
+                    <span className="text-[10px] bg-slate-100 text-zinc-700 px-1.5 py-0.5 rounded border border-slate-200 font-mono">
+                      {selectedInvoiceBreakdownRow.credit_notes.length}
+                    </span>
+                  </div>
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 text-zinc-500 font-medium border-b border-slate-200 text-[11px]">
+                        <th className="py-1.5 px-2">CN No</th>
+                        <th className="py-1.5 px-2">Date</th>
+                        <th className="py-1.5 px-2 text-right">Reject Qty</th>
+                        <th className="py-1.5 px-2 text-right">Unit Price</th>
+                        <th className="py-1.5 px-2 text-right">CN Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 font-mono">
+                      {selectedInvoiceBreakdownRow.credit_notes.map((cn: any, idx: number) => (
+                        <tr key={idx}>
+                          <td className="py-2 px-2 text-zinc-900 font-semibold">{cn.cn_no}</td>
+                          <td className="py-2 px-2 text-zinc-600">{cn.cn_date}</td>
+                          <td className="py-2 px-2 text-right text-zinc-800 font-semibold">{cn.qty}</td>
+                          <td className="py-2 px-2 text-right text-zinc-600">${Number(cn.unit_price || 0).toFixed(2)}</td>
+                          <td className="py-2 px-2 text-right text-zinc-900 font-semibold">-${Number(cn.amount || 0).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
 
             <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end">
@@ -2796,6 +3803,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
           </div>
         </div>
       )}
+
 
       {/* Confirmation Dialog */}
       <ConfirmDialog
