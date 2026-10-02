@@ -1,13 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { 
-  Search, RefreshCw, Printer, Download, Eye, FileText, CheckCircle2, 
-  XCircle, AlertCircle, Clock, ExternalLink, Filter, Calendar, 
-  ChevronDown, ChevronUp, Package, Shield, Layers, Camera, X
-} from "lucide-react";
-import { showToast } from "@/lib/toast";
 import { PDFDocument } from "pdf-lib";
+import { showToast } from "@/lib/toast";
 
 const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
@@ -51,6 +46,8 @@ interface Order {
   before_pack_photo?: string;
   transit_at?: number;
   delivered_at?: number;
+  batch_id_packing?: string;
+  batch_id_packed?: string;
 }
 
 interface Shop {
@@ -74,88 +71,189 @@ const formatStatusLabel = (status: string) => {
   }
 };
 
-const getStatusBadgeClass = (status: string) => {
-  const s = (status || "").toUpperCase();
-  if (s === "AWAITING_SHIPMENT") return "bg-amber-50 text-amber-700 border-amber-200";
-  if (s === "AWAITING_COLLECTION") return "bg-blue-50 text-blue-700 border-blue-200";
-  if (s === "IN_TRANSIT" || s === "SHIPPED" || s === "PICK_UP") return "bg-purple-50 text-purple-700 border-purple-200";
-  if (s === "DELIVERED" || s === "COMPLETED") return "bg-emerald-50 text-emerald-700 border-emerald-200";
-  if (s === "CANCELLED") return "bg-red-50 text-red-700 border-red-200";
-  return "bg-zinc-100 text-zinc-700 border-zinc-200";
-};
+const computeOrderSyncStats = (prevOrders: Order[], newOrders: Order[]) => {
+  let newCount = 0;
+  const statusTransitions: Record<string, number> = {};
 
-const triggerBlobDownload = (blob: Blob, filename: string) => {
-  const url = window.URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  window.URL.revokeObjectURL(url);
+  const prevMap = new Map(prevOrders.map(o => [o.id, o]));
+  for (const newOrd of newOrders) {
+    const prevOrd = prevMap.get(newOrd.id);
+    if (!prevOrd) {
+      newCount++;
+    } else {
+      const prevStatus = formatStatusLabel(prevOrd.actual_status);
+      const newStatus = formatStatusLabel(newOrd.actual_status);
+      if (prevStatus !== newStatus) {
+        const transitionKey = `${prevStatus} -> ${newStatus}`;
+        statusTransitions[transitionKey] = (statusTransitions[transitionKey] || 0) + 1;
+      }
+    }
+  }
+
+  const details: string[] = [];
+  if (newCount > 0) {
+    details.push(`• ${newCount} new order${newCount > 1 ? 's' : ''} fetched successfully`);
+  }
+  for (const [transition, count] of Object.entries(statusTransitions)) {
+    const parts = transition.split(" -> ");
+    details.push(`• ${count} order${count > 1 ? 's' : ''} status updated from ${parts[0]} to ${parts[1]} successfully`);
+  }
+
+  return { newCount, details };
 };
 
 export function TiktokOrdersModule({ profile }: { profile?: any }) {
   const [shops, setShops] = React.useState<Shop[]>([]);
   const [orders, setOrders] = React.useState<Order[]>([]);
+  const [terminalName, setTerminalName] = React.useState("PC Office");
+  const [isPrintTerminal, setIsPrintTerminal] = React.useState(false);
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const name = localStorage.getItem("terminal_name");
+      if (name) setTerminalName(name);
+      const isAutoPrint = localStorage.getItem("terminal_auto_print") === "true";
+      setIsPrintTerminal(isAutoPrint);
+    }
+  }, []);
+
+  // Highlight text matching query helper
+  const highlightText = (text: string, highlight: string) => {
+    if (!highlight.trim()) {
+      return text;
+    }
+    const regex = new RegExp(`(${highlight.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <>
+        {parts.map((part, i) => 
+          regex.test(part) ? (
+            <mark key={i} className="bg-yellow-200 text-black font-bold p-0.5 rounded">
+              {part}
+            </mark>
+          ) : (
+            part
+          )
+        )}
+      </>
+    );
+  };
+
   const [isLoading, setIsLoading] = React.useState(true);
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  // Filter & Search states
+  // Filter & Sort State
   const [selectedShopId, setSelectedShopId] = React.useState<string>("all");
   const [selectedTab, setSelectedTab] = React.useState<string>("all");
   const [searchQuery, setSearchQuery] = React.useState("");
+  const [isSearchExpanded, setIsSearchExpanded] = React.useState(false);
   const [sortBy, setSortBy] = React.useState<"newest" | "oldest">("newest");
-  
-  // Date filters (empty by default to show all orders)
+  const [isRefreshHovered, setIsRefreshHovered] = React.useState(false);
+  const [selectedOrderItems, setSelectedOrderItems] = React.useState<Order | null>(null);
+  const [awbLoadingOrderId, setAwbLoadingOrderId] = React.useState<string | null>(null);
+
+  // Bulk AWB selection state
+  const [selectedOrderIds, setSelectedOrderIds] = React.useState<Set<string>>(new Set());
+  const [isBulkPrinting, setIsBulkPrinting] = React.useState(false);
+  const [bulkPrintProgress, setBulkPrintProgress] = React.useState<string>("");
+  const [isBulkDownloading, setIsBulkDownloading] = React.useState(false);
+  const [bulkDownloadProgress, setBulkDownloadProgress] = React.useState<string>("");
+  const [isBulkMarkingPrinted, setIsBulkMarkingPrinted] = React.useState(false);
+
+  // Confirmation popup state
+  const [printConfirmData, setPrintConfirmData] = React.useState<{
+    isOpen: boolean;
+    orderId?: string;
+    shopId?: string;
+    isBulk: boolean;
+    bulkOrderIds?: string[];
+    printedOrderIds?: string[];
+  }>({ isOpen: false, isBulk: false });
+
+  // Pagination & rows per page state
+  const [currentPage, setCurrentPage] = React.useState(1);
+  const [rowsPerPage, setRowsPerPage] = React.useState<number | "custom">(50);
+  const [customRowsInput, setCustomRowsInput] = React.useState("50");
+
+  // Month & Date filters state
+  const [selectedMonth, setSelectedMonth] = React.useState<string>("all");
   const [startDate, setStartDate] = React.useState<string>("");
   const [endDate, setEndDate] = React.useState<string>("");
+  const [isFiltersExpanded, setIsFiltersExpanded] = React.useState(false);
 
-  // Modals & Active selections
-  const [selectedOrderItems, setSelectedOrderItems] = React.useState<Order | null>(null);
-  const [selectedOrderForLogs, setSelectedOrderForLogs] = React.useState<Order | null>(null);
+  // Issues popup state
   const [issuesOrder, setIssuesOrder] = React.useState<Order | null>(null);
   const [newIssueTitle, setNewIssueTitle] = React.useState("");
   const [newIssueNote, setNewIssueNote] = React.useState("");
-  const [awbLoadingOrderId, setAwbLoadingOrderId] = React.useState<string | null>(null);
-  const [selectedProofOrder, setSelectedProofOrder] = React.useState<Order | null>(null);
-  const [zoomImgUrl, setZoomImgUrl] = React.useState<string | null>(null);
 
-  // Bulk operations
-  const [selectedOrderIds, setSelectedOrderIds] = React.useState<Set<string>>(new Set());
-  const [isBulkDownloading, setIsBulkDownloading] = React.useState(false);
-  const [bulkDownloadProgress, setBulkDownloadProgress] = React.useState("");
-  const [isBulkMarkingPrinted, setIsBulkMarkingPrinted] = React.useState(false);
+  // Logs popup state
+  const [selectedOrderForLogs, setSelectedOrderForLogs] = React.useState<Order | null>(null);
 
-  // Pagination
-  const [currentPage, setCurrentPage] = React.useState(1);
-  const pageSize = 50;
+  React.useEffect(() => {
+    setSelectedOrderIds(new Set());
+    setCurrentPage(1);
+  }, [selectedShopId, selectedTab, searchQuery, selectedMonth, startDate, endDate, rowsPerPage, customRowsInput]);
+
+  const ordersRef = React.useRef<Order[]>([]);
+  ordersRef.current = orders;
 
   const fetchOrders = React.useCallback(async (sync = false, silent = false) => {
     try {
-      if (sync && !silent) setIsSyncing(true);
-      else if (!silent) setIsLoading(true);
-      setError(null);
-
-      const syncStartDateParam = sync ? `&sync_start_date=${Date.now() - 15 * 86400000}` : "";
-      const res = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=${sync}${syncStartDateParam}&_t=${Date.now()}`, {
+      if (sync) {
+        setIsSyncing(true);
+      } else if (ordersRef.current.length === 0 && !silent) {
+        setIsLoading(true);
+      }
+      if (!silent) {
+        setError(null);
+      }
+      const activeOnlyParam = silent ? "&active_only=true" : "";
+      const res = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=${sync}${activeOnlyParam}&_t=${Date.now()}`, {
         cache: "no-store"
       });
-      if (!res.ok) throw new Error(`Failed to load orders: ${res.statusText}`);
-      
-      const data = (await res.json()) as any;
+      if (!res.ok) {
+        throw new Error(`Failed to load orders: ${res.statusText}`);
+      }
+      const data = await res.json() as any;
       if (data.success) {
         setShops(data.shops || []);
-        setOrders(data.orders || []);
-        if (sync && !silent) showToast("Orders synchronized with TikTok successfully", "success");
+        if (silent) {
+          const updatedOrders = data.orders || [];
+          const stats = computeOrderSyncStats(ordersRef.current, updatedOrders);
+          if (stats.newCount > 0 || stats.details.length > 0) {
+            setTimeout(() => {
+              window.dispatchEvent(new CustomEvent("tiktok-bg-update", {
+                detail: { count: stats.newCount, details: stats.details }
+              }));
+            }, 0);
+          }
+
+          setOrders(prev => {
+            const prevMap = new Map(prev.map(o => [o.id, o]));
+            updatedOrders.forEach((o: any) => {
+              prevMap.set(o.id, o);
+            });
+            return Array.from(prevMap.values()).sort((a, b) => b.create_time - a.create_time);
+          });
+        } else {
+          setOrders(data.orders || []);
+        }
+        if (sync && !silent) {
+          showToast("Orders refreshed successfully", "success");
+        }
       } else {
-        throw new Error(data.error || "Failed to fetch orders");
+        throw new Error(data.error || "Unknown error occurred");
       }
     } catch (err: any) {
-      if (!silent) {
-        setError(err.message);
-        showToast(err.message || "Failed to fetch orders", "error");
+      if (silent || ordersRef.current.length > 0) {
+        console.warn("Background orders sync failed:", err.message || err);
+        if (!silent) {
+          showToast(`Refresh failed: ${err.message || "Network error"}`, "error");
+        }
+      } else {
+        console.error("Error fetching orders:", err);
+        setError(err.message || "Failed to load orders dashboard data.");
       }
     } finally {
       if (!silent) {
@@ -166,603 +264,1509 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
   }, []);
 
   React.useEffect(() => {
-    // 1. Instant load from cached tiktok_orders in database
     fetchOrders(false);
 
-    // 2. 5-Minute polling from TikTok API (last 15 days only)
     const interval = setInterval(() => {
-      if (document.visibilityState === "visible") {
-        fetchOrders(true, true);
+      if (document.visibilityState === 'visible') {
+        fetchOrders(false, true);
       }
-    }, 5 * 60 * 1000);
+    }, 30000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders(false, true);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [fetchOrders]);
 
   // Global db-refresh listener
   React.useEffect(() => {
-    const handleDbRefresh = () => fetchOrders(true, false);
+    const handleDbRefresh = () => {
+      handleRefreshClick();
+    };
     window.addEventListener("db-refresh", handleDbRefresh);
     return () => window.removeEventListener("db-refresh", handleDbRefresh);
-  }, [fetchOrders]);
+  }, []);
 
-  // Filtered orders computation
-  const filteredOrders = React.useMemo(() => {
-    return orders.filter(order => {
-      // Shop filter
-      if (selectedShopId !== "all" && order.shop_id !== selectedShopId) return false;
-
-      // Tab / Status filter
-      if (selectedTab !== "all") {
-        const actual = (order.actual_status || "").toUpperCase();
-        if (selectedTab === "awaiting_shipment" && actual !== "AWAITING_SHIPMENT") return false;
-        if (selectedTab === "awaiting_collection" && actual !== "AWAITING_COLLECTION") return false;
-        if (selectedTab === "in_transit" && actual !== "IN_TRANSIT" && actual !== "SHIPPED" && actual !== "PICK_UP") return false;
-        if (selectedTab === "delivered" && actual !== "DELIVERED" && actual !== "COMPLETED") return false;
-        if (selectedTab === "cancelled" && actual !== "CANCELLED") return false;
-      }
-
-      // Date range filter
-      if (startDate || endDate) {
-        const orderDate = new Date(order.create_time * 1000).toISOString().split("T")[0];
-        if (startDate && orderDate < startDate) return false;
-        if (endDate && orderDate > endDate) return false;
-      }
-
-      // Search Query filter
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const idMatch = (order.id || "").toLowerCase().includes(q);
-        const trackMatch = (order.tracking_number || "").toLowerCase().includes(q);
-        const nameMatch = (order.recipient_name || "").toLowerCase().includes(q);
-        const itemMatch = (order.items || []).some(
-          it => (it.product_name || "").toLowerCase().includes(q) || (it.sku_name || "").toLowerCase().includes(q) || (it.seller_sku || "").toLowerCase().includes(q)
-        );
-        if (!idMatch && !trackMatch && !nameMatch && !itemMatch) return false;
-      }
-
-      return true;
-    }).sort((a, b) => {
-      if (sortBy === "newest") return b.create_time - a.create_time;
-      return a.create_time - b.create_time;
+  const handleRefreshClick = async () => {
+    if (isLoading || isSyncing) return;
+    window.dispatchEvent(new CustomEvent("tiktok-sync-start", { detail: { manual: true } }));
+    
+    let prevOrdersList: Order[] = [];
+    setOrders(prev => {
+      prevOrdersList = prev;
+      return prev;
     });
-  }, [orders, selectedShopId, selectedTab, startDate, endDate, searchQuery, sortBy]);
 
-  // Tab counts
-  const tabCounts = React.useMemo(() => {
-    const counts = { all: 0, awaiting_shipment: 0, awaiting_collection: 0, in_transit: 0, delivered: 0, cancelled: 0 };
-    orders.forEach(o => {
-      if (selectedShopId !== "all" && o.shop_id !== selectedShopId) return;
-      counts.all++;
-      const s = (o.actual_status || "").toUpperCase();
-      if (s === "AWAITING_SHIPMENT") counts.awaiting_shipment++;
-      else if (s === "AWAITING_COLLECTION") counts.awaiting_collection++;
-      else if (s === "IN_TRANSIT" || s === "SHIPPED" || s === "PICK_UP") counts.in_transit++;
-      else if (s === "DELIVERED" || s === "COMPLETED") counts.delivered++;
-      else if (s === "CANCELLED") counts.cancelled++;
-    });
-    return counts;
-  }, [orders, selectedShopId]);
-
-  // Paged orders
-  const totalPages = Math.max(1, Math.ceil(filteredOrders.length / pageSize));
-  const pagedOrders = React.useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredOrders.slice(start, start + pageSize);
-  }, [filteredOrders, currentPage]);
-
-  // Selection handlers
-  const handleSelectAllOnPage = () => {
-    const next = new Set(selectedOrderIds);
-    const allPageSelected = pagedOrders.every(o => next.has(o.id));
-    if (allPageSelected) {
-      pagedOrders.forEach(o => next.delete(o.id));
-    } else {
-      pagedOrders.forEach(o => next.add(o.id));
-    }
-    setSelectedOrderIds(next);
-  };
-
-  const handleToggleSelectOrder = (id: string) => {
-    const next = new Set(selectedOrderIds);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    setSelectedOrderIds(next);
-  };
-
-  // Toggle Printed status
-  const handleTogglePrinted = async (orderId: string, currentStatus: boolean) => {
     try {
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, is_printed: !currentStatus } : o));
-      const res = await fetch(`${WORKER_URL}/api/tiktok/orders/toggle-printed`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order_id: orderId, is_printed: !currentStatus })
+      setIsSyncing(true);
+      setError(null);
+
+      // 1. Fetch from cache first
+      const resCache = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=false&_t=${Date.now()}`, {
+        cache: "no-store"
       });
-      if (!res.ok) throw new Error("Failed to update printed status");
-      showToast("Printed status updated", "success");
-    } catch (err: any) {
-      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, is_printed: currentStatus } : o));
-      showToast(err.message, "error");
-    }
-  };
-
-  // Mark all selected as printed
-  const handleBulkMarkAsPrinted = async () => {
-    const ids = Array.from(selectedOrderIds);
-    if (ids.length === 0 || isBulkMarkingPrinted) return;
-    setIsBulkMarkingPrinted(true);
-    showToast(`Marking ${ids.length} orders as printed...`, "info");
-    try {
-      for (const id of ids) {
-        await fetch(`${WORKER_URL}/api/tiktok/orders/toggle-printed`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ order_id: id, is_printed: true })
-        });
+      if (resCache.ok) {
+        const dataCache = await resCache.json() as any;
+        if (dataCache.success) {
+          setShops(dataCache.shops || []);
+          setOrders(dataCache.orders || []);
+          prevOrdersList = dataCache.orders || [];
+        }
       }
-      setOrders(prev => prev.map(o => ids.includes(o.id) ? { ...o, is_printed: true } : o));
-      setSelectedOrderIds(new Set());
-      showToast("Selected orders marked as printed", "success");
+
+      // 2. Perform live sync in the background (Quick Sync for the last 15 days only)
+      const fifteenDaysAgo = Date.now() - 15 * 24 * 3600 * 1000;
+      const resSync = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=true&sync_start_date=${fifteenDaysAgo}&_t=${Date.now()}`, {
+        cache: "no-store"
+      });
+      if (!resSync.ok) {
+        throw new Error(`Failed to refresh orders: ${resSync.statusText}`);
+      }
+      const dataSync = await resSync.json() as any;
+      if (dataSync.success) {
+        setShops(dataSync.shops || []);
+        setOrders(dataSync.orders || []);
+        
+        const stats = computeOrderSyncStats(prevOrdersList, dataSync.orders || []);
+        
+        showToast("Orders refreshed successfully", "success");
+        window.dispatchEvent(new CustomEvent("tiktok-sync-end", { 
+          detail: { success: true, count: stats.newCount, details: stats.details, manual: true } 
+        }));
+        window.dispatchEvent(new CustomEvent("tiktok-manual-sync"));
+      } else {
+        throw new Error(dataSync.error || "Unknown error occurred");
+      }
     } catch (err: any) {
-      showToast(err.message, "error");
+      console.error("Refresh error:", err);
+      setError(err.message || "Failed to refresh orders.");
+      window.dispatchEvent(new CustomEvent("tiktok-sync-end", { 
+        detail: { success: false, error: err.message, manual: true } 
+      }));
     } finally {
-      setIsBulkMarkingPrinted(false);
+      setIsSyncing(false);
     }
   };
 
-  // Single AWB Download / Print
-  const handlePrintAWB = async (order: Order) => {
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    showToast(`Copied: ${text}`, "success");
+  };
+
+  const handleCreateAWB = async (orderId: string, shopId: string) => {
+    if (awbLoadingOrderId) return;
+    const order = orders.find(o => o.id === orderId);
+    if (order && order.actual_status && order.actual_status.toUpperCase() === "UNPAID") {
+      showToast("Cannot create AWB for Unpaid orders!", "warning");
+      return;
+    }
+    window.dispatchEvent(new CustomEvent("tiktok-action", { detail: { action: "Create AWB", orderId } }));
     try {
-      setAwbLoadingOrderId(order.id);
-      showToast("Fetching AWB document...", "info");
-      const res = await fetch(`${WORKER_URL}/api/tiktok/orders/single-awb-pdf?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}`);
-      if (!res.ok) throw new Error("Failed to load AWB PDF");
-      const blob = await res.blob();
-      triggerBlobDownload(blob, `AWB_${order.id}.pdf`);
-      setOrders(prev => prev.map(o => o.id === order.id ? { ...o, is_printed: true } : o));
-      showToast("AWB downloaded successfully", "success");
+      setAwbLoadingOrderId(orderId);
+      const res = await fetch(`${WORKER_URL}/api/tiktok/orders/create-awb`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ order_id: orderId, shop_id: shopId, action_by: "Admin" })
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json() as any;
+        throw new Error(errorData.error || `Failed to create AWB: ${res.statusText}`);
+      }
+
+      const data = await res.json() as any;
+      if (data.success) {
+        showToast(`AWB created successfully for order: ${orderId}`, "success");
+        window.dispatchEvent(new CustomEvent("tiktok-action", { detail: { action: "Create AWB Success", orderId } }));
+        if (data.order) {
+          setOrders(prev => prev.map(o => o.id === orderId ? { ...o, ...data.order } : o));
+        } else {
+          await fetchOrders(false);
+        }
+      } else {
+        throw new Error(data.error || "Failed to create AWB");
+      }
     } catch (err: any) {
-      showToast(err.message || "Failed to download AWB", "error");
+      console.error("Create AWB error:", err);
+      showToast(`Error: ${err.message || "Failed to create AWB"}`, "error");
+      window.dispatchEvent(new CustomEvent("tiktok-action", { detail: { action: "Create AWB Failure", orderId, error: err.message } }));
     } finally {
       setAwbLoadingOrderId(null);
     }
   };
 
-  // Bulk AWB Merge & Download
-  const handleBulkDownloadAWB = async () => {
-    const ids = Array.from(selectedOrderIds);
-    if (ids.length === 0 || isBulkDownloading) return;
-
-    setIsBulkDownloading(true);
-    setBulkDownloadProgress(`0 / ${ids.length}`);
+  const handlePrintAWB = async (orderId: string, shopId: string, force = false) => {
+    if (awbLoadingOrderId) return;
+    const order = orders.find(o => o.id === orderId);
+    if (order && order.actual_status && order.actual_status.toUpperCase() === "UNPAID") {
+      showToast("Cannot print AWB for Unpaid orders!", "warning");
+      return;
+    }
+    if (order && order.is_printed && !force) {
+      setPrintConfirmData({
+        isOpen: true,
+        orderId,
+        shopId,
+        isBulk: false
+      });
+      return;
+    }
     try {
-      const mergedPdf = await PDFDocument.create();
-      let successCount = 0;
+      setAwbLoadingOrderId(orderId);
+      const res = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(orderId)}&shop_id=${encodeURIComponent(shopId)}&action_by=${encodeURIComponent(terminalName)}`, {
+        method: "GET"
+      });
 
-      for (let i = 0; i < ids.length; i++) {
-        const id = ids[i];
-        setBulkDownloadProgress(`${i + 1} / ${ids.length}`);
-        const ord = orders.find(o => o.id === id);
-        if (!ord) continue;
+      if (!res.ok) {
+        const errorData = await res.json() as any;
+        throw new Error(errorData.error || `Failed to print AWB: ${res.statusText}`);
+      }
+
+      const data = await res.json() as any;
+      if (data.success && data.doc_url) {
+        showToast("Resizing AWB to A6...", "info");
+        const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(data.doc_url)}`;
+        const pdfRes = await fetch(proxyUrl);
+        if (!pdfRes.ok) {
+          throw new Error(`Failed to download PDF: ${pdfRes.status}`);
+        }
+        const pdfBytes = await pdfRes.arrayBuffer();
+        
+        const singlePdf = await PDFDocument.load(pdfBytes);
+        const pages = singlePdf.getPages();
+        const scalePercentVal = Number(localStorage.getItem("awb_print_scale") || "100");
+        const printScale = scalePercentVal / 100;
+
+        pages.forEach((page) => {
+          const { width, height } = page.getSize();
+          const targetWidth = 283.46;
+          const targetHeight = 425.20;
+
+          const scaleX = targetWidth / width;
+          const scaleY = targetHeight / height;
+          const baseScale = Math.min(scaleX, scaleY);
+          const scale = baseScale * printScale;
+
+          page.scaleContent(scale, scale);
+
+          const dx = 0;
+          const dy = targetHeight - (height * scale);
+          page.translateContent(dx, dy);
+
+          page.setSize(targetWidth, targetHeight);
+        });
+
+        const singlePdfBytes = await singlePdf.save();
+        const blob = new Blob([singlePdfBytes as any], { type: "application/pdf" });
+
+        const now = new Date();
+        const DD = String(now.getDate()).padStart(2, '0');
+        const MM = String(now.getMonth() + 1).padStart(2, '0');
+        const YYYY = now.getFullYear();
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        
+        const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_1.pdf`;
+        
+        try {
+          const pendingFilename = `TiktokAWBPrintPending/${filename}`;
+          const uploadPendingUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
+          await fetch(uploadPendingUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: blob
+          });
+        } catch (uploadErr) {
+          console.error("Failed to upload print-pending AWB to R2:", uploadErr);
+        }
+
+        if (order) {
+          const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
+          const r2Filename = `Tiktok AWB/${cleanShopName}/${order.id}.pdf`;
+          const uploadUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+          
+          fetch(uploadUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: pdfBytes
+          }).catch(uploadErr => {
+            console.error("Failed to upload AWB to R2:", uploadErr);
+          });
+        }
+
+        showToast("AWB printed silently successfully", "success");
+        setOrders(prev => prev.map(o => o.id === orderId ? { ...o, is_printed: true } : o));
+      } else {
+        throw new Error(data.error || "No document URL returned");
+      }
+    } catch (err: any) {
+      console.error("Print AWB error:", err);
+      showToast(`Error: ${err.message || "Failed to print AWB"}`, "error");
+    } finally {
+      setAwbLoadingOrderId(null);
+    }
+  };
+
+  const handleBulkPrint = async (orderIds?: string[]) => {
+    const idsToPrint = orderIds || Array.from(selectedOrderIds);
+    if (idsToPrint.length === 0 || isBulkPrinting) return;
+    setIsBulkPrinting(true);
+    setBulkPrintProgress("Preparing...");
+
+    const docUrls: string[] = [];
+    const failedOrders: string[] = [];
+    const saveFilesInfo: any[] = [];
+
+    try {
+      let count = 0;
+      for (const orderId of idsToPrint) {
+        count++;
+        setBulkPrintProgress(`Fetching ${count}/${idsToPrint.length}...`);
+        const order = orders.find(o => o.id === orderId);
+        if (!order) continue;
+        if (order.actual_status && order.actual_status.toUpperCase() === "UNPAID") {
+          continue;
+        }
 
         try {
-          const res = await fetch(`${WORKER_URL}/api/tiktok/orders/single-awb-pdf?order_id=${encodeURIComponent(ord.id)}&shop_id=${encodeURIComponent(ord.shop_id)}`);
-          if (res.ok) {
-            const pdfBytes = await res.arrayBuffer();
-            const srcPdf = await PDFDocument.load(pdfBytes);
-            const copiedPages = await mergedPdf.copyPages(srcPdf, srcPdf.getPageIndices());
-            copiedPages.forEach(page => mergedPdf.addPage(page));
-            successCount++;
+          const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
+          if (order.is_printed) {
+            const r2Url = `${WORKER_URL}/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
+            docUrls.push(r2Url);
+            saveFilesInfo.push({
+              pdfUrl: r2Url,
+              shopName: order.shop_name || "Unknown Shop",
+              orderId: order.id,
+              createTime: order.create_time,
+              alreadyInR2: true
+            });
+          } else {
+            const res = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
+              method: "GET"
+            });
+
+            if (!res.ok) {
+              const errorData = await res.json() as any;
+              throw new Error(errorData.error || `HTTP error! status: ${res.status}`);
+            }
+
+            const data = await res.json() as any;
+            if (data.success && data.doc_url) {
+              docUrls.push(data.doc_url);
+              saveFilesInfo.push({
+                pdfUrl: data.doc_url,
+                shopName: order.shop_name || "Unknown Shop",
+                orderId: order.id,
+                createTime: order.create_time,
+                alreadyInR2: false
+              });
+            } else {
+              throw new Error(data.error || "No document URL returned");
+            }
           }
-        } catch (e) {
-          console.error(`Failed to fetch AWB for ${id}`, e);
+        } catch (err: any) {
+          console.error(`Error fetching AWB for order ${orderId}:`, err);
+          failedOrders.push(orderId);
         }
       }
 
-      if (successCount === 0) {
-        throw new Error("No AWB documents could be fetched for the selected orders.");
+      if (docUrls.length === 0) {
+        throw new Error("Failed to retrieve AWB URLs for all selected orders.");
       }
 
+      setBulkPrintProgress("Merging PDFs...");
+      const mergedPdf = await PDFDocument.create();
+      let mergedPageCount = 0;
+
+      const scalePercentVal = Number(localStorage.getItem("awb_print_scale") || "100");
+      const printScale = scalePercentVal / 100;
+
+      for (const docUrl of docUrls) {
+        try {
+          const matchedFile = saveFilesInfo.find(file => file.pdfUrl === docUrl);
+          let pdfBytes: ArrayBuffer;
+
+          if (matchedFile && matchedFile.alreadyInR2) {
+            let pdfRes = await fetch(docUrl);
+            if (!pdfRes.ok) {
+              if (pdfRes.status === 404) {
+                const order = orders.find(o => o.id === matchedFile.orderId);
+                if (order) {
+                  const fallbackRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+                  if (fallbackRes.ok) {
+                    const fallbackData = await fallbackRes.json() as any;
+                    if (fallbackData.success && fallbackData.doc_url) {
+                      const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(fallbackData.doc_url)}`;
+                      pdfRes = await fetch(proxyUrl);
+                      if (pdfRes.ok) {
+                        matchedFile.alreadyInR2 = false;
+                        matchedFile.pdfUrl = fallbackData.doc_url;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            if (!pdfRes.ok) {
+              throw new Error(`Failed to download PDF from R2: ${pdfRes.status}`);
+            }
+            pdfBytes = await pdfRes.arrayBuffer();
+          } else {
+            const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(docUrl)}`;
+            const pdfRes = await fetch(proxyUrl);
+            if (!pdfRes.ok) {
+              throw new Error(`Failed to download PDF from proxy: ${pdfRes.status}`);
+            }
+            pdfBytes = await pdfRes.arrayBuffer();
+          }
+          
+          if (matchedFile) {
+            matchedFile.pdfBytes = pdfBytes;
+          }
+
+          const pdf = await PDFDocument.load(pdfBytes);
+          const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+          copiedPages.forEach((page) => {
+            const { width, height } = page.getSize();
+            const targetWidth = 283.46;
+            const targetHeight = 425.20;
+
+            const scaleX = targetWidth / width;
+            const scaleY = targetHeight / height;
+            const baseScale = Math.min(scaleX, scaleY);
+            const scale = baseScale * printScale;
+
+            page.scaleContent(scale, scale);
+
+            const dx = 0;
+            const dy = targetHeight - (height * scale);
+            page.translateContent(dx, dy);
+
+            page.setSize(targetWidth, targetHeight);
+            mergedPdf.addPage(page);
+            mergedPageCount++;
+          });
+        } catch (err) {
+          console.error(`Failed to merge PDF from URL ${docUrl}:`, err);
+        }
+      }
+
+      if (mergedPageCount === 0) {
+        throw new Error("No PDF pages could be successfully merged.");
+      }
+
+      setBulkPrintProgress("Finalizing...");
       const mergedPdfBytes = await mergedPdf.save();
       const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
-      triggerBlobDownload(blob, `Bulk_AWB_${Date.now()}_${successCount}_orders.pdf`);
+
+      const now = new Date();
+      const DD = String(now.getDate()).padStart(2, '0');
+      const MM = String(now.getMonth() + 1).padStart(2, '0');
+      const YYYY = now.getFullYear();
+      const hh = String(now.getHours()).padStart(2, '0');
+      const mm = String(now.getMinutes()).padStart(2, '0');
       
-      // Update local printed status
-      setOrders(prev => prev.map(o => ids.includes(o.id) ? { ...o, is_printed: true } : o));
-      showToast(`Merged ${successCount} AWBs downloaded successfully`, "success");
+      const filename = `AutoPrintAWB_${DD}${MM}${YYYY}_${hh}${mm}_${saveFilesInfo.length}.pdf`;
+      
+      try {
+        const pendingFilename = `TiktokAWBPrintPending/${filename}`;
+        const uploadPendingUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(pendingFilename)}`;
+        await fetch(uploadPendingUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/pdf" },
+          body: blob
+        });
+      } catch (uploadErr) {
+        console.error("Failed to upload print-pending combined AWB to R2:", uploadErr);
+      }
+
+      for (const file of saveFilesInfo) {
+        try {
+          if (file.alreadyInR2) continue;
+
+          let fileData: ArrayBuffer;
+          if (file.pdfBytes) {
+            fileData = file.pdfBytes;
+          } else if (file.pdfUrl) {
+            const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
+            const fileRes = await fetch(proxyUrl);
+            fileData = await fileRes.arrayBuffer();
+          } else {
+            continue;
+          }
+
+          const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
+          const r2Filename = `Tiktok AWB/${cleanShopName}/${file.orderId}.pdf`;
+          const uploadUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+          
+          fetch(uploadUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: fileData
+          }).catch(uploadErr => {
+            console.error(`Failed to upload bulk single AWB to R2: ${r2Filename}`, uploadErr);
+          });
+        } catch (err) {
+          console.error(`Failed to process/upload single AWB for order ${file.orderId} to R2:`, err);
+        }
+      }
+
+      showToast("AWBs combined and printed silently successfully!", "success");
+
+      const printedSet = new Set(idsToPrint.filter(id => !failedOrders.includes(id)));
+      setOrders(prev => prev.map(o => printedSet.has(o.id) ? { ...o, is_printed: true } : o));
+
+      setSelectedOrderIds(new Set());
+
+      if (failedOrders.length > 0) {
+        showToast(`Merged successfully. Failed orders: ${failedOrders.join(", ")}`, "warning");
+      }
     } catch (err: any) {
-      showToast(err.message || "Bulk download failed", "error");
+      console.error("Bulk print error:", err);
+      showToast(`Error: ${err.message || "Failed to merge and print AWBs"}`, "error");
+    } finally {
+      setIsBulkPrinting(false);
+      setBulkPrintProgress("");
+    }
+  };
+
+  const triggerBulkPrint = () => {
+    if (selectedOrderIds.size === 0) return;
+    const selectedIdsArray = Array.from(selectedOrderIds);
+    const printedIds = selectedIdsArray.filter(id => {
+      const order = orders.find(o => o.id === id);
+      return order && order.is_printed;
+    });
+
+    if (printedIds.length > 0) {
+      setPrintConfirmData({
+        isOpen: true,
+        isBulk: true,
+        bulkOrderIds: selectedIdsArray,
+        printedOrderIds: printedIds
+      });
+    } else {
+      handleBulkPrint(selectedIdsArray);
+    }
+  };
+
+  const handleBulkDownload = async () => {
+    const idsToDownload = Array.from(selectedOrderIds);
+    if (idsToDownload.length === 0 || isBulkDownloading) return;
+    setIsBulkDownloading(true);
+    setBulkDownloadProgress("Preparing...");
+
+    const docUrls: string[] = [];
+    const failedOrders: string[] = [];
+    const saveFilesInfo: any[] = [];
+
+    try {
+      let count = 0;
+      for (const orderId of idsToDownload) {
+        count++;
+        setBulkDownloadProgress(`Fetching ${count}/${idsToDownload.length}...`);
+        const order = orders.find(o => o.id === orderId);
+        if (!order) continue;
+        if (order.actual_status && order.actual_status.toUpperCase() === "UNPAID") {
+          continue;
+        }
+
+        try {
+          const cleanShopName = (order.shop_name || "Unknown Shop").replace(/[\\/:*?"<>|]/g, "_").trim();
+          if (order.is_printed) {
+            const r2Url = `${WORKER_URL}/api/files/Tiktok AWB/${encodeURIComponent(cleanShopName)}/${encodeURIComponent(order.id)}.pdf`;
+            docUrls.push(r2Url);
+            saveFilesInfo.push({
+              pdfUrl: r2Url,
+              shopName: order.shop_name || "Unknown Shop",
+              orderId: order.id,
+              createTime: order.create_time,
+              alreadyInR2: true
+            });
+          } else {
+            const res = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`, {
+              method: "GET"
+            });
+
+            if (!res.ok) {
+              const errorData = await res.json() as any;
+              throw new Error(errorData.error || `HTTP error! status: ${res.status}`);
+            }
+
+            const data = await res.json() as any;
+            if (data.success && data.doc_url) {
+              docUrls.push(data.doc_url);
+              saveFilesInfo.push({
+                pdfUrl: data.doc_url,
+                shopName: order.shop_name || "Unknown Shop",
+                orderId: order.id,
+                createTime: order.create_time,
+                alreadyInR2: false
+              });
+            } else {
+              throw new Error(data.error || "No document URL returned");
+            }
+          }
+        } catch (err: any) {
+          console.error(`Error fetching AWB for order ${orderId}:`, err);
+          failedOrders.push(orderId);
+        }
+      }
+
+      if (docUrls.length === 0) {
+        throw new Error("Failed to retrieve AWB URLs for all selected orders.");
+      }
+
+      setBulkDownloadProgress("Merging PDFs...");
+      const mergedPdf = await PDFDocument.create();
+      let mergedPageCount = 0;
+
+      for (const docUrl of docUrls) {
+        try {
+          const matchedFile = saveFilesInfo.find(file => file.pdfUrl === docUrl);
+          let pdfBytes: ArrayBuffer;
+
+          if (matchedFile && matchedFile.alreadyInR2) {
+            let pdfRes = await fetch(docUrl);
+            if (!pdfRes.ok) {
+              if (pdfRes.status === 404) {
+                const order = orders.find(o => o.id === matchedFile.orderId);
+                if (order) {
+                  const fallbackRes = await fetch(`${WORKER_URL}/api/tiktok/orders/print-awb?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id)}&action_by=${encodeURIComponent(terminalName)}`);
+                  if (fallbackRes.ok) {
+                    const fallbackData = await fallbackRes.json() as any;
+                    if (fallbackData.success && fallbackData.doc_url) {
+                      const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(fallbackData.doc_url)}`;
+                      pdfRes = await fetch(proxyUrl);
+                      if (pdfRes.ok) {
+                        matchedFile.alreadyInR2 = false;
+                        matchedFile.pdfUrl = fallbackData.doc_url;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            if (!pdfRes.ok) {
+              throw new Error(`Failed to download PDF from R2: ${pdfRes.status}`);
+            }
+            pdfBytes = await pdfRes.arrayBuffer();
+          } else {
+            const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(docUrl)}`;
+            const pdfRes = await fetch(proxyUrl);
+            if (!pdfRes.ok) {
+              throw new Error(`Failed to download PDF from proxy: ${pdfRes.status}`);
+            }
+            pdfBytes = await pdfRes.arrayBuffer();
+          }
+          
+          if (matchedFile) {
+            matchedFile.pdfBytes = pdfBytes;
+          }
+
+          const pdf = await PDFDocument.load(pdfBytes);
+          const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+          copiedPages.forEach((page) => {
+            mergedPdf.addPage(page);
+            mergedPageCount++;
+          });
+        } catch (err) {
+          console.error(`Failed to merge PDF from URL ${docUrl}:`, err);
+        }
+      }
+
+      if (mergedPageCount === 0) {
+        throw new Error("No PDF pages could be successfully merged.");
+      }
+
+      setBulkDownloadProgress("Finalizing...");
+      const mergedPdfBytes = await mergedPdf.save();
+      const blob = new Blob([mergedPdfBytes as any], { type: "application/pdf" });
+
+      const downloadUrl = window.URL.createObjectURL(blob);
+      window.open(downloadUrl, "_blank");
+
+      for (const file of saveFilesInfo) {
+        try {
+          if (file.alreadyInR2) continue;
+
+          let fileData: ArrayBuffer;
+          if (file.pdfBytes) {
+            fileData = file.pdfBytes;
+          } else if (file.pdfUrl) {
+            const proxyUrl = `${WORKER_URL}/api/proxy?url=${encodeURIComponent(file.pdfUrl)}`;
+            const fileRes = await fetch(proxyUrl);
+            fileData = await fileRes.arrayBuffer();
+          } else {
+            continue;
+          }
+
+          const cleanShopName = file.shopName.replace(/[\\/:*?"<>|]/g, "_").trim();
+          const r2Filename = `Tiktok AWB/${cleanShopName}/${file.orderId}.pdf`;
+          const uploadUrl = `${WORKER_URL}/api/upload?filename=${encodeURIComponent(r2Filename)}`;
+          
+          fetch(uploadUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/pdf" },
+            body: fileData
+          });
+        } catch (err) {
+          console.error(`Failed to process/upload single AWB for order ${file.orderId} to R2:`, err);
+        }
+      }
+
+      showToast("AWBs merged and opened successfully!", "success");
+
+      const printedSet = new Set(idsToDownload.filter(id => !failedOrders.includes(id)));
+      setOrders(prev => prev.map(o => printedSet.has(o.id) ? { ...o, is_printed: true } : o));
+      setSelectedOrderIds(new Set());
+
+      if (failedOrders.length > 0) {
+        showToast(`Merged successfully. Failed orders: ${failedOrders.join(", ")}`, "warning");
+      }
+    } catch (err: any) {
+      console.error("Bulk download error:", err);
+      showToast(`Error: ${err.message || "Failed to merge and download AWBs"}`, "error");
     } finally {
       setIsBulkDownloading(false);
       setBulkDownloadProgress("");
     }
   };
 
-  // Issues management
-  const handleSaveIssue = async () => {
-    if (!issuesOrder || !newIssueTitle.trim()) return;
-    try {
-      const currentIssues = issuesOrder.issues || [];
-      const newIssue: IssueItem = {
-        id: "iss_" + Date.now(),
-        title: newIssueTitle.trim(),
-        note: newIssueNote.trim(),
-        done: false
-      };
-      const updatedIssues = [...currentIssues, newIssue];
-      const res = await fetch(`${WORKER_URL}/api/tiktok/orders/update-issues`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order_id: issuesOrder.id, issues: updatedIssues })
-      });
-      if (!res.ok) throw new Error("Failed to update issues");
-      
-      setOrders(prev => prev.map(o => o.id === issuesOrder.id ? { ...o, issues: updatedIssues } : o));
-      setIssuesOrder(prev => prev ? { ...prev, issues: updatedIssues } : null);
-      setNewIssueTitle("");
-      setNewIssueNote("");
-      showToast("Issue added", "success");
-    } catch (err: any) {
-      showToast(err.message, "error");
+  const formatDate = (unixSeconds: number) => {
+    if (!unixSeconds) return "N/A";
+    const date = new Date(unixSeconds * 1000);
+    return date.toLocaleDateString("en-GB", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  };
+
+  const isOrderPacked = (order: Order) => {
+    const system = (order.system_status || "").toLowerCase();
+    const hasBatchPacked = Boolean(order.batch_id_packed && order.batch_id_packed.trim());
+    const hasBatchPacking = Boolean(order.batch_id_packing && order.batch_id_packing.trim());
+    return system === "packed" || hasBatchPacked || hasBatchPacking;
+  };
+
+  // Status Filters classification helper
+  const matchesTab = (order: Order, tab: string) => {
+    const actual = (order.actual_status || "").toUpperCase();
+    const isPacked = isOrderPacked(order);
+
+    switch (tab) {
+      case "all":
+        return true;
+      case "pending_pack":
+        return (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && !isPacked;
+      case "pending_collection":
+        return (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") && isPacked;
+      case "in_transit":
+        return actual === "IN_TRANSIT" || actual === "SHIPPED" || actual === "PICK_UP";
+      case "delivered":
+        return actual === "DELIVERED" || actual === "COMPLETED";
+      default:
+        return true;
     }
   };
 
-  const handleToggleIssueDone = async (issueId: string) => {
-    if (!issuesOrder) return;
+  // Pre-filter by Shop ID
+  const shopFilteredOrders = orders.filter(
+    (o) => selectedShopId === "all" || o.shop_id === selectedShopId
+  );
+
+  // Compute counts based on the current shop filter
+  const counts = {
+    all: shopFilteredOrders.length,
+    pending_pack: shopFilteredOrders.filter((o) => matchesTab(o, "pending_pack")).length,
+    pending_collection: shopFilteredOrders.filter((o) => matchesTab(o, "pending_collection")).length,
+    in_transit: shopFilteredOrders.filter((o) => matchesTab(o, "in_transit")).length,
+    delivered: shopFilteredOrders.filter((o) => matchesTab(o, "delivered")).length
+  };
+
+  // Get list of unique months present in orders for the dropdown
+  const availableMonths = React.useMemo(() => {
+    const months = new Set<string>();
+    orders.forEach(o => {
+      if (o.create_time) {
+        const date = new Date(o.create_time * 1000);
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        months.add(`${yyyy}-${mm}`);
+      }
+    });
+    return Array.from(months).sort((a, b) => b.localeCompare(a));
+  }, [orders]);
+
+  const formatMonthName = (yearMonth: string) => {
+    const [yyyy, mm] = yearMonth.split('-');
+    const date = new Date(parseInt(yyyy), parseInt(mm) - 1, 1);
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  // Filter and Search
+  const seenIds = new Set<string>();
+  const processedOrders = shopFilteredOrders
+    .filter((o) => matchesTab(o, selectedTab))
+    .filter((o) => {
+      if (seenIds.has(o.id)) return false;
+      seenIds.add(o.id);
+
+      // Search Query Filter
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const matchId = (o.id || "").toLowerCase().includes(q);
+        const matchTracking = (o.tracking_number || "").toLowerCase().includes(q);
+        if (!(matchId || matchTracking)) return false;
+      }
+
+      // Month Filter
+      if (selectedMonth !== "all") {
+        const date = new Date(o.create_time * 1000);
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        if (`${yyyy}-${mm}` !== selectedMonth) return false;
+      }
+
+      // Date Range Filter
+      if (startDate) {
+        const startSec = new Date(startDate + "T00:00:00").getTime() / 1000;
+        if (o.create_time < startSec) return false;
+      }
+      if (endDate) {
+        const endSec = new Date(endDate + "T23:59:59").getTime() / 1000;
+        if (o.create_time > endSec) return false;
+      }
+
+      return true;
+    })
+    .sort((a, b) => {
+      return sortBy === "newest"
+        ? b.create_time - a.create_time
+        : a.create_time - b.create_time;
+    });
+
+  // Pagination Slice
+  const limit = rowsPerPage === "custom" ? parseInt(customRowsInput) || 50 : rowsPerPage;
+  const totalPages = Math.ceil(processedOrders.length / limit) || 1;
+  const startIndex = (currentPage - 1) * limit;
+  const endIndex = startIndex + limit;
+  const paginatedOrders = processedOrders.slice(startIndex, endIndex);
+
+  // Selection helpers (based on paginated current page list)
+  const printEligibleVisibleOrders = paginatedOrders.filter(order =>
+    !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "UNPAID"].includes((order.actual_status || "").toUpperCase())
+  );
+
+  const isAllSelected = printEligibleVisibleOrders.length > 0 && printEligibleVisibleOrders.every(o => selectedOrderIds.has(o.id));
+
+  const toggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedOrderIds(prev => {
+        const next = new Set(prev);
+        printEligibleVisibleOrders.forEach(o => next.delete(o.id));
+        return next;
+      });
+    } else {
+      setSelectedOrderIds(prev => {
+        const next = new Set(prev);
+        printEligibleVisibleOrders.forEach(o => next.add(o.id));
+        return next;
+      });
+    }
+  };
+
+  // Get status color badges classes
+  const getStatusBadgeStyle = (status: string) => {
+    const s = (status || "").toUpperCase();
+    if (s === "AWAITING_SHIPMENT" || s === "AWAITING_COLLECTION") {
+      return { bg: "#FFF4E5", text: "#B76E00" };
+    }
+    if (s === "IN_TRANSIT" || s === "SHIPPED" || s === "PICK_UP") {
+      return { bg: "#E8F0FE", text: "#1A73E8" };
+    }
+    if (s === "DELIVERED" || s === "COMPLETED") {
+      return { bg: "#E6F4EA", text: "#137333" };
+    }
+    if (s === "CANCELLED" || s === "FAILED") {
+      return { bg: "#FCE8E6", text: "#C5221F" };
+    }
+    return { bg: "#F1F3F4", text: "#5F6368" };
+  };
+
+  const getDisplayStatus = (order: Order) => {
+    const actual = (order.actual_status || "").toUpperCase();
+    const system = (order.system_status || "").toLowerCase();
+
+    if (actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT") {
+      if (system === "packed") {
+        return {
+          text: "Pending Collection",
+          bg: "#E8F0FE",
+          color: "#1A73E8"
+        };
+      } else {
+        return {
+          text: "Pending Pack",
+          bg: "#FFF4E5",
+          color: "#B76E00"
+        };
+      }
+    }
+
+    const style = getStatusBadgeStyle(order.actual_status);
+    return {
+      text: (order.actual_status || "").replace(/_/g, " "),
+      bg: style.bg,
+      color: style.text
+    };
+  };
+
+  const handleUpdateIssues = async (orderId: string, updatedIssues: IssueItem[]) => {
+    setOrders(prev => prev.map(o => {
+      if (o.id === orderId) {
+        const updated = { ...o, issues: updatedIssues };
+        if (issuesOrder && issuesOrder.id === orderId) {
+          setIssuesOrder(updated);
+        }
+        return updated;
+      }
+      return o;
+    }));
+
     try {
-      const updatedIssues = (issuesOrder.issues || []).map(iss => 
-        iss.id === issueId ? { ...iss, done: !iss.done } : iss
-      );
       const res = await fetch(`${WORKER_URL}/api/tiktok/orders/update-issues`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ order_id: issuesOrder.id, issues: updatedIssues })
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          order_id: orderId,
+          issues: updatedIssues
+        })
       });
-      if (!res.ok) throw new Error("Failed to update issue status");
-
-      setOrders(prev => prev.map(o => o.id === issuesOrder.id ? { ...o, issues: updatedIssues } : o));
-      setIssuesOrder(prev => prev ? { ...prev, issues: updatedIssues } : null);
-    } catch (err: any) {
-      showToast(err.message, "error");
+      if (!res.ok) {
+        throw new Error("Failed to save issues to server");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to save issues to database", "error");
     }
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px] min-w-0">
-      {/* Top Header & Actions Bar */}
-      <div className="content-header flex flex-col md:flex-row justify-between items-start md:items-center gap-3 pr-2">
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col gap-0.5">
-            <h3 className="font-primary text-base font-bold text-zinc-900 flex items-center gap-2">
-              TikTok Orders
-              <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 font-semibold border border-blue-200">
-                {filteredOrders.length} {filteredOrders.length === 1 ? 'Order' : 'Orders'}
-              </span>
-            </h3>
-            <p className="font-primary text-xs text-zinc-500">
-              Manage order fulfillment, AWB downloads, shipping labels, and status synchronization.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Shop Selector */}
-          <select
-            value={selectedShopId}
-            onChange={(e) => setSelectedShopId(e.target.value)}
-            className="px-3 py-1.5 border border-zinc-300 rounded-lg text-xs font-semibold bg-white text-zinc-700 focus:outline-none focus:border-[#0b57d0]"
-          >
-            <option value="all">All Shops ({shops.length})</option>
-            {shops.map(s => (
-              <option key={s.id} value={s.id}>{s.name}</option>
-            ))}
-          </select>
-
-          {/* Sync Orders Button */}
+    <div className="flex flex-col flex-1 h-full overflow-hidden select-none font-primary min-w-0">
+      
+      {/* Shops Tab Navigation */}
+      <div className="flex items-center gap-1 border-b border-[#E0E2E6] pb-1 mb-3 overflow-x-auto whitespace-nowrap shrink-0">
+        <button
+          onClick={() => setSelectedShopId("all")}
+          className={`px-4 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition-all duration-200 cursor-pointer outline-none ${
+            selectedShopId === "all"
+              ? "border-[#0B57D0] text-[#0B57D0] bg-[#EAF1FB]"
+              : "border-transparent text-[#5F6368] hover:text-[#1F1F1F] hover:bg-[#F8F9FA]"
+          }`}
+        >
+          All Shops
+        </button>
+        {shops.map((shop) => (
           <button
-            onClick={() => fetchOrders(true)}
-            disabled={isSyncing}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-[#0b57d0] text-white text-xs font-bold rounded-lg hover:bg-[#0842a0] transition duration-150 shadow-sm disabled:opacity-50"
+            key={shop.id}
+            onClick={() => setSelectedShopId(shop.id)}
+            className={`px-4 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition-all duration-200 cursor-pointer outline-none ${
+              selectedShopId === shop.id
+                ? "border-[#0B57D0] text-[#0B57D0] bg-[#EAF1FB]"
+                : "border-transparent text-[#5F6368] hover:text-[#1F1F1F] hover:bg-[#F8F9FA]"
+            }`}
           >
-            <RefreshCw size={13} className={isSyncing ? "animate-spin" : ""} />
-            {isSyncing ? "Syncing..." : "Sync TikTok"}
+            {shop.name}
           </button>
-        </div>
+        ))}
       </div>
 
-      {/* Tabs & Filter Bar */}
-      <div className="flex flex-col gap-2 bg-white p-3 rounded-lg border border-zinc-200 shadow-2xs">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      {/* Dashboard Content Card */}
+      <div className="flex-1 flex flex-col bg-white border border-[#E0E2E6] rounded-2xl shadow-xs overflow-hidden min-h-0">
+        
+        {/* Sub-Tabs Selector & Search controls (Row 1) */}
+        <div className="flex flex-col md:flex-row justify-between items-stretch md:items-center border-b border-[#E0E2E6] p-4 gap-4 bg-[#FDFDFD] shrink-0">
+          
           {/* Status Tabs */}
-          <div className="flex items-center gap-1 overflow-x-auto custom-scrollbar">
+          <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap">
             {[
-              { id: "all", label: "All", count: tabCounts.all },
-              { id: "awaiting_shipment", label: "Awaiting Shipment", count: tabCounts.awaiting_shipment },
-              { id: "awaiting_collection", label: "Awaiting Collection", count: tabCounts.awaiting_collection },
-              { id: "in_transit", label: "In Transit", count: tabCounts.in_transit },
-              { id: "delivered", label: "Delivered", count: tabCounts.delivered },
-              { id: "cancelled", label: "Cancelled", count: tabCounts.cancelled },
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => { setSelectedTab(tab.id); setCurrentPage(1); }}
-                className={`px-3 py-1 text-xs font-bold rounded-md transition-all flex items-center gap-1.5 whitespace-nowrap ${
-                  selectedTab === tab.id
-                    ? "bg-[#0b57d0] text-white shadow-xs"
-                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"
-                }`}
-              >
-                {tab.label}
-                <span className={`text-[10px] px-1.5 py-0.2 rounded-full ${
-                  selectedTab === tab.id ? "bg-white/20 text-white" : "bg-zinc-200 text-zinc-700"
-                }`}>
-                  {tab.count}
-                </span>
-              </button>
-            ))}
+              { key: "all", label: "All" },
+              { key: "pending_pack", label: "Pending Pack" },
+              { key: "pending_collection", label: "Pending Collection" },
+              { key: "in_transit", label: "In Transit" },
+              { key: "delivered", label: "Delivered" }
+            ].map((tab) => {
+              const count = counts[tab.key as keyof typeof counts];
+              const isActive = selectedTab === tab.key;
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setSelectedTab(tab.key)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all cursor-pointer outline-none ${
+                    isActive
+                      ? "bg-[#EAF1FB] border-[#C2E7FF] text-[#0B57D0]"
+                      : "bg-transparent border-transparent text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#1F1F1F]"
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                      isActive ? "bg-[#C2E7FF] text-[#0842A0]" : "bg-[#F1F3F4] text-[#5F6368]"
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
 
-          {/* Bulk Action Controls */}
-          {selectedOrderIds.size > 0 && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-[#0b57d0]">
-                {selectedOrderIds.size} Selected
-              </span>
-              <button
-                onClick={handleBulkDownloadAWB}
-                disabled={isBulkDownloading}
-                className="flex items-center gap-1 px-2.5 py-1 bg-emerald-600 text-white text-xs font-bold rounded hover:bg-emerald-700 transition"
-              >
-                <Download size={12} />
-                {isBulkDownloading ? bulkDownloadProgress : "Download AWB"}
-              </button>
-              <button
-                onClick={handleBulkMarkAsPrinted}
-                disabled={isBulkMarkingPrinted}
-                className="flex items-center gap-1 px-2.5 py-1 bg-zinc-700 text-white text-xs font-bold rounded hover:bg-zinc-800 transition"
-              >
-                <CheckCircle2 size={12} />
-                Mark Printed
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Search & Date Filter Row */}
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-zinc-100">
-          <div className="relative flex-1 min-w-[220px]">
-            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search Order ID, Tracking Number, Recipient, Product, SKU..."
-              className="w-full pl-8 pr-3 py-1.5 border border-zinc-300 rounded-lg text-xs bg-zinc-50 focus:bg-white focus:outline-none focus:border-[#0b57d0]"
-            />
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-zinc-500 font-medium">Date:</span>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 border border-zinc-300 rounded text-xs bg-white text-zinc-700"
-            />
-            <span className="text-xs text-zinc-400">to</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 border border-zinc-300 rounded text-xs bg-white text-zinc-700"
-            />
-            {(startDate || endDate) && (
+          {/* Search, Filter Toggle & Refresh Actions */}
+          <div className="flex items-center gap-3">
+            <div 
+              className="relative flex items-center transition-all duration-300 ease-in-out"
+              onMouseEnter={() => setIsSearchExpanded(true)}
+              onMouseLeave={() => {
+                if (!searchQuery) setIsSearchExpanded(false);
+              }}
+              style={{
+                width: isSearchExpanded || searchQuery ? "256px" : "32px",
+                height: "32px"
+              }}
+            >
+              <input
+                type="text"
+                placeholder={isSearchExpanded || searchQuery ? "Search Order ID or Tracking Number" : ""}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onFocus={() => setIsSearchExpanded(true)}
+                onBlur={() => {
+                  if (!searchQuery) setIsSearchExpanded(false);
+                }}
+                className="w-full h-full border border-[#E0E2E6] rounded-full pl-9 pr-4 text-xs text-[#1F1F1F] placeholder-[#5F6368] bg-[#FCFDFE] focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] transition-all duration-300 ease-in-out"
+                style={{
+                  opacity: isSearchExpanded || searchQuery ? 1 : 0,
+                  pointerEvents: isSearchExpanded || searchQuery ? "auto" : "none"
+                }}
+              />
+              
               <button
                 type="button"
-                onClick={() => { setStartDate(""); setEndDate(""); }}
-                className="text-xs text-[#0b57d0] hover:underline font-semibold"
+                onClick={() => setIsSearchExpanded(true)}
+                className="absolute left-0 top-0 w-8 h-8 rounded-full border border-[#E0E2E6] flex items-center justify-center bg-[#FCFDFE] text-[#5F6368] hover:bg-[#F1F3F4] hover:text-[#1F1F1F] transition-all duration-300 ease-in-out outline-none cursor-pointer"
+                style={{
+                  pointerEvents: isSearchExpanded || searchQuery ? "none" : "auto",
+                  opacity: isSearchExpanded || searchQuery ? 0 : 1,
+                  borderWidth: isSearchExpanded || searchQuery ? "0px" : "1px"
+                }}
               >
-                Clear
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </button>
+
+              {(isSearchExpanded || searchQuery) && (
+                <svg 
+                  className="w-3.5 h-3.5 absolute left-3.5 text-[#5F6368] transition-opacity duration-300" 
+                  fill="none" 
+                  stroke="currentColor" 
+                  strokeWidth="2" 
+                  viewBox="0 0 24 24" 
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              )}
+            </div>
+
+            {/* Filters Toggle Button */}
+            <button
+              onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold border transition-all cursor-pointer outline-none ${
+                isFiltersExpanded || startDate || endDate || selectedMonth !== "all" || rowsPerPage !== 50 || sortBy !== "newest"
+                  ? "bg-[#EAF1FB] border-[#C2E7FF] text-[#0B57D0]"
+                  : "bg-transparent border-[#E0E2E6] text-[#5F6368] hover:bg-[#F1F3F4]"
+              }`}
+              style={{ height: "32px" }}
+              title="Toggle advanced filters"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z" />
+              </svg>
+              <span>Filters</span>
+              {(startDate || endDate || selectedMonth !== "all" || rowsPerPage !== 50 || sortBy !== "newest") && (
+                <span className="w-1.5 h-1.5 rounded-full bg-[#0B57D0]" />
+              )}
+            </button>
+
+            {/* Bulk Download Button */}
+            {selectedOrderIds.size > 0 && (
+              <button
+                onClick={handleBulkDownload}
+                disabled={isBulkDownloading}
+                className="px-4 py-2 text-xs font-semibold rounded-full text-white bg-[#1A73E8] hover:bg-[#1557B0] transition duration-150 inline-flex items-center gap-1.5 cursor-pointer outline-none border-none shadow-xs"
+                style={{ height: "32px" }}
+              >
+                {isBulkDownloading ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                    {bulkDownloadProgress}
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                    </svg>
+                    Download AWB ({selectedOrderIds.size})
+                  </>
+                )}
               </button>
             )}
+
+            {/* Bulk Print Button */}
+            {isPrintTerminal && selectedOrderIds.size > 0 && (
+              <button
+                onClick={triggerBulkPrint}
+                disabled={isBulkPrinting}
+                className="px-4 py-2 text-xs font-semibold rounded-full text-white bg-[#0B57D0] hover:bg-[#0842A0] transition duration-150 inline-flex items-center gap-1.5 cursor-pointer outline-none border-none shadow-xs"
+                style={{ height: "32px" }}
+              >
+                {isBulkPrinting ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                    </svg>
+                    {bulkPrintProgress}
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                    </svg>
+                    Print AWB ({selectedOrderIds.size})
+                  </>
+                )}
+              </button>
+            )}
+
+            {/* Refresh Button */}
+            <button
+              onClick={handleRefreshClick}
+              disabled={isLoading || isSyncing}
+              onMouseEnter={() => setIsRefreshHovered(true)}
+              onMouseLeave={() => setIsRefreshHovered(false)}
+              className="flex items-center justify-center rounded-full overflow-hidden text-white bg-[#0B57D0] hover:bg-[#0842A0] cursor-pointer outline-none border-none shadow-xs"
+              style={{
+                height: "32px",
+                padding: isRefreshHovered || isSyncing ? "8px 16px" : "8px",
+                width: isSyncing ? "120px" : (isRefreshHovered ? "135px" : "32px"),
+                fontSize: "12px",
+                fontWeight: "600",
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: (isRefreshHovered || isSyncing) ? "6px" : "0px",
+                minWidth: isSyncing ? "120px" : (isRefreshHovered ? "135px" : "32px"),
+                whiteSpace: "nowrap",
+                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
+              }}
+              title="Refresh Orders"
+            >
+              {isSyncing ? (
+                <>
+                  <svg className="w-3.5 h-3.5 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                  </svg>
+                  <span className="whitespace-nowrap opacity-100">Refreshing...</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                  </svg>
+                  <span 
+                    className="whitespace-nowrap transition-all duration-300 ease-in-out"
+                    style={{
+                      opacity: isRefreshHovered ? 1 : 0,
+                      maxWidth: isRefreshHovered ? "100px" : "0px",
+                      overflow: "hidden"
+                    }}
+                  >
+                    Refresh Orders
+                  </span>
+                </>
+              )}
+            </button>
           </div>
 
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
-            className="px-2.5 py-1.5 border border-zinc-300 rounded-lg text-xs bg-white text-zinc-700 font-medium"
-          >
-            <option value="newest">Newest First</option>
-            <option value="oldest">Oldest First</option>
-          </select>
         </div>
-      </div>
 
-      {/* Main Table Content */}
-      <div className="content-body flex-1 w-full overflow-hidden bg-white border border-zinc-200 rounded-lg shadow-2xs flex flex-col">
-        {isLoading ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-2">
-              <RefreshCw className="animate-spin text-[#0b57d0]" size={24} />
-              <span className="text-xs font-semibold text-zinc-500">Loading TikTok orders...</span>
+        {/* Advanced Filters (Row 2) - Collapsible */}
+        {isFiltersExpanded && (
+          <div className="flex flex-wrap items-center gap-6 px-4 py-3 bg-[#FCFCFD] border-b border-[#E0E2E6] shrink-0">
+            {/* Sort selector */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-[#5F6368] uppercase tracking-wider">Sort:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="border border-[#E0E2E6] rounded-full px-3 py-1 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+              </select>
+            </div>
+
+            {/* Month Dropdown */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-[#5F6368] uppercase tracking-wider">Month:</span>
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="border border-[#E0E2E6] rounded-full px-3 py-1 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
+              >
+                <option value="all">All Months</option>
+                {availableMonths.map((m) => (
+                  <option key={m} value={m}>
+                    {formatMonthName(m)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Date Range Picker */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-[#5F6368] uppercase tracking-wider">Date:</span>
+              <input
+                type="date"
+                value={startDate}
+                max={new Date().toISOString().split("T")[0]}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="border border-[#E0E2E6] rounded-full px-2.5 py-0.5 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
+              />
+              <span className="text-xs text-[#5F6368] font-medium">-</span>
+              <input
+                type="date"
+                value={endDate}
+                max={new Date().toISOString().split("T")[0]}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="border border-[#E0E2E6] rounded-full px-2.5 py-0.5 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
+              />
+              {(startDate || endDate) && (
+                <button
+                  onClick={() => {
+                    setStartDate("");
+                    setEndDate("");
+                  }}
+                  className="text-xs text-[#0B57D0] hover:text-[#0842A0] font-semibold cursor-pointer border-none bg-transparent outline-none"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+
+            {/* Rows limit */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-bold text-[#5F6368] uppercase tracking-wider">Limit:</span>
+              <select
+                value={rowsPerPage}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "custom") {
+                    setRowsPerPage("custom");
+                  } else {
+                    setRowsPerPage(parseInt(val));
+                  }
+                }}
+                className="border border-[#E0E2E6] rounded-full px-3 py-1 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
+              >
+                <option value={50}>50 rows</option>
+                <option value={100}>100 rows</option>
+                <option value={300}>300 rows</option>
+                <option value={500}>500 rows</option>
+                <option value="custom">Custom</option>
+              </select>
+              {rowsPerPage === "custom" && (
+                <input
+                  type="number"
+                  min="1"
+                  value={customRowsInput}
+                  onChange={(e) => setCustomRowsInput(e.target.value)}
+                  className="w-16 border border-[#E0E2E6] rounded-full px-2 py-0.5 text-xs text-center text-[#1F1F1F] bg-white focus:outline-none focus:border-[#0B57D0]"
+                  placeholder="Num"
+                />
+              )}
             </div>
           </div>
-        ) : filteredOrders.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center">
-            <div className="flex flex-col items-center gap-2 text-center p-6">
-              <Package className="text-zinc-300" size={40} />
-              <span className="text-sm font-bold text-zinc-700">No Orders Found</span>
-              <p className="text-xs text-zinc-500 max-w-sm">
-                No orders match your selected shop, status, date filters, or search term. Click "Sync TikTok" to fetch new orders.
-              </p>
+        )}
+
+        {/* Orders Data List Card Body */}
+        <div className="flex-1 overflow-y-scroll overflow-x-auto min-h-0">
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center h-64 text-sm text-[#5F6368] italic">
+              <svg className="w-8 h-8 animate-spin text-[#0B57D0] mb-2" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+              </svg>
+              Loading orders...
             </div>
-          </div>
-        ) : (
-          <div className="flex-1 overflow-auto custom-scrollbar">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead className="bg-[#f8f9fa] border-b border-zinc-200 sticky top-0 z-10 text-zinc-600 font-bold">
-                <tr>
-                  <th className="p-2.5 w-10 text-center">
+          ) : error && orders.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 text-sm text-[#C5221F] font-medium p-6 text-center">
+              <svg className="w-8 h-8 text-[#C5221F] mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              {error}
+              <button onClick={handleRefreshClick} className="mt-4 px-4 py-2 bg-[#0B57D0] text-white text-xs font-semibold rounded-lg hover:bg-[#0842A0] cursor-pointer">Try Again</button>
+            </div>
+          ) : processedOrders.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 text-sm text-[#5F6368] italic p-6">
+              No orders match your filter criteria.
+            </div>
+          ) : (
+            <table className="w-full border-collapse text-left text-xs table-fixed min-w-[1015px]">
+              <thead>
+                <tr className="border-b border-[#E0E2E6]">
+                  <th className="p-3 w-[40px] text-center sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">
                     <input
                       type="checkbox"
-                      checked={pagedOrders.length > 0 && pagedOrders.every(o => selectedOrderIds.has(o.id))}
-                      onChange={handleSelectAllOnPage}
-                      className="rounded border-zinc-300 text-[#0b57d0] focus:ring-0 cursor-pointer"
+                      checked={isAllSelected}
+                      onChange={toggleSelectAll}
+                      className="w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
                     />
                   </th>
-                  <th className="p-2.5">Order ID / Shop</th>
-                  <th className="p-2.5">Date</th>
-                  <th className="p-2.5">Tracking / Courier</th>
-                  <th className="p-2.5">Recipient</th>
-                  <th className="p-2.5">Items</th>
-                  <th className="p-2.5">Status</th>
-                  <th className="p-2.5 text-center">AWB</th>
-                  <th className="p-2.5 text-center">Proofs</th>
-                  <th className="p-2.5 text-right">Actions</th>
+                  <th className="p-3 font-semibold text-[#1F1F1F] w-[26%] sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Order ID & Date</th>
+                  <th className="p-3 font-semibold text-[#1F1F1F] w-[15%] sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Shop</th>
+                  <th className="p-3 font-semibold text-[#1F1F1F] w-[12%] sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Items</th>
+                  <th className="p-3 font-semibold text-[#1F1F1F] w-[26%] sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Tracking</th>
+                  <th className="p-3 font-semibold text-[#1F1F1F] w-[21%] sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Status</th>
+                  <th className="p-3 font-semibold text-[#1F1F1F] w-[265px] max-w-[265px] sticky top-0 bg-[#F8F9FA] z-10 shadow-[0_1px_0_0_#E0E2E6]">Action</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-200">
-                {pagedOrders.map(order => {
+              <tbody>
+                {paginatedOrders.map((order) => {
+                  const displayStatus = getDisplayStatus(order);
                   const isSelected = selectedOrderIds.has(order.id);
-                  const isPrinted = !!order.is_printed;
-                  const hasIssues = (order.issues || []).length > 0;
-                  const totalItemsQty = (order.items || []).reduce((acc, it) => acc + (it.quantity || 1), 0);
-
+                  const isEligible = !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "UNPAID"].includes((order.actual_status || "").toUpperCase());
                   return (
-                    <tr 
-                      key={order.id} 
-                      className={`hover:bg-[#f4f7fc] transition-colors ${isSelected ? "bg-blue-50/60" : ""}`}
-                    >
-                      {/* Checkbox */}
-                      <td className="p-2.5 text-center">
+                    <tr key={`${order.shop_id}_${order.id}`} className="border-b border-[#F1F3F4] hover:bg-slate-50 transition duration-150">
+                      <td className="p-3 text-center align-top">
                         <input
                           type="checkbox"
                           checked={isSelected}
-                          onChange={() => handleToggleSelectOrder(order.id)}
-                          className="rounded border-zinc-300 text-[#0b57d0] focus:ring-0 cursor-pointer"
+                          disabled={!isEligible}
+                          onChange={() => {
+                            setSelectedOrderIds(prev => {
+                              const next = new Set(prev);
+                              if (next.has(order.id)) {
+                                next.delete(order.id);
+                              } else {
+                                next.add(order.id);
+                              }
+                              return next;
+                            });
+                          }}
+                          className={`w-3.5 h-3.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer ${!isEligible ? "opacity-30 cursor-not-allowed" : ""}`}
                         />
                       </td>
-
-                      {/* Order ID & Shop */}
-                      <td className="p-2.5 font-mono">
-                        <div className="flex flex-col">
-                          <span className="font-bold text-zinc-900 hover:text-[#0b57d0] cursor-pointer" onClick={() => setSelectedOrderItems(order)}>
-                            {order.id}
+                      {/* ID & Date */}
+                      <td className="p-3 align-top">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="font-mono font-semibold text-[#1F1F1F] text-xs truncate max-w-[140px]" title={order.id}>
+                            {highlightText(order.id, searchQuery)}
                           </span>
-                          <span className="text-[10px] text-zinc-500 font-sans">
-                            {order.shop_name}
-                          </span>
+                          <button
+                            onClick={() => copyToClipboard(order.id)}
+                            className="text-[#5F6368] hover:text-[#1F1F1F] cursor-pointer outline-none border-none bg-transparent"
+                            title="Copy order ID"
+                          >
+                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                          </button>
                         </div>
-                      </td>
-
-                      {/* Date */}
-                      <td className="p-2.5 text-zinc-600 whitespace-nowrap">
-                        {new Date(order.create_time * 1000).toLocaleDateString("en-GB")}
-                        <div className="text-[10px] text-zinc-400">
-                          {new Date(order.create_time * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </td>
-
-                      {/* Tracking / Courier */}
-                      <td className="p-2.5">
-                        <div className="flex flex-col">
-                          <span className="font-mono text-xs text-zinc-900 font-medium">
-                            {order.tracking_number || "—"}
-                          </span>
-                          <span className="text-[10px] font-semibold text-zinc-500">
-                            {order.shipping_provider || "Standard"}
-                          </span>
-                        </div>
-                      </td>
-
-                      {/* Recipient */}
-                      <td className="p-2.5 text-zinc-800 font-medium">
-                        {order.recipient_name || "—"}
-                      </td>
-
-                      {/* Items */}
-                      <td className="p-2.5">
-                        <button
-                          onClick={() => setSelectedOrderItems(order)}
-                          className="px-2 py-0.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-800 rounded font-semibold text-xs transition"
-                        >
-                          {totalItemsQty} {totalItemsQty === 1 ? 'Item' : 'Items'}
-                        </button>
-                      </td>
-
-                      {/* Status */}
-                      <td className="p-2.5 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold border ${getStatusBadgeClass(order.actual_status)}`}>
-                          {formatStatusLabel(order.actual_status)}
+                        <span className="text-[10px] text-[#5F6368] block">
+                          {formatDate(order.create_time)}
                         </span>
                       </td>
 
-                      {/* AWB Status Toggle */}
-                      <td className="p-2.5 text-center whitespace-nowrap">
+                      {/* Shop */}
+                      <td className="p-3 align-top font-medium text-[#1F1F1F] truncate" title={order.shop_name}>
+                        {order.shop_name}
+                      </td>
+
+                      {/* Items badge toggle */}
+                      <td className="p-3 align-top">
                         <button
-                          onClick={() => handleTogglePrinted(order.id, isPrinted)}
-                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold border transition ${
-                            isPrinted 
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100" 
-                              : "bg-zinc-100 text-zinc-500 border-zinc-300 hover:bg-zinc-200"
-                          }`}
-                          title="Click to toggle printed status"
+                          onClick={() => setSelectedOrderItems(order)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#E0E2E6] hover:bg-[#EAF1FB] hover:border-[#C2E7FF] hover:text-[#0B57D0] transition duration-150 cursor-pointer text-xs font-semibold text-[#5F6368] outline-none bg-white"
                         >
-                          {isPrinted ? "✓ Printed" : "Unprinted"}
+                          <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                          </svg>
+                          <span>
+                            {order.items.reduce((s, i) => s + i.quantity, 0)} {order.items.reduce((s, i) => s + i.quantity, 0) === 1 ? "Item" : "Items"}
+                          </span>
                         </button>
                       </td>
 
-                      {/* Proofs & Photos */}
-                      <td className="p-2.5 text-center">
-                        {order.proof_photo || order.before_pack_photo ? (
-                          <button
-                            onClick={() => setSelectedProofOrder(order)}
-                            className="p-1 text-blue-600 hover:bg-blue-50 rounded transition"
-                            title="View packing proof photos"
-                          >
-                            <Camera size={15} />
-                          </button>
-                        ) : (
-                          <span className="text-zinc-300">—</span>
-                        )}
+                      {/* Tracking */}
+                      <td className="p-3 align-top">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2">
+                            {order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "" ? (
+                              <a
+                                href={`${WORKER_URL}/api/tiktok/orders/single-awb-pdf?order_id=${encodeURIComponent(order.id)}&shop_id=${encodeURIComponent(order.shop_id || "")}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                title="View / Download AWB"
+                                className="w-5 h-5 rounded-full bg-[#E8F0FE] hover:bg-[#D2E3FC] text-[#0B57D0] flex items-center justify-center transition duration-150 cursor-pointer outline-none border-none shadow-xs flex-shrink-0"
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                </svg>
+                              </a>
+                            ) : (
+                              <div
+                                title="AWB not yet generated"
+                                className="w-5 h-5 rounded-full bg-[#F1F3F4] text-[#9AA0A6] flex items-center justify-center cursor-not-allowed select-none flex-shrink-0 border border-gray-200"
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                </svg>
+                              </div>
+                            )}
+                            <span className="font-medium text-[#1F1F1F] truncate block max-w-[130px]" title={order.shipping_provider || "N/A"}>
+                              {order.shipping_provider || "N/A"}
+                            </span>
+                          </div>
+                          {order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "" ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-[#5F6368] text-[10px] truncate max-w-[120px]" title={order.tracking_number}>
+                                {highlightText(order.tracking_number, searchQuery)}
+                              </span>
+                              <button
+                                onClick={() => copyToClipboard(order.tracking_number)}
+                                className="text-[#5F6368] hover:text-[#1F1F1F] cursor-pointer outline-none border-none bg-transparent flex-shrink-0"
+                                title="Copy tracking number"
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                                </svg>
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-[#9AA0A6] italic">No tracking yet</span>
+                          )}
+                        </div>
                       </td>
 
-                      {/* Actions */}
-                      <td className="p-2.5 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1">
-                          {/* Print Single AWB */}
-                          <button
-                            onClick={() => handlePrintAWB(order)}
-                            disabled={awbLoadingOrderId === order.id}
-                            className="p-1 text-zinc-600 hover:text-[#0b57d0] hover:bg-zinc-100 rounded transition"
-                            title="Download AWB PDF"
-                          >
-                            <Download size={14} className={awbLoadingOrderId === order.id ? "animate-bounce" : ""} />
-                          </button>
+                      {/* Status */}
+                      <td className="p-3 align-top">
+                        <span
+                          className="px-2.5 py-1 rounded-full text-[10px] font-bold inline-block text-center uppercase"
+                          style={{ backgroundColor: displayStatus.bg, color: displayStatus.color }}
+                        >
+                          {displayStatus.text}
+                        </span>
+                      </td>
 
-                          {/* Issues button */}
-                          <button
-                            onClick={() => setIssuesOrder(order)}
-                            className={`p-1 rounded transition ${
-                              hasIssues 
-                                ? "text-red-600 bg-red-50 hover:bg-red-100 font-bold" 
-                                : "text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100"
-                            }`}
-                            title="Manage Order Issues"
-                          >
-                            <AlertCircle size={14} />
-                          </button>
+                      {/* Action */}
+                      <td className="p-3 align-top">
+                        <div className="flex items-center gap-2">
+                          {isPrintTerminal && !["IN_TRANSIT", "SHIPPED", "DELIVERED", "COMPLETED", "CANCELLED", "FAILED", "UNPAID"].includes((order.actual_status || "").toUpperCase()) && (
+                            <>
+                              {!(order.tracking_number && order.tracking_number !== "N/A" && order.tracking_number.trim() !== "") ? (
+                                <button
+                                  onClick={() => handleCreateAWB(order.id, order.shop_id)}
+                                  disabled={awbLoadingOrderId !== null}
+                                  className="px-3 py-1 bg-[#0B57D0] text-white text-[11px] font-semibold rounded-md hover:bg-[#0842A0] transition cursor-pointer"
+                                  style={{
+                                    height: "28px",
+                                    whiteSpace: "nowrap"
+                                  }}
+                                >
+                                  {awbLoadingOrderId === order.id ? "Creating..." : "Create AWB"}
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handlePrintAWB(order.id, order.shop_id)}
+                                  disabled={awbLoadingOrderId !== null}
+                                  className="px-3 py-1 border border-[#E0E2E6] bg-white text-[#1F1F1F] text-[11px] font-semibold rounded-md hover:bg-[#F8F9FA] transition cursor-pointer"
+                                  style={{
+                                    height: "28px",
+                                    whiteSpace: "nowrap"
+                                  }}
+                                >
+                                  {awbLoadingOrderId === order.id ? "Printing..." : order.is_printed ? "Reprint AWB" : "Print AWB"}
+                                </button>
+                              )}
+                            </>
+                          )}
 
-                          {/* Order Log Timeline */}
+                          {/* Issue Button */}
+                          {(() => {
+                            const issues = order.issues || [];
+                            const hasPending = issues.some(iss => !iss.done);
+                            return (
+                              <button
+                                onClick={() => {
+                                  setIssuesOrder(order);
+                                  setNewIssueTitle("");
+                                  setNewIssueNote("");
+                                }}
+                                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border transition duration-150 cursor-pointer outline-none flex items-center gap-1 h-[28px] ${
+                                  hasPending
+                                    ? "bg-[#FFEAD2] border-[#FFB74D] text-[#E65100] hover:bg-[#FFD19A]"
+                                    : "bg-white border-[#E0E2E6] text-[#0b57d0] hover:bg-[#F8F9FA]"
+                                }`}
+                              >
+                                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                                <span>Issue</span>
+                                {issues.length > 0 && (
+                                  <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-bold leading-none ${
+                                    hasPending ? "bg-[#E65100] text-white" : "bg-[#5F6368] text-white"
+                                  }`}>
+                                    {issues.length}
+                                  </span>
+                                )}
+                              </button>
+                            );
+                          })()}
+
+                          {/* Log Button */}
                           <button
                             onClick={() => setSelectedOrderForLogs(order)}
-                            className="p-1 text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100 rounded transition"
-                            title="View Audit Logs"
+                            className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-[#E0E2E6] bg-white text-[#0b57d0] hover:bg-[#F8F9FA] transition duration-150 cursor-pointer outline-none flex items-center gap-1 h-[28px]"
+                            title="View order logs"
                           >
-                            <Clock size={14} />
+                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            <span>Log</span>
                           </button>
                         </div>
                       </td>
@@ -771,350 +1775,638 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
                 })}
               </tbody>
             </table>
+          )}
+        </div>
+
+        {/* Pagination Footer */}
+        <div className="flex items-center justify-between px-6 py-3 border-t border-[#E0E2E6] bg-[#F8F9FA] select-none text-xs text-[#5F6368] font-medium shrink-0">
+          <div>
+            Showing {processedOrders.length > 0 ? startIndex + 1 : 0} to {Math.min(endIndex, processedOrders.length)} of {processedOrders.length} orders
           </div>
-        )}
-
-        {/* Footer Pagination */}
-        <div className="p-3 bg-[#f8f9fa] border-t border-zinc-200 flex justify-between items-center text-xs text-zinc-600">
-          <span>
-            Showing <b>{Math.min(filteredOrders.length, (currentPage - 1) * pageSize + 1)}</b> to <b>{Math.min(filteredOrders.length, currentPage * pageSize)}</b> of <b>{filteredOrders.length}</b> orders
-          </span>
-
-          <div className="flex items-center gap-2">
+          
+          <div className="flex items-center gap-1.5">
             <button
-              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
               disabled={currentPage === 1}
-              className="px-2.5 py-1 border border-zinc-300 rounded bg-white hover:bg-zinc-100 disabled:opacity-40 transition"
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              className={`px-3 py-1.5 rounded-lg border text-[11px] font-semibold transition duration-150 outline-none ${
+                currentPage === 1
+                  ? "bg-[#F1F3F4] text-[#9AA0A6] border-transparent cursor-not-allowed"
+                  : "bg-white text-[#1F1F1F] border-[#E0E2E6] hover:bg-[#F8F9FA] cursor-pointer"
+              }`}
             >
               Previous
             </button>
-            <span className="font-bold">
-              {currentPage} / {totalPages}
-            </span>
+            
+            <div className="flex items-center gap-0.5">
+              {Array.from({ length: totalPages }).map((_, idx) => {
+                const pageNum = idx + 1;
+                if (totalPages > 6) {
+                  if (pageNum !== 1 && pageNum !== totalPages && Math.abs(pageNum - currentPage) > 1) {
+                    if (pageNum === 2 && currentPage > 3) {
+                      return <span key="ellipsis-start" className="px-1 text-[#9AA0A6]">...</span>;
+                    }
+                    if (pageNum === totalPages - 1 && currentPage < totalPages - 2) {
+                      return <span key="ellipsis-end" className="px-1 text-[#9AA0A6]">...</span>;
+                    }
+                    return null;
+                  }
+                }
+                
+                return (
+                  <button
+                    key={pageNum}
+                    onClick={() => setCurrentPage(pageNum)}
+                    className={`w-7 h-7 rounded-lg text-[11px] font-bold transition duration-150 outline-none cursor-pointer ${
+                      currentPage === pageNum
+                        ? "bg-[#0B57D0] text-white border-transparent"
+                        : "bg-transparent text-[#5F6368] border-transparent hover:bg-[#EAF1FB] hover:text-[#0B57D0]"
+                    }`}
+                  >
+                    {pageNum}
+                  </button>
+                );
+              })}
+            </div>
+
             <button
-              onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
               disabled={currentPage === totalPages}
-              className="px-2.5 py-1 border border-zinc-300 rounded bg-white hover:bg-zinc-100 disabled:opacity-40 transition"
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              className={`px-3 py-1.5 rounded-lg border text-[11px] font-semibold transition duration-150 outline-none ${
+                currentPage === totalPages
+                  ? "bg-[#F1F3F4] text-[#9AA0A6] border-transparent cursor-not-allowed"
+                  : "bg-white text-[#1F1F1F] border-[#E0E2E6] hover:bg-[#F8F9FA] cursor-pointer"
+              }`}
             >
               Next
             </button>
           </div>
         </div>
+
       </div>
 
-      {/* Order Items Modal */}
+      {/* Items Popover Card Modal */}
       {selectedOrderItems && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg overflow-hidden font-primary animate-in fade-in zoom-in-95 duration-150">
-            <header className="px-5 py-3.5 bg-[#f8f9fa] border-b border-zinc-200 flex justify-between items-center">
+        <div className="fixed inset-0 bg-[#00000040] backdrop-blur-[2px] flex items-center justify-center z-[20000] p-4 select-none">
+          <div className="bg-white border border-[#E0E2E6] rounded-2xl shadow-xl max-w-lg w-full max-h-[80vh] flex flex-col overflow-hidden animate-[fadeIn_0.15s_ease-out]">
+            
+            {/* Header */}
+            <div className="flex justify-between items-center border-b border-[#E0E2E6] p-4 bg-[#F8F9FA]">
               <div>
-                <h4 className="text-sm font-bold text-zinc-900">Order Items Details</h4>
-                <p className="text-[11px] text-zinc-500 font-mono">Order ID: {selectedOrderItems.id}</p>
+                <h3 className="text-sm font-bold text-[#1F1F1F] mb-0.5">Order Items</h3>
+                <span className="text-[10px] text-[#5F6368] font-mono">ID: {selectedOrderItems.id}</span>
               </div>
-              <button 
-                onClick={() => setSelectedOrderItems(null)} 
-                className="text-zinc-400 hover:text-zinc-700 text-sm font-bold"
+              <button
+                onClick={() => setSelectedOrderItems(null)}
+                className="p-1.5 hover:bg-[#E0E2E6] rounded-full text-[#5F6368] hover:text-[#1F1F1F] transition duration-150 cursor-pointer outline-none border-none bg-transparent"
               >
-                ✕
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
-            </header>
+            </div>
 
-            <div className="p-4 max-h-[60vh] overflow-y-auto custom-scrollbar flex flex-col gap-3">
-              {(selectedOrderItems.items || []).map((item, idx) => (
-                <div key={idx} className="flex gap-3 p-3 bg-zinc-50 border border-zinc-200 rounded-lg items-center">
+            {/* Item List */}
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+              {selectedOrderItems.items.map((item, idx) => (
+                <div key={idx} className="flex items-start gap-3 border-b border-[#F1F3F4] pb-3 last:border-b-0 last:pb-0">
                   {item.sku_image ? (
-                    <img src={item.sku_image} alt="SKU" className="w-14 h-14 object-cover rounded border border-zinc-300 shrink-0" />
+                    <img
+                      src={item.sku_image}
+                      alt="SKU image"
+                      className="w-12 h-12 rounded border border-[#E0E2E6] object-cover flex-shrink-0"
+                    />
                   ) : (
-                    <div className="w-14 h-14 bg-zinc-200 rounded flex items-center justify-center text-zinc-400 text-xs shrink-0">
-                      No Img
+                    <div className="w-12 h-12 rounded border border-[#E0E2E6] bg-[#F1F3F4] flex items-center justify-center text-xs text-[#5F6368] font-bold flex-shrink-0">
+                      N/A
                     </div>
                   )}
-                  <div className="flex flex-col flex-1 min-w-0">
-                    <span className="text-xs font-bold text-zinc-900 line-clamp-2">{item.product_name}</span>
-                    <span className="text-[11px] text-zinc-600">{item.sku_name}</span>
-                    {item.seller_sku && (
-                      <span className="text-[10px] font-mono text-zinc-400">SKU: {item.seller_sku}</span>
-                    )}
-                  </div>
-                  <div className="text-right">
-                    <span className="text-xs font-bold text-[#0b57d0]">x{item.quantity}</span>
-                    <div className="text-[11px] text-zinc-500">{item.currency} {item.sale_price}</div>
+                  <div className="min-w-0 flex-1 flex flex-col justify-between min-h-[48px]">
+                    <div>
+                      <span className="text-xs font-bold text-[#1F1F1F] block leading-tight mb-1">
+                        {item.sku_name}
+                      </span>
+                      <span className="text-[10px] text-[#5F6368] font-mono block">
+                        SKU: {item.seller_sku}
+                      </span>
+                    </div>
+                    <div className="flex justify-end mt-1">
+                      <span className="text-xs font-bold text-[#1F1F1F]">
+                        Qty: {item.quantity} × {item.currency} {parseFloat(item.sale_price).toFixed(2)}
+                      </span>
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
 
-            <footer className="p-3 bg-[#f8f9fa] border-t border-zinc-200 flex justify-between items-center">
-              <span className="text-xs font-bold text-zinc-700">
-                Total: {selectedOrderItems.currency} {selectedOrderItems.total_amount}
-              </span>
+            {/* Footer */}
+            <div className="border-t border-[#E0E2E6] p-4 bg-[#F8F9FA] flex justify-between items-center">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs text-[#5F6368]">
+                  Total: <span className="font-bold text-[#1F1F1F]">{selectedOrderItems.items.reduce((s, i) => s + i.quantity, 0)} Items</span>
+                </span>
+                <span className="text-xs text-[#5F6368]">
+                  Total Amount: <span className="font-bold text-[#1F1F1F]">{selectedOrderItems.currency} {parseFloat(selectedOrderItems.total_amount).toFixed(2)}</span>
+                </span>
+              </div>
               <button
                 onClick={() => setSelectedOrderItems(null)}
-                className="px-3 py-1.5 bg-[#0b57d0] text-white text-xs font-bold rounded-lg hover:bg-[#0842a0]"
+                className="px-4 py-2 bg-[#0B57D0] text-white text-xs font-semibold rounded-lg hover:bg-[#0842A0] cursor-pointer"
               >
                 Close
               </button>
-            </footer>
+            </div>
+
           </div>
         </div>
       )}
 
-      {/* Proof Photo Modal */}
-      {selectedProofOrder && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden font-primary animate-in fade-in zoom-in-95 duration-150">
-            <header className="px-5 py-3.5 bg-[#f8f9fa] border-b border-zinc-200 flex justify-between items-center">
-              <div>
-                <h4 className="text-sm font-bold text-zinc-900">Packing Proof Photos</h4>
-                <p className="text-[11px] text-zinc-500 font-mono">Order ID: {selectedProofOrder.id}</p>
+      {/* Confirmation modal */}
+      {printConfirmData.isOpen && (
+        <div className="fixed inset-0 bg-[#00000040] backdrop-blur-[2px] flex items-center justify-center z-[20000] p-4 select-none">
+          <div className="bg-white border border-[#E0E2E6] rounded-2xl shadow-xl max-w-md w-full flex flex-col overflow-hidden animate-[fadeIn_0.15s_ease-out] p-6">
+            
+            <div className="flex items-start gap-4 mb-4">
+              <div className="p-3 bg-[#FEF7EC] rounded-full text-[#B76E00] flex-shrink-0">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
               </div>
-              <button 
-                onClick={() => setSelectedProofOrder(null)} 
-                className="text-zinc-400 hover:text-zinc-700 text-sm font-bold"
-              >
-                ✕
-              </button>
-            </header>
-
-            <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[70vh] overflow-y-auto">
-              <div className="flex flex-col gap-2">
-                <span className="text-xs font-bold text-zinc-700">Before Packing Photo:</span>
-                {selectedProofOrder.before_pack_photo ? (
-                  <img src={selectedProofOrder.before_pack_photo} alt="Before Pack" className="w-full rounded-lg border border-zinc-300 shadow-xs" />
-                ) : (
-                  <div className="h-48 bg-zinc-100 rounded-lg flex items-center justify-center text-xs text-zinc-400">
-                    No Before Photo
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <span className="text-xs font-bold text-zinc-700">After Packing Proof:</span>
-                {selectedProofOrder.proof_photo ? (
-                  <img src={selectedProofOrder.proof_photo} alt="After Pack" className="w-full rounded-lg border border-zinc-300 shadow-xs" />
-                ) : (
-                  <div className="h-48 bg-zinc-100 rounded-lg flex items-center justify-center text-xs text-zinc-400">
-                    No After Photo
-                  </div>
-                )}
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-bold text-[#1F1F1F] mb-1">
+                  {printConfirmData.isBulk ? "AWBs Already Printed" : "AWB Already Printed"}
+                </h3>
+                <div className="text-xs text-[#5F6368] leading-relaxed">
+                  {printConfirmData.isBulk ? (
+                    <div>
+                      Some of the selected orders have already had their AWBs printed before.
+                      <span className="block mt-2 font-semibold text-[#1F1F1F]">
+                        Already printed ({printConfirmData.printedOrderIds?.length}):
+                      </span>
+                      <span className="block mt-1 font-mono text-[10px] text-gray-500 max-h-[80px] overflow-y-auto border border-gray-100 p-2 rounded bg-slate-50">
+                        {printConfirmData.printedOrderIds?.join(", ")}
+                      </span>
+                    </div>
+                  ) : (
+                    <p>The AWB for order <strong>{printConfirmData.orderId}</strong> has already been printed. Do you want to print it again?</p>
+                  )}
+                </div>
               </div>
             </div>
 
-            <footer className="p-3 bg-[#f8f9fa] border-t border-zinc-200 flex justify-between items-center">
-              <span className="text-xs text-zinc-500">
-                Packed by: <b>{selectedProofOrder.packed_by || "—"}</b>
-              </span>
+            <div className="flex justify-end gap-2 mt-4">
               <button
-                onClick={() => setSelectedProofOrder(null)}
-                className="px-3 py-1.5 bg-[#0b57d0] text-white text-xs font-bold rounded-lg hover:bg-[#0842a0]"
+                onClick={() => setPrintConfirmData({ isOpen: false, isBulk: false })}
+                className="px-4 py-2 border border-[#E0E2E6] bg-white text-[#1F1F1F] text-xs font-semibold rounded-lg hover:bg-[#F8F9FA] cursor-pointer"
+                style={{
+                  height: "36px"
+                }}
               >
-                Close
+                Cancel
               </button>
-            </footer>
+
+              {printConfirmData.isBulk ? (
+                <>
+                  <button
+                    onClick={() => {
+                      const nonPrintedIds = (printConfirmData.bulkOrderIds || []).filter(
+                        id => !(printConfirmData.printedOrderIds || []).includes(id)
+                      );
+                      setPrintConfirmData({ isOpen: false, isBulk: false });
+                      handleBulkPrint(nonPrintedIds);
+                    }}
+                    className="px-4 py-2 border border-[#E0E2E6] bg-white text-[#1F1F1F] text-xs font-semibold rounded-lg hover:bg-[#F8F9FA] cursor-pointer"
+                    style={{
+                      height: "36px"
+                    }}
+                  >
+                    Skip Printed
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPrintConfirmData({ isOpen: false, isBulk: false });
+                      handleBulkPrint(printConfirmData.bulkOrderIds);
+                    }}
+                    className="px-4 py-2 bg-[#0B57D0] text-white text-xs font-semibold rounded-lg hover:bg-[#0842A0] cursor-pointer"
+                    style={{
+                      height: "36px"
+                    }}
+                  >
+                    Print All
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => {
+                    const orderId = printConfirmData.orderId!;
+                    const shopId = printConfirmData.shopId!;
+                    setPrintConfirmData({ isOpen: false, isBulk: false });
+                    handlePrintAWB(orderId, shopId, true);
+                  }}
+                  className="px-4 py-2 bg-[#0B57D0] text-white text-xs font-semibold rounded-lg hover:bg-[#0842A0] cursor-pointer"
+                  style={{
+                    height: "36px"
+                  }}
+                >
+                  Print Again
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
 
       {/* Issues Management Modal */}
       {issuesOrder && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden font-primary animate-in fade-in zoom-in-95 duration-150">
-            <header className="px-5 py-3.5 bg-[#f8f9fa] border-b border-zinc-200 flex justify-between items-center">
+        <div className="fixed inset-0 bg-[#00000040] backdrop-blur-[2px] flex items-center justify-center z-[20000] p-4 select-none">
+          <div className="bg-white border border-[#E0E2E6] rounded-2xl shadow-xl max-w-xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-[fadeIn_0.15s_ease-out]">
+            
+            {/* Header */}
+            <div className="flex justify-between items-center border-b border-[#E0E2E6] p-4 bg-[#F8F9FA]">
               <div>
-                <h4 className="text-sm font-bold text-zinc-900">Order Issues & Remarks</h4>
-                <p className="text-[11px] text-zinc-500 font-mono">Order ID: {issuesOrder.id}</p>
+                <h3 className="text-sm font-bold text-[#1F1F1F] mb-0.5 flex items-center gap-1.5">
+                  <svg className="w-4 h-4 text-[#5F6368]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  Order Issues & Tasks
+                </h3>
+                <span className="text-[10px] text-[#5F6368] font-mono">Order ID: {issuesOrder.id}</span>
               </div>
-              <button onClick={() => setIssuesOrder(null)} className="text-zinc-400 hover:text-zinc-700 font-bold">✕</button>
-            </header>
+              <button
+                onClick={() => setIssuesOrder(null)}
+                className="p-1.5 hover:bg-[#E0E2E6] rounded-full text-[#5F6368] hover:text-[#1F1F1F] transition duration-150 cursor-pointer outline-none border-none bg-transparent"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
 
-            <div className="p-4 flex flex-col gap-4">
-              {/* Existing issues list */}
-              <div className="flex flex-col gap-2 max-h-48 overflow-y-auto custom-scrollbar">
-                {(issuesOrder.issues || []).length === 0 ? (
-                  <span className="text-xs text-zinc-400 italic">No issues registered for this order.</span>
+            {/* Modal Body */}
+            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+              
+              {/* Add New Issue Form */}
+              <div className="bg-[#F8F9FA] border border-[#E0E2E6] rounded-xl p-3 flex flex-col gap-2.5">
+                <span className="text-[11px] font-bold text-[#1F1F1F] uppercase tracking-wider">Create New Task / Issue</span>
+                
+                <div>
+                  <input
+                    type="text"
+                    placeholder="Task Title (e.g. Damaged packaging, Missing item)"
+                    value={newIssueTitle}
+                    onChange={(e) => setNewIssueTitle(e.target.value)}
+                    className="w-full border border-[#E0E2E6] rounded-lg px-3 py-1.5 text-xs text-[#1F1F1F] placeholder-[#5F6368] bg-white focus:outline-none focus:border-[#0B57D0]"
+                    maxLength={100}
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <textarea
+                    placeholder="Describe details or remarks here (maximum 300 words)..."
+                    value={newIssueNote}
+                    onChange={(e) => setNewIssueNote(e.target.value)}
+                    className="w-full border border-[#E0E2E6] rounded-lg px-3 py-1.5 text-xs text-[#1F1F1F] placeholder-[#5F6368] bg-white focus:outline-none focus:border-[#0B57D0] h-20 resize-none"
+                  />
+                  <div className="flex justify-between items-center px-1">
+                    {(() => {
+                      const clean = newIssueNote.trim();
+                      const count = clean === "" ? 0 : clean.split(/\s+/).length;
+                      const isOver = count > 300;
+                      return (
+                        <>
+                          <span className={`text-[10px] font-medium ${isOver ? "text-[#C5221F]" : "text-[#5F6368]"}`}>
+                            Word count: {count} / 300 {isOver && "(Limit exceeded)"}
+                          </span>
+                          <span className="text-[10px] text-[#5F6368]">
+                            {(issuesOrder.issues || []).length} / 10 issues max
+                          </span>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                <button
+                  disabled={
+                    newIssueTitle.trim() === "" ||
+                    (newIssueNote.trim() !== "" && newIssueNote.trim().split(/\s+/).length > 300) ||
+                    (issuesOrder.issues || []).length >= 10
+                  }
+                  onClick={async () => {
+                    const currentIssues = issuesOrder.issues || [];
+                    const newIssue: IssueItem = {
+                      id: Math.random().toString(36).substring(7) + "_" + Date.now(),
+                      title: newIssueTitle.trim(),
+                      note: newIssueNote.trim(),
+                      done: false
+                    };
+                    const updated = [...currentIssues, newIssue];
+                    await handleUpdateIssues(issuesOrder.id, updated);
+                    setNewIssueTitle("");
+                    setNewIssueNote("");
+                  }}
+                  className={`py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 border border-transparent transition duration-150 outline-none cursor-pointer ${
+                    newIssueTitle.trim() === "" ||
+                    (newIssueNote.trim() !== "" && newIssueNote.trim().split(/\s+/).length > 300) ||
+                    (issuesOrder.issues || []).length >= 10
+                      ? "bg-[#F1F3F4] text-[#9AA0A6] cursor-not-allowed"
+                      : "bg-[#0B57D0] text-white hover:bg-[#0842A0]"
+                  }`}
+                  style={{ height: "32px" }}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  Add Task / Issue
+                </button>
+              </div>
+
+              {/* Existing Issues List */}
+              <div className="flex flex-col gap-2">
+                <span className="text-[11px] font-bold text-[#5F6368] uppercase tracking-wider px-1">Issues & Tasks List</span>
+                
+                {(!issuesOrder.issues || issuesOrder.issues.length === 0) ? (
+                  <div className="text-center text-xs text-[#5F6368] italic py-8 border border-dashed border-[#E0E2E6] rounded-xl">
+                    No active tasks or issues recorded for this order.
+                  </div>
                 ) : (
-                  (issuesOrder.issues || []).map(iss => (
-                    <div key={iss.id} className="flex items-start gap-2 p-2.5 bg-zinc-50 border border-zinc-200 rounded-lg">
-                      <input
-                        type="checkbox"
-                        checked={iss.done}
-                        onChange={() => handleToggleIssueDone(iss.id)}
-                        className="mt-0.5 rounded border-zinc-300 text-[#0b57d0] cursor-pointer"
-                      />
-                      <div className="flex-1">
-                        <div className={`text-xs font-bold ${iss.done ? "line-through text-zinc-400" : "text-zinc-800"}`}>
-                          {iss.title}
+                  <div className="flex flex-col gap-2">
+                    {issuesOrder.issues.map((issue) => (
+                      <div
+                        key={issue.id}
+                        className={`border rounded-xl p-3 flex gap-3 items-start transition duration-150 ${
+                          issue.done
+                            ? "bg-[#F8F9FA] border-[#E0E2E6] opacity-60"
+                            : "bg-[#FFFDF4] border-[#FFE0B2]"
+                        }`}
+                      >
+                        {/* Done status toggle */}
+                        <div className="pt-0.5">
+                          <input
+                            type="checkbox"
+                            checked={issue.done}
+                            onChange={async () => {
+                              const updated = issuesOrder.issues!.map(x => {
+                                if (x.id === issue.id) {
+                                  return { ...x, done: !x.done };
+                                }
+                                return x;
+                              });
+                              await handleUpdateIssues(issuesOrder.id, updated);
+                            }}
+                            className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                            title="Toggle Done/Not Done status"
+                          />
                         </div>
-                        {iss.note && <div className="text-[11px] text-zinc-500">{iss.note}</div>}
+
+                        {/* Title & Notes details */}
+                        <div className="flex-1 min-w-0">
+                          <h4 className={`text-xs font-bold text-[#1F1F1F] mb-0.5 break-words ${issue.done ? "line-through text-[#5F6368]" : ""}`}>
+                            {issue.title}
+                          </h4>
+                          {issue.note && (
+                            <p className="text-[11px] text-[#5F6368] leading-normal break-words whitespace-pre-wrap mb-0">
+                              {issue.note}
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Delete Button */}
+                        <button
+                          onClick={async () => {
+                            const updated = issuesOrder.issues!.filter(x => x.id !== issue.id);
+                            await handleUpdateIssues(issuesOrder.id, updated);
+                          }}
+                          className="p-1 hover:bg-[#F1F3F4] rounded text-[#5F6368] hover:text-[#C5221F] transition duration-150 cursor-pointer outline-none border-none bg-transparent"
+                          title="Delete issue"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
                       </div>
-                    </div>
-                  ))
+                    ))}
+                  </div>
                 )}
               </div>
 
-              {/* Add new issue form */}
-              <div className="flex flex-col gap-2 pt-2 border-t border-zinc-200">
-                <span className="text-xs font-bold text-zinc-700">Add New Issue / Note:</span>
-                <input
-                  type="text"
-                  value={newIssueTitle}
-                  onChange={(e) => setNewIssueTitle(e.target.value)}
-                  placeholder="Issue title (e.g. Missing Item, Damaged Box)"
-                  className="px-3 py-1.5 border border-zinc-300 rounded text-xs focus:outline-none focus:border-[#0b57d0]"
-                />
-                <textarea
-                  value={newIssueNote}
-                  onChange={(e) => setNewIssueNote(e.target.value)}
-                  placeholder="Additional note / remark..."
-                  rows={2}
-                  className="px-3 py-1.5 border border-zinc-300 rounded text-xs focus:outline-none focus:border-[#0b57d0]"
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveIssue}
-                  className="self-end px-3 py-1.5 bg-red-600 text-white text-xs font-bold rounded-lg hover:bg-red-700"
-                >
-                  + Add Issue
-                </button>
-              </div>
             </div>
 
-            <footer className="p-3 bg-[#f8f9fa] border-t border-zinc-200 flex justify-end">
+            {/* Footer */}
+            <div className="border-t border-[#E0E2E6] p-3.5 bg-[#F8F9FA] flex justify-end">
               <button
                 onClick={() => setIssuesOrder(null)}
-                className="px-3 py-1.5 bg-zinc-200 hover:bg-zinc-300 text-zinc-800 text-xs font-bold rounded-lg"
+                className="px-4 py-1.5 border border-[#E0E2E6] bg-white text-[#1F1F1F] text-xs font-semibold rounded-lg hover:bg-[#F8F9FA] cursor-pointer"
+                style={{
+                  height: "36px"
+                }}
               >
                 Close
               </button>
-            </footer>
+            </div>
+
           </div>
         </div>
       )}
 
-      {/* Right Slide-in Timeline Panel: Order Audit History */}
+      {/* Activity Logs Modal */}
       {selectedOrderForLogs && (
-        <>
-          {/* Backdrop Overlay */}
-          <div 
-            className="fixed inset-0 bg-zinc-950/30 z-50 transition-opacity duration-300 animate-in fade-in"
-            onClick={() => setSelectedOrderForLogs(null)}
-          />
-
-          {/* Right Drawer Panel */}
-          <div className="fixed top-0 right-0 h-screen w-full sm:w-[480px] bg-white shadow-2xl border-l border-zinc-200 z-50 transform transition-transform duration-300 ease-in-out flex flex-col font-primary animate-in slide-in-from-right duration-300">
-            {/* Drawer Header */}
-            <header className="p-5 border-b border-zinc-200 flex items-center justify-between bg-[#f8f9fa] shrink-0">
-              <div className="flex flex-col gap-0.5">
-                <div className="flex items-center gap-2">
-                  <Clock size={16} className="text-[#0b57d0]" />
-                  <h3 className="font-bold text-sm text-zinc-900">Order Audit History</h3>
-                </div>
-                <span className="text-xs font-mono font-bold text-zinc-600">
-                  {selectedOrderForLogs.id}
-                </span>
+        <div className="fixed inset-0 bg-[#00000040] backdrop-blur-[2px] flex items-center justify-center z-[20000] p-4 select-none">
+          <div className="bg-white border border-[#E0E2E6] rounded-2xl shadow-xl max-w-lg w-full max-h-[80vh] flex flex-col overflow-hidden animate-[fadeIn_0.15s_ease-out]">
+            
+            {/* Header */}
+            <div className="flex justify-between items-center border-b border-[#E0E2E6] p-4 bg-[#F8F9FA]">
+              <div>
+                <h3 className="text-sm font-bold text-[#1F1F1F] mb-0.5 flex items-center gap-1.5">
+                  <svg className="w-4 h-4 text-[#5F6368]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                  </svg>
+                  Order Activity Logs
+                </h3>
+                <span className="text-[10px] text-[#5F6368] font-mono">Order ID: {selectedOrderForLogs.id}</span>
               </div>
               <button
                 onClick={() => setSelectedOrderForLogs(null)}
-                className="p-1.5 rounded-lg hover:bg-zinc-200 text-zinc-500 hover:text-zinc-800 transition"
+                className="p-1.5 hover:bg-[#E0E2E6] rounded-full text-[#5F6368] hover:text-[#1F1F1F] transition duration-150 cursor-pointer outline-none border-none bg-transparent"
               >
-                <X size={18} />
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
               </button>
-            </header>
-
-            {/* Order Overview Card */}
-            <div className="p-4 bg-zinc-50 border-b border-zinc-200 text-xs flex flex-col gap-2 shrink-0">
-              <div className="flex justify-between items-center">
-                <span className="text-zinc-500">Shop: <b>{selectedOrderForLogs.shop_name}</b></span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${getStatusBadgeClass(selectedOrderForLogs.actual_status)}`}>
-                  {formatStatusLabel(selectedOrderForLogs.actual_status)}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-zinc-600 font-mono text-[11px]">
-                <span>Tracking: <b>{selectedOrderForLogs.tracking_number || "—"}</b></span>
-                <span>Courier: <b>{selectedOrderForLogs.shipping_provider || "Standard"}</b></span>
-              </div>
             </div>
 
-            {/* Timeline Body */}
-            <div className="flex-1 overflow-y-auto p-5 custom-scrollbar bg-white">
-              {Array.isArray(selectedOrderForLogs.logs) && selectedOrderForLogs.logs.length > 0 ? (
-                <div className="relative pl-6 flex flex-col gap-6">
-                  {/* Vertical Timeline Line */}
-                  <div className="absolute left-[11px] top-3 bottom-3 w-0.5 bg-zinc-200" />
+            {/* Body */}
+            <div className="flex-1 overflow-y-auto p-5">
+              {(() => {
+                let parsedLogs: any[] = [];
+                if (selectedOrderForLogs.logs) {
+                  if (Array.isArray(selectedOrderForLogs.logs)) {
+                    parsedLogs = selectedOrderForLogs.logs;
+                  } else if (typeof selectedOrderForLogs.logs === "string") {
+                    try {
+                      parsedLogs = JSON.parse(selectedOrderForLogs.logs);
+                    } catch (e) {
+                      console.error("Failed to parse logs string:", e);
+                    }
+                  }
+                }
+                const logsList = [...parsedLogs];
+                
+                const hasPackingLog = logsList.some((l: any) => {
+                  const act = (l.action || "").toLowerCase();
+                  return act.includes("before pack") || act.includes("packing proof");
+                });
+                if (selectedOrderForLogs.before_pack_photo && !hasPackingLog) {
+                  logsList.push({
+                    action: "Packing Proof",
+                    actionBy: selectedOrderForLogs.packed_by || "Packer",
+                    remark: "Scanned items in bucket before packing",
+                    timestamp: selectedOrderForLogs.packed_at ? (selectedOrderForLogs.packed_at - 60000) : (selectedOrderForLogs.create_time * 1000 + 120000),
+                    photoUrl: selectedOrderForLogs.before_pack_photo
+                  });
+                }
 
-                  {selectedOrderForLogs.logs.map((log: any, idx: number) => {
-                    const actionName = log.action || log.title || "Event";
-                    const isLatest = idx === selectedOrderForLogs.logs!.length - 1;
-                    
-                    let dotColor = "bg-[#0b57d0]";
-                    if (actionName.includes("Proof") || actionName.includes("Delivered")) dotColor = "bg-emerald-600";
-                    else if (actionName.includes("AWB")) dotColor = "bg-purple-600";
-                    else if (actionName.includes("Collection") || actionName.includes("Pack")) dotColor = "bg-amber-600";
-                    else if (actionName.includes("Cancel")) dotColor = "bg-red-600";
+                const hasPackLog = logsList.some((l: any) => {
+                  const act = (l.action || "").toLowerCase();
+                  return act === "pack" || act === "packed" || act === "shipping proof" || act === "shipping proof (repacked)";
+                });
+                if (selectedOrderForLogs.packed_at && !hasPackLog) {
+                  logsList.push({
+                    action: "Shipping Proof",
+                    actionBy: selectedOrderForLogs.packed_by || "Packer",
+                    remark: "Order packed successfully",
+                    timestamp: selectedOrderForLogs.packed_at,
+                    photoUrl: selectedOrderForLogs.proof_photo || ""
+                  });
+                }
 
-                    return (
-                      <div key={idx} className="relative flex items-start group">
-                        {/* Timeline Circle Node */}
-                        <div className={`absolute -left-[19px] top-1.5 w-3.5 h-3.5 rounded-full ${dotColor} border-2 border-white shadow-xs z-10`} />
+                const hasTransitLog = logsList.some((l: any) => {
+                  const act = (l.action || "").toLowerCase();
+                  return act.includes("transit") || act.includes("shipped") || act.includes("handover") || act.includes("collect");
+                });
+                if (selectedOrderForLogs.transit_at && !hasTransitLog) {
+                  logsList.push({
+                    action: "In Transit",
+                    actionBy: "System",
+                    remark: "Status updated to Transit",
+                    timestamp: selectedOrderForLogs.transit_at
+                  });
+                }
 
-                        {/* Event Card Content */}
-                        <div className="flex flex-col gap-1.5 bg-zinc-50 hover:bg-zinc-100/80 p-3.5 rounded-xl border border-zinc-200/80 w-full transition shadow-2xs">
-                          <div className="flex justify-between items-start flex-wrap gap-1">
-                            <span className="font-bold text-xs text-zinc-900">
-                              {actionName}
-                            </span>
-                            <span className="text-[10px] text-zinc-500 font-semibold bg-white px-2 py-0.5 rounded border border-zinc-200">
-                              {log.timestamp ? new Date(log.timestamp).toLocaleString("en-GB") : ""}
-                            </span>
-                          </div>
+                const hasDeliveredLog = logsList.some((l: any) => {
+                  const act = (l.action || "").toLowerCase();
+                  return act.includes("delivered") || act.includes("completed");
+                });
+                if (selectedOrderForLogs.delivered_at && !hasDeliveredLog) {
+                  logsList.push({
+                    action: "Delivered",
+                    actionBy: "System",
+                    remark: "Status updated to Delivered",
+                    timestamp: selectedOrderForLogs.delivered_at
+                  });
+                }
+                
+                logsList.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
 
-                          {(log.action_by || log.actionBy) && (
-                            <div className="text-[11px] text-zinc-600">
-                              By: <span className="font-semibold text-zinc-800">{log.action_by || log.actionBy}</span>
-                            </div>
-                          )}
+                const formatDateTime = (ts: number) => {
+                  if (!ts) return "N/A";
+                  const date = new Date(ts);
+                  const yyyy = date.getFullYear();
+                  const mm = String(date.getMonth() + 1).padStart(2, '0');
+                  const dd = String(date.getDate()).padStart(2, '0');
+                  const hh = String(date.getHours()).padStart(2, '0');
+                  const min = String(date.getMinutes()).padStart(2, '0');
+                  const ss = String(date.getSeconds()).padStart(2, '0');
+                  return `${dd}/${mm}/${yyyy} ${hh}:${min}:${ss}`;
+                };
 
-                          {(log.details || log.remark) && (
-                            <p className="text-[11px] text-zinc-600 bg-white p-2 rounded border border-zinc-200/60 leading-relaxed select-text">
-                              {log.details || log.remark}
-                            </p>
-                          )}
-
-                          {log.photoUrl && (
-                            <div className="mt-1">
-                              <img
-                                src={log.photoUrl}
-                                alt="Proof"
-                                className="w-24 h-24 object-cover rounded-lg border border-zinc-300 shadow-xs cursor-pointer hover:scale-105 transition"
-                                onClick={() => setZoomImgUrl(log.photoUrl)}
-                              />
-                            </div>
-                          )}
+                return (
+                  <div className="flex flex-col gap-4">
+                    <div>
+                      <h4 className="text-[11px] font-bold text-[#5F6368] uppercase tracking-wider mb-4">Timeline Events</h4>
+                      {logsList.length === 0 ? (
+                        <div className="text-center text-xs text-[#5F6368] italic py-8 border border-dashed border-[#E0E2E6] rounded-xl">
+                          No activity logs recorded for this order.
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-center p-6 text-zinc-400">
-                  <Clock size={36} className="text-zinc-300 mb-2" />
-                  <span className="text-xs font-semibold">No audit timeline recorded yet</span>
-                </div>
-              )}
+                      ) : (
+                        <div className="relative border-l border-[#E0E2E6] ml-2.5 pl-6 flex flex-col gap-6">
+                          {logsList.map((log: any, idx: number) => {
+                            const actionLower = (log.action || "").toLowerCase();
+                            
+                            const isAWBAction = ["create awb", "print awb", "reprint awb"].includes(actionLower);
+                            const isPackingProof = ["before pack", "packing proof"].includes(actionLower);
+                            const isShippingProof = ["pack", "repack", "shipping proof", "shipping proof (repacked)"].includes(actionLower);
+                            const isTransit = ["collect", "collected", "handover", "transit", "in transit"].includes(actionLower);
+                            const isDelivered = ["delivered", "completed"].includes(actionLower);
+                            const isSync = actionLower.includes("sync");
+
+                            let dotColor = "bg-gray-400";
+                            if (isAWBAction) dotColor = "bg-[#0b57d0]";
+                            else if (isPackingProof) dotColor = "bg-[#137333]";
+                            else if (isShippingProof) dotColor = "bg-[#007a87]";
+                            else if (isTransit) dotColor = "bg-[#b76e00]";
+                            else if (isDelivered) dotColor = "bg-[#681da8]";
+                            else if (isSync) dotColor = "bg-[#5f6368]";
+
+                            let actionLabel = log.action || "";
+                            if (actionLabel.toLowerCase() === "before pack") actionLabel = "Packing Proof";
+                            if (actionLabel.toLowerCase() === "pack" || actionLabel.toLowerCase() === "repack") actionLabel = "Shipping Proof";
+
+                            return (
+                              <div key={idx} className="relative group">
+                                <span className={`absolute -left-[32px] top-1 w-3.5 h-3.5 rounded-full border-2 border-white ring-4 ring-transparent transition duration-150 ${dotColor}`} />
+                                <div className="flex flex-col gap-1.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-bold text-[#1f1f1f]">{actionLabel}</span>
+                                    <span className="text-[10px] text-[#5f6368] font-semibold bg-[#f1f3f4] px-2 py-0.5 rounded-full select-none">
+                                      by {log.actionBy || "System"}
+                                    </span>
+                                  </div>
+                                  {log.remark && (
+                                    <span className="text-[11px] text-[#5F6368] leading-relaxed break-words font-medium">
+                                      {log.remark}
+                                    </span>
+                                  )}
+                                  {log.photoUrl && (
+                                    <div className="mt-2 border border-[#E0E2E6] rounded-xl bg-[#F8F9FA] p-2.5 max-w-[200px] flex flex-col gap-1.5 items-center">
+                                      <span className="text-[9px] font-bold text-[#5f6368] uppercase tracking-wide select-none">Proof Attachment</span>
+                                      <a href={log.photoUrl} target="_blank" rel="noreferrer" className="relative group overflow-hidden rounded-lg border border-[#E0E2E6] aspect-square w-full flex items-center justify-center bg-white cursor-pointer">
+                                        <img src={log.photoUrl} alt="Log Attachment" className="w-full h-full object-cover group-hover:scale-105 transition duration-150" />
+                                      </a>
+                                    </div>
+                                  )}
+                                  <span className="text-[10px] text-[#9aa0a6] font-medium font-mono select-none mt-1">
+                                    {formatDateTime(log.timestamp)}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
-            {/* Drawer Footer */}
-            <footer className="p-4 bg-[#f8f9fa] border-t border-zinc-200 flex justify-end shrink-0">
+            {/* Footer */}
+            <div className="border-t border-[#E0E2E6] p-3.5 bg-[#F8F9FA] flex justify-end">
               <button
                 onClick={() => setSelectedOrderForLogs(null)}
-                className="px-4 py-2 bg-[#0b57d0] hover:bg-[#0842a0] text-white text-xs font-bold rounded-lg transition shadow-sm"
+                className="px-4 py-1.5 border border-[#E0E2E6] bg-white text-[#1F1F1F] text-xs font-semibold rounded-lg hover:bg-[#F8F9FA] cursor-pointer"
+                style={{
+                  height: "36px"
+                }}
               >
                 Close
               </button>
-            </footer>
+            </div>
+
           </div>
-        </>
+        </div>
       )}
+
     </div>
   );
 }

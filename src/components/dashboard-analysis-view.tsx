@@ -1053,13 +1053,42 @@ export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {
       return b || "Other Brand";
     };
 
-    let totalInAmt = 0;
-    let totalInQty = 0;
-    let totalOutAmt = 0;
-    let totalOutQty = 0;
+    // Set of buyers that have actual Sell-Out data
+    const buyersWithSellOut = new Set<string>();
+    filteredSalesOut.forEach((r) => {
+      const b = (
+        r.buyer_name ||
+        r.buyer_code ||
+        r.retailer_name ||
+        r.retailer_group ||
+        r.buyer ||
+        r.customer_name ||
+        "Unknown Buyer"
+      ).trim();
+      const amt = Number(r.sales_amount || 0);
+      const qty = Number(r.sales_quantity || 0);
+      if (b && (amt > 0 || qty > 0 || r.sales_amount !== undefined)) {
+        buyersWithSellOut.add(b);
+      }
+    });
 
-    // Aggregate Sell-In
+    // Aggregate Sell-In (If grouping by buyer, do not count sell-in if buyer has no sell-out data)
     filteredSalesIn.forEach((r) => {
+      const buyerName = (
+        r.buyer_name ||
+        r.buyer_code ||
+        r.retailer_name ||
+        r.retailer_group ||
+        r.buyer ||
+        r.customer_name ||
+        "Unknown Buyer"
+      ).trim();
+
+      // Rule: Do not count sell in if sell out has no data for that buyer
+      if (soComparisonGroup === "buyer" && !buyersWithSellOut.has(buyerName)) {
+        return;
+      }
+
       const key = getGroupKey(r);
       const amt = Number(r.total_demand !== undefined ? r.total_demand : (r.gross_amount || (Number(r.total_amount || 0) > 0 ? r.total_amount : 0)));
       const qty = Number(r.quantity !== undefined ? r.quantity : (r.gross_qty || (Number(r.total_qty || 0) > 0 ? r.total_qty : 0)));
@@ -1068,9 +1097,6 @@ export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {
       cur.sellInAmt += amt;
       cur.sellInQty += qty;
       map.set(key, cur);
-
-      totalInAmt += amt;
-      totalInQty += qty;
     });
 
     // Aggregate Sell-Out
@@ -1083,13 +1109,15 @@ export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {
       cur.sellOutAmt += amt;
       cur.sellOutQty += qty;
       map.set(key, cur);
-
-      totalOutAmt += amt;
-      totalOutQty += qty;
     });
 
+    // Filter map items: when grouped by buyer, ensure only buyers with sell out data are included
+    let all = Array.from(map.values());
+    if (soComparisonGroup === "buyer") {
+      all = all.filter((it) => buyersWithSellOut.has(it.label) && (it.sellOutAmt > 0 || it.sellOutQty > 0 || it.sellInAmt > 0 || it.sellInQty > 0));
+    }
+
     // Sort by combined volume and take top 6
-    const all = Array.from(map.values());
     all.sort((a, b) => {
       const volA = soComparisonMetric === "amount" ? (a.sellInAmt + a.sellOutAmt) : (a.sellInQty + a.sellOutQty);
       const volB = soComparisonMetric === "amount" ? (b.sellInAmt + b.sellOutAmt) : (b.sellInQty + b.sellOutQty);
@@ -1098,7 +1126,20 @@ export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {
 
     const items = all.slice(0, 6);
 
+    // Sum totals based on the active comparison items
+    let totalInAmt = 0;
+    let totalInQty = 0;
+    let totalOutAmt = 0;
+    let totalOutQty = 0;
     let maxVal = 100;
+
+    all.forEach((it) => {
+      totalInAmt += it.sellInAmt;
+      totalInQty += it.sellInQty;
+      totalOutAmt += it.sellOutAmt;
+      totalOutQty += it.sellOutQty;
+    });
+
     items.forEach((it) => {
       const inVal = soComparisonMetric === "amount" ? it.sellInAmt : it.sellInQty;
       const outVal = soComparisonMetric === "amount" ? it.sellOutAmt : it.sellOutQty;
@@ -1123,6 +1164,25 @@ export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {
   const sellThroughData = React.useMemo(() => {
     const map = new Map<string, { label: string; inQty: number; outQty: number; inAmt: number; outAmt: number }>();
 
+    // Set of buyers that have actual Sell-Out data
+    const buyersWithSellOut = new Set<string>();
+    filteredSalesOut.forEach((r) => {
+      const b = (
+        r.buyer_name ||
+        r.buyer_code ||
+        r.retailer_name ||
+        r.retailer_group ||
+        r.buyer ||
+        r.customer_name ||
+        "Unknown Buyer"
+      ).trim();
+      const amt = Number(r.sales_amount || 0);
+      const qty = Number(r.sales_quantity || 0);
+      if (b && (amt > 0 || qty > 0 || r.sales_amount !== undefined)) {
+        buyersWithSellOut.add(b);
+      }
+    });
+
     filteredSalesIn.forEach((r) => {
       let key = "Other";
       if (sellThroughGroup === "brand") {
@@ -1143,6 +1203,11 @@ export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {
           r.customer_name ||
           "Unknown Buyer"
         ).trim();
+
+        // Rule: Do not count sell in if sell out has no data for that buyer
+        if (!buyersWithSellOut.has(key)) {
+          return;
+        }
       }
 
       const qty = Number(r.quantity !== undefined ? r.quantity : (r.gross_qty || (Number(r.total_qty || 0) > 0 ? r.total_qty : 0)));

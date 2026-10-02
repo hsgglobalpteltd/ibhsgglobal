@@ -2,7 +2,7 @@
 import * as React from "react";
 import { submitMobileSignature } from "@/lib/api";
 import { showToast } from "@/lib/toast";
-import { Shield, CheckCircle, RefreshCw } from "lucide-react";
+import { CheckCircle2, Loader2 } from "lucide-react";
 
 export default function MobileSignPage() {
   const [sessionId, setSessionId] = React.useState<string | null>(null);
@@ -11,6 +11,7 @@ export default function MobileSignPage() {
   const [phone, setPhone] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
   const [submitted, setSubmitted] = React.useState(false);
+  const [hasDrawn, setHasDrawn] = React.useState(false);
 
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
   const [isDrawing, setIsDrawing] = React.useState(false);
@@ -24,25 +25,34 @@ export default function MobileSignPage() {
     }
   }, []);
 
-  // Set up canvas sizing
-  React.useEffect(() => {
+  // Set up canvas sizing with higher DPI for smooth signature
+  const initCanvas = React.useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    // Set display size
     const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * 2; // double resolution for high DPI displays
-    canvas.height = rect.height * 2;
+    if (rect.width === 0 || rect.height === 0) return;
+
+    const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 2 : 2;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
 
     const ctx = canvas.getContext("2d");
     if (ctx) {
-      ctx.scale(2, 2);
-      ctx.strokeStyle = "#18181b"; // zinc-900 color
+      ctx.scale(dpr, dpr);
+      ctx.strokeStyle = "#0f172a"; // slate-900 for dark crisp ink
       ctx.lineWidth = 2.5;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
     }
-  }, [submitted]);
+  }, []);
+
+  React.useEffect(() => {
+    initCanvas();
+    const handleResize = () => initCanvas();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [initCanvas, submitted]);
 
   // Drawing event handlers
   const getCoordinates = (e: React.MouseEvent | React.TouchEvent): { x: number; y: number } => {
@@ -77,6 +87,7 @@ export default function MobileSignPage() {
     ctx.beginPath();
     ctx.moveTo(x, y);
     setIsDrawing(true);
+    setHasDrawn(true);
   };
 
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
@@ -106,13 +117,20 @@ export default function MobileSignPage() {
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    setHasDrawn(false);
   };
 
   const checkCanvasEmpty = (canvas: HTMLCanvasElement): boolean => {
-    const buffer = new Uint32Array(
-      canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data.buffer
-    );
-    return !buffer.some((color) => color !== 0);
+    try {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return true;
+      const pixelBuffer = new Uint32Array(
+        ctx.getImageData(0, 0, canvas.width, canvas.height).data.buffer
+      );
+      return !pixelBuffer.some((color) => color !== 0);
+    } catch {
+      return !hasDrawn;
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -129,7 +147,7 @@ export default function MobileSignPage() {
 
     const canvas = canvasRef.current;
     if (!canvas || checkCanvasEmpty(canvas)) {
-      showToast("Please sign on the signature pad before submitting.", "warning");
+      showToast("Please draw your signature before submitting.", "warning");
       return;
     }
 
@@ -147,93 +165,141 @@ export default function MobileSignPage() {
 
   if (submitted) {
     return (
-      <div className="flex h-[100dvh] w-full flex-col items-center justify-center bg-[#E5E5E5] p-8 text-center font-primary select-none overflow-hidden animate-fade-in gap-5">
-        <div className="h-14 w-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-xs">
-          <CheckCircle className="w-8 h-8" />
+      <div className="min-h-[100dvh] w-full bg-white flex flex-col items-center justify-center p-6 text-center font-primary select-none animate-in fade-in duration-300">
+        <div className="w-full max-w-sm flex flex-col gap-6 items-center">
+          <img
+            src="/logo.png"
+            alt="HSG Global"
+            className="h-16 sm:h-20 w-auto object-contain"
+            onError={(e) => {
+              const target = e.currentTarget;
+              if (!target.src.endsWith("hsg-logo.png")) {
+                target.src = "/hsg-logo.png";
+              }
+            }}
+          />
+          <div className="h-16 w-16 rounded-full bg-emerald-50 border border-emerald-200/80 text-emerald-600 flex items-center justify-center shadow-xs">
+            <CheckCircle2 className="w-8 h-8" />
+          </div>
+          <div className="flex flex-col gap-2">
+            <h1 className="text-xl font-bold tracking-tight text-zinc-950">Signature Submitted</h1>
+            <p className="text-xs text-zinc-500 font-medium leading-relaxed max-w-xs">
+              Your signature has been securely captured. Please check your desktop screen to download the signed agreement and complete your login.
+            </p>
+          </div>
+          <div className="w-full border-t border-slate-100 my-1" />
+          <p className="text-xs text-zinc-400 font-medium">You can now safely close this browser tab.</p>
         </div>
-        <h1 className="text-xl font-extrabold text-zinc-900">Signature Submitted!</h1>
-        <p className="text-sm text-zinc-650 leading-relaxed max-w-xs">
-          Your handwritten signature has been successfully captured. Please check your desktop computer to download the signed contract PDF and finalize your login setup.
-        </p>
-        <p className="text-xs text-zinc-400 font-medium mt-4">You can safely close this mobile browser tab now.</p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-[100dvh] w-full flex-col justify-between bg-[#E5E5E5] p-5 font-primary select-none overflow-hidden">
-      <div className="flex flex-col gap-1 text-center mt-1">
-        <div className="mx-auto h-9 w-9 rounded-lg bg-zinc-700 text-white flex items-center justify-center">
-          <Shield className="w-4 h-4" />
+    <div className="min-h-[100dvh] w-full bg-white flex flex-col justify-between p-4 sm:p-6 font-primary select-none overflow-y-auto">
+      <div className="w-full max-w-lg mx-auto flex flex-col justify-between flex-1 gap-5">
+        
+        {/* Header with Bigger Company Logo (No placeholder, no background box) */}
+        <div className="flex flex-col items-center text-center gap-2 pt-2">
+          <img
+            src="/logo.png"
+            alt="HSG Global"
+            className="h-16 sm:h-20 w-auto object-contain transition-all"
+            onError={(e) => {
+              const target = e.currentTarget;
+              if (!target.src.endsWith("hsg-logo.png")) {
+                target.src = "/hsg-logo.png";
+              }
+            }}
+          />
+          <div className="flex flex-col gap-0.5 mt-1">
+            <h1 className="text-xl font-bold tracking-tight text-zinc-950">Sign NDA Agreement</h1>
+            <p className="text-xs text-zinc-500 font-medium truncate max-w-[340px]">
+              {email ? `Signing for: ${email}` : "HSG Global Internal Bridge"}
+            </p>
+          </div>
         </div>
-        <h1 className="text-xl font-extrabold tracking-tight text-zinc-950 mt-1">Sign NDA Contract</h1>
-        <p className="text-[10px] text-zinc-500 font-medium truncate">
-          {email ? `Signing for: ${email}` : "Capture mobile credentials"}
-        </p>
-      </div>
 
-      <form onSubmit={handleSubmit} className="flex flex-1 flex-col justify-between mt-4 gap-4">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Full Name</label>
-            <input
-              type="text"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Enter your full name"
-              className="h-10 px-3 bg-[#EEEEEE] border border-zinc-300 rounded-lg text-base text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400/20 select-text"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1">
-            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Phone Number</label>
-            <input
-              type="tel"
-              required
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              placeholder="e.g. +65 8123 4567"
-              className="h-10 px-3 bg-[#EEEEEE] border border-zinc-300 rounded-lg text-base text-zinc-900 focus:outline-none focus:ring-2 focus:ring-zinc-400/20 select-text"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Draw Signature</label>
-              <button
-                type="button"
-                onClick={clearCanvas}
-                className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-800 font-bold cursor-pointer"
-              >
-                <RefreshCw size={10} />
-                <span>Clear Canvas</span>
-              </button>
-            </div>
-            <div className="relative w-full h-36 bg-zinc-50 border border-zinc-300 rounded-lg overflow-hidden cursor-crosshair touch-none">
-              <canvas
-                ref={canvasRef}
-                onMouseDown={startDrawing}
-                onMouseMove={draw}
-                onMouseUp={stopDrawing}
-                onMouseLeave={stopDrawing}
-                onTouchStart={startDrawing}
-                onTouchMove={draw}
-                onTouchEnd={stopDrawing}
-                className="absolute inset-0 w-full h-full"
+        {/* Form Fields */}
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 justify-between gap-4 mt-2">
+          <div className="flex flex-col gap-3.5">
+            {/* Full Name Input */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-700">Full Name</label>
+              <input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Enter your full name"
+                className="w-full h-12 px-4 bg-white border border-slate-300 rounded-xl text-base font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0] focus:ring-2 focus:ring-[#0B57D0]/20 transition-all shadow-xs select-text"
               />
             </div>
-          </div>
-        </div>
 
-        <button
-          type="submit"
-          disabled={submitting}
-          className="w-full h-11 bg-zinc-800 hover:bg-zinc-900 disabled:bg-zinc-400 text-white rounded-lg text-sm font-bold shadow-sm transition-colors cursor-pointer focus:outline-none mb-1"
-        >
-          {submitting ? "Submitting Signature..." : "Submit Signature"}
-        </button>
-      </form>
+            {/* Phone Number Input */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-zinc-700">Phone Number</label>
+              <input
+                type="tel"
+                required
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                placeholder="e.g. +65 8123 4567"
+                className="w-full h-12 px-4 bg-white border border-slate-300 rounded-xl text-base font-medium text-zinc-900 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0] focus:ring-2 focus:ring-[#0B57D0]/20 transition-all shadow-xs select-text"
+              />
+            </div>
+
+            {/* Signature Canvas with Full Width & High Usability */}
+            <div className="flex flex-col gap-1.5 mt-1">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-zinc-700">Signature</label>
+                <button
+                  type="button"
+                  onClick={clearCanvas}
+                  className="text-xs font-medium text-zinc-500 hover:text-zinc-900 transition-colors cursor-pointer py-0.5 px-2 rounded-md hover:bg-zinc-100"
+                >
+                  Clear
+                </button>
+              </div>
+
+              <div className="relative w-full h-64 sm:h-72 bg-white border border-slate-300 rounded-xl overflow-hidden cursor-crosshair touch-none transition-all shadow-2xs focus-within:border-[#0B57D0] focus-within:ring-2 focus-within:ring-[#0B57D0]/20">
+                <canvas
+                  ref={canvasRef}
+                  onMouseDown={startDrawing}
+                  onMouseMove={draw}
+                  onMouseUp={stopDrawing}
+                  onMouseLeave={stopDrawing}
+                  onTouchStart={startDrawing}
+                  onTouchMove={draw}
+                  onTouchEnd={stopDrawing}
+                  className="absolute inset-0 w-full h-full"
+                />
+
+                {/* Dotted signature guideline moved higher */}
+                <div className="absolute bottom-12 left-6 right-6 border-b-2 border-dotted border-slate-300 pointer-events-none flex items-end">
+                  <span className="text-xs text-zinc-400 font-serif pb-0.5 pr-2 select-none">✕</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Submit Button */}
+          <button
+            type="submit"
+            disabled={submitting}
+            className="w-full h-12 mt-2 bg-[#0B57D0] hover:bg-[#0842A0] active:scale-[0.98] disabled:opacity-50 text-white rounded-xl text-base font-semibold shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/30 shrink-0"
+          >
+            {submitting ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Submitting Signature...</span>
+              </>
+            ) : (
+              <span>Submit Signature</span>
+            )}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
+

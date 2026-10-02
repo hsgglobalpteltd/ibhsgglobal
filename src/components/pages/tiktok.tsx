@@ -4,6 +4,7 @@ import * as React from "react";
 import { FeatureCard } from "../feature-card";
 import { TiktokOrdersModule } from "../modules/TiktokOrdersModule";
 import { TiktokTerminalModule } from "../modules/TiktokTerminalModule";
+import { TiktokSalesReportModule } from "../modules/TiktokSalesReportModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canViewModule } from "@/lib/permissions";
 import { UserProfile } from "@/lib/api";
@@ -67,6 +68,9 @@ export function TiktokPage({ profile, breadcrumbPath }: TiktokPageProps) {
         return <TiktokOrdersModule profile={profile} />;
       case "Tiktok Terminal":
         return <TiktokTerminalModule profile={profile} />;
+      case "Tiktok Sale Report":
+      case "Tiktok Sales Report":
+        return <TiktokSalesReportModule profile={profile} />;
       default:
         return null;
     }

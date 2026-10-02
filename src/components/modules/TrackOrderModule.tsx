@@ -1721,6 +1721,34 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     return profile?.name || profile?.email || "Admin";
   }, [profile]);
 
+  // Fetch Return Order Mapping Templates from Database
+  const fetchReturnTemplates = async () => {
+    // 1. Initial load from localStorage for instant UI
+    const local = localStorage.getItem("ib_return_mapper_templates");
+    if (local) {
+      try {
+        const parsed = JSON.parse(local);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setReturnTemplates(parsed);
+        }
+      } catch (_) {}
+    }
+
+    // 2. Fetch live from Database via Workers dedicated endpoint
+    try {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/templates");
+      if (res.ok) {
+        const json = await res.json();
+        if (json.success && Array.isArray(json.templates)) {
+          setReturnTemplates(json.templates);
+          try {
+            localStorage.setItem("ib_return_mapper_templates", JSON.stringify(json.templates));
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  };
+
   // Fetch drafts, API settings, product SKUs, and driver logs on mount
   React.useEffect(() => {
     // 1. Load draft orders from localStorage
@@ -1735,6 +1763,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     
     // Fetch OneMap API settings
     fetchSettingApi();
+    fetchReturnTemplates();
     
     // Quick load from cache for instant UI, followed by live Database sync
     fetchDatabaseOrders(false).then(() => {
@@ -5076,6 +5105,23 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   }, [isReturnVisualMapperOpen, returnBoxRef, returnBoxLoc, returnBoxPos, dragState, updateCropPreviews]);
 
 
+  // Helper to sync Return Templates to Database & LocalStorage
+  const syncReturnTemplatesToDatabase = async (updated: ReturnTemplatePreset[]) => {
+    try {
+      localStorage.setItem("ib_return_mapper_templates", JSON.stringify(updated));
+    } catch (_) {}
+
+    try {
+      await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders/templates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ templates: updated })
+      });
+    } catch (err) {
+      console.error("Failed to sync return templates to database:", err);
+    }
+  };
+
   // Save current bounding box configuration as a named template
   const handleSaveReturnTemplate = () => {
     const name = newTemplateNameInput.trim();
@@ -5095,10 +5141,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     setSelectedTemplateId(newPreset.id);
     setNewTemplateNameInput("");
     setShowSaveTemplateForm(false);
-    try {
-      localStorage.setItem("ib_return_mapper_templates", JSON.stringify(updated));
-      showToast(`Template "${name}" saved.`, "success");
-    } catch (_) {}
+    syncReturnTemplatesToDatabase(updated);
+    showToast(`Template "${name}" saved to Database.`, "success");
   };
 
   // Apply a saved template preset
@@ -5121,10 +5165,8 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     if (selectedTemplateId === templateId) {
       setSelectedTemplateId("");
     }
-    try {
-      localStorage.setItem("ib_return_mapper_templates", JSON.stringify(updated));
-      showToast("Template deleted.", "info");
-    } catch (_) {}
+    syncReturnTemplatesToDatabase(updated);
+    showToast("Template deleted.", "info");
   };
 
   // Run Batch Gemini OCR Extraction across all pages using mapped bounding boxes
@@ -5150,6 +5192,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       const totalPages = pdfDoc.numPages;
 
       const extractedDrafts: TrackOrderDraft[] = [];
+      const duplicates: string[] = [];
       const tempAssignedMarks: string[] = [];
 
       // Calculate epoch deadline from returnMapperCollectDate
@@ -5285,6 +5328,35 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             }
           ]);
 
+          const normalizeRef = (s: string) => String(s || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+          const cleanRefNorm = normalizeRef(cleanRef);
+          const cleanRefUpper = cleanRef.trim().toUpperCase();
+
+          // Validation: check if Return Reference Number is already registered in Drafts, or ANY order in dbOrders (Pending, Completed, Returns)
+          const inDrafts = drafts.some((d) => {
+            const dRef = (d.refNumber || d.doNumber || "").trim().toUpperCase();
+            return dRef === cleanRefUpper || (cleanRefNorm.length >= 4 && normalizeRef(dRef) === cleanRefNorm);
+          }) || extractedDrafts.some((d) => {
+            const dRef = (d.refNumber || d.doNumber || "").trim().toUpperCase();
+            return dRef === cleanRefUpper || (cleanRefNorm.length >= 4 && normalizeRef(dRef) === cleanRefNorm);
+          });
+
+          const inDb = dbOrders.some((o) => {
+            const oRef = String(o.ref_number || "").trim().toUpperCase();
+            const oDo = String(o.do_number || "").trim().toUpperCase();
+            const oId = String(o.id || "").trim().toUpperCase();
+            if (oRef === cleanRefUpper || oDo === cleanRefUpper || oId === cleanRefUpper) return true;
+            if (cleanRefNorm.length >= 4) {
+              if (normalizeRef(oRef) === cleanRefNorm || normalizeRef(oDo) === cleanRefNorm) return true;
+            }
+            return false;
+          });
+
+          if (inDrafts || inDb) {
+            duplicates.push(cleanRef);
+            continue;
+          }
+
           // Geocode coordinates for Singapore postal code
           let lat: number | string = "";
           let lng: number | string = "";
@@ -5325,10 +5397,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         }
       }
 
+      if (duplicates.length > 0) {
+        showToast(`Warning: Return order(s) ${duplicates.join(", ")} already registered in system and were ignored.`, "warning");
+      }
+
       if (extractedDrafts.length > 0) {
         const mergedDrafts = [...drafts, ...extractedDrafts];
         saveDraftsToStorage(mergedDrafts);
         showToast(`Added ${extractedDrafts.length} extracted return orders to Drafts!`, "success");
+        if (!cancelExtractionRef.current) {
+          setIsReturnVisualMapperOpen(false);
+        }
+      } else if (duplicates.length > 0) {
+        showToast("All extracted return orders are already registered in the system.", "info");
         if (!cancelExtractionRef.current) {
           setIsReturnVisualMapperOpen(false);
         }

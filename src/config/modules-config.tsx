@@ -198,6 +198,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Tiktok Terminal",
         description: "Manage Tiktok fulfillment terminals, IP verification configurations, and station permissions.",
+      },
+      {
+        title: "Tiktok Sale Report",
+        description: "Analyze TikTok shop sales, SKU performance, unit demand, and historical trends by Year, Month, and Week.",
       }
     ]
   },

@@ -9,7 +9,7 @@ import { onAuthStateChanged, User } from "firebase/auth";
 import { syncUserProfile, fetchMyProfile, fetchLatestContract, loginWithPin, logoutUser, UserProfile } from "@/lib/api";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "@/components/custom-button";
-import { ShieldAlert, KeyRound, Sparkles } from "lucide-react";
+import { ShieldAlert, KeyRound, Sparkles, LogOut } from "lucide-react";
 import { WelcomeAboardScreen } from "@/components/welcome-aboard";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MaintenanceModule } from "@/components/MaintenanceModule";
@@ -40,6 +40,7 @@ export default function Home() {
   const [idToken, setIdToken] = React.useState<string>("");
   const [profile, setProfile] = React.useState<UserProfile | null>(null);
   const [loading, setLoading] = React.useState<boolean>(true);
+  const isLoggingOutRef = React.useRef<boolean>(false);
 
   // Restore cached session immediately upon client mount before network checks
   React.useEffect(() => {
@@ -201,6 +202,13 @@ export default function Home() {
   // Listen to Firebase Auth state changes
   React.useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (isLoggingOutRef.current) {
+        setFirebaseUser(null);
+        setIdToken("");
+        setProfile(null);
+        setLoading(false);
+        return;
+      }
       if (user) {
         try {
           const token = await user.getIdToken();
@@ -480,27 +488,31 @@ export default function Home() {
 
   // Handle session superseded (forced logout when logged in on another device)
   const handleSessionSuperseded = React.useCallback(async (message?: string) => {
+    isLoggingOutRef.current = true;
     showToast(message || "You have been signed out because this account is now active on another device.", "error");
-    try {
-      if (auth.currentUser) {
-        await signOut(auth);
-      }
-    } catch (e) {
-      console.warn("Sign out error:", e);
+    if (typeof window !== "undefined") {
+      safeLocalStorageRemove("ib_user_profile");
+      safeLocalStorageRemove("ib_auth_token");
+      safeLocalStorageRemove("ib_promoter_schedules_draft");
+      safeLocalStorageRemove("ib_promoter_schedules_backup");
     }
     setFirebaseUser(null);
     setIdToken("");
     setProfile(null);
     setPinDigits(["", "", "", ""]);
     setShowPinLogin(false);
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("ib_user_profile");
-      localStorage.removeItem("ib_auth_token");
-      localStorage.removeItem("ib_promoter_schedules_draft");
-      localStorage.removeItem("ib_promoter_schedules_backup");
-    }
     setActiveItem("Dashboard");
     setBreadcrumbPath(["Dashboard"]);
+    try {
+      if (auth.currentUser) {
+        await signOut(auth);
+      }
+    } catch (e) {
+      console.warn("Sign out error:", e);
+    } finally {
+      isLoggingOutRef.current = false;
+      setLoading(false);
+    }
   }, []);
 
   // Listen to ib-session-superseded event from API interceptors
@@ -687,10 +699,30 @@ export default function Home() {
   };
 
   const handleLogout = async () => {
+    isLoggingOutRef.current = true;
     const userEmail = firebaseUser?.email || profile?.email;
     const token = idToken;
+
+    // 1. Immediately wipe all local storage and session cache
+    if (typeof window !== "undefined") {
+      safeLocalStorageRemove("ib_user_profile");
+      safeLocalStorageRemove("ib_auth_token");
+      safeLocalStorageRemove("ib_promoter_schedules_draft");
+      safeLocalStorageRemove("ib_promoter_schedules_backup");
+    }
+
+    // 2. Immediately reset React state to switch UI to logged-out login view
+    setFirebaseUser(null);
+    setIdToken("");
+    setProfile(null);
+    setPinDigits(["", "", "", ""]);
+    setShowPinLogin(false);
+    setActiveItem("Dashboard");
+    setBreadcrumbPath(["Dashboard"]);
+
+    // 3. Notify backend and sign out of Firebase
     try {
-      if (userEmail) {
+      if (userEmail && token) {
         logoutUser(token, userEmail).catch(() => {});
       }
       if (auth.currentUser) {
@@ -698,20 +730,11 @@ export default function Home() {
       }
     } catch (err: any) {
       console.warn("Sign out auth error:", err);
+    } finally {
+      isLoggingOutRef.current = false;
+      setLoading(false);
     }
-    setFirebaseUser(null);
-    setIdToken("");
-    setProfile(null);
-    setPinDigits(["", "", "", ""]);
-    setShowPinLogin(false);
-    if (typeof window !== "undefined") {
-      localStorage.removeItem("ib_user_profile");
-      localStorage.removeItem("ib_auth_token");
-      localStorage.removeItem("ib_promoter_schedules_draft");
-      localStorage.removeItem("ib_promoter_schedules_backup");
-    }
-    setActiveItem("Dashboard");
-    setBreadcrumbPath(["Dashboard"]);
+
     showToast("Signed out successfully", "info");
   };
 
@@ -752,7 +775,7 @@ export default function Home() {
     // 1. Loading Overlay Screen
     if (loading) {
       return (
-        <div className="flex min-h-screen w-full items-center justify-center bg-[#EEEEEE] select-none animate-in fade-in duration-300">
+        <div className="flex min-h-screen w-full items-center justify-center bg-[#F0F4F9] select-none animate-in fade-in duration-300">
           <span className="font-primary text-sm font-semibold text-zinc-600 animate-pulse">
             Connecting to Internal Bridge...
           </span>
@@ -763,18 +786,18 @@ export default function Home() {
     // 1.5 Website Global Maintenance Check
     if (checkIsUnderMaintenance(maintenanceSettings, clientIp)) {
       return (
-        <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 select-none font-primary text-center">
-          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 shadow-md flex flex-col gap-6 items-center">
-            <div className="h-12 w-12 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shadow-xs">
-              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-construction animate-bounce"><rect x="2" y="18" width="20" height="4" rx="1"/><path d="M17 14v-4"/><path d="M7 14v-4"/><path d="M13 6h-2"/><path d="m15 10-3-3-3 3"/><path d="M12 18v-4"/></svg>
+        <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#F0F4F9] p-6 select-none font-primary text-center animate-in fade-in duration-300">
+          <div className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl p-8 shadow-xl flex flex-col gap-6 items-center">
+            <div className="h-14 w-14 rounded-full bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 shadow-xs">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-construction animate-bounce"><rect x="2" y="18" width="20" height="4" rx="1"/><path d="M17 14v-4"/><path d="M7 14v-4"/><path d="M13 6h-2"/><path d="m15 10-3-3-3 3"/><path d="M12 18v-4"/></svg>
             </div>
-            <div className="flex flex-col gap-2">
-              <h2 className="text-xl font-bold text-zinc-950">System Under Maintenance</h2>
-              <p className="text-xs text-zinc-550 font-semibold leading-relaxed">
+            <div className="flex flex-col gap-1.5 items-center">
+              <h2 className="text-xl font-bold tracking-tight text-zinc-950">System Under Maintenance</h2>
+              <p className="text-xs font-medium text-zinc-500 leading-relaxed max-w-[280px]">
                 The HSG Global Internal Bridge is undergoing scheduled upgrades. Please try again later.
               </p>
             </div>
-            <div className="w-full border-t border-zinc-300/60 my-1" />
+            <div className="w-full border-t border-slate-100 my-1" />
             <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
               Secure System Portals Offline
             </p>
@@ -895,19 +918,26 @@ export default function Home() {
     // 4. User Suspended/Blocked Lock Screen
     if (profile.active === 2) {
       return (
-        <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 select-none font-primary animate-fade-in">
-          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 shadow-md flex flex-col gap-6 items-center text-center">
-            <div className="h-12 w-12 rounded-full bg-red-50 border border-red-200 flex items-center justify-center text-red-600 shadow-xs">
-              <ShieldAlert className="w-6 h-6 animate-pulse" />
+        <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#F0F4F9] p-6 select-none font-primary animate-in fade-in duration-300">
+          <div className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl p-8 shadow-xl flex flex-col gap-6 items-center text-center">
+            <div className="h-14 w-14 rounded-full bg-red-50 border border-red-200/80 flex items-center justify-center text-red-600 shadow-xs">
+              <ShieldAlert className="w-7 h-7 animate-pulse" />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <h2 className="text-xl font-bold text-zinc-950">Access Denied</h2>
-              <p className="text-sm text-zinc-500">Please contact admin.</p>
+            <div className="flex flex-col gap-1.5 items-center">
+              <h2 className="text-xl font-bold tracking-tight text-zinc-950">Access Denied</h2>
+              <p className="text-xs font-medium text-zinc-500 leading-relaxed max-w-[280px]">
+                Please contact admin.
+              </p>
             </div>
-            <div className="w-full border-t border-zinc-300/60 my-1" />
-            <CustomButton onClick={handleLogout} variant="default" className="w-full h-9 text-xs">
-              Log Out
-            </CustomButton>
+            <div className="w-full border-t border-slate-100 my-1" />
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full h-10 flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-zinc-50 active:scale-[0.98] text-xs font-semibold text-zinc-800 transition-all shadow-xs cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20"
+            >
+              <LogOut className="w-3.5 h-3.5 text-zinc-500" />
+              <span>Log Out</span>
+            </button>
           </div>
         </div>
       );
@@ -916,23 +946,30 @@ export default function Home() {
     // 5. User Inactive (Pending Approval) Lock Screen
     if (profile.active === 0) {
       return (
-        <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 select-none font-primary animate-fade-in">
-          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg p-6 shadow-md flex flex-col gap-6 items-center text-center">
-            <div className="h-12 w-12 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shadow-xs">
-              <ShieldAlert className="w-6 h-6" />
+        <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#F0F4F9] p-6 select-none font-primary animate-in fade-in duration-300">
+          <div className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl p-8 shadow-xl flex flex-col gap-6 items-center text-center">
+            <div className="h-14 w-14 rounded-full bg-amber-50 border border-amber-200/80 flex items-center justify-center text-amber-600 shadow-xs">
+              <ShieldAlert className="w-7 h-7" />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <h2 className="text-xl font-bold text-zinc-950">Pending Approval</h2>
-              <p className="text-sm text-zinc-500">Please contact admin for approval.</p>
+            <div className="flex flex-col gap-1.5 items-center">
+              <h2 className="text-xl font-bold tracking-tight text-zinc-950">Pending Approval</h2>
+              <p className="text-xs font-medium text-zinc-500 leading-relaxed max-w-[280px]">
+                Please contact admin for approval.
+              </p>
             </div>
-            <div className="w-full border-t border-zinc-300/60 my-1" />
-            <CustomButton onClick={handleLogout} variant="default" className="w-full h-9 text-xs">
-              Log Out
-            </CustomButton>
+            <div className="w-full border-t border-slate-100 my-1" />
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full h-10 flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white hover:bg-zinc-50 active:scale-[0.98] text-xs font-semibold text-zinc-800 transition-all shadow-xs cursor-pointer hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20"
+            >
+              <LogOut className="w-3.5 h-3.5 text-zinc-500" />
+              <span>Log Out</span>
+            </button>
           </div>
 
           {/* Live scanning progress bar line under the card container */}
-          <div className="w-full max-w-sm h-1.5 bg-zinc-300/60 rounded-full mt-4 overflow-hidden relative">
+          <div className="w-full max-w-sm h-1.5 bg-slate-200 rounded-full mt-4 overflow-hidden relative shadow-inner">
             <div className="animate-progress-slide rounded-full" />
           </div>
         </div>

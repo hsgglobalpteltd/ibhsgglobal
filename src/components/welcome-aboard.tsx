@@ -1,8 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Shield, LogOut, Check, FileText, QrCode, Hourglass, Loader2 } from "lucide-react";
-import { CustomButton } from "./custom-button";
+import { LogOut, FileText, QrCode, Hourglass, Loader2, CheckCircle2, ShieldCheck } from "lucide-react";
 import { fetchLatestContract, startSigningSession, pollSigningSession, finalizeContractSignature, UserProfile } from "@/lib/api";
 import { showToast } from "@/lib/toast";
 import { jsPDF } from "jspdf";
@@ -15,30 +14,38 @@ interface WelcomeAboardScreenProps {
   userEmail?: string | null;
 }
 
-const FALLBACK_CONTRACT_TEXT = `iB - HSG GLOBAL Internal Bridge
-Terms of Service and Non-Disclosure Agreement
-
-By completing this registration form and requesting access to the HSG Global Internal Bridge ("iB"), you explicitly acknowledge, understand, and agree to the following terms and conditions:
-
-1. Authorized Access and Employment Status
-You acknowledge that this portal is strictly for the internal use of employees and authorized personnel of HSG GLOBAL PTE. LTD. Access to this portal is a privilege tied directly to your current employment or contract status. In the event that your relationship with HSG GLOBAL PTE. LTD. is terminated or concluded, your access privileges will be revoked immediately, and your account will be removed without prior notice.
-
-2. Data Confidentiality and Non-Disclosure
-All information, data, metrics, and content hosted within the iB are strictly Confidential and Proprietary. You are expressly prohibited from sharing, exporting, duplicating, or disclosing any data from this portal to any third party without the explicit written consent of the Director or an authorized representative acting on behalf of the company.
-
-3. Accountability and Data Integrity
-You bear full responsibility and accountability for all activities, modifications, and data entries performed under your registered account. You agree to maintain the highest standards of data integrity and ensure that all information input into the system is accurate and truthful.
-
-4. Prohibition of Sabotage and Misconduct
-Any deliberate attempt to sabotage, corrupt, or manipulate data—including but not limited to providing intentionally false inputs, deleting critical records, or compromising system security—is strictly prohibited. Any such misconduct will result in immediate termination of portal access, disciplinary action, and potential legal and financial liability for damages caused.
-
-5. No Financial Transactions
-The iB is exclusively an operational tool. It does not require, request, or accept any form of payment, subscription fees, or financial transactions. Be vigilant against any unauthorized requests for financial information within this platform.`;
+// Helper to load image as base64 data URL for jsPDF
+const loadImgDataUrl = (src: string): Promise<string> => {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined") return resolve("");
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth || 64;
+        canvas.height = img.naturalHeight || 64;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL("image/png"));
+        } else {
+          resolve("");
+        }
+      } catch {
+        resolve("");
+      }
+    };
+    img.onerror = () => resolve("");
+    img.src = src;
+  });
+};
 
 export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, userEmail }: WelcomeAboardScreenProps) {
   const emailToUse = userEmail || profile.email || (profile as any).Email || "";
-  const [contractText, setContractText] = React.useState(FALLBACK_CONTRACT_TEXT);
-  const [scrolledToBottom, setScrolledToBottom] = React.useState(true);
+  const [contractText, setContractText] = React.useState("");
+  const [isContractLoading, setIsContractLoading] = React.useState(true);
+  const [scrolledToBottom, setScrolledToBottom] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [finalizing, setFinalizing] = React.useState(false);
 
@@ -50,48 +57,26 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, us
   const pollIntervalRef = React.useRef<any>(null);
   const timerIntervalRef = React.useRef<any>(null);
 
-  // Load contract text
+  // Load contract text directly from API
   React.useEffect(() => {
     fetchLatestContract()
       .then((latest) => {
         if (latest && latest.text && latest.text.trim().length > 0) {
           setContractText(latest.text);
-        } else {
-          // Fallback to static text file
-          fetch("/sign-up contract.txt")
-            .then((res) => {
-              if (res.ok) return res.text();
-              throw new Error("Failed to load static file");
-            })
-            .then((text) => {
-              if (text && text.trim().length > 0) {
-                setContractText(text);
-              }
-            })
-            .catch((e) => console.warn("Static contract fallback failed:", e));
         }
       })
       .catch((err) => {
-        console.warn("Could not load latest contract from API, using static fallback:", err);
-        fetch("/sign-up contract.txt")
-          .then((res) => {
-            if (res.ok) return res.text();
-            throw new Error("Failed to load static file");
-          })
-          .then((text) => {
-            if (text && text.trim().length > 0) {
-              setContractText(text);
-            }
-          })
-          .catch((e) => console.warn("Static contract fallback failed:", e));
+        console.warn("Could not load latest contract from API:", err);
+      })
+      .finally(() => {
+        setIsContractLoading(false);
       });
   }, []);
 
   // Monitor scroll height
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const target = e.currentTarget;
-    // Allow small tolerance (20px) for zoomed screens
-    const isAtBottom = target.scrollHeight - target.scrollTop - target.clientHeight <= 20;
+    const isAtBottom = target.scrollHeight - target.scrollTop - target.clientHeight <= 25;
     if (isAtBottom) {
       setScrolledToBottom(true);
     }
@@ -112,11 +97,28 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, us
     try {
       // 1. Generate signed contract PDF
       const doc = new jsPDF();
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text("iB - HSG GLOBAL Internal Bridge", 20, 20);
-      doc.setFontSize(11);
-      doc.text("Terms of Service and Non-Disclosure Agreement", 20, 27);
+      
+      // Load company favicon icon for PDF header
+      const iconDataUrl = await loadImgDataUrl("/icon.png").catch(() => "");
+      if (iconDataUrl) {
+        try {
+          doc.addImage(iconDataUrl, "PNG", 20, 14, 12, 12);
+        } catch {}
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(15);
+        doc.text("iB - HSG Global Internal Bridge", 35, 20);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.text("Terms of Service and Non-Disclosure Agreement", 35, 26);
+      } else {
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(15);
+        doc.text("iB - HSG Global Internal Bridge", 20, 20);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(10);
+        doc.text("Terms of Service and Non-Disclosure Agreement", 20, 26);
+      }
+      doc.setDrawColor(226, 232, 240);
       doc.line(20, 31, 190, 31);
 
       doc.setFont("helvetica", "normal");
@@ -139,7 +141,7 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, us
       }
 
       // Trigger Auto-Download to users desktop
-      doc.save("ib-NDA-contract.pdf");
+      doc.save("iB - HSG Global NDA contract.pdf");
       showToast("Signed contract PDF downloaded successfully!", "success");
 
       // 2. Upload signed PDF directly to R2
@@ -243,27 +245,34 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, us
   };
 
   return (
-    <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#EEEEEE] p-6 font-primary animate-fade-in">
-      <style>{`
-        .custom-scrollbar {
-          -webkit-overflow-scrolling: touch;
-        }
-      `}</style>
-
-      <div className="w-full max-w-3xl bg-[#E5E5E5] border border-zinc-300 rounded-lg shadow-lg flex flex-col h-[90vh] max-h-[90vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-300 bg-[#EEEEEE] rounded-t-lg">
-          <div className="flex items-center gap-2.5">
-            <Shield className="w-5 h-5 text-zinc-700" />
-            <div>
-              <h3 className="text-base font-bold text-zinc-950">NDA Agreement & Terms of Service</h3>
-              <p className="text-[10px] text-zinc-500 font-medium">Please review the agreement and scroll to the bottom to sign</p>
+    <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#F0F4F9] p-4 sm:p-6 font-primary animate-fade-in select-none">
+      <div className="w-full max-w-4xl bg-white border border-slate-200 rounded-2xl shadow-xl flex flex-col h-[88vh] max-h-[850px] overflow-hidden">
+        
+        {/* Top Header Bar */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shrink-0">
+          <div className="flex items-center gap-3.5">
+            <img
+              src="/icon.png"
+              alt="HSG Global"
+              className="h-10 w-10 sm:h-11 sm:w-11 object-contain shrink-0"
+              onError={(e) => {
+                const target = e.currentTarget;
+                if (!target.src.endsWith("icon-192.png")) {
+                  target.src = "/icon-192.png";
+                }
+              }}
+            />
+            <div className="h-8 w-px bg-slate-200" />
+            <div className="flex flex-col justify-center">
+              <h1 className="text-base font-bold tracking-tight text-zinc-950">NDA Agreement & Terms of Service</h1>
+              <p className="text-xs text-zinc-500 font-medium mt-0.5">Review the terms below and scroll to the bottom to sign</p>
             </div>
           </div>
+          
           <button 
             type="button" 
             onClick={onLogout}
-            className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-red-600 font-bold px-2 py-1.5 rounded-md hover:bg-red-50 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 text-xs font-semibold text-zinc-600 hover:text-red-600 hover:bg-red-50 border border-slate-200 hover:border-red-200 px-3 py-1.5 rounded-lg transition-all cursor-pointer shadow-2xs"
             title="Sign out of your session"
           >
             <LogOut size={13} />
@@ -271,45 +280,101 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, us
           </button>
         </div>
 
+        {/* Document Reading Viewport */}
         <div 
-          className="w-full p-8 overflow-y-auto custom-scrollbar bg-zinc-50 text-zinc-700 text-xs leading-relaxed border-b border-zinc-300 whitespace-pre-wrap font-primary select-text h-[calc(90vh-136px)]"
+          onScroll={handleScroll}
+          className="w-full p-6 sm:p-8 overflow-y-auto bg-[#F8F9FA] flex-1 select-text"
         >
-          {contractText}
+          <div className="max-w-3xl mx-auto bg-white border border-slate-200/90 rounded-xl p-8 sm:p-10 shadow-xs flex flex-col gap-6 text-zinc-700">
+            
+            {/* Document Header Inside Page */}
+            <div className="flex items-start justify-between border-b border-slate-200 pb-5">
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] font-bold text-[#0B57D0] uppercase tracking-wider">HSG GLOBAL PTE. LTD.</span>
+                <h2 className="text-lg sm:text-xl font-bold text-zinc-950">Terms of Service & Non-Disclosure Agreement</h2>
+                <p className="text-xs text-zinc-500 font-medium">HSG Global Internal Bridge System Access Policy</p>
+              </div>
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#E8F0FE] text-[#0B57D0] text-[11px] font-bold shrink-0">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Confidential</span>
+              </div>
+            </div>
+
+            {/* Document Body Text */}
+            {/* Document Body Text */}
+            {isContractLoading ? (
+              <div className="flex flex-col items-center justify-center py-24 gap-3 text-zinc-400">
+                <Loader2 className="w-8 h-8 text-[#0B57D0] animate-spin" />
+                <span className="text-xs font-medium text-zinc-500">Loading agreement terms...</span>
+              </div>
+            ) : (
+              <div className="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap font-normal text-zinc-700 space-y-4">
+                {contractText}
+              </div>
+            )}
+
+            {/* Signature Notice Footer */}
+            <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-zinc-400 font-medium">
+              <span>iB HSG Global Internal Bridge</span>
+            </div>
+          </div>
         </div>
 
         {/* Bottom Actions Bar */}
-        <div className="flex items-center justify-between gap-4 px-6 py-4 bg-[#EEEEEE] border-t border-zinc-300 rounded-b-lg">
-          <span className="text-[10px] text-zinc-500 font-bold shrink-0">
-            Please click "Sign Contract" to generate your signature QR code.
-          </span>
-          
-          <div className="flex items-center gap-3">
-            <CustomButton 
-              type="button" 
-              variant="dark"
-              disabled={!scrolledToBottom || loading}
-              onClick={handleSignClick}
-              className="h-10 text-xs font-bold"
-            >
-              {loading ? "Generating QR..." : "Sign Contract"}
-            </CustomButton>
+        <div className="flex items-center justify-between gap-4 px-6 py-3.5 bg-[#F8F9FA] border-t border-slate-200 shrink-0">
+          <div className="flex items-center gap-2">
+            {isContractLoading ? (
+              <span className="text-xs text-zinc-400 font-medium flex items-center gap-1.5">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                <span>Fetching latest agreement...</span>
+              </span>
+            ) : scrolledToBottom ? (
+              <span className="text-xs font-semibold text-emerald-600 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Agreement reviewed. You may now sign.</span>
+              </span>
+            ) : (
+              <span className="text-xs text-zinc-500 font-medium flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-zinc-400" />
+                <span>Scroll to the bottom of the agreement to enable signing.</span>
+              </span>
+            )}
           </div>
+          
+          <button 
+            type="button" 
+            disabled={isContractLoading || !contractText || !scrolledToBottom || loading}
+            onClick={handleSignClick}
+            className="h-10 px-5 bg-[#0B57D0] hover:bg-[#0842A0] active:scale-[0.98] disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all cursor-pointer flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/30"
+          >
+            {loading ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Generating QR...</span>
+              </>
+            ) : (
+              <>
+                <QrCode className="w-3.5 h-3.5" />
+                <span>Sign Contract</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 
       {/* QR Code Handshake Dialog Overlay */}
       {showQrModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-xs p-4 animate-tableFadeInOnly">
-          <div className="w-full max-w-sm bg-[#E5E5E5] border border-zinc-300 rounded-lg shadow-2xl overflow-hidden flex flex-col font-primary">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-300 bg-[#EEEEEE]">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-sm bg-white border border-slate-200 rounded-2xl shadow-2xl overflow-hidden flex flex-col font-primary animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white">
               <div className="flex items-center gap-2">
-                <QrCode className="w-4 h-4 text-zinc-650" />
+                <QrCode className="w-4 h-4 text-[#0B57D0]" />
                 <h3 className="text-sm font-bold text-zinc-950">Scan QR to Sign</h3>
               </div>
               <button 
                 type="button"
                 onClick={handleCancelSession}
-                className="text-zinc-400 hover:text-zinc-800 rounded-md p-1 cursor-pointer"
+                className="text-zinc-400 hover:text-zinc-800 rounded-lg p-1 transition-colors cursor-pointer"
               >
                 <X size={16} />
               </button>
@@ -318,33 +383,33 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, us
             <div className="p-6 flex flex-col items-center gap-4 text-center">
               {finalizing ? (
                 <div className="flex flex-col items-center gap-3 py-8">
-                  <Loader2 className="w-10 h-10 text-zinc-800 animate-spin" />
-                  <span className="text-sm font-bold text-zinc-800">Compiling signed PDF...</span>
-                  <p className="text-xs text-zinc-500">Please wait while we secure your signature and finalize registration.</p>
+                  <Loader2 className="w-10 h-10 text-[#0B57D0] animate-spin" />
+                  <span className="text-sm font-bold text-zinc-900">Compiling signed agreement...</span>
+                  <p className="text-xs text-zinc-500 max-w-[260px]">Please wait while we secure your signature and finalize registration.</p>
                 </div>
               ) : (
                 <>
-                  <p className="text-xs text-zinc-550 leading-normal">
+                  <p className="text-xs text-zinc-600 font-medium leading-relaxed">
                     Scan the QR code below using your mobile phone camera to fill out your details and sign securely.
                   </p>
 
-                  <div className="bg-white p-3 rounded-lg border border-zinc-300 shadow-inner flex items-center justify-center w-60 h-60">
+                  <div className="bg-white p-3 rounded-2xl border border-slate-200 shadow-md flex items-center justify-center w-60 h-60">
                     <img 
                       src={getQrCodeUrl()} 
                       alt="Signature QR Code" 
-                      className="w-full h-full"
+                      className="w-full h-full rounded-lg"
                     />
                   </div>
 
-                  <div className="flex items-center justify-center gap-2 bg-[#EEEEEE] px-4 py-2 rounded-full border border-zinc-300 w-fit">
+                  <div className="flex items-center justify-center gap-2 bg-[#F0F4F9] px-4 py-2 rounded-full border border-slate-200 w-fit">
                     <Hourglass className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
-                    <span className="text-xs font-bold text-zinc-700">Expires in: {formatTime(timeLeft)}</span>
+                    <span className="text-xs font-semibold text-zinc-700">Expires in: {formatTime(timeLeft)}</span>
                   </div>
 
                   <button
                     type="button"
                     onClick={handleCancelSession}
-                    className="text-xs font-bold text-zinc-500 hover:text-zinc-800 cursor-pointer mt-1"
+                    className="text-xs font-semibold text-zinc-500 hover:text-zinc-800 cursor-pointer mt-1"
                   >
                     Cancel and return
                   </button>
@@ -358,7 +423,6 @@ export function WelcomeAboardScreen({ profile, idToken, onLogout, onComplete, us
   );
 }
 
-// X icon helper in case lucide doesn't load X
 function X({ size }: { size: number }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-x">
@@ -367,3 +431,4 @@ function X({ size }: { size: number }) {
     </svg>
   );
 }
+
