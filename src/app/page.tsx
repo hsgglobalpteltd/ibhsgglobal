@@ -90,6 +90,21 @@ export default function Home() {
   } | null>(null);
 
   const [isFullscreen, setIsFullscreen] = React.useState<boolean>(false);
+  const [dashboardTab, setDashboardTab] = React.useState<string>("today");
+
+  React.useEffect(() => {
+    const handleTabChange = (e: Event) => {
+      const customEvent = e as CustomEvent<string>;
+      if (customEvent.detail) {
+        setDashboardTab(customEvent.detail);
+      }
+    };
+
+    window.addEventListener("dashboard-tab-change", handleTabChange);
+    return () => {
+      window.removeEventListener("dashboard-tab-change", handleTabChange);
+    };
+  }, []);
 
   React.useEffect(() => {
     const handleFullscreenChange = () => {
@@ -1000,7 +1015,7 @@ export default function Home() {
 
         {/* Desktop/Tablet View */}
         <div className="hidden md:flex print:flex h-screen w-full bg-[#F8F9FC] overflow-hidden">
-          {!isFullscreen && (
+          {!(isFullscreen || (activeItem === "Dashboard" && dashboardTab === "analysis")) && (
             <SidePanel 
               activeItem={activeItem} 
               onSelectMenu={handleMenuSelect} 

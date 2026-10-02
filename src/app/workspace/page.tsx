@@ -18,6 +18,7 @@ import {
   ArrowUpDown,
   Filter,
   Trash2,
+  ArrowLeft,
   Copy,
   Check,
   X,
@@ -68,6 +69,7 @@ import {
   Redo2,
   LogOut,
   Bot,
+  ExternalLink,
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import {
@@ -937,18 +939,29 @@ export default function WorkspaceStandalonePage() {
     }
 
     // Check duplicate in active project
-    const isAlreadyInProject = currentTeamspaceMembers.some(
+    const existingMember = currentTeamspaceMembers.find(
       (m) => (m.email || "").toLowerCase() === emailToAdd
     );
-    if (isAlreadyInProject) {
-      showToast(`User ${nameToAdd} (${emailToAdd}) is already a member of this project.`, "info");
-      return;
+
+    if (existingMember) {
+      if (existingMember.role === newMemberRole) {
+        // Exactly the same role - do nothing because it's same, no duplicate add in
+        showToast(`${nameToAdd} is already a ${newMemberRole} in this project.`, "info");
+        setNewMemberName("");
+        setNewMemberEmail("");
+        setSelectedDbUserEmail("");
+        setMemberSearchQuery("");
+        return;
+      }
+      // Different role: replace old with new
     }
 
     setSavingMember(true);
-    showToast(`Adding ${nameToAdd} to ${currentTeamspace.name}...`, "info");
+    const isRoleUpdate = Boolean(existingMember && existingMember.role !== newMemberRole);
+    showToast(isRoleUpdate ? `Updating ${nameToAdd}'s role to ${newMemberRole}...` : `Adding ${nameToAdd} to ${currentTeamspace.name}...`, "info");
     try {
       const res = await saveWfeMember({
+        id: existingMember?.id,
         teamspace_id: currentTeamspace.id,
         name: nameToAdd,
         email: emailToAdd,
@@ -956,8 +969,21 @@ export default function WorkspaceStandalonePage() {
       });
 
       if (res && res.success && res.member) {
-        setProjectMembers((prev) => [...prev.filter((m) => m.id !== res.member.id), res.member]);
-        showToast(`Successfully added ${nameToAdd} (${newMemberRole}) to project!`, "success");
+        setProjectMembers((prev) => {
+          const filtered = prev.filter(
+            (m) => m.id !== res.member.id && (m.email || "").toLowerCase() !== emailToAdd
+          );
+          return [...filtered, res.member];
+        });
+
+        if (res.unchanged) {
+          showToast(`${nameToAdd} is already a ${newMemberRole} in this project.`, "info");
+        } else if (res.updated || isRoleUpdate) {
+          showToast(`Updated ${nameToAdd}'s role to ${newMemberRole} in project!`, "success");
+        } else {
+          showToast(`Successfully added ${nameToAdd} (${newMemberRole}) to project!`, "success");
+        }
+
         setNewMemberName("");
         setNewMemberEmail("");
         setSelectedDbUserEmail("");
@@ -1330,7 +1356,37 @@ export default function WorkspaceStandalonePage() {
   };
 
   const formatAssigneeDisplayName = (personName: string): string => {
-    return isAssigneeCurrentUser(personName) ? "Me" : personName;
+    if (!personName) return "";
+    const p = personName.trim();
+    if (!p) return "";
+    if (isAssigneeCurrentUser(p)) return "Me";
+
+    const pLower = p.toLowerCase();
+    // 1. Look up in current teamspace members
+    const mem = currentTeamspaceMembers.find(
+      (m) => (m.email && m.email.toLowerCase() === pLower) || (m.name && m.name.toLowerCase() === pLower)
+    ) || projectMembers.find(
+      (m) => (m.email && m.email.toLowerCase() === pLower) || (m.name && m.name.toLowerCase() === pLower)
+    );
+    if (mem && mem.name && !mem.name.includes("@")) return mem.name;
+
+    // 2. Look up in registered database users
+    const reg = registeredUsers.find(
+      (u) => (u.email && u.email.toLowerCase() === pLower) || (u.name && u.name.toLowerCase() === pLower)
+    );
+    if (reg && reg.name && !reg.name.includes("@")) return reg.name;
+
+    // 3. If raw email string (e.g. abdurrahmanmarikan@gmail.com), convert email handle to human readable name
+    if (p.includes("@")) {
+      const prefix = p.split("@")[0].replace(/[._-]/g, " ");
+      return prefix
+        .split(" ")
+        .filter(Boolean)
+        .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+        .join(" ");
+    }
+
+    return p;
   };
 
   const isTaskAssignedToCurrentUser = (task: WfeTask | null | undefined): boolean => {
@@ -2590,20 +2646,35 @@ export default function WorkspaceStandalonePage() {
       {/* ========================================================= */}
       <aside className="w-64 flex-shrink-0 bg-[#FBFBFC] border-r border-slate-200/90 flex flex-col justify-between select-none font-primary shadow-[inset_-1px_0_0_rgba(0,0,0,0.02)]">
         <div className="flex flex-col flex-1 min-h-0 overflow-y-auto">
+          {/* Back to iB Console Button (Hidden for Guests) */}
+          {/* Back to iB Console Button (Hidden for Guests) */}
+          {!isGuest && (
+            <div className="px-2.5 pt-2 pb-1 bg-white/40 shrink-0 border-b border-slate-100">
+              <a
+                href="/"
+                className="w-full flex items-center gap-1.5 px-2 py-1.2 rounded-md text-[11px] font-medium text-zinc-600 hover:text-[#0B57D0] hover:bg-blue-50/60 border border-slate-200/70 hover:border-blue-200 transition-all group cursor-pointer"
+                title="Back to iB - HSG Global Internal Bridge"
+              >
+                <ArrowLeft className="w-3 h-3 text-zinc-400 group-hover:text-[#0B57D0] transition-colors shrink-0" />
+                <span>Back to iB</span>
+              </a>
+            </div>
+          )}
+
           {/* Workspace Switcher */}
-          <div className="p-3 border-b border-slate-200/80 flex items-center justify-between group transition-colors bg-white/70">
-            <div className="flex items-center gap-2.5 min-w-0">
+          <div className="px-3 py-2 border-b border-slate-200/70 flex items-center justify-between group transition-colors bg-white/50">
+            <div className="flex items-center gap-2 min-w-0">
               <img
                 src="/favicon.ico"
                 alt="HSG Global"
-                className="w-6 h-6 object-contain shrink-0"
+                className="w-5 h-5 object-contain shrink-0"
                 onError={(e) => {
                   (e.currentTarget as HTMLElement).style.display = 'none';
                 }}
               />
               <div className="truncate min-w-0">
-                <div className="text-xs font-bold text-zinc-950 truncate tracking-tight leading-tight">HSG Global Workspace</div>
-                <div className="text-[10.5px] font-medium text-zinc-500 truncate leading-tight mt-0.5">
+                <div className="text-[11.5px] font-semibold text-zinc-900 truncate tracking-tight leading-tight">HSG Global Workspace</div>
+                <div className="text-[10px] text-zinc-400 truncate leading-tight mt-0.5">
                   {isGuest ? "Guest Access" : "Internal Bridge"}
                 </div>
               </div>
@@ -2611,65 +2682,62 @@ export default function WorkspaceStandalonePage() {
           </div>
 
           {/* Search & Action Bar */}
-          <div className="p-2.5 border-b border-slate-200/80 space-y-1.5">
+          <div className="p-2 border-b border-slate-200/70 space-y-1">
             <button
               onClick={() => {
                 setShowSearchModal(true);
                 setGlobalSearchInput("");
               }}
-              className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-600 bg-white border border-slate-200/90 hover:border-blue-400 hover:text-zinc-950 hover:shadow-2xs transition-all text-left cursor-pointer group shadow-xs"
+              className="w-full flex items-center justify-between px-2 py-1.2 rounded-md text-[11px] text-zinc-500 bg-white border border-slate-200/80 hover:border-blue-300 hover:text-zinc-900 transition-all text-left cursor-pointer group shadow-2xs"
             >
-              <div className="flex items-center gap-2 truncate">
-                <Search className="w-3.5 h-3.5 text-zinc-400 group-hover:text-blue-600 transition-colors shrink-0" />
-                <span className="font-medium truncate">Search / Quick Find</span>
+              <div className="flex items-center gap-1.5 truncate">
+                <Search className="w-3 h-3 text-zinc-400 group-hover:text-blue-600 transition-colors shrink-0" />
+                <span className="truncate font-normal">Search / Quick Find</span>
               </div>
-              <kbd className="text-[10px] bg-zinc-50 border border-slate-200 px-1.5 py-0.5 rounded text-zinc-500 font-mono shadow-2xs font-semibold shrink-0">Ctrl+K</kbd>
+              <kbd className="text-[9px] bg-zinc-50 border border-slate-200 px-1 py-0.2 rounded text-zinc-400 font-mono">Ctrl+K</kbd>
             </button>
 
             {/* Archive Folder under Search button */}
             {!isGuest && (
               <button
                 onClick={() => setShowArchiveModal(true)}
-                className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-medium text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50 transition-colors text-left cursor-pointer"
+                className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-zinc-500 hover:text-zinc-900 hover:bg-slate-100/70 transition-colors text-left cursor-pointer font-normal"
               >
-                <Archive className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                <Archive className="w-3 h-3 text-zinc-400 shrink-0" />
                 <span>Archive Folder</span>
               </button>
             )}
           </div>
 
           {/* TEAMSPACES / PROJECTS SECTION (100% INTERACTIVE) */}
-          <div className="px-3 pt-3">
-            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider uppercase text-zinc-400 px-1 mb-1.5">
-              <span className="flex items-center gap-1.5">
-                <span className="w-1 h-3 rounded-full bg-blue-500 shrink-0" />
-                <span>{isGuest ? "Shared Project" : `Projects / Teamspaces (${activeTeamspaces.length})`}</span>
-              </span>
+          <div className="px-2.5 pt-2.5">
+            <div className="flex items-center justify-between text-[10px] font-medium tracking-wider uppercase text-zinc-400 px-1 mb-1">
+              <span>{isGuest ? "Shared Project" : `Projects (${activeTeamspaces.length})`}</span>
               {!isGuest && (
                 <button
                   onClick={() => setShowNewTeamspaceModal(true)}
                   title="Create New Teamspace"
-                  className="p-1 rounded-md hover:bg-slate-200/70 text-zinc-500 hover:text-zinc-900 transition-colors cursor-pointer"
+                  className="p-0.5 rounded hover:bg-slate-200/60 text-zinc-400 hover:text-zinc-800 transition-colors cursor-pointer"
                 >
-                  <Plus className="w-3.5 h-3.5" />
+                  <Plus className="w-3 h-3" />
                 </button>
               )}
             </div>
 
-            <div className="space-y-1 mt-1">
+            <div className="space-y-0.5 mt-0.5">
               {visibleTeamspaces.map((ts) => {
                 const tsPages = publicPages.filter((p) => p.teamspace_id === ts.id);
                 return (
                   <div key={ts.id} className="space-y-0.5 group/ts">
                     {/* Teamspace Header Row */}
-                    <div className={`flex items-center justify-between py-1.5 px-2 rounded-lg hover:bg-slate-200/60 cursor-pointer text-xs font-bold group/tsrow transition-colors ${
-                      ts.is_archived === 1 ? "opacity-60 text-zinc-500 italic" : "text-zinc-800 hover:text-zinc-950"
+                    <div className={`flex items-center justify-between py-1 px-1.5 rounded-md hover:bg-slate-100/70 cursor-pointer text-[11.5px] font-medium group/tsrow transition-colors ${
+                      ts.is_archived === 1 ? "opacity-60 text-zinc-400 italic" : "text-zinc-700 hover:text-zinc-950"
                     }`}>
-                      <div className="flex items-center gap-2 truncate">
-                        <span className="text-sm shrink-0">{ts.icon || "📁"}</span>
+                      <div className="flex items-center gap-1.5 truncate">
+                        <span className="text-xs shrink-0">{ts.icon || "📁"}</span>
                         <span className="truncate">{ts.name}</span>
                         {ts.is_archived === 1 && (
-                          <span className="text-[9px] not-italic font-bold px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-200 rounded shrink-0">
+                          <span className="text-[8.5px] not-italic font-semibold px-1 py-0.2 bg-amber-50 text-amber-700 border border-amber-200 rounded shrink-0">
                             Archived
                           </span>
                         )}
@@ -2681,9 +2749,9 @@ export default function WorkspaceStandalonePage() {
                             handleOpenEditTeamspaceModal(ts);
                           }}
                           title={`Settings & Edit ${ts.name}`}
-                          className="p-1 hover:bg-white rounded text-zinc-500 hover:text-zinc-900 shadow-2xs transition-colors"
+                          className="p-0.5 hover:bg-white rounded text-zinc-400 hover:text-zinc-800 shadow-2xs transition-colors"
                         >
-                          <Pencil className="w-3 h-3" />
+                          <Pencil className="w-2.5 h-2.5" />
                         </button>
                         <button
                           onClick={(e) => {
@@ -2691,27 +2759,27 @@ export default function WorkspaceStandalonePage() {
                             handleOpenNewPageModal(ts.id, false);
                           }}
                           title={`Add page to ${ts.name}`}
-                          className="p-1 hover:bg-white rounded text-zinc-500 hover:text-zinc-900 shadow-2xs transition-colors"
+                          className="p-0.5 hover:bg-white rounded text-zinc-400 hover:text-zinc-800 shadow-2xs transition-colors"
                         >
-                          <Plus className="w-3 h-3" />
+                          <Plus className="w-2.5 h-2.5" />
                         </button>
                       </div>
                     </div>
 
                     {/* Pages inside this Teamspace */}
-                    <div className="pl-3 space-y-0.5 border-l-2 border-slate-200 ml-3.5 my-0.5">
+                    <div className="pl-2.5 space-y-0.5 border-l border-slate-200/70 ml-2.5 my-0.5">
                       {tsPages.map((p) => (
                         <div
                           key={p.id}
-                          className={`flex items-center justify-between py-1.5 px-2.5 rounded-lg text-xs transition-all group/p cursor-pointer ${
+                          className={`flex items-center justify-between py-1 px-2 rounded-md text-[11px] transition-all group/p cursor-pointer ${
                             activePageId === p.id
-                              ? "bg-gradient-to-r from-blue-50 to-indigo-50/60 text-[#0B57D0] font-bold border border-blue-200/70 shadow-2xs"
-                              : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50 font-medium"
+                              ? "bg-blue-50/90 text-[#0B57D0] font-semibold border border-blue-200/80 shadow-2xs"
+                              : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-100/60 font-normal"
                           }`}
                           onClick={() => handleSelectPage(p.id)}
                         >
-                          <div className="flex items-center gap-2 truncate min-w-0">
-                            <span className="text-xs shrink-0">{p.icon || "📄"}</span>
+                          <div className="flex items-center gap-1.5 truncate min-w-0">
+                            <span className="text-[11px] shrink-0">{p.icon || "📄"}</span>
                             <span className="truncate">{p.title}</span>
                           </div>
                           <div className="flex items-center gap-0.5 opacity-0 group-hover/p:opacity-100 transition-opacity shrink-0">
@@ -2721,9 +2789,9 @@ export default function WorkspaceStandalonePage() {
                                 handleOpenEditPageModal(p);
                               }}
                               title="Edit"
-                              className="p-1 text-zinc-400 hover:text-zinc-800 hover:bg-white rounded shadow-2xs transition-colors"
+                              className="p-0.5 text-zinc-400 hover:text-zinc-700 hover:bg-white rounded transition-colors"
                             >
-                              <Pencil className="w-3 h-3" />
+                              <Pencil className="w-2.5 h-2.5" />
                             </button>
                             <button
                               onClick={(e) => {
@@ -2736,13 +2804,13 @@ export default function WorkspaceStandalonePage() {
                               }}
                               disabled={!isProjectAdmin}
                               title={!isProjectAdmin ? "Only Project Managers can delete pages" : "Delete"}
-                              className={`p-1 rounded ${
+                              className={`p-0.5 rounded ${
                                 !isProjectAdmin
-                                  ? "opacity-35 cursor-not-allowed text-zinc-400"
-                                  : "text-zinc-400 hover:text-rose-600 hover:bg-rose-50 shadow-2xs cursor-pointer transition-colors"
+                                  ? "opacity-30 cursor-not-allowed text-zinc-300"
+                                  : "text-zinc-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
                               }`}
                             >
-                              <Trash2 className="w-3 h-3" />
+                              <Trash2 className="w-2.5 h-2.5" />
                             </button>
                           </div>
                         </div>
@@ -2751,9 +2819,9 @@ export default function WorkspaceStandalonePage() {
                       {tsPages.length === 0 && (
                         <button
                           onClick={() => handleOpenNewPageModal(ts.id, false)}
-                          className="text-[11px] text-zinc-400 hover:text-[#0B57D0] py-1 px-2 flex items-center gap-1.5 cursor-pointer font-medium hover:bg-blue-50/50 rounded-md transition-colors"
+                          className="text-[10.5px] text-zinc-400 hover:text-[#0B57D0] py-0.5 px-1.5 flex items-center gap-1 cursor-pointer font-normal hover:bg-blue-50/40 rounded transition-colors"
                         >
-                          <Plus className="w-3 h-3" /> <span>Add note / doc</span>
+                          <Plus className="w-2.5 h-2.5" /> <span>Add note / doc</span>
                         </button>
                       )}
                     </div>
@@ -2764,18 +2832,15 @@ export default function WorkspaceStandalonePage() {
           </div>
 
           {/* PRIVATE SECTION (100% INTERACTIVE) */}
-          <div className="px-3 pt-4 pb-2">
-            <div className="flex items-center justify-between text-[10px] font-bold tracking-wider uppercase text-zinc-400 px-1 mb-1.5">
-              <span className="flex items-center gap-1.5">
-                <span className="w-1 h-3 rounded-full bg-purple-500 shrink-0" />
-                <span>Private ({privatePages.length})</span>
-              </span>
+          <div className="px-2.5 pt-3 pb-2">
+            <div className="flex items-center justify-between text-[10px] font-medium tracking-wider uppercase text-zinc-400 px-1 mb-1">
+              <span>Private ({privatePages.length})</span>
               <button
                 onClick={() => handleOpenNewPageModal(null, true)}
                 title="Create Private Note"
-                className="p-1 rounded-md hover:bg-slate-200/70 text-zinc-500 hover:text-zinc-900 transition-colors cursor-pointer"
+                className="p-0.5 rounded hover:bg-slate-200/60 text-zinc-400 hover:text-zinc-800 transition-colors cursor-pointer"
               >
-                <Plus className="w-3.5 h-3.5" />
+                <Plus className="w-3 h-3" />
               </button>
             </div>
 
@@ -2783,15 +2848,15 @@ export default function WorkspaceStandalonePage() {
               {privatePages.map((p) => (
                 <div
                   key={p.id}
-                  className={`flex items-center justify-between py-1.5 px-2.5 rounded-lg text-xs transition-all group/priv cursor-pointer ${
+                  className={`flex items-center justify-between py-1 px-2 rounded-md text-[11px] transition-all group/priv cursor-pointer ${
                     activePageId === p.id
-                      ? "bg-gradient-to-r from-purple-50 to-pink-50/60 text-purple-900 font-bold border border-purple-200/70 shadow-2xs"
-                      : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50 font-medium"
+                      ? "bg-purple-50/80 text-purple-900 font-semibold border border-purple-200/80 shadow-2xs"
+                      : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-100/60 font-normal"
                   }`}
                   onClick={() => handleSelectPage(p.id)}
                 >
-                  <div className="flex items-center gap-2 truncate min-w-0">
-                    <span className="text-xs shrink-0">{p.icon || "👤"}</span>
+                  <div className="flex items-center gap-1.5 truncate min-w-0">
+                    <span className="text-[11px] shrink-0">{p.icon || "👤"}</span>
                     <span className="truncate">{p.title}</span>
                   </div>
                   <div className="flex items-center gap-0.5 opacity-0 group-hover/priv:opacity-100 transition-opacity shrink-0">
@@ -2801,9 +2866,9 @@ export default function WorkspaceStandalonePage() {
                         handleOpenEditPageModal(p);
                       }}
                       title="Edit"
-                      className="p-1 text-zinc-400 hover:text-zinc-800 hover:bg-white rounded shadow-2xs transition-colors"
+                      className="p-0.5 text-zinc-400 hover:text-zinc-700 hover:bg-white rounded transition-colors"
                     >
-                      <Pencil className="w-3 h-3" />
+                      <Pencil className="w-2.5 h-2.5" />
                     </button>
                     <button
                       onClick={(e) => {
@@ -2811,9 +2876,9 @@ export default function WorkspaceStandalonePage() {
                         handleDeletePage(p.id, p.title);
                       }}
                       title="Delete"
-                      className="p-1 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded shadow-2xs transition-colors"
+                      className="p-0.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors"
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Trash2 className="w-2.5 h-2.5" />
                     </button>
                   </div>
                 </div>
@@ -2822,9 +2887,9 @@ export default function WorkspaceStandalonePage() {
               {privatePages.length === 0 && (
                 <button
                   onClick={() => handleOpenNewPageModal(null, true)}
-                  className="text-[11px] text-zinc-400 hover:text-purple-700 py-1 px-2 flex items-center gap-1.5 cursor-pointer font-medium hover:bg-purple-50/50 rounded-md transition-colors"
+                  className="w-full text-left text-[10.5px] text-zinc-400 hover:text-zinc-700 py-1 px-2 flex items-center gap-1 cursor-pointer font-normal hover:bg-slate-100/60 rounded-md transition-colors"
                 >
-                  <Plus className="w-3 h-3" /> <span>Add private note</span>
+                  <Plus className="w-2.5 h-2.5" /> <span>Add private note</span>
                 </button>
               )}
             </div>
@@ -3975,7 +4040,7 @@ export default function WorkspaceStandalonePage() {
                                     }`}
                                   >
                                     <UserIcon className={`w-3 h-3 ${isMe ? "text-[#0B57D0]" : "text-zinc-500"}`} />
-                                    <span>{isMe ? "Me" : person}</span>
+                                    <span>{formatAssigneeDisplayName(person)}</span>
                                   </span>
                                 );
                               })}
@@ -4159,7 +4224,7 @@ export default function WorkspaceStandalonePage() {
                                         }`}
                                       >
                                         <UserIcon className={`w-2.5 h-2.5 ${isMe ? "text-[#0B57D0]" : "text-zinc-400"}`} />
-                                        <span>{isMe ? "Me" : person}</span>
+                                        <span>{formatAssigneeDisplayName(person)}</span>
                                       </span>
                                     );
                                   })}
@@ -4799,7 +4864,7 @@ export default function WorkspaceStandalonePage() {
                               className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200/80"
                             >
                               <UserIcon className="w-2.5 h-2.5 text-[#0B57D0]" />
-                              <span>{isMe ? "Me" : name}</span>
+                              <span>{formatAssigneeDisplayName(name)}</span>
                               {!editingTask.is_locked && (
                                 <button
                                   type="button"
@@ -5481,7 +5546,7 @@ export default function WorkspaceStandalonePage() {
                                 <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 pointer-events-none" />
                                 <input
                                   type="text"
-                                  placeholder="Type at least 4 characters to search..."
+                                  placeholder="Type user name..."
                                   value={memberSearchQuery}
                                   onChange={(e) => setMemberSearchQuery(e.target.value)}
                                   className="w-full pl-8 pr-7 py-2 text-xs bg-white border border-zinc-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 font-medium"
@@ -5499,13 +5564,7 @@ export default function WorkspaceStandalonePage() {
                               </div>
 
                               {/* Floating Filtered Dropdown Results */}
-                              {memberSearchQuery.trim().length > 0 && memberSearchQuery.trim().length < 4 && (
-                                <div className="absolute left-0 right-0 top-full mt-1 z-30 px-3 py-1.5 bg-white border border-zinc-200 rounded-lg shadow-lg text-[11px] text-amber-600 font-medium">
-                                  Type at least 4 characters ({memberSearchQuery.trim().length}/4)
-                                </div>
-                              )}
-
-                              {memberSearchQuery.trim().length >= 4 && (() => {
+                              {memberSearchQuery.trim().length > 0 && (() => {
                                 const query = memberSearchQuery.trim().toLowerCase();
                                 const matches = registeredUsers.filter(
                                   (u) =>
@@ -5524,22 +5583,22 @@ export default function WorkspaceStandalonePage() {
                                 return (
                                   <div className="absolute left-0 right-0 top-full mt-1 z-30 max-h-44 overflow-y-auto bg-white border border-zinc-200 rounded-lg shadow-xl divide-y divide-zinc-100">
                                     {matches.map((u) => {
-                                      const isAlreadyMember = currentTeamspaceMembers.some(
-                                        (m) => m.email.toLowerCase() === u.email.toLowerCase()
+                                      const existingMember = currentTeamspaceMembers.find(
+                                        (m) => (m.email || "").toLowerCase() === (u.email || "").toLowerCase()
                                       );
                                       return (
                                         <button
                                           key={u.id || u.email}
                                           type="button"
-                                          disabled={isAlreadyMember}
                                           onClick={() => {
                                             setSelectedDbUserEmail(u.email);
                                             setMemberSearchQuery("");
+                                            if (existingMember) {
+                                              setNewMemberRole(existingMember.role === "Manager" ? "Member" : "Manager");
+                                            }
                                           }}
-                                          className={`w-full px-3 py-2 text-left flex items-center justify-between transition-colors ${
-                                            isAlreadyMember
-                                              ? "opacity-50 cursor-not-allowed bg-zinc-50/80"
-                                              : "hover:bg-blue-50/70 cursor-pointer"
+                                          className={`w-full px-3 py-2 text-left flex items-center justify-between transition-colors hover:bg-blue-50/70 cursor-pointer ${
+                                            existingMember ? "bg-blue-50/20" : ""
                                           }`}
                                         >
                                           <div className="min-w-0 pr-2">
@@ -5547,9 +5606,11 @@ export default function WorkspaceStandalonePage() {
                                             <p className="text-[11px] text-zinc-500 truncate">{u.email}</p>
                                           </div>
                                           <div className="shrink-0 flex items-center gap-1">
-                                            {isAlreadyMember ? (
-                                              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 border border-zinc-200">
-                                                Already Member
+                                            {existingMember ? (
+                                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${
+                                                existingMember.role === "Manager" ? "bg-purple-100 text-purple-800 border-purple-200 font-bold" : "bg-zinc-100 text-zinc-700 border-zinc-200"
+                                              }`}>
+                                                Current: {existingMember.role}
                                               </span>
                                             ) : (
                                               <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-50 text-[#0B57D0] border border-blue-100">
@@ -5598,15 +5659,17 @@ export default function WorkspaceStandalonePage() {
                       <div className="flex items-center gap-2">
                         <span className="text-[11px] text-zinc-600 font-semibold">Role:</span>
                         {(() => {
-                          const managersCount = currentTeamspaceMembers.filter((m) => m.role === "Manager").length;
+                          const activeEmail = memberSource === "database" ? selectedDbUserEmail : newMemberEmail;
+                          const existing = currentTeamspaceMembers.find((m) => (m.email || "").toLowerCase() === (activeEmail || "").toLowerCase());
+                          const otherManagers = currentTeamspaceMembers.filter((m) => m.role === "Manager" && (!existing || m.id !== existing.id)).length;
                           return (
                             <select
                               value={newMemberRole}
                               onChange={(e) => setNewMemberRole(e.target.value)}
                               className="px-2.5 py-1.5 text-xs bg-white border border-zinc-300 rounded-lg font-semibold text-zinc-700 outline-none"
                             >
-                              <option value="Manager" disabled={managersCount >= 3}>
-                                Manager {managersCount >= 3 ? "(Max 3)" : `(${managersCount}/3)`}
+                              <option value="Manager" disabled={otherManagers >= 3}>
+                                Manager {otherManagers >= 3 ? "(Max 3)" : `(${otherManagers}/3)`}
                               </option>
                               <option value="Member">Member</option>
                               <option value="Viewer">Viewer</option>
@@ -5615,14 +5678,31 @@ export default function WorkspaceStandalonePage() {
                         })()}
                       </div>
 
-                      <button
-                        type="submit"
-                        disabled={savingMember}
-                        className="px-4 py-2 text-xs font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all"
-                      >
-                        <UserPlus className="w-3.5 h-3.5" />
-                        <span>{savingMember ? "Adding..." : "Add to Project"}</span>
-                      </button>
+                      {(() => {
+                        const activeEmail = memberSource === "database" ? selectedDbUserEmail : newMemberEmail;
+                        const existing = currentTeamspaceMembers.find((m) => (m.email || "").toLowerCase() === (activeEmail || "").toLowerCase());
+                        const isRoleChange = existing && existing.role !== newMemberRole;
+                        const isSameRole = existing && existing.role === newMemberRole;
+
+                        return (
+                          <button
+                            type="submit"
+                            disabled={savingMember}
+                            className="px-4 py-2 text-xs font-bold bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 transition-all"
+                          >
+                            <UserPlus className="w-3.5 h-3.5" />
+                            <span>
+                              {savingMember
+                                ? "Saving..."
+                                : isRoleChange
+                                ? "Update Role"
+                                : isSameRole
+                                ? "Keep Role"
+                                : "Add to Project"}
+                            </span>
+                          </button>
+                        );
+                      })()}
                     </div>
                   </form>
                 ) : (
@@ -5649,7 +5729,20 @@ export default function WorkspaceStandalonePage() {
                   {currentTeamspaceMembers.map((m) => (
                     <div
                       key={m.id}
-                      className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-50/80 hover:bg-zinc-50 border border-zinc-200/70 text-xs transition-colors"
+                      onClick={() => {
+                        if (!isProjectAdmin) return;
+                        if (registeredUsers.some((u) => u.email.toLowerCase() === (m.email || "").toLowerCase())) {
+                          setMemberSource("database");
+                          setSelectedDbUserEmail(m.email);
+                        } else {
+                          setMemberSource("email");
+                          setNewMemberName(m.name);
+                          setNewMemberEmail(m.email);
+                        }
+                        setNewMemberRole(m.role as any || "Member");
+                      }}
+                      className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-50/80 hover:bg-zinc-100/90 border border-zinc-200/70 text-xs transition-colors cursor-pointer group"
+                      title="Click to edit role"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
                         <div className="w-8 h-8 rounded-full bg-[#0B57D0] text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-2xs">
@@ -5672,7 +5765,11 @@ export default function WorkspaceStandalonePage() {
 
                       {isProjectAdmin && (m.email || "").toLowerCase() !== projectCreatorEmail.toLowerCase() && (
                         <button
-                          onClick={() => handleDeleteMember(m.id, m.name)}
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteMember(m.id, m.name);
+                          }}
                           className="p-1.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-colors cursor-pointer shrink-0 ml-1"
                           title="Remove member from project"
                         >
@@ -5908,7 +6005,7 @@ export default function WorkspaceStandalonePage() {
                                 </span>
                               </div>
                               <div className="text-[10px] text-zinc-400 truncate">
-                                {parentPage ? parentPage.title : "Workspace"} {t.assigned_to ? `• ${t.assigned_to}` : ""}
+                                {parentPage ? parentPage.title : "Workspace"} {t.assigned_to ? `• ${t.assigned_to.split(",").map((s) => formatAssigneeDisplayName(s.trim())).filter(Boolean).join(", ")}` : ""}
                               </div>
                             </div>
                           </div>
@@ -6269,7 +6366,7 @@ export default function WorkspaceStandalonePage() {
               <div>
                 <h3 className="text-base font-bold text-zinc-950">Connect Workspace to Agent AI</h3>
                 <p className="text-xs text-zinc-500 mt-0.5">
-                  Choose your connection method to read and manage your live workspace with AI.
+                  Manage your live workspace directly with iBuddy, or connect your outside chat AI.
                 </p>
               </div>
               <button
@@ -6282,79 +6379,76 @@ export default function WorkspaceStandalonePage() {
 
             {/* Modal Body: 2-Column Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-stretch">
-              {/* LEFT COLUMN: ChatGPT Plus (Custom GPT Actions) */}
-              <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-4 flex flex-col justify-between space-y-3">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
+              {/* LEFT COLUMN: iBuddy (Built-in Workspace AI) */}
+              <div className="bg-gradient-to-b from-blue-50/70 via-white to-slate-50/50 border border-blue-200/80 rounded-xl p-4 flex flex-col justify-between space-y-4 shadow-xs">
+                <div className="space-y-3.5">
+                  <div className="flex items-center justify-between border-b border-blue-100 pb-2.5">
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-zinc-900">ChatGPT Plus</span>
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100/80 text-blue-700 border border-blue-200">Custom GPT Action</span>
+                        <div className="w-5 h-5 rounded-md bg-[#0B57D0] text-white flex items-center justify-center shrink-0 shadow-2xs">
+                          <Bot className="w-3.5 h-3.5" />
+                        </div>
+                        <span className="text-xs font-bold text-zinc-950">iBuddy</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 border border-blue-200">
+                          Built-in • Recommended
+                        </span>
                       </div>
-                      <p className="text-[11px] text-zinc-500 mt-0.5">
-                        Native 2-way tools to Read, Create, Move & Update cards.
+                      <p className="text-[11px] text-zinc-600 mt-1 font-medium">
+                        Use iBuddy — iBuddy can do anything across your workspace and operations.
                       </p>
                     </div>
                   </div>
 
-                  {/* Tutorial Steps */}
-                  <div className="space-y-1.5">
-                    <span className="text-xs font-semibold text-zinc-700 block">How to connect:</span>
-                    <ol className="text-[11.5px] text-zinc-600 space-y-1.5 bg-white p-3 rounded-lg border border-slate-200 list-decimal list-inside leading-relaxed">
-                      <li>In ChatGPT, click <strong>Explore GPTs</strong> &rarr; <strong>+ Create</strong>.</li>
-                      <li>Open the <strong>Configure</strong> tab &rarr; scroll to <strong>Actions</strong>.</li>
-                      <li>Click <strong>Create new action</strong> &rarr; <strong>Import from URL</strong>.</li>
-                      <li>Paste the <strong>OpenAPI Schema URL</strong> below and Save!</li>
-                    </ol>
-                  </div>
-
-                  {/* OpenAPI Schema URL with Copy */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-zinc-700 flex items-center justify-between">
-                      <span>OpenAPI Schema URL</span>
-                      {aiTokenLoading && (
-                        <span className="text-[10px] text-zinc-400 flex items-center gap-1">
-                          <Loader2 className="w-2.5 h-2.5 animate-spin text-blue-600" /> Loading...
-                        </span>
-                      )}
-                    </label>
-                    <div className="relative flex items-center">
-                      <input
-                        type="text"
-                        readOnly
-                        value={`https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge/openapi.json?token=${aiToken || "..."}`}
-                        className="w-full h-8 pl-2.5 pr-20 text-[11px] font-mono bg-white border border-slate-200 rounded-lg select-all focus:outline-none text-zinc-800"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const openApiUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge/openapi.json?token=${aiToken}`;
-                          navigator.clipboard.writeText(openApiUrl);
-                          setCopiedOpenApi(true);
-                          setTimeout(() => setCopiedOpenApi(false), 2000);
-                          showToast("OpenAPI Schema URL copied!", "success");
-                        }}
-                        className="absolute right-1 px-2 py-1 text-[10.5px] font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 rounded border border-blue-200 transition-colors cursor-pointer flex items-center gap-1"
-                      >
-                        {copiedOpenApi ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
-                        <span>{copiedOpenApi ? "Copied" : "Copy"}</span>
-                      </button>
+                  {/* Highlights */}
+                  <div className="space-y-2">
+                    <div className="bg-white/90 p-3 rounded-lg border border-blue-100 space-y-2 text-[11.5px] text-zinc-700 leading-relaxed">
+                      <div className="flex items-start gap-2">
+                        <Sparkles className="w-3.5 h-3.5 text-[#0B57D0] shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="text-zinc-900 font-semibold">Zero Setup Required:</strong> Ready out of the box directly inside iB — no tokens, URLs, or external setups needed.
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="text-zinc-900 font-semibold">Full Workspace Intelligence:</strong> Read, create, update, and organize cards and documents across your boards.
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0 mt-0.5" />
+                        <div>
+                          <strong className="text-zinc-900 font-semibold">Cross-System Operations:</strong> Check TikTok fulfillment, driver deliveries, inventory, and pending orders in real-time.
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
+
+                <div className="pt-2 border-t border-blue-100/80">
+                  <a
+                    href="/"
+                    className="w-full flex items-center justify-center gap-1.5 h-8.5 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold shadow-xs transition-all cursor-pointer"
+                  >
+                    <Bot className="w-3.5 h-3.5" />
+                    <span>Open Dashboard & Ask iBuddy</span>
+                    <ExternalLink className="w-3 h-3 ml-0.5 opacity-80" />
+                  </a>
+                </div>
               </div>
 
-              {/* RIGHT COLUMN: Other AI Agents & Direct Prompts */}
+              {/* RIGHT COLUMN: Outside Chat AI / External Agents */}
               <div className="bg-slate-50/80 border border-slate-200 rounded-xl p-4 flex flex-col justify-between space-y-3">
                 <div className="space-y-3">
                   <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
                     <div>
                       <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-bold text-zinc-900">AI Agents & Direct Prompts</span>
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100/80 text-emerald-700 border border-emerald-200">GET & POST Tools</span>
+                        <span className="text-xs font-bold text-zinc-900">Outside Chat AI</span>
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-700 border border-zinc-200">
+                          External Agent
+                        </span>
                       </div>
                       <p className="text-[11px] text-zinc-500 mt-0.5">
-                        For Claude, Cursor, LangChain, n8n, or AI with HTTP tools.
+                        If you prefer to use outside chat AI, copy this URL or pre-prompt.
                       </p>
                     </div>
                   </div>
@@ -6362,7 +6456,7 @@ export default function WorkspaceStandalonePage() {
                   {/* Field 1: Live AI Endpoint URL */}
                   <div className="space-y-1.5">
                     <label className="text-xs font-semibold text-zinc-700 flex items-center justify-between">
-                      <span>1. Your Live AI Endpoint Link</span>
+                      <span>1. Live AI Endpoint Link</span>
                     </label>
                     <div className="relative flex items-center">
                       <input
@@ -6392,7 +6486,7 @@ export default function WorkspaceStandalonePage() {
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between text-xs">
                       <label className="font-semibold text-zinc-700">
-                        2. Pre-Prompt (Copy & Paste to AI Chat / Agent)
+                        2. Pre-Prompt (Copy &amp; Paste to AI Chat / Agent)
                       </label>
                       <button
                         type="button"
@@ -6411,10 +6505,39 @@ export default function WorkspaceStandalonePage() {
                     </div>
                     <textarea
                       readOnly
-                      rows={4}
+                      rows={3}
                       value={`You are my iB Workspace AI Assistant.\nLive API: https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge?token=${aiToken}\n\n- READ: HTTP GET to the endpoint above.\n- WRITE (Create/Update/Delete projects, boards, tasks, docs): Execute HTTP POST to the endpoint above using JSON body: {"action": "<name>", ...params}.\n- Guardrails: You cannot assign people to tasks or manage members.\n\nFetch my live workspace data from the endpoint now and summarize my active tasks.`}
                       className="w-full p-2.5 text-[11px] leading-relaxed font-mono bg-white border border-slate-200 rounded-lg select-all focus:outline-none text-zinc-800 resize-none"
                     />
+                  </div>
+
+                  {/* Field 3: OpenAPI Schema URL (Optional) */}
+                  <div className="space-y-1">
+                    <label className="text-[11px] font-semibold text-zinc-600 flex items-center justify-between">
+                      <span>3. OpenAPI Schema URL (For Actions / GPTs / Tools)</span>
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type="text"
+                        readOnly
+                        value={`https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge/openapi.json?token=${aiToken || "..."}`}
+                        className="w-full h-7 pl-2.5 pr-16 text-[10.5px] font-mono bg-white border border-slate-200 rounded-lg select-all focus:outline-none text-zinc-700"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const openApiUrl = `https://ib-v2.hsgglobalpteltd.workers.dev/api/wfe/ai-bridge/openapi.json?token=${aiToken}`;
+                          navigator.clipboard.writeText(openApiUrl);
+                          setCopiedOpenApi(true);
+                          setTimeout(() => setCopiedOpenApi(false), 2000);
+                          showToast("OpenAPI Schema URL copied!", "success");
+                        }}
+                        className="absolute right-1 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-600 bg-zinc-100 hover:bg-zinc-200 rounded border border-zinc-300/80 transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        {copiedOpenApi ? <Check className="w-2.5 h-2.5 text-emerald-600" /> : <Copy className="w-2.5 h-2.5" />}
+                        <span>{copiedOpenApi ? "Copied" : "Copy"}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

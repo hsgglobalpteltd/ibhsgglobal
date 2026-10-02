@@ -14,6 +14,13 @@ interface DashboardPageProps {
 export function DashboardPage({ profile }: DashboardPageProps) {
   const [activeTab, setActiveTab] = React.useState<"today" | "analysis" | "forecast">("today");
 
+  const handleTabSwitch = (tab: "today" | "analysis" | "forecast") => {
+    setActiveTab(tab);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("dashboard-tab-change", { detail: tab }));
+    }
+  };
+
   React.useEffect(() => {
     const handleTabChange = (e: Event) => {
       const customEvent = e as CustomEvent<"today" | "analysis" | "forecast">;
@@ -82,9 +89,9 @@ export function DashboardPage({ profile }: DashboardPageProps) {
       {/* Tab Content: Today (Combined Greeting Banner & What's Happening Today Console) */}
       {(activeTab === "today" || !activeTab) && (
         <div className="flex flex-row justify-center items-center w-full h-full min-h-0 overflow-hidden animate-in fade-in duration-300 p-3 md:p-4">
-          <div className="flex flex-row gap-5 lg:gap-6 xl:gap-8 w-full max-w-6xl h-full max-h-[860px] min-h-0 overflow-hidden items-stretch justify-center">
+          <div className="flex flex-row gap-5 lg:gap-6 xl:gap-7 w-full max-w-[1360px] h-full max-h-[880px] min-h-0 overflow-hidden items-stretch justify-center">
             {/* Left Side: Greeting & Workspace Access */}
-            <div className="w-[260px] sm:w-[280px] lg:w-[300px] shrink-0 h-full min-h-0 flex flex-col justify-center gap-5 overflow-y-auto pr-1">
+            <div className="w-[240px] lg:w-[260px] xl:w-[280px] shrink-0 h-full min-h-0 flex flex-col justify-center gap-5 overflow-y-auto pr-1">
               {/* Header Greeting */}
               <div className="flex flex-col items-start gap-1 shrink-0">
                 <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#0B57D0] text-white text-[11px] font-semibold shadow-2xs select-none">
@@ -133,7 +140,7 @@ export function DashboardPage({ profile }: DashboardPageProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveTab("analysis");
+                    handleTabSwitch("analysis");
                   }}
                   className="w-full bg-white rounded-xl border border-slate-200/90 hover:border-[#0B57D0]/60 p-3.5 flex items-center justify-between gap-3 shadow-2xs hover:shadow-xs hover:bg-[#F8F9FD] transition-all duration-150 cursor-pointer group text-left select-none"
                 >
@@ -158,8 +165,8 @@ export function DashboardPage({ profile }: DashboardPageProps) {
               </div>
             </div>
 
-            {/* Right Side: What's Happening Today Console (Centered & Sized Neatly) */}
-            <div className="flex-1 max-w-[760px] h-full min-h-0 overflow-hidden flex flex-col justify-center">
+            {/* Right Side: What's Happening Today Console & History */}
+            <div className="flex-1 min-w-0 h-full min-h-0 overflow-hidden flex flex-col justify-center">
               <DashboardAiSummary userName={userName} profile={effectiveProfile} />
             </div>
           </div>
@@ -168,7 +175,7 @@ export function DashboardPage({ profile }: DashboardPageProps) {
 
       {/* Tab Content: Analysis */}
       {activeTab === "analysis" && (
-        <DashboardAnalysisView onBack={() => setActiveTab("today")} />
+        <DashboardAnalysisView onBack={() => handleTabSwitch("today")} />
       )}
 
       {/* Tab Content: Forecast */}

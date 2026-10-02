@@ -798,12 +798,68 @@ export async function deleteConsoleContext(id: string): Promise<{ success: boole
   return handleResponse(res, "Delete console context");
 }
 
+export interface UserChatSession {
+  id: string;
+  user_email: string;
+  title: string;
+  preview: string;
+  messages: Array<{ text: string; isUser?: boolean; isAi?: boolean; timestamp?: string; isFirst?: boolean }>;
+  is_pinned?: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export async function fetchUserChats(email: string): Promise<{ success: boolean; chats: UserChatSession[] }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/chats?email=${encodeURIComponent(email)}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+  });
+  return handleResponse(res, "Fetch user chats");
+}
+
+export async function saveUserChat(chat: Partial<UserChatSession>): Promise<{ success: boolean; id: string }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/chats/save`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+    body: JSON.stringify(chat),
+  });
+  return handleResponse(res, "Save user chat");
+}
+
+export async function deleteUserChat(id: string, email?: string): Promise<{ success: boolean; deletedId: string }> {
+  const token = await getFreshToken();
+  const sessionHeaders = getSessionIdHeader();
+  const res = await fetch(`${WORKER_URL}/api/dashboard/chats/delete`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+      ...sessionHeaders,
+    },
+    body: JSON.stringify({ id, email }),
+  });
+  return handleResponse(res, "Delete user chat");
+}
+
 export async function fetchDashboardAiBriefing(
   userName: string,
   profile?: any,
   skipGreeting = false,
   message?: string,
-  history?: any[]
+  history?: any[],
+  enableWebSearch = false
 ): Promise<{ success: boolean; text: string; is_ai?: boolean; source?: string; router_intent?: string; data?: any; error?: string }> {
   const token = await getFreshToken();
   const sessionHeaders = getSessionIdHeader();
@@ -822,6 +878,7 @@ export async function fetchDashboardAiBriefing(
       skip_greeting: skipGreeting,
       message: message || undefined,
       history: history || undefined,
+      enable_web_search: enableWebSearch,
     }),
   });
   return handleResponse(res, "Fetch dashboard briefing");

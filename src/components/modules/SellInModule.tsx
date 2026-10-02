@@ -23,10 +23,13 @@ import {
   ChevronLeft,
   ChevronRight,
   AlertCircle,
-  Printer
+  Printer,
+  SlidersHorizontal,
+  DollarSign
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { cn } from "@/lib/utils";
 import * as XLSX from "xlsx";
 import { PDFDocument } from "pdf-lib";
 
@@ -239,10 +242,28 @@ export function SellInModule({ profile }: SellInModuleProps) {
     return `${y}-${m}`;
   });
 
-  // TopBar Tab Switcher State: "sellin" | "buyers" | "reports"
-  const [activeMainTab, setActiveMainTab] = React.useState<"sellin" | "buyers" | "reports">("sellin");
+  // TopBar Tab Switcher State: "sellin" | "buyers" | "products" | "reports"
+  const [activeMainTab, setActiveMainTab] = React.useState<"sellin" | "buyers" | "products" | "reports">("sellin");
+
+  // Temporary Products State
+  const [tempProductsList, setTempProductsList] = React.useState<any[]>([]);
+  const [loadingTempProducts, setLoadingTempProducts] = React.useState<boolean>(false);
+  const [productSearch, setProductSearch] = React.useState<string>("");
+  const [productBrandFilter, setProductBrandFilter] = React.useState<string>("all");
+  const [productTypeFilter, setProductTypeFilter] = React.useState<"all" | "master" | "temp">("all");
+
+  // Add / Edit Temp Product Modal State
+  const [showTempProductModal, setShowTempProductModal] = React.useState<boolean>(false);
+  const [editingTempProduct, setEditingTempProduct] = React.useState<any | null>(null);
+  const [tempProductSku, setTempProductSku] = React.useState<string>("");
+  const [tempProductName, setTempProductName] = React.useState<string>("");
+  const [tempProductBrand, setTempProductBrand] = React.useState<string>("");
+  const [tempProductCostPrice, setTempProductCostPrice] = React.useState<string>("0");
+  const [tempProductRemarks, setTempProductRemarks] = React.useState<string>("");
+  const [savingTempProduct, setSavingTempProduct] = React.useState<boolean>(false);
 
   // Print Reports State
+  const [availableYears, setAvailableYears] = React.useState<string[]>([]);
   const [reportSelectedYear, setReportSelectedYear] = React.useState<number>(() => {
     const parts = (currentPeriod || "2026-08").split("-");
     return parseInt(parts[0], 10) || 2026;
@@ -255,6 +276,34 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [reportBrandFilter, setReportBrandFilter] = React.useState<string>("all");
   const [generatingPdf, setGeneratingPdf] = React.useState<boolean>(false);
   const [exportingExcel, setExportingExcel] = React.useState<boolean>(false);
+  const [selectedPrintLayout, setSelectedPrintLayout] = React.useState<string | null>(null);
+
+  // Brand Store Group Mapping Modal States (Only when buyer has >1 store group)
+  const [showBrandStoreModal, setShowBrandStoreModal] = React.useState<boolean>(false);
+  const [brandStoreModalAction, setBrandStoreModalAction] = React.useState<"pdf" | "excel" | "edit_only">("edit_only");
+  const [loadingBrandStoreMapping, setLoadingBrandStoreMapping] = React.useState<boolean>(false);
+  const [brandStoreAssignments, setBrandStoreAssignments] = React.useState<
+    Array<{
+      brand_name: string;
+      buyer_code: string;
+      buyer_name: string;
+      channel: string;
+      available_groups: Array<{ group_name: string; store_count: number }>;
+      selected_groups: string[];
+      assigned_store_count: number;
+    }>
+  >([]);
+  const [savingBrandStoreMapping, setSavingBrandStoreMapping] = React.useState<boolean>(false);
+  const [newTagInput, setNewTagInput] = React.useState<Record<string, { name: string; count: number }>>({});
+
+  // Dynamic Year Options: only show years that actually have Sell-In data
+  const yearSelectOptions = React.useMemo(() => {
+    if (availableYears.length === 0) {
+      const currentY = String(reportSelectedYear || new Date().getFullYear());
+      return [{ label: currentY, value: currentY }];
+    }
+    return availableYears.map((y) => ({ label: y, value: y }));
+  }, [availableYears, reportSelectedYear]);
 
   const reportAsOfPeriod = React.useMemo(() => {
     return `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
@@ -285,6 +334,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [buyersList, setBuyersList] = React.useState<any[]>([]);
   const [channelsList, setChannelsList] = React.useState<any[]>([]);
   const [sheetsList, setSheetsList] = React.useState<any[]>([]);
+  const [sheetItemsList, setSheetItemsList] = React.useState<any[]>([]);
   const [productsList, setProductsList] = React.useState<any[]>([]);
   const [brandsList, setBrandsList] = React.useState<any[]>([]);
 
@@ -394,6 +444,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [productSearchTerm, setProductSearchTerm] = React.useState<string>("");
   const [savingAssignProduct, setSavingAssignProduct] = React.useState<boolean>(false);
 
+  // Price Mismatch Modal State
+  const [showPriceMismatchModal, setShowPriceMismatchModal] = React.useState<boolean>(false);
+  const [priceMismatchTarget, setPriceMismatchTarget] = React.useState<any | null>(null);
+  const [savingUpdateListingPrice, setSavingUpdateListingPrice] = React.useState<boolean>(false);
+
+  // Snapshot Cost Price Modal State (This Month Only)
+  const [showCostSnapshotModal, setShowCostSnapshotModal] = React.useState<boolean>(false);
+  const [costSnapshotTarget, setCostSnapshotTarget] = React.useState<any | null>(null);
+  const [editingCostPrice, setEditingCostPrice] = React.useState<string>("");
+  const [savingCostSnapshot, setSavingCostSnapshot] = React.useState<boolean>(false);
+
   // Confirmation dialog
   const [confirmConfig, setConfirmConfig] = React.useState<{
     open: boolean;
@@ -419,8 +480,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
         setBuyersList(Array.isArray(data.buyers) ? data.buyers : []);
         setChannelsList(Array.isArray(data.channels) ? data.channels : []);
         setSheetsList(Array.isArray(data.sheets) ? data.sheets : []);
+        setSheetItemsList(Array.isArray(data.sheet_items) ? data.sheet_items : []);
         setProductsList(Array.isArray(data.products) ? data.products : []);
         setBrandsList(Array.isArray(data.brands) ? data.brands : []);
+        if (Array.isArray(data.temp_products)) {
+          setTempProductsList(data.temp_products);
+        }
       } else {
         setRecords([]);
       }
@@ -432,18 +497,94 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   }, []);
 
+  // Fetch temporary products independently
+  const fetchTempProducts = React.useCallback(async () => {
+    try {
+      setLoadingTempProducts(true);
+      const res = await fetch(`${API_BASE}/api/sellin/temp-products`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.temp_products)) {
+          setTempProductsList(data.temp_products);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to fetch temp products:", err);
+    } finally {
+      setLoadingTempProducts(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (activeMainTab === "products") {
+      fetchTempProducts();
+    }
+  }, [activeMainTab, fetchTempProducts]);
+
+  // Fetch only years that actually have Sell-In data
+  const fetchAvailableYears = React.useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/available-years`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.years) && data.years.length > 0) {
+          setAvailableYears(data.years);
+          return;
+        }
+      }
+      // Fallback: fetch distinct years from batches
+      const bRes = await fetch(`${API_BASE}/api/sellin/batches`);
+      if (bRes.ok) {
+        const batches = await bRes.json();
+        if (Array.isArray(batches)) {
+          const distinctYears = Array.from(
+            new Set(
+              batches
+                .map((b: any) => b.period?.split("-")?.[0])
+                .filter((y: any) => y && /^\d{4}$/.test(y))
+            )
+          ).sort().reverse() as string[];
+          if (distinctYears.length > 0) {
+            setAvailableYears(distinctYears);
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Could not fetch available years:", err);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    fetchAvailableYears();
+  }, [fetchAvailableYears]);
+
+  React.useEffect(() => {
+    if (availableYears.length > 0 && !availableYears.includes(String(reportSelectedYear))) {
+      setReportSelectedYear(Number(availableYears[0]));
+    }
+  }, [availableYears, reportSelectedYear]);
+
+  React.useEffect(() => {
+    if (activeMainTab === "reports") {
+      fetchAvailableYears();
+    }
+  }, [activeMainTab, fetchAvailableYears]);
+
   React.useEffect(() => {
     fetchBatchDetails(currentPeriod);
   }, [currentPeriod, fetchBatchDetails]);
 
   // Global Refresh event
   React.useEffect(() => {
-    const handleDbRefresh = () => fetchBatchDetails(currentPeriod, false);
+    const handleDbRefresh = () => {
+      fetchBatchDetails(currentPeriod, false);
+      fetchAvailableYears();
+    };
     window.addEventListener("db-refresh", handleDbRefresh);
     return () => window.removeEventListener("db-refresh", handleDbRefresh);
-  }, [fetchBatchDetails, currentPeriod]);
+  }, [fetchBatchDetails, fetchAvailableYears, currentPeriod]);
 
-  // TopBar Tabs Integration (Sell-In Demand | Buyers & Channels)
+  // TopBar Tabs Integration (Sell-In Demand | Buyers & Channels | Product List | Print Report)
   React.useEffect(() => {
     window.dispatchEvent(
       new CustomEvent("set-topbar-tabs", {
@@ -451,6 +592,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
           tabs: [
             { id: "sellin", label: "Sell-In Demand" },
             { id: "buyers", label: "Buyers & Channels" },
+            { id: "products", label: "Product List" },
             { id: "reports", label: "Print Report" },
           ],
           activeTabId: activeMainTab,
@@ -466,8 +608,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
   React.useEffect(() => {
     const handleSelectTab = (e: Event) => {
       const customEvent = e as CustomEvent<string>;
-      if (customEvent.detail === "sellin" || customEvent.detail === "buyers" || customEvent.detail === "reports") {
-        setActiveMainTab(customEvent.detail as "sellin" | "buyers" | "reports");
+      if (
+        customEvent.detail === "sellin" ||
+        customEvent.detail === "buyers" ||
+        customEvent.detail === "products" ||
+        customEvent.detail === "reports"
+      ) {
+        setActiveMainTab(customEvent.detail as "sellin" | "buyers" | "products" | "reports");
       }
     };
     window.addEventListener("topbar-select-tab", handleSelectTab);
@@ -508,26 +655,43 @@ export function SellInModule({ profile }: SellInModuleProps) {
     let cnAmount = 0;
     let cnQty = 0;
     let unresolvedCount = 0;
+    let totalCost = 0;
 
     records.forEach((r) => {
+      const dQty = Number(r.demand_qty ?? r.quantity ?? 0);
+      const cQty = Number(r.reject_qty ?? r.cn_quantity ?? 0);
+      const netQty = dQty - cQty;
+      const cPrice = Number(r.cost_price || 0);
+      totalCost += Math.max(0, netQty) * cPrice;
+
       grossDemand += Number(r.total_demand || 0);
-      demandQty += Number(r.demand_qty ?? r.quantity ?? 0);
+      demandQty += dQty;
       cnAmount += Number(r.cn_amount || 0);
-      cnQty += Number(r.reject_qty ?? r.cn_quantity ?? 0);
-      if (r.validation_status && r.validation_status !== "valid") {
+      cnQty += cQty;
+      if ((r.validation_status && r.validation_status !== "valid") || r.has_price_mismatch) {
         unresolvedCount++;
       }
     });
 
     const netAmount = grossDemand - cnAmount;
-    return { grossDemand, demandQty, cnAmount, cnQty, netAmount, unresolvedCount };
+    const grossProfit = netAmount - totalCost;
+    const marginPercent = netAmount > 0 ? (grossProfit / netAmount) * 100 : 0;
+    return { grossDemand, demandQty, cnAmount, cnQty, netAmount, unresolvedCount, totalCost, grossProfit, marginPercent };
   }, [records]);
 
-  // Distinct Brands from records
+  // Distinct Brands from records (excluding unbranded)
   const availableBrands = React.useMemo(() => {
     const set = new Set<string>();
     records.forEach((r) => {
-      if (r.brand && r.brand.trim()) set.add(r.brand.trim());
+      const b = (r.brand || "").trim();
+      const isUnbranded = !b || 
+        b.toLowerCase() === "unassigned" || 
+        b.toLowerCase() === "unassigned brand" || 
+        b.toLowerCase() === "unbrand" || 
+        b.toLowerCase() === "unbranded" || 
+        b.toLowerCase() === "(unassigned)" ||
+        b.toLowerCase() === "unassigned brands";
+      if (b && !isUnbranded) set.add(b);
     });
     return Array.from(set).sort();
   }, [records]);
@@ -565,7 +729,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
     return records.filter((r) => {
       if (subFilterTab === "si" && Number(r.quantity || 0) <= 0) return false;
       if (subFilterTab === "cn" && Number(r.cn_amount || 0) <= 0) return false;
-      if (subFilterTab === "unresolved" && (r.validation_status === "valid" || !r.validation_status)) return false;
+      if (subFilterTab === "unresolved") {
+        const isInvalid = r.validation_status && r.validation_status !== "valid";
+        const isMismatch = Boolean(r.has_price_mismatch);
+        if (!isInvalid && !isMismatch) return false;
+      }
 
       if (channelFilter !== "all" && r.channel !== channelFilter) return false;
       if (brandFilter !== "all" && r.brand !== brandFilter) return false;
@@ -616,6 +784,28 @@ export function SellInModule({ profile }: SellInModuleProps) {
       for (const { file, chunks } of filePlans) {
         const totalPages = chunks[0]?.totalPages || 1;
         let fileOriginalUrl = "";
+
+        // Pre-upload the FULL complete PDF to R2 so all pages are preserved intact
+        try {
+          const preUploadFd = new FormData();
+          preUploadFd.append("file", file);
+          preUploadFd.append("period", currentPeriod || "general");
+          preUploadFd.append("type", "invoice");
+          const preRes = await fetch(`${API_BASE}/api/sellin/upload-file`, {
+            method: "POST",
+            body: preUploadFd
+          });
+          if (preRes.ok) {
+            const preData = await preRes.json();
+            if (preData.file_url) {
+              fileOriginalUrl = preData.file_url;
+              latestFileUrl = fileOriginalUrl;
+              latestFileName = file.name;
+            }
+          }
+        } catch (uploadErr) {
+          console.warn("Failed to pre-upload full PDF to R2, falling back to chunk upload:", uploadErr);
+        }
 
         for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
           const chunk = chunks[cIdx];
@@ -781,6 +971,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         } else {
           fetchBatchDetails(currentPeriod, true);
         }
+        fetchAvailableYears();
       } else {
         showToast(data.error || "Failed to save invoices", "error");
       }
@@ -822,6 +1013,28 @@ export function SellInModule({ profile }: SellInModuleProps) {
       for (const { file, chunks } of filePlans) {
         const totalPages = chunks[0]?.totalPages || 1;
         let fileOriginalUrl = "";
+
+        // Pre-upload the FULL complete Credit Note PDF to R2 so all pages are preserved intact
+        try {
+          const preUploadFd = new FormData();
+          preUploadFd.append("file", file);
+          preUploadFd.append("period", currentPeriod || "general");
+          preUploadFd.append("type", "credit_note");
+          const preRes = await fetch(`${API_BASE}/api/sellin/upload-file`, {
+            method: "POST",
+            body: preUploadFd
+          });
+          if (preRes.ok) {
+            const preData = await preRes.json();
+            if (preData.file_url) {
+              fileOriginalUrl = preData.file_url;
+              latestFileUrl = fileOriginalUrl;
+              latestFileName = file.name;
+            }
+          }
+        } catch (uploadErr) {
+          console.warn("Failed to pre-upload full CN PDF to R2, falling back to chunk upload:", uploadErr);
+        }
 
         for (let cIdx = 0; cIdx < chunks.length; cIdx++) {
           const chunk = chunks[cIdx];
@@ -987,6 +1200,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         } else {
           fetchBatchDetails(currentPeriod, true);
         }
+        fetchAvailableYears();
       } else {
         showToast(data.error || "Failed to save credit notes", "error");
       }
@@ -1190,14 +1404,106 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   };
 
-  // Generate & Open Brand Sales Report PDF in New Tab (Blob URL, Landscape)
-  const handleGenerateReportPdf = async () => {
-    if (generatingPdf) return;
-    setGeneratingPdf(true);
+  // =========================================================================
+  // BRAND STORE GROUP MAPPING & REPORT GENERATORS
+  // =========================================================================
 
-    // Open a blank new tab immediately on user click to avoid popup blocker
-    const newTab = typeof window !== "undefined" ? window.open("", "_blank") : null;
-    if (newTab) {
+  const groupedBrandStoreAssignments = React.useMemo(() => {
+    const map = new Map<string, typeof brandStoreAssignments>();
+    brandStoreAssignments.forEach((item) => {
+      const b = item.brand_name;
+      if (!map.has(b)) map.set(b, []);
+      map.get(b)!.push(item);
+    });
+    return Array.from(map.entries()).map(([brandName, buyers]) => ({ brandName, buyers }));
+  }, [brandStoreAssignments]);
+
+  const handleToggleStoreGroup = (brandName: string, buyerCode: string, groupName: string) => {
+    setBrandStoreAssignments((prev) =>
+      prev.map((item) => {
+        if (item.brand_name === brandName && item.buyer_code === buyerCode) {
+          const isSelected = item.selected_groups.includes(groupName);
+          const newSelected = isSelected
+            ? item.selected_groups.filter((g) => g !== groupName)
+            : [...item.selected_groups, groupName];
+
+          const newCount = item.available_groups
+            .filter((g) => newSelected.includes(g.group_name))
+            .reduce((sum, g) => sum + (Number(g.store_count) || 0), 0);
+
+          return {
+            ...item,
+            selected_groups: newSelected,
+            assigned_store_count: newCount
+          };
+        }
+        return item;
+      })
+    );
+  };
+
+  const handleUpdateStoreCount = (brandName: string, buyerCode: string, count: number) => {
+    setBrandStoreAssignments((prev) =>
+      prev.map((item) => {
+        if (item.brand_name === brandName && item.buyer_code === buyerCode) {
+          return {
+            ...item,
+            assigned_store_count: Math.max(0, count)
+          };
+        }
+        return item;
+      })
+    );
+  };
+
+  const handleAddNewStoreTag = (brandName: string, buyerCode: string) => {
+    const key = `${brandName}::${buyerCode}`;
+    const draft = newTagInput[key];
+    if (!draft || !draft.name.trim()) return;
+
+    const tagName = draft.name.trim();
+    const tagCount = Number(draft.count) || 1;
+
+    setBrandStoreAssignments((prev) =>
+      prev.map((item) => {
+        if (item.brand_name === brandName && item.buyer_code === buyerCode) {
+          const exists = item.available_groups.find((g) => g.group_name.toLowerCase() === tagName.toLowerCase());
+          let nextAvailable = item.available_groups;
+          if (!exists) {
+            nextAvailable = [...item.available_groups, { group_name: tagName, store_count: tagCount }];
+          }
+          const nextSelected = item.selected_groups.includes(tagName)
+            ? item.selected_groups
+            : [...item.selected_groups, tagName];
+
+          const nextCount = nextAvailable
+            .filter((g) => nextSelected.includes(g.group_name))
+            .reduce((sum, g) => sum + (Number(g.store_count) || 0), 0);
+
+          return {
+            ...item,
+            available_groups: nextAvailable,
+            selected_groups: nextSelected,
+            assigned_store_count: nextCount
+          };
+        }
+        return item;
+      })
+    );
+
+    setNewTagInput((prev) => ({
+      ...prev,
+      [key]: { name: "", count: 1 }
+    }));
+  };
+
+  // Compile & Open PDF in new tab
+  const compileAndOpenPdf = async (data: any, existingTab?: Window | null) => {
+    let newTab = existingTab;
+    if (!newTab && typeof window !== "undefined") {
+      newTab = window.open("", "_blank");
+    }
+    if (newTab && !newTab.closed) {
       newTab.document.title = "Generating Sales Report PDF...";
       newTab.document.body.innerHTML = `
         <div style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: #334155;">
@@ -1209,23 +1515,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
 
     try {
-      const endPeriod = `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
-      const res = await fetch(
-        `${API_BASE}/api/sellin/report-by-brands?end_period=${encodeURIComponent(endPeriod)}&months=${reportDurationMonths}&brand=${encodeURIComponent(reportBrandFilter)}`
-      );
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        if (newTab) newTab.close();
-        showToast(data.error || "Failed to load report data", "error");
-        return;
-      }
-
-      if (!data.brands || data.brands.length === 0) {
-        if (newTab) newTab.close();
-        showToast("No sales records found for this period range", "error");
-        return;
-      }
-
       const { jsPDF } = await import("jspdf");
       const autoTable = (await import("jspdf-autotable")).default;
 
@@ -1249,18 +1538,45 @@ export function SellInModule({ profile }: SellInModuleProps) {
         doc.setTextColor(24, 24, 27);
         doc.text(brand.brand_name.toUpperCase(), 14, 15);
 
+        const numMonths = periods.length;
+        let channelWidth = 24;
+        let buyerWidth = 65;
+        let storesWidth = 15;
+        let tableFontSize = 7.5;
+        let headerFontSize = 7.5;
+
+        if (numMonths >= 12) {
+          channelWidth = 18;
+          buyerWidth = 40;
+          storesWidth = 12;
+          tableFontSize = 6.2;
+          headerFontSize = 6.5;
+        } else if (numMonths >= 6) {
+          channelWidth = 20;
+          buyerWidth = 52;
+          storesWidth = 14;
+          tableFontSize = 7.0;
+          headerFontSize = 7.2;
+        } else {
+          channelWidth = 24;
+          buyerWidth = 65;
+          storesWidth = 15;
+          tableFontSize = 7.5;
+          headerFontSize = 7.5;
+        }
+
         // Header Row 1 & Row 2
         const headRow1: any[] = [
           { content: "CHANNEL", rowSpan: 2, styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold" } },
           { content: "BUYERS", rowSpan: 2, styles: { halign: "left", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold" } },
-          { content: "TOTAL STORE\nCARRY BRANDS", rowSpan: 2, styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold" } },
+          { content: "STORES", rowSpan: 2, styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold" } },
           { content: yearText, colSpan: periods.length * 2, styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold" } }
         ];
 
         const headRow2: any[] = periods.map((p: any) => ({
           content: p.label,
           colSpan: 2,
-          styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold", fontSize: 7.5 }
+          styles: { halign: "center", valign: "middle", fillColor: [248, 250, 252], textColor: [24, 24, 27], fontStyle: "bold", fontSize: headerFontSize }
         }));
 
         // Group buyers by channel for clean rowSpan merging
@@ -1282,18 +1598,33 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 styles: { valign: "middle", halign: "center", fontStyle: "bold", fillColor: [255, 255, 255] }
               });
             }
-            row.push({ content: b.buyer_name, styles: { halign: "left" } });
-            row.push({ content: String(b.total_store || 1), styles: { halign: "center" } });
+            row.push({
+              content: b.buyer_name,
+              styles: { halign: "left", overflow: "ellipsize" }
+            });
+            row.push({
+              content: String(b.total_store || 1),
+              styles: { halign: "center" }
+            });
 
             periods.forEach((p: any) => {
               const m = b.monthly_data?.[p.period] || { qty: 0, amount: 0 };
+              const isQtyZero = !m.qty || m.qty <= 0;
+              const isAmountZero = !m.amount || m.amount <= 0;
+
               row.push({
-                content: m.qty > 0 ? m.qty.toLocaleString() : "-",
-                styles: { halign: "right" }
+                content: isQtyZero ? "" : m.qty.toLocaleString(),
+                styles: {
+                  halign: "right",
+                  fillColor: isQtyZero ? [243, 244, 246] : [255, 255, 255]
+                }
               });
               row.push({
-                content: m.amount > 0 ? `$ ${m.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$ 0.00",
-                styles: { halign: "right" }
+                content: isAmountZero ? "" : `$ ${m.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                styles: {
+                  halign: "right",
+                  fillColor: isAmountZero ? [243, 244, 246] : [255, 255, 255]
+                }
               });
             });
 
@@ -1307,13 +1638,24 @@ export function SellInModule({ profile }: SellInModuleProps) {
         ];
         periods.forEach((p: any) => {
           const tot = brand.totals_by_period?.[p.period] || { qty: 0, amount: 0 };
+          const isTotQtyZero = !tot.qty || tot.qty <= 0;
+          const isTotAmtZero = !tot.amount || tot.amount <= 0;
+
           totRow.push({
-            content: tot.qty > 0 ? tot.qty.toLocaleString() : "-",
-            styles: { fontStyle: "bold", halign: "right", fillColor: [245, 247, 250] }
+            content: isTotQtyZero ? "" : tot.qty.toLocaleString(),
+            styles: {
+              fontStyle: "bold",
+              halign: "right",
+              fillColor: isTotQtyZero ? [243, 244, 246] : [245, 247, 250]
+            }
           });
           totRow.push({
-            content: tot.amount > 0 ? `$ ${tot.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$ 0.00",
-            styles: { fontStyle: "bold", halign: "right", fillColor: [245, 247, 250] }
+            content: isTotAmtZero ? "" : `$ ${tot.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+            styles: {
+              fontStyle: "bold",
+              halign: "right",
+              fillColor: isTotAmtZero ? [243, 244, 246] : [245, 247, 250]
+            }
           });
         });
         bodyRows.push(totRow);
@@ -1325,11 +1667,16 @@ export function SellInModule({ profile }: SellInModuleProps) {
           theme: "grid",
           styles: {
             font: "helvetica",
-            fontSize: 7.5,
-            cellPadding: 2,
+            fontSize: tableFontSize,
+            cellPadding: 1.5,
             lineColor: [180, 185, 195],
             lineWidth: 0.2,
             textColor: [30, 41, 59]
+          },
+          columnStyles: {
+            0: { cellWidth: channelWidth, halign: "center", fontStyle: "bold" },
+            1: { cellWidth: buyerWidth, halign: "left", overflow: "ellipsize" },
+            2: { cellWidth: storesWidth, halign: "center" }
           },
           headStyles: {
             fillColor: [248, 250, 252],
@@ -1379,10 +1726,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   };
 
-  // Export Brand Sales Report to Excel matching img1 format
-  const handleExportBrandReportExcel = async () => {
-    if (exportingExcel) return;
-    setExportingExcel(true);
+  // Generate & Open Brand Sales Report PDF directly
+  const handleGenerateReportPdf = async () => {
+    if (generatingPdf) return;
+    setGeneratingPdf(true);
+
     try {
       const endPeriod = `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
       const res = await fetch(
@@ -1390,23 +1738,32 @@ export function SellInModule({ profile }: SellInModuleProps) {
       );
       const data = await res.json();
       if (!res.ok || !data.success || !data.brands || data.brands.length === 0) {
-        showToast("No report data available to export for this period", "error");
+        showToast("No sales records found for this period range", "error");
+        setGeneratingPdf(false);
         return;
       }
 
+      await compileAndOpenPdf(data);
+    } catch (err: any) {
+      showToast("Failed to compile report: " + err.message, "error");
+    } finally {
+      setGeneratingPdf(false);
+    }
+  };
+
+  // Compile & Download Excel
+  const compileAndDownloadExcel = async (data: any) => {
+    try {
       const rows: any[] = [];
       const periods = data.period_columns || [];
+      const endPeriod = `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
 
       data.brands.forEach((brand: any) => {
-        // 1. Brand Section Header (Bold, uppercase)
         rows.push([brand.brand_name.toUpperCase()]);
-
-        // 2. Table Header Row 1: CHANNEL, BUYERS, TOTAL STORE CARRY BRANDS, Year spanning all months
-        const row1: any[] = ["CHANNEL", "BUYERS", "TOTAL STORE CARRY BRANDS"];
+        const row1: any[] = ["CHANNEL", "BUYERS", "STORES"];
         row1.push(data.year || reportSelectedYear);
         rows.push(row1);
 
-        // 3. Table Header Row 2: Month Names spanning Qty & Amount
         const row2: any[] = ["", "", ""];
         periods.forEach((p: any) => {
           row2.push(p.label);
@@ -1414,7 +1771,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
         });
         rows.push(row2);
 
-        // 4. Data Rows for each buyer
         brand.buyers.forEach((b: any) => {
           const bRow: any[] = [b.channel || "Retailer", b.buyer_name, b.total_store || 1];
           periods.forEach((p: any) => {
@@ -1425,7 +1781,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
           rows.push(bRow);
         });
 
-        // 5. Total Row: TOTAL SALE PCS / AMOUNT
         const totRow: any[] = ["TOTAL SALE PCS / AMOUNT", "", ""];
         periods.forEach((p: any) => {
           const tot = brand.totals_by_period?.[p.period] || { qty: 0, amount: 0 };
@@ -1434,15 +1789,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
         });
         rows.push(totRow);
 
-        // 6. Blank separator
         rows.push([]);
-
-        // 7. YTD Rows (matching img1)
         rows.push(["YTD", `${brand.ytd_days || data.ytd_days || 0} DAY`]);
         rows.push(["TOTAL SALE TY", brand.ytd_total_amount || 0]);
         rows.push(["TOTAL QTY TY", brand.ytd_total_qty || 0]);
-
-        // Blank spacing before next brand
         rows.push([]);
         rows.push([]);
       });
@@ -1458,6 +1808,440 @@ export function SellInModule({ profile }: SellInModuleProps) {
       setExportingExcel(false);
     }
   };
+
+  // Export Brand Sales Report to Excel directly
+  const handleExportBrandReportExcel = async () => {
+    if (exportingExcel) return;
+    setExportingExcel(true);
+
+    try {
+      const endPeriod = `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
+      const res = await fetch(
+        `${API_BASE}/api/sellin/report-by-brands?end_period=${encodeURIComponent(endPeriod)}&months=${reportDurationMonths}&brand=${encodeURIComponent(reportBrandFilter)}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.brands || data.brands.length === 0) {
+        showToast("No report data available to export for this period", "error");
+        setExportingExcel(false);
+        return;
+      }
+
+      await compileAndDownloadExcel(data);
+    } catch (err: any) {
+      showToast("Failed to export Excel: " + err.message, "error");
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
+  // Open Store Group Mapping Editor Modal
+  const handleOpenEditStoreMapping = async () => {
+    if (loadingBrandStoreMapping) return;
+    setLoadingBrandStoreMapping(true);
+
+    try {
+      const endPeriod = `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
+      const [res, mapRes] = await Promise.all([
+        fetch(
+          `${API_BASE}/api/sellin/report-by-brands?end_period=${encodeURIComponent(endPeriod)}&months=${reportDurationMonths}&brand=${encodeURIComponent(reportBrandFilter)}`
+        ),
+        fetch(`${API_BASE}/api/sellin/brand-buyer-store-mappings`)
+      ]);
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.brands || data.brands.length === 0) {
+        showToast("No brand sales records found for the selected period", "info");
+        return;
+      }
+
+      const savedMappings: any[] = mapRes.ok ? (await mapRes.json()).mappings || [] : [];
+      const multiGroupAssignments: any[] = [];
+      const seenKeys = new Set<string>();
+
+      data.brands.forEach((brand: any) => {
+        (brand.buyers || []).forEach((b: any) => {
+          const bCode = (b.buyer_code || "").trim();
+          const bName = (b.buyer_name || "").trim();
+          const matchedBuyer = buyersList.find((bl) =>
+            (bCode && bl.buyer_code && String(bl.buyer_code).trim().toLowerCase() === bCode.toLowerCase()) ||
+            (bName && bl.buyer_name && String(bl.buyer_name).trim().toLowerCase() === bName.toLowerCase())
+          );
+
+          if (matchedBuyer && Array.isArray(matchedBuyer.store_groups) && matchedBuyer.store_groups.length > 1) {
+            const itemKey = `${brand.brand_name}::${bCode || bName}`;
+            if (seenKeys.has(itemKey)) return;
+            seenKeys.add(itemKey);
+
+            const savedMap = savedMappings.find((m: any) =>
+              String(m.brand_name || "").toLowerCase().trim() === String(brand.brand_name || "").toLowerCase().trim() &&
+              ((bCode && String(m.buyer_code || "").toLowerCase().trim() === bCode.toLowerCase()) ||
+               (bName && String(m.buyer_name || "").toLowerCase().trim() === bName.toLowerCase()))
+            );
+
+            let selectedGroups: string[] = [];
+            let assignedCount = 0;
+
+            if (savedMap && savedMap.assigned_store_count > 0) {
+              selectedGroups = Array.isArray(savedMap.selected_groups) ? savedMap.selected_groups : [];
+              assignedCount = Number(savedMap.assigned_store_count) || 0;
+            } else {
+              selectedGroups = matchedBuyer.store_groups.map((g: any) => g.group_name);
+              assignedCount = matchedBuyer.store_groups.reduce((sum: number, g: any) => sum + (Number(g.store_count) || 0), 0);
+            }
+
+            multiGroupAssignments.push({
+              brand_name: brand.brand_name,
+              buyer_code: bCode || matchedBuyer.buyer_code || "",
+              buyer_name: bName || matchedBuyer.buyer_name || "",
+              channel: b.channel || matchedBuyer.channel || "Retailer",
+              available_groups: matchedBuyer.store_groups,
+              selected_groups: selectedGroups,
+              assigned_store_count: assignedCount
+            });
+          }
+        });
+      });
+
+      if (multiGroupAssignments.length === 0) {
+        showToast("None of the buyers for the selected brands have multiple store groups.", "info");
+        return;
+      }
+
+      setBrandStoreAssignments(multiGroupAssignments);
+      setBrandStoreModalAction("edit_only");
+      setShowBrandStoreModal(true);
+    } catch (err: any) {
+      showToast("Failed to load store group mapping: " + err.message, "error");
+    } finally {
+      setLoadingBrandStoreMapping(false);
+    }
+  };
+
+  // Save brand store group mappings to backend database and proceed with PDF/Excel
+  const handleSaveBrandStoreMappingsAndProceed = async () => {
+    setSavingBrandStoreMapping(true);
+    let newTab: Window | null = null;
+    if (brandStoreModalAction === "pdf" && typeof window !== "undefined") {
+      newTab = window.open("", "_blank");
+      if (newTab) {
+        newTab.document.title = "Generating Sales Report PDF...";
+        newTab.document.body.innerHTML = `
+          <div style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; color: #334155;">
+            <div style="width: 32px; height: 32px; border: 3px solid #cbd5e1; border-top-color: #0B57D0; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+            <p style="margin-top: 16px; font-size: 14px; font-weight: 500;">Saving Store Mappings & Compiling PDF...</p>
+            <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+          </div>
+        `;
+      }
+    }
+
+    try {
+      const saveRes = await fetch(`${API_BASE}/api/sellin/brand-buyer-store-mappings`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mappings: brandStoreAssignments.map((a) => ({
+            brand_name: a.brand_name,
+            buyer_code: a.buyer_code,
+            buyer_name: a.buyer_name,
+            selected_groups: a.selected_groups,
+            assigned_store_count: a.assigned_store_count
+          }))
+        })
+      });
+
+      if (!saveRes.ok) {
+        const errJson = await saveRes.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to persist mapping");
+      }
+
+      showToast("Store group mappings saved to database!", "success");
+      setShowBrandStoreModal(false);
+
+      if (brandStoreModalAction === "edit_only") {
+        return;
+      }
+
+      // Re-fetch report data with newly saved mappings applied
+      const endPeriod = `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
+      const res = await fetch(
+        `${API_BASE}/api/sellin/report-by-brands?end_period=${encodeURIComponent(endPeriod)}&months=${reportDurationMonths}&brand=${encodeURIComponent(reportBrandFilter)}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        if (newTab) newTab.close();
+        showToast(data.error || "Failed to load updated report data", "error");
+        return;
+      }
+
+      if (brandStoreModalAction === "pdf") {
+        await compileAndOpenPdf(data, newTab);
+      } else {
+        await compileAndDownloadExcel(data);
+      }
+    } catch (err: any) {
+      if (newTab) newTab.close();
+      showToast("Failed to save mappings: " + err.message, "error");
+    } finally {
+      setSavingBrandStoreMapping(false);
+    }
+  };
+
+  // Proceed with current temporary values without saving to database
+  const handleSkipAndProceed = async () => {
+    setShowBrandStoreModal(false);
+    let newTab: Window | null = null;
+    if (brandStoreModalAction === "pdf" && typeof window !== "undefined") {
+      newTab = window.open("", "_blank");
+    }
+
+    try {
+      const endPeriod = `${reportSelectedYear}-${String(reportSelectedMonth).padStart(2, "0")}`;
+      const res = await fetch(
+        `${API_BASE}/api/sellin/report-by-brands?end_period=${encodeURIComponent(endPeriod)}&months=${reportDurationMonths}&brand=${encodeURIComponent(reportBrandFilter)}`
+      );
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        if (newTab) newTab.close();
+        showToast(data.error || "Failed to load report data", "error");
+        return;
+      }
+
+      // Apply in-memory store counts
+      if (data.brands && Array.isArray(data.brands)) {
+        data.brands.forEach((brand: any) => {
+          (brand.buyers || []).forEach((b: any) => {
+            const assignment = brandStoreAssignments.find((a) =>
+              a.brand_name.toLowerCase().trim() === brand.brand_name.toLowerCase().trim() &&
+              ((a.buyer_code && a.buyer_code.toLowerCase().trim() === (b.buyer_code || "").toLowerCase().trim()) ||
+               (a.buyer_name && a.buyer_name.toLowerCase().trim() === (b.buyer_name || "").toLowerCase().trim()))
+            );
+            if (assignment && assignment.assigned_store_count > 0) {
+              b.total_store = assignment.assigned_store_count;
+            }
+          });
+        });
+      }
+
+      if (brandStoreModalAction === "pdf") {
+        await compileAndOpenPdf(data, newTab);
+      } else {
+        await compileAndDownloadExcel(data);
+      }
+    } catch (err: any) {
+      if (newTab) newTab.close();
+      showToast("Failed to compile report: " + err.message, "error");
+    } finally {
+      setSavingBrandStoreMapping(false);
+    }
+  };
+
+  // =============================================================
+  // Temporary Products Handlers & Calculations
+  // =============================================================
+  const isSkuInMaster = React.useMemo(() => {
+    const clean = tempProductSku.trim().toLowerCase();
+    if (!clean) return false;
+    return productsList.some((p: any) => {
+      const s = String(p.sku || p.sku_number || p.id || "").trim().toLowerCase();
+      return s === clean;
+    });
+  }, [tempProductSku, productsList]);
+
+  const handleOpenAddTempProduct = () => {
+    setEditingTempProduct(null);
+    setTempProductSku("");
+    setTempProductName("");
+    setTempProductBrand(brandsList?.[0]?.display_name || brandsList?.[0]?.name || "");
+    setTempProductCostPrice("0");
+    setTempProductRemarks("");
+    setShowTempProductModal(true);
+  };
+
+  const handleOpenEditTempProduct = (item: any) => {
+    setEditingTempProduct(item);
+    setTempProductSku(item.sku || "");
+    setTempProductName(item.product_name || "");
+    setTempProductBrand(item.brand || "");
+    setTempProductCostPrice(String(item.cost_price ?? 0));
+    setTempProductRemarks(item.remarks || "");
+    setShowTempProductModal(true);
+  };
+
+  const handleSaveTempProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tempProductSku.trim()) {
+      showToast("SKU is required", "error");
+      return;
+    }
+    if (!tempProductName.trim()) {
+      showToast("Product name is required", "error");
+      return;
+    }
+    if (isSkuInMaster) {
+      showToast("This SKU already exists in Master Catalog", "error");
+      return;
+    }
+
+    try {
+      setSavingTempProduct(true);
+      const res = await fetch(`${API_BASE}/api/sellin/temp-products`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingTempProduct?.id,
+          sku: tempProductSku.trim(),
+          product_name: tempProductName.trim(),
+          brand: tempProductBrand.trim() || "Unassigned Brand",
+          cost_price: parseFloat(tempProductCostPrice) || 0,
+          remarks: tempProductRemarks.trim() || null
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to save temporary product");
+      }
+      showToast(
+        editingTempProduct ? "Temporary product updated" : "Temporary product added successfully",
+        "success"
+      );
+      setShowTempProductModal(false);
+      fetchTempProducts();
+      fetchBatchDetails(currentPeriod, true);
+    } catch (err: any) {
+      showToast(err.message || "Failed to save temporary product", "error");
+    } finally {
+      setSavingTempProduct(false);
+    }
+  };
+
+  const handleDeleteTempProduct = (item: any) => {
+    setConfirmConfig({
+      open: true,
+      title: "Delete Temporary Product",
+      description: `Are you sure you want to delete "${item.product_name}" (${item.sku})? Past Sell-In records will keep their existing data safely.`,
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/sellin/temp-products/${encodeURIComponent(item.id)}`, {
+            method: "DELETE"
+          });
+          if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || "Failed to delete temporary product");
+          }
+          showToast(`Temporary product ${item.sku} deleted`, "success");
+          fetchTempProducts();
+          fetchBatchDetails(currentPeriod, true);
+        } catch (err: any) {
+          showToast(err.message || "Failed to delete temporary product", "error");
+        }
+      }
+    });
+  };
+
+  const productFilterBrands = React.useMemo(() => {
+    const set = new Set<string>();
+    brandsList.forEach((b: any) => {
+      const name = b.display_name || b.name || b.brand_name;
+      if (name) set.add(name);
+    });
+    tempProductsList.forEach((tp: any) => {
+      if (tp.brand) set.add(tp.brand);
+    });
+    return Array.from(set).sort();
+  }, [brandsList, tempProductsList]);
+
+  const unifiedProductList = React.useMemo(() => {
+    // 1. Master products
+    const masterItems = (productsList || []).map((p: any) => {
+      let bName = "Unassigned Brand";
+      const bKey = String(p['Brands ID'] || p.brands_id || p.brand_id || p.brand || "").trim().toLowerCase();
+      const matchedBrand = brandsList.find((b: any) => 
+        String(b.id || "").toLowerCase() === bKey || 
+        String(b.name || "").toLowerCase() === bKey ||
+        String(b.display_name || "").toLowerCase() === bKey
+      );
+      if (matchedBrand) {
+        bName = matchedBrand.display_name || matchedBrand.name || matchedBrand.brand_name || bKey;
+      } else if (p.brand_name || p.brand) {
+        bName = p.brand_name || p.brand;
+      }
+
+      // Cost price resolution: Check 'Cost', 'cost', 'Cost Price', 'cost_price', 'price'
+      const rawCost = p.Cost !== undefined && p.Cost !== "" && p.Cost !== null
+        ? Number(p.Cost)
+        : (p.cost !== undefined && p.cost !== "" && p.cost !== null
+          ? Number(p.cost)
+          : (p['Cost Price'] !== undefined && p['Cost Price'] !== "" && p['Cost Price'] !== null
+            ? Number(p['Cost Price'])
+            : (p.cost_price !== undefined && p.cost_price !== "" && p.cost_price !== null
+              ? Number(p.cost_price)
+              : Number(p.price || 0))));
+
+      let finalCost = isNaN(rawCost) ? 0 : rawCost;
+      if ((!finalCost || finalCost === 0) && sheetItemsList && sheetItemsList.length > 0) {
+        const sSkuLower = String(p.sku || p['SKU Number'] || p.sku_number || p.id || "").toLowerCase().trim();
+        const matchedItem = sheetItemsList.find((si: any) => 
+          (si.product_sku && String(si.product_sku).toLowerCase().trim() === sSkuLower) ||
+          (si.retailer_sku && String(si.retailer_sku).toLowerCase().trim() === sSkuLower)
+        );
+        if (matchedItem) {
+          finalCost = Number(matchedItem['Cost Price'] || matchedItem.cost_price || matchedItem.retailer_price || matchedItem.market_price || 0);
+          if (isNaN(finalCost)) finalCost = 0;
+        }
+      }
+
+      const masterSku = p.sku || p['SKU Number'] || p.sku_number || p.id || "";
+      return {
+        id: p.id || masterSku,
+        sku: masterSku,
+        product_name: p['Display Name'] || p.display_name || p.name || p.product_name || "—",
+        brand: bName,
+        cost_price: finalCost,
+        remarks: null,
+        is_temp: false
+      };
+    });
+
+    // 2. Temp products
+    const tempItems = (tempProductsList || []).map((tp: any) => ({
+      id: tp.id || tp.sku,
+      sku: tp.sku,
+      product_name: tp.product_name,
+      brand: tp.brand || "Unassigned Brand",
+      cost_price: Number(tp.cost_price || 0),
+      remarks: tp.remarks || null,
+      is_temp: true
+    }));
+
+    // Combined
+    let combined = [...masterItems, ...tempItems];
+
+    // Filter by type
+    if (productTypeFilter === "master") {
+      combined = combined.filter((x) => !x.is_temp);
+    } else if (productTypeFilter === "temp") {
+      combined = combined.filter((x) => x.is_temp);
+    }
+
+    // Filter by brand
+    if (productBrandFilter !== "all") {
+      const bFilterLower = productBrandFilter.toLowerCase();
+      combined = combined.filter((x) => x.brand.toLowerCase() === bFilterLower);
+    }
+
+    // Filter by search
+    if (productSearch.trim()) {
+      const term = productSearch.trim().toLowerCase();
+      combined = combined.filter((x) => 
+        x.sku.toLowerCase().includes(term) || 
+        x.product_name.toLowerCase().includes(term) ||
+        x.brand.toLowerCase().includes(term)
+      );
+    }
+
+    // Sort alphabetically by product name
+    return combined.sort((a, b) => a.product_name.localeCompare(b.product_name));
+  }, [productsList, tempProductsList, productTypeFilter, productBrandFilter, productSearch, brandsList, sheetItemsList]);
 
   // Assign Sales Channel to Record(s)
   const handleSaveAssignChannel = async () => {
@@ -1504,31 +2288,65 @@ export function SellInModule({ profile }: SellInModuleProps) {
   // Open Assign Product Modal
   const handleOpenAssignProductModal = (row: any) => {
     setAssignProductTarget(row);
-    const existingMaster = productsList.find((p) => p.sku === row.product_sku || p.sku_number === row.product_sku);
-    setSelectedMasterSku(existingMaster ? existingMaster.sku : (row.product_sku || ""));
+
+    const rowSku = String(row.product_sku || "").trim().toLowerCase();
+    const rowName = String(row.product_name || "").trim().toLowerCase();
+
+    let matched: any = null;
+
+    // 1. If data has SKU, match SKU first
+    if (rowSku && rowSku !== "(blank sku)") {
+      matched = unifiedProductList.find((p) => 
+        String(p.sku || p.id || "").trim().toLowerCase() === rowSku
+      );
+    }
+
+    // 2. If data doesn't have SKU, or if SKU not found in Product List, match Product Name
+    if (!matched && rowName) {
+      matched = unifiedProductList.find((p) => 
+        String(p.product_name || "").trim().toLowerCase() === rowName
+      );
+      if (!matched) {
+        matched = unifiedProductList.find((p) => {
+          const pName = String(p.product_name || "").trim().toLowerCase();
+          return pName && ((pName.length > 4 && rowName.includes(pName)) || (rowName.length > 4 && pName.includes(rowName)));
+        });
+      }
+    }
+
+    if (matched) {
+      setSelectedMasterSku(matched.sku);
+      setProductSearchTerm("");
+    } else {
+      setSelectedMasterSku(row.product_sku || "");
+      setProductSearchTerm(row.product_name || row.product_sku || "");
+    }
+
     setApplyProductToAllMatchingRows(true);
-    setProductSearchTerm("");
     setShowAssignProductModal(true);
   };
 
-  // Save Assign Master Product
+  // Save Assign Product
   const handleSaveAssignProduct = async () => {
     if (!assignProductTarget || !selectedMasterSku) {
-      showToast("Please select a master product SKU", "error");
+      showToast("Please select a product SKU", "error");
       return;
     }
     setSavingAssignProduct(true);
     try {
-      const chosenProduct = productsList.find((p) => p.sku === selectedMasterSku || p.sku_number === selectedMasterSku);
+      const chosenProduct = unifiedProductList.find((p) => 
+        String(p.sku).toLowerCase() === selectedMasterSku.toLowerCase() ||
+        String(p.id).toLowerCase() === selectedMasterSku.toLowerCase()
+      );
       const res = await fetch(`${API_BASE}/api/sellin/assign-product`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: assignProductTarget.id,
           period: currentPeriod,
-          product_sku: selectedMasterSku,
-          product_name: chosenProduct?.display_name || chosenProduct?.name || assignProductTarget.product_name,
-          brand: chosenProduct?.brand_name || chosenProduct?.brand || assignProductTarget.brand,
+          product_sku: chosenProduct ? chosenProduct.sku : selectedMasterSku,
+          product_name: chosenProduct?.product_name || assignProductTarget.product_name,
+          brand: chosenProduct?.brand || assignProductTarget.brand,
           target_description: assignProductTarget.product_name,
           target_sku: assignProductTarget.product_sku,
           apply_to_all_matching_desc: applyProductToAllMatchingRows
@@ -1536,17 +2354,99 @@ export function SellInModule({ profile }: SellInModuleProps) {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast(data.message || `Master SKU "${selectedMasterSku}" assigned successfully!`, "success");
+        showToast(data.message || `Product SKU "${selectedMasterSku}" assigned successfully!`, "success");
         setShowAssignProductModal(false);
         setAssignProductTarget(null);
         fetchBatchDetails(currentPeriod, true);
       } else {
-        showToast(data.error || "Failed to assign master product", "error");
+        showToast(data.error || "Failed to assign product", "error");
       }
     } catch (e: any) {
       showToast(e.message || "Assign product error", "error");
     } finally {
       setSavingAssignProduct(false);
+    }
+  };
+
+  // Open Price Mismatch Modal
+  const handleOpenPriceMismatchModal = (record: any) => {
+    setPriceMismatchTarget(record);
+    setShowPriceMismatchModal(true);
+  };
+
+  // Update Listing Sheet Price from Price Mismatch Modal
+  const handleUpdateListingPrice = async () => {
+    if (!priceMismatchTarget) return;
+    setSavingUpdateListingPrice(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/update-listing-price`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sheet_id: priceMismatchTarget.matched_sheet_id,
+          product_sku: priceMismatchTarget.product_sku,
+          new_price: Number(priceMismatchTarget.unit_price || 0),
+          item_id: priceMismatchTarget.matched_listing_item_id,
+          period: currentPeriod
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(data.message || `Listing Sheet price updated to $${Number(priceMismatchTarget.unit_price || 0).toFixed(2)}!`, "success");
+        setShowPriceMismatchModal(false);
+        setPriceMismatchTarget(null);
+        fetchBatchDetails(currentPeriod, true);
+      } else {
+        showToast(data.error || "Failed to update listing price", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Update listing price error", "error");
+    } finally {
+      setSavingUpdateListingPrice(false);
+    }
+  };
+
+  // Open Cost Snapshot Modal
+  const handleOpenCostSnapshotModal = (record: any) => {
+    setCostSnapshotTarget(record);
+    const existingCost = record.cost_price !== undefined && record.cost_price !== null ? Number(record.cost_price) : 0;
+    setEditingCostPrice(existingCost > 0 ? String(existingCost) : "");
+    setShowCostSnapshotModal(true);
+  };
+
+  // Save Cost Snapshot (This Month Only)
+  const handleSaveCostSnapshot = async () => {
+    if (!costSnapshotTarget) return;
+    const parsedCost = parseFloat(editingCostPrice);
+    if (isNaN(parsedCost) || parsedCost < 0) {
+      showToast("Please enter a valid cost price (0 or higher)", "error");
+      return;
+    }
+    setSavingCostSnapshot(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/records/${encodeURIComponent(costSnapshotTarget.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          cost_price: parsedCost,
+          period: currentPeriod
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`Snapshot cost price ($${parsedCost.toFixed(2)}) saved for this month!`, "success");
+        setShowCostSnapshotModal(false);
+        setCostSnapshotTarget(null);
+        // Optimistically update record in memory
+        setRecords(prev => prev.map(r => r.id === costSnapshotTarget.id ? { ...r, cost_price: parsedCost } : r));
+        fetchBatchDetails(currentPeriod, false);
+      } else {
+        showToast(data.error || "Failed to update snapshot cost price", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Save cost price error", "error");
+    } finally {
+      setSavingCostSnapshot(false);
     }
   };
 
@@ -1935,6 +2835,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 </span>
               </div>
 
+              {/* Profit / Revenue Margin Pill */}
+              <div 
+                className="h-7 flex items-center gap-1 px-2 rounded-md bg-[#F8F9FA] border border-slate-200 text-[11px]"
+                title={`Total Net Revenue / Gross Profit after COGS ($${kpis.totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`}
+              >
+                <span className="text-zinc-500 font-normal">Profit:</span>
+                <span className={`font-medium ${kpis.grossProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                  ${kpis.grossProfit.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="text-[10px] text-zinc-400 font-normal">({kpis.marginPercent.toFixed(1)}%)</span>
+              </div>
+
               {/* Diagnostics Alert / Validation Status Pill */}
               {kpis.unresolvedCount > 0 ? (
                 <button
@@ -2087,36 +2999,32 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </button>
             </div>
           </>
-        ) : (
+        ) : activeMainTab === "products" ? (
           <>
             <div>
-              <h1 className="text-base font-semibold text-zinc-900">Print Reports</h1>
+              <h1 className="text-base font-semibold text-zinc-900">Product List</h1>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Generate and print landscape executive reports and multi-month sales summaries.
+                Unified product registry for Sell-In demand. Temporary products registered here are stored separately and do not alter the Master Catalog.
               </p>
             </div>
-
-            {/* Year & Month End Selector in Header Bar */}
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-semibold text-zinc-600">Month End:</span>
-              <div className="flex items-center gap-1.5">
-                <CustomSelect
-                  value={String(reportSelectedYear)}
-                  onChange={(val) => setReportSelectedYear(Number(val))}
-                  options={YEAR_OPTIONS}
-                  className="w-24 text-xs"
-                  minWidth="min-w-[85px]"
-                />
-                <CustomSelect
-                  value={String(reportSelectedMonth)}
-                  onChange={(val) => setReportSelectedMonth(Number(val))}
-                  options={MONTH_OPTIONS.map((m) => ({ label: m.label, value: String(m.value) }))}
-                  className="w-38 text-xs"
-                  minWidth="min-w-[135px]"
-                />
-              </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleOpenAddTempProduct}
+                className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer transition-all active:scale-98"
+              >
+                <Plus size={14} />
+                <span>Add Temp Product</span>
+              </button>
             </div>
           </>
+        ) : (
+          <div>
+            <h1 className="text-base font-semibold text-zinc-900">Print Reports</h1>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Generate and print landscape executive reports and multi-month sales summaries.
+            </p>
+          </div>
         )}
       </div>
 
@@ -2304,7 +3212,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <th className="py-2.5 px-3 w-20">Source</th>
                     <th className="py-2.5 px-3 min-w-[150px]">Buyer</th>
                     <th className="py-2.5 px-3 min-w-[120px]">Channel</th>
-                    <th className="py-2.5 px-3 min-w-[180px]">Product SKU & Description</th>
+                    <th className="py-2.5 px-3 w-[160px] max-w-[170px]">Product SKU & Description</th>
                     <th className="py-2.5 px-3 min-w-[110px]">Brand</th>
                     <th className="py-2.5 px-3 w-24 text-right">Demand Qty</th>
                     <th className="py-2.5 px-3 w-28 text-right">Unit Price ($)</th>
@@ -2312,7 +3220,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <th className="py-2.5 px-3 w-24 text-right">Reject Qty</th>
                     <th className="py-2.5 px-3 w-24 text-right">CN ($)</th>
                     <th className="py-2.5 px-3 min-w-[160px] text-center">Diagnostic Status</th>
-                    <th className="py-2.5 px-3 w-10 text-center"></th>
+                    <th className="py-2.5 px-2 w-16 text-center"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -2452,19 +3360,25 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         </td>
 
                         {/* Product SKU & Name */}
-                        <td className="py-2 px-3">
-                          <div className="flex flex-col min-w-0">
-                            <span className="text-zinc-800 truncate" title={r.product_name || r.product_sku || ""}>
+                        <td className="py-2 px-3 w-[160px] max-w-[170px] overflow-hidden">
+                          <div className="flex flex-col min-w-0 max-w-[160px]">
+                            <span 
+                              className="text-zinc-800 truncate block font-medium" 
+                              title={r.product_name || r.product_sku || ""}
+                            >
                               {r.product_name || r.product_sku || "(No Description)"}
                             </span>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              <span className={`text-[10px] font-mono ${!r.product_sku ? "text-amber-600 font-semibold" : "text-zinc-500"}`}>
+                            <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                              <span 
+                                className={`text-[10px] font-mono truncate shrink min-w-0 max-w-[130px] ${!r.product_sku ? "text-amber-600 font-semibold" : "text-zinc-500"}`}
+                                title={r.product_sku || "(Blank SKU)"}
+                              >
                                 {r.product_sku || "(Blank SKU)"}
                               </span>
                               <button
                                 type="button"
                                 onClick={() => handleOpenAssignProductModal(r)}
-                                className="p-0.5 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer inline-flex items-center justify-center group"
+                                className="p-0.5 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer inline-flex items-center justify-center group shrink-0"
                                 title="Click to assign master product SKU"
                               >
                                 <Edit2 size={10} className="group-hover:scale-110 transition-transform" />
@@ -2497,7 +3411,20 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                         {/* Unit Price ($/pcs) - 100% from Invoice, non-editable */}
                         <td className="py-2 px-3 text-right text-zinc-800 font-mono">
-                          ${Number(r.unit_price || 0).toFixed(2)}
+                          <div className="flex flex-col items-end gap-0.5">
+                            <span>${Number(r.unit_price || 0).toFixed(2)}</span>
+                            {r.has_price_mismatch && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPriceMismatchModal(r)}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-sans font-medium bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-colors cursor-pointer"
+                                title={`Invoice: $${Number(r.unit_price || 0).toFixed(2)} vs List Price: $${Number(r.listing_price || 0).toFixed(2)}. Click to review or update.`}
+                              >
+                                <AlertTriangle size={10} className="text-amber-600 shrink-0" />
+                                <span>List Price: ${Number(r.listing_price || 0).toFixed(2)}</span>
+                              </button>
+                            )}
+                          </div>
                         </td>
 
                         {/* Total Gross Demand ($) */}
@@ -2581,23 +3508,41 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           )}
                         </td>
 
-                        {/* Delete Row Button */}
-                        <td className="py-2 px-3 text-center">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setConfirmConfig({
-                                open: true,
-                                title: "Delete Demand Record",
-                                description: `Remove ${r.product_sku} for ${r.buyer_name || r.buyer_code}?`,
-                                onConfirm: () => handleDeleteRecord(r.id)
-                              });
-                            }}
-                            className="p-1 rounded text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                            title="Delete Row"
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                        {/* Row Actions: Edit Snapshot Cost & Delete */}
+                        <td className="py-2 px-2 text-center whitespace-nowrap">
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenCostSnapshotModal(r)}
+                              className={`p-1 rounded transition-colors cursor-pointer ${
+                                Number(r.cost_price || 0) > 0 
+                                  ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" 
+                                  : "text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50"
+                              }`}
+                              title={
+                                Number(r.cost_price || 0) > 0 
+                                  ? `Snapshot Cost: $${Number(r.cost_price).toFixed(2)} (Click to edit for this month)` 
+                                  : "Set Snapshot Cost Price for this month"
+                              }
+                            >
+                              <DollarSign size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setConfirmConfig({
+                                  open: true,
+                                  title: "Delete Demand Record",
+                                  description: `Remove ${r.product_sku} for ${r.buyer_name || r.buyer_code}?`,
+                                  onConfirm: () => handleDeleteRecord(r.id)
+                                });
+                              }}
+                              className="p-1 rounded text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                              title="Delete Row"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2834,139 +3779,348 @@ export function SellInModule({ profile }: SellInModuleProps) {
       )}
 
       {/* ========================================================================= */}
+      {/* 3. TAB 2B: PRODUCT LIST (Unified Master & Temporary Products)              */}
+      {/* ========================================================================= */}
+      {activeMainTab === "products" && (
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          {/* Filter & Controls Toolbar */}
+          <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+            <div className="flex items-center gap-2.5 flex-wrap">
+              
+              {/* Search Bar */}
+              <div className="relative">
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                <input
+                  type="text"
+                  placeholder="Search SKU, name, or brand..."
+                  value={productSearch}
+                  onChange={(e) => setProductSearch(e.target.value)}
+                  className="h-8 pl-8 pr-3 w-64 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
+                />
+              </div>
+
+              {/* Brand Filter Dropdown */}
+              <select
+                value={productBrandFilter}
+                onChange={(e) => setProductBrandFilter(e.target.value)}
+                className="h-8 px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-700 focus:outline-none focus:border-[#0B57D0] cursor-pointer"
+              >
+                <option value="all">All Brands ({productFilterBrands.length})</option>
+                {productFilterBrands.map((b) => (
+                  <option key={b} value={b}>{b}</option>
+                ))}
+              </select>
+
+              {/* Type Filter Pills */}
+              <div className="flex items-center bg-white border border-slate-200 rounded-lg p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setProductTypeFilter("all")}
+                  className={cn(
+                    "px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer",
+                    productTypeFilter === "all" ? "bg-slate-100 text-zinc-900 font-semibold" : "text-zinc-500 hover:text-zinc-900"
+                  )}
+                >
+                  All ({productsList.length + tempProductsList.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProductTypeFilter("master")}
+                  className={cn(
+                    "px-2.5 py-1 rounded-md text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer",
+                    productTypeFilter === "master" ? "bg-slate-100 text-zinc-900 font-semibold" : "text-zinc-500 hover:text-zinc-900"
+                  )}
+                >
+                  <CheckCircle2 size={13} className="text-emerald-500" />
+                  <span>Master ({productsList.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProductTypeFilter("temp")}
+                  className={cn(
+                    "px-2.5 py-1 rounded-md text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer",
+                    productTypeFilter === "temp" ? "bg-slate-100 text-zinc-900 font-semibold" : "text-zinc-500 hover:text-zinc-900"
+                  )}
+                >
+                  <CheckCircle2 size={13} className="text-zinc-400" />
+                  <span>Temp ({tempProductsList.length})</span>
+                </button>
+              </div>
+
+            </div>
+
+            <div className="text-[11px] text-zinc-400">
+              Showing {unifiedProductList.length} products
+            </div>
+          </div>
+
+          {/* Unified Table Viewport */}
+          <div className="flex-1 min-h-0 overflow-auto bg-white">
+            {loadingTempProducts ? (
+              <div className="flex flex-col items-center justify-center h-48 gap-2 text-zinc-400">
+                <RefreshCw size={18} className="animate-spin text-[#0B57D0]" />
+                <span className="text-xs">Loading products...</span>
+              </div>
+            ) : unifiedProductList.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 text-center p-4">
+                <p className="text-xs text-zinc-500">No products found matching the criteria.</p>
+              </div>
+            ) : (
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 text-zinc-600 font-semibold text-[11px]">
+                  <tr>
+                    <th className="py-2.5 px-3 text-center w-12" title="Green check = Master Catalog, Gray check = Temporary">
+                      Type
+                    </th>
+                    <th className="py-2.5 px-3 w-40">SKU Number</th>
+                    <th className="py-2.5 px-4">Product Name</th>
+                    <th className="py-2.5 px-4 w-44">Brand</th>
+                    <th className="py-2.5 px-4 text-right w-28">Cost Price</th>
+                    <th className="py-2.5 px-4 w-48">Remarks</th>
+                    <th className="py-2.5 px-3 text-center w-20">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {unifiedProductList.map((item, idx) => (
+                    <tr key={`${item.is_temp ? 'temp' : 'master'}_${item.id || item.sku || idx}`} className="hover:bg-slate-50/80 transition-colors">
+                      <td className="py-2.5 px-3 text-center">
+                        <div className="flex items-center justify-center">
+                          {item.is_temp ? (
+                            <span title="Temporary Product (Sell-In only)">
+                              <CheckCircle2 size={16} className="text-zinc-400" />
+                            </span>
+                          ) : (
+                            <span title="Master Product (Official catalog)">
+                              <CheckCircle2 size={16} className="text-emerald-500" />
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-2.5 px-3 font-mono font-semibold text-zinc-900">
+                        {item.sku}
+                      </td>
+                      <td className="py-2.5 px-4 font-medium text-zinc-900">
+                        {item.product_name}
+                      </td>
+                      <td className="py-2.5 px-4 text-zinc-600">
+                        {item.brand}
+                      </td>
+                      <td className="py-2.5 px-4 text-right font-mono text-zinc-800">
+                        ${item.cost_price ? item.cost_price.toFixed(2) : "0.00"}
+                      </td>
+                      <td className="py-2.5 px-4 text-zinc-500 text-[11px] truncate max-w-xs">
+                        {item.remarks || "—"}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        {item.is_temp ? (
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditTempProduct(item)}
+                              className="p-1 text-zinc-400 hover:text-[#0B57D0] rounded transition-colors cursor-pointer"
+                              title="Edit Temporary Product"
+                            >
+                              <Edit2 size={13} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTempProduct(item)}
+                              className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                              title="Delete Temporary Product"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-zinc-300 font-mono text-xs">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* 4. TAB 3: PRINT REPORTS VIEW                                              */}
       {/* ========================================================================= */}
       {activeMainTab === "reports" && (
-        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto p-5 bg-[#F8F9FA]">
-          <div className="max-w-5xl mx-auto w-full space-y-6">
-            <div>
-              <h2 className="text-sm font-bold text-zinc-900 uppercase tracking-wider">Available Reports</h2>
-              <p className="text-xs text-zinc-500 mt-0.5">Select a report below to configure timeframes and generate printable landscape documents.</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl">
-              {/* Card 1: Sale Report By Brands */}
-              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between">
-                <div>
-                  {/* Clean Minimal Header */}
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-md bg-blue-50 border border-blue-100 flex items-center justify-center text-[#0B57D0]">
-                        <Printer size={15} />
-                      </div>
-                      <h3 className="text-sm font-bold text-zinc-900">Sale Report By Brands</h3>
-                    </div>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-[#0B57D0] border border-blue-200">
-                      Landscape PDF
-                    </span>
-                  </div>
-
-                  {/* Clean Form Controls (Flat, No Container Over-nesting) */}
-                  <div className="py-3 space-y-3">
-                    {/* Year & Month End Selectors */}
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div>
-                        <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
-                          Select Year
-                        </label>
-                        <CustomSelect
-                          value={String(reportSelectedYear)}
-                          onChange={(val) => setReportSelectedYear(Number(val))}
-                          options={YEAR_OPTIONS}
-                          className="w-full text-xs"
-                          minWidth="w-full"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
-                          Select Month End
-                        </label>
-                        <CustomSelect
-                          value={String(reportSelectedMonth)}
-                          onChange={(val) => setReportSelectedMonth(Number(val))}
-                          options={MONTH_OPTIONS.map((m) => ({ label: m.label, value: String(m.value) }))}
-                          className="w-full text-xs"
-                          minWidth="w-full"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Reporting Duration (Equal Width, Single Text) */}
-                    <div>
-                      <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
-                        Reporting Duration
-                      </label>
-                      <div className="grid grid-cols-3 gap-2 w-full">
-                        {[
-                          { label: "3 Months", val: 3 },
-                          { label: "6 Months", val: 6 },
-                          { label: "12 Months", val: 12 },
-                        ].map((opt) => (
-                          <button
-                            key={opt.val}
-                            type="button"
-                            onClick={() => setReportDurationMonths(opt.val)}
-                            className={`h-8 w-full rounded-lg text-xs font-medium text-center border transition-all cursor-pointer flex items-center justify-center ${
-                              reportDurationMonths === opt.val
-                                ? "bg-[#0B57D0] text-white border-[#0B57D0] font-semibold shadow-2xs"
-                                : "bg-white text-zinc-700 border-slate-200 hover:bg-slate-50"
-                            }`}
-                          >
-                            {opt.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Brand Filter */}
-                    <div>
-                      <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
-                        Brand Filter
-                      </label>
-                      <CustomSelect
-                        value={reportBrandFilter}
-                        onChange={setReportBrandFilter}
-                        options={[
-                          { label: "All Brands (Separate Tables)", value: "all" },
-                          ...availableBrands.map((b) => ({ label: b, value: b })),
-                        ]}
-                        className="w-full text-xs"
-                        minWidth="w-full"
-                      />
-                    </div>
-
-                    {/* Minimal Date Range Indicator */}
-                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-zinc-500">
-                      <span>Generated Range:</span>
-                      <span className="font-semibold text-zinc-800 font-mono text-[11px]">
-                        {calculatedReportPeriods[0]?.label} → {calculatedReportPeriods[calculatedReportPeriods.length - 1]?.label} ({reportDurationMonths}M)
+        <div className="flex flex-col flex-1 min-h-0 overflow-y-auto p-5 bg-[#F8F9FA] select-none">
+          <div className="w-full flex flex-col gap-4 relative">
+            <div className="w-full p-2">
+              <div className="flex flex-wrap gap-6 items-start">
+                
+                {/* Card 1: Report by Brands */}
+                <div
+                  className={cn(
+                    "bg-white border rounded-lg transition-all duration-300 shadow-xs hover:shadow-md select-none flex flex-col justify-between overflow-hidden",
+                    selectedPrintLayout === "report-by-brands"
+                      ? "w-[480px] min-h-[220px] border-[#0B57D0] scale-[1.01]"
+                      : "group relative w-[240px] h-[180px] border-slate-200 hover:bg-[#D3E3FD] cursor-pointer flex items-center justify-center hover:scale-[1.03]"
+                  )}
+                  onClick={() => {
+                    if (selectedPrintLayout !== "report-by-brands") {
+                      setSelectedPrintLayout("report-by-brands");
+                    }
+                  }}
+                >
+                  {selectedPrintLayout !== "report-by-brands" ? (
+                    <div className="w-full h-full p-6 flex flex-col items-center justify-center relative pointer-events-none">
+                      <span className="font-primary text-sm font-semibold text-zinc-800 transition-all duration-300 group-hover:opacity-0 group-hover:scale-90 text-center px-4 absolute">
+                        Report by Brands
+                      </span>
+                      <span className="font-primary text-xs leading-relaxed font-semibold text-[#041E49] transition-all duration-300 opacity-0 scale-90 group-hover:opacity-100 group-hover:scale-100 text-center px-5 absolute">
+                        Print landscape sales matrix by brand across selected months.
                       </span>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="w-[480px] p-5 flex flex-col gap-4 text-xs font-primary shrink-0 transition-opacity duration-300 animate-in fade-in fill-mode-both">
+                      <div className="flex justify-between items-center border-b border-slate-200 pb-2.5">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[#0B57D0]">
+                          Configure Report by Brands
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedPrintLayout(null);
+                          }}
+                          className="p-1 hover:bg-slate-100 rounded text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+
+                      {/* Clean Form Controls */}
+                      <div className="space-y-3">
+                        {/* Year & Month End Selectors */}
+                        <div className="grid grid-cols-2 gap-2.5">
+                          <div>
+                            <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                              Select Year
+                            </label>
+                            <CustomSelect
+                              value={String(reportSelectedYear)}
+                              onChange={(val) => setReportSelectedYear(Number(val))}
+                              options={yearSelectOptions}
+                              className="w-full text-xs"
+                              minWidth="w-full"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                              Select Month End
+                            </label>
+                            <CustomSelect
+                              value={String(reportSelectedMonth)}
+                              onChange={(val) => setReportSelectedMonth(Number(val))}
+                              options={MONTH_OPTIONS.map((m) => ({ label: m.label, value: String(m.value) }))}
+                              className="w-full text-xs"
+                              minWidth="w-full"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Reporting Duration */}
+                        <div>
+                          <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                            Reporting Duration
+                          </label>
+                          <div className="grid grid-cols-3 gap-2 w-full">
+                            {[
+                              { label: "3 Months", val: 3 },
+                              { label: "6 Months", val: 6 },
+                              { label: "12 Months", val: 12 },
+                            ].map((opt) => (
+                              <button
+                                key={opt.val}
+                                type="button"
+                                onClick={() => setReportDurationMonths(opt.val)}
+                                className={`h-8 w-full rounded-lg text-xs font-medium text-center border transition-all cursor-pointer flex items-center justify-center ${
+                                  reportDurationMonths === opt.val
+                                    ? "bg-[#0B57D0] text-white border-[#0B57D0] font-semibold shadow-2xs"
+                                    : "bg-white text-zinc-700 border-slate-200 hover:bg-slate-50"
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Brand Filter */}
+                        <div>
+                          <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                            Brand Filter
+                          </label>
+                          <CustomSelect
+                            value={reportBrandFilter}
+                            onChange={setReportBrandFilter}
+                            options={[
+                              { label: "All Brands (Separate Tables)", value: "all" },
+                              ...availableBrands.map((b) => ({ label: b, value: b })),
+                            ]}
+                            className="w-full text-xs"
+                            minWidth="w-full"
+                          />
+                        </div>
+
+                        {/* Minimal Date Range Indicator */}
+                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-zinc-500">
+                          <span>Generated Range:</span>
+                          <span className="font-semibold text-zinc-800 font-mono text-[11px]">
+                            {calculatedReportPeriods[0]?.label} → {calculatedReportPeriods[calculatedReportPeriods.length - 1]?.label} ({reportDurationMonths}M)
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Card Action Buttons */}
+                      <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={handleOpenEditStoreMapping}
+                          disabled={loadingBrandStoreMapping || exportingExcel || generatingPdf}
+                          className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                          title="Edit which store groups each brand carries"
+                        >
+                          {loadingBrandStoreMapping ? (
+                            <RefreshCw size={12} className="animate-spin text-zinc-500" />
+                          ) : (
+                            <SlidersHorizontal size={12} className="text-zinc-500" />
+                          )}
+                          <span>Edit Store Mapping</span>
+                        </button>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleExportBrandReportExcel()}
+                            disabled={exportingExcel || generatingPdf || loadingBrandStoreMapping}
+                            className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
+                          >
+                            {exportingExcel ? <RefreshCw size={13} className="animate-spin text-emerald-600" /> : <FileSpreadsheet size={13} className="text-emerald-600" />}
+                            <span>{exportingExcel ? "Exporting..." : "Download Excel"}</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={handleGenerateReportPdf}
+                            disabled={generatingPdf || exportingExcel || loadingBrandStoreMapping}
+                            className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-98 disabled:opacity-50"
+                          >
+                            {generatingPdf ? <RefreshCw size={13} className="animate-spin text-white" /> : <Printer size={13} className="text-white" />}
+                            <span>{generatingPdf ? "Compiling..." : "Generate Report"}</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                {/* Card Action Buttons */}
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleExportBrandReportExcel()}
-                    disabled={exportingExcel || generatingPdf}
-                    className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs disabled:opacity-50"
-                  >
-                    {exportingExcel ? <RefreshCw size={13} className="animate-spin text-emerald-600" /> : <FileSpreadsheet size={13} className="text-emerald-600" />}
-                    <span>{exportingExcel ? "Exporting..." : "Download Excel"}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleGenerateReportPdf}
-                    disabled={generatingPdf || exportingExcel}
-                    className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-98 disabled:opacity-50"
-                  >
-                    {generatingPdf ? <RefreshCw size={13} className="animate-spin text-white" /> : <Printer size={13} className="text-white" />}
-                    <span>{generatingPdf ? "Compiling..." : "Print PDF (New Tab)"}</span>
-                  </button>
-                </div>
               </div>
             </div>
           </div>
@@ -3058,6 +4212,337 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 Close
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Assign Store Groups to Brands (Only for buyers with >1 store group) */}
+      {showBrandStoreModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-100">
+            
+            {/* Header */}
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
+              <div>
+                <h2 className="text-sm font-bold text-zinc-950">Assign Store Groups to Brands</h2>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Select which store groups each brand carries for accurate store count calculations.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowBrandStoreModal(false)}
+                className="p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Body: Clean Flat List without Nested Containers */}
+            <div className="px-5 py-2 flex-1 overflow-y-auto min-h-0 bg-white divide-y divide-slate-200 text-xs font-primary">
+              {groupedBrandStoreAssignments.map(({ brandName, buyers }) => (
+                <div key={brandName} className="py-3.5 first:pt-2 last:pb-2 space-y-3">
+                  
+                  {/* Brand Title (Clean Neutral Header) */}
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-xs uppercase tracking-wide text-zinc-900">
+                      {brandName}
+                    </span>
+                    <span className="text-[11px] text-zinc-400">
+                      • {buyers.length} {buyers.length > 1 ? "buyers" : "buyer"} with multiple store groups
+                    </span>
+                  </div>
+
+                  {/* Buyers List (Direct Rows) */}
+                  <div className="space-y-3 pl-2 border-l-2 border-slate-100">
+                    {buyers.map((b) => {
+                      const draftKey = `${brandName}::${b.buyer_code}`;
+                      const draft = newTagInput[draftKey] || { name: "", count: 1 };
+
+                      return (
+                        <div key={b.buyer_code || b.buyer_name} className="space-y-1.5">
+                          
+                          {/* Row 1: Buyer Name & Numeric Store Qty */}
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-semibold text-zinc-900 text-xs">
+                                {b.buyer_name}
+                              </span>
+                              {b.buyer_code && (
+                                <span className="font-mono text-[10px] bg-slate-100 text-zinc-600 px-1.5 py-0.5 rounded">
+                                  {b.buyer_code}
+                                </span>
+                              )}
+                              <span className="text-[10px] text-zinc-400">
+                                ({b.channel || "Retailer"})
+                              </span>
+                            </div>
+
+                            {/* Store Qty inline */}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className="text-[11px] text-zinc-500">Store Qty:</span>
+                              <input
+                                type="number"
+                                min="0"
+                                value={b.assigned_store_count}
+                                onChange={(e) => handleUpdateStoreCount(brandName, b.buyer_code, parseInt(e.target.value, 10) || 0)}
+                                className="w-16 h-7 px-1.5 border border-slate-300 rounded text-center text-xs font-bold text-zinc-900 bg-white focus:outline-none focus:border-zinc-500"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Row 2: Clickable Store Groups Tags (Soft Neutral Design) */}
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {b.available_groups.map((grp) => {
+                              const isSelected = b.selected_groups.includes(grp.group_name);
+                              return (
+                                <button
+                                  key={grp.group_name}
+                                  type="button"
+                                  onClick={() => handleToggleStoreGroup(brandName, b.buyer_code, grp.group_name)}
+                                  className={cn(
+                                    "h-6 px-2.5 rounded-full text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer border",
+                                    isSelected
+                                      ? "bg-slate-100 border-slate-300 text-zinc-900 font-semibold shadow-2xs"
+                                      : "bg-white border-slate-200 text-zinc-500 hover:bg-slate-50 hover:text-zinc-800"
+                                  )}
+                                >
+                                  {isSelected ? <Check size={11} className="text-zinc-700" /> : <Plus size={11} className="text-zinc-400" />}
+                                  <span>{grp.group_name}</span>
+                                  <span className={cn("text-[10px] font-mono", isSelected ? "text-zinc-600" : "text-zinc-400")}>
+                                    ({grp.store_count})
+                                  </span>
+                                </button>
+                              );
+                            })}
+
+                            {/* Inline Add Tag */}
+                            <div className="flex items-center gap-1 border border-slate-200 rounded-md px-1.5 py-0.5 bg-white">
+                              <input
+                                type="text"
+                                value={draft.name}
+                                onChange={(e) =>
+                                  setNewTagInput((prev) => ({
+                                    ...prev,
+                                    [draftKey]: { ...draft, name: e.target.value }
+                                  }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    handleAddNewStoreTag(brandName, b.buyer_code);
+                                  }
+                                }}
+                                placeholder="+ Group tag"
+                                className="w-20 h-5 text-[11px] text-zinc-800 focus:outline-none"
+                              />
+                              <input
+                                type="number"
+                                min="1"
+                                value={draft.count}
+                                onChange={(e) =>
+                                  setNewTagInput((prev) => ({
+                                    ...prev,
+                                    [draftKey]: { ...draft, count: Math.max(1, parseInt(e.target.value, 10) || 1) }
+                                  }))
+                                }
+                                placeholder="Qty"
+                                className="w-10 h-5 px-1 text-[11px] font-mono text-center text-zinc-800 border-l border-slate-200 focus:outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => handleAddNewStoreTag(brandName, b.buyer_code)}
+                                disabled={!draft.name.trim()}
+                                className="h-5 px-1.5 text-zinc-600 hover:text-zinc-900 text-[10px] font-bold cursor-pointer disabled:opacity-30"
+                              >
+                                Add
+                              </button>
+                            </div>
+                          </div>
+
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                </div>
+              ))}
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 bg-white border-t border-slate-200 flex items-center justify-between shrink-0">
+              <div className="text-[11px] text-zinc-500">
+                Saved mappings will be stored in database and remembered for future reports.
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBrandStoreModal(false)}
+                  className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                {brandStoreModalAction !== "edit_only" && (
+                  <button
+                    type="button"
+                    onClick={handleSkipAndProceed}
+                    className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-50 cursor-pointer"
+                  >
+                    Skip & Generate
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={savingBrandStoreMapping}
+                  onClick={handleSaveBrandStoreMappingsAndProceed}
+                  className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-98 disabled:opacity-50"
+                >
+                  {savingBrandStoreMapping ? <RefreshCw size={13} className="animate-spin text-white" /> : <Check size={13} />}
+                  <span>
+                    {savingBrandStoreMapping
+                      ? "Saving Mappings..."
+                      : brandStoreModalAction === "edit_only"
+                      ? "Save Store Mapping"
+                      : "Save Mapping & Generate Report"}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Add / Edit Temporary Product */}
+      {showTempProductModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-100">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-white shrink-0">
+              <div>
+                <h2 className="text-sm font-bold text-zinc-950">
+                  {editingTempProduct ? "Edit Temporary Product" : "Add Temporary Product"}
+                </h2>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Registered for Sell-In only and kept separated from Master Products.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowTempProductModal(false)}
+                className="p-1 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveTempProduct} className="p-5 space-y-3.5 text-xs font-primary">
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                  SKU Number <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. TMP-CLEAR-01"
+                  value={tempProductSku}
+                  onChange={(e) => setTempProductSku(e.target.value)}
+                  className={cn(
+                    "w-full h-8 px-2.5 border rounded-lg text-xs font-mono text-zinc-900 bg-white focus:outline-none",
+                    isSkuInMaster
+                      ? "border-red-400 focus:border-red-500 bg-red-50/20"
+                      : "border-slate-300 focus:border-[#0B57D0]"
+                  )}
+                />
+                {isSkuInMaster && (
+                  <p className="text-[11px] text-red-600 mt-1 font-medium flex items-center gap-1">
+                    <AlertCircle size={12} />
+                    This SKU already exists in Master Catalog
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                  Product Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Special Clearance Bundle 500g"
+                  value={tempProductName}
+                  onChange={(e) => setTempProductName(e.target.value)}
+                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs text-zinc-900 bg-white focus:outline-none focus:border-[#0B57D0]"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Brand
+                  </label>
+                  <input
+                    type="text"
+                    list="temp-brand-options"
+                    placeholder="Select or enter brand"
+                    value={tempProductBrand}
+                    onChange={(e) => setTempProductBrand(e.target.value)}
+                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs text-zinc-900 bg-white focus:outline-none focus:border-[#0B57D0]"
+                  />
+                  <datalist id="temp-brand-options">
+                    {brandsList.map((b: any) => {
+                      const name = b.display_name || b.name || b.brand_name;
+                      return <option key={b.id || name} value={name} />;
+                    })}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                    Cost / Unit Price ($)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={tempProductCostPrice}
+                    onChange={(e) => setTempProductCostPrice(e.target.value)}
+                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-mono text-zinc-900 bg-white focus:outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
+                  Remarks / Notes (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. One-time promo item, June 2026 batch"
+                  value={tempProductRemarks}
+                  onChange={(e) => setTempProductRemarks(e.target.value)}
+                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs text-zinc-900 bg-white focus:outline-none focus:border-[#0B57D0]"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowTempProductModal(false)}
+                  className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingTempProduct || isSkuInMaster}
+                  className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs cursor-pointer active:scale-98 disabled:opacity-50"
+                >
+                  {savingTempProduct ? <RefreshCw size={13} className="animate-spin text-white" /> : <Check size={13} />}
+                  <span>{editingTempProduct ? "Update Product" : "Save Temp Product"}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
@@ -3276,10 +4761,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                   </div>
                                 )}
                               </td>
-                              <td className="py-2 px-3 text-zinc-800">
-                                <span className="font-medium">{it.description}</span>
+                              <td className="py-2 px-3 text-zinc-800 max-w-[200px] overflow-hidden">
+                                <span className="font-medium truncate block" title={it.description}>{it.description}</span>
                                 {it.product_name && it.product_name !== it.description && (
-                                  <span className="text-[10px] text-zinc-400 block">{it.product_name}</span>
+                                  <span className="text-[10px] text-zinc-400 truncate block" title={it.product_name}>{it.product_name}</span>
                                 )}
                               </td>
                               <td className="py-2 px-3 text-right font-mono text-zinc-800">
@@ -3523,10 +5008,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                   </div>
                                 )}
                               </td>
-                              <td className="py-2 px-3 text-zinc-800">
-                                <span className="font-medium">{it.description}</span>
+                              <td className="py-2 px-3 text-zinc-800 max-w-[200px] overflow-hidden">
+                                <span className="font-medium truncate block" title={it.description}>{it.description}</span>
                                 {it.product_name && it.product_name !== it.description && (
-                                  <span className="text-[10px] text-zinc-400 block">{it.product_name}</span>
+                                  <span className="text-[10px] text-zinc-400 truncate block" title={it.product_name}>{it.product_name}</span>
                                 )}
                               </td>
                               <td className="py-2 px-3 text-right font-mono text-zinc-800 font-semibold">
@@ -4141,15 +5626,15 @@ export function SellInModule({ profile }: SellInModuleProps) {
         </div>
       )}
 
-      {/* Modal: Assign Master Product SKU */}
+      {/* Modal: Assign Product SKU */}
       {showAssignProductModal && assignProductTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col max-h-[90vh]">
             {/* Modal Header */}
             <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
               <div>
-                <h2 className="text-sm font-semibold text-zinc-950">Assign Master Product SKU</h2>
-                <p className="text-xs text-zinc-500">Map this invoice item description to an official master product.</p>
+                <h2 className="text-sm font-semibold text-zinc-950">Assign Product SKU</h2>
+                <p className="text-xs text-zinc-500">Map this invoice item description to a product from the Product List.</p>
               </div>
               <button 
                 type="button" 
@@ -4181,12 +5666,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 </div>
               </div>
 
-              {/* Master Product Selection */}
+              {/* Product Selection */}
               <div className="flex flex-col gap-1.5">
                 <label className="font-medium text-zinc-700 flex items-center justify-between">
-                  <span>Select Master Product <span className="text-red-500">*</span></span>
+                  <span>Select Product from Product List <span className="text-red-500">*</span></span>
                   <span className="text-[11px] text-zinc-400 font-normal">
-                    {productsList.length} products available
+                    {unifiedProductList.length} products available
                   </span>
                 </label>
 
@@ -4196,52 +5681,58 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     type="text"
                     value={productSearchTerm}
                     onChange={(e) => setProductSearchTerm(e.target.value)}
-                    placeholder="Search master product by SKU, name, or brand..."
+                    placeholder="Search product by SKU, name, or brand..."
                     className="w-full h-8 pl-8 pr-3 border border-slate-300 rounded-lg text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none focus:border-[#0B57D0]"
                   />
                   <Search size={13} className="absolute left-2.5 top-2.5 text-zinc-400" />
                 </div>
 
                 {/* Products List */}
-                <div className="mt-1 border border-slate-200 rounded-lg max-h-48 overflow-y-auto divide-y divide-slate-100 bg-white">
-                  {productsList
+                <div className="mt-1 border border-slate-200 rounded-lg max-h-56 overflow-y-auto divide-y divide-slate-100 bg-white">
+                  {unifiedProductList
                     .filter((p) => {
                       if (!productSearchTerm.trim()) return true;
                       const q = productSearchTerm.toLowerCase();
                       return (
                         (p.sku && p.sku.toLowerCase().includes(q)) ||
-                        (p.sku_number && p.sku_number.toLowerCase().includes(q)) ||
-                        (p.name && p.name.toLowerCase().includes(q)) ||
-                        (p.display_name && p.display_name.toLowerCase().includes(q)) ||
-                        (p.brand_name && p.brand_name.toLowerCase().includes(q)) ||
+                        (p.product_name && p.product_name.toLowerCase().includes(q)) ||
                         (p.brand && p.brand.toLowerCase().includes(q))
                       );
                     })
                     .slice(0, 100)
                     .map((p) => {
-                      const isSelected = selectedMasterSku === p.sku || selectedMasterSku === p.sku_number;
-                      const brandLabel = p.brand_name || p.brand || "";
+                      const isSelected = selectedMasterSku === p.sku;
+                      const brandLabel = p.brand || "";
                       return (
                         <button
-                          key={p.id || p.sku}
+                          key={`${p.is_temp ? 'temp' : 'master'}_${p.id || p.sku}`}
                           type="button"
-                          onClick={() => setSelectedMasterSku(p.sku || p.sku_number)}
+                          onClick={() => setSelectedMasterSku(p.sku)}
                           className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 transition-colors cursor-pointer ${
                             isSelected
                               ? "bg-blue-50/80 text-[#0B57D0]"
                               : "hover:bg-slate-50 text-zinc-800"
                           }`}
                         >
-                          <div className="flex flex-col min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <span className="font-mono font-semibold text-xs text-zinc-900">{p.sku || p.sku_number}</span>
-                              {brandLabel && (
-                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-medium">
-                                  {brandLabel}
-                                </span>
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span title={p.is_temp ? "Temporary Product" : "Master Product"}>
+                              {p.is_temp ? (
+                                <CheckCircle2 size={14} className="text-slate-400 shrink-0" />
+                              ) : (
+                                <CheckCircle2 size={14} className="text-emerald-500 shrink-0" />
                               )}
+                            </span>
+                            <div className="flex flex-col min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono font-semibold text-xs text-zinc-900">{p.sku}</span>
+                                {brandLabel && (
+                                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 text-slate-600 font-medium">
+                                    {brandLabel}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-xs text-zinc-600 truncate mt-0.5">{p.product_name}</span>
                             </div>
-                            <span className="text-xs text-zinc-600 truncate mt-0.5">{p.display_name || p.name}</span>
                           </div>
                           {isSelected && <Check size={14} className="text-[#0B57D0] shrink-0" />}
                         </button>
@@ -4271,7 +5762,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         Also assign to all matching records in {formatPeriodLabel(currentPeriod)} ({matchingCount} record{matchingCount === 1 ? '' : 's'})
                       </span>
                       <span className="text-[11px] text-zinc-500 leading-tight mt-0.5">
-                        Applies this master SKU and brand to all line items with description "{targetDesc}".
+                        Applies this product SKU and brand to all line items with description "{targetDesc}".
                       </span>
                     </div>
                   </label>
@@ -4298,7 +5789,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
               >
                 {savingAssignProduct ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                <span>Assign Master Product</span>
+                <span>Assign Product</span>
               </button>
             </div>
           </div>
@@ -4526,6 +6017,258 @@ export function SellInModule({ profile }: SellInModuleProps) {
         </div>
       )}
 
+
+      {/* Modal: Listing Price Discrepancy */}
+      {showPriceMismatchModal && priceMismatchTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col">
+            {/* Modal Header */}
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0">
+                  <AlertTriangle size={14} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-950">List Price Discrepancy</h2>
+                  <p className="text-[11px] text-zinc-500">Invoice price differs from registered List Price.</p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowPriceMismatchModal(false);
+                  setPriceMismatchTarget(null);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 flex flex-col gap-3 text-xs">
+              {/* Product & Buyer Context */}
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex flex-col gap-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-zinc-500 font-medium text-[11px] shrink-0">Buyer:</span>
+                  <span className="font-semibold text-zinc-900 text-right">{priceMismatchTarget.buyer_name || priceMismatchTarget.buyer_code}</span>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-zinc-500 font-medium text-[11px] shrink-0">Product:</span>
+                  <span className="font-medium text-zinc-900 text-right break-words">{priceMismatchTarget.product_name || priceMismatchTarget.product_sku}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium text-[11px]">SKU:</span>
+                  <span className="font-mono text-zinc-700">{priceMismatchTarget.product_sku}</span>
+                </div>
+                {priceMismatchTarget.matched_sheet_name && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-500 font-medium text-[11px]">Listing Sheet:</span>
+                    <span className="text-zinc-700 font-medium">{priceMismatchTarget.matched_sheet_name}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Price Comparison Card */}
+              <div className="grid grid-cols-2 gap-2.5">
+                {/* Invoiced Unit Price */}
+                <div className="p-3 rounded-lg border border-slate-200 bg-white flex flex-col items-center text-center">
+                  <span className="text-[10.5px] font-medium text-zinc-500 uppercase tracking-wider">Invoice Unit Price</span>
+                  <span className="text-lg font-bold text-zinc-900 font-mono mt-1">
+                    ${Number(priceMismatchTarget.unit_price || 0).toFixed(2)}
+                  </span>
+                  <span className="text-[10px] text-emerald-600 font-medium mt-0.5">Used in Demand Total</span>
+                </div>
+
+                {/* Listing Sheet Contract Price */}
+                <div className="p-3 rounded-lg border border-amber-200 bg-amber-50/50 flex flex-col items-center text-center">
+                  <span className="text-[10.5px] font-medium text-amber-700 uppercase tracking-wider">Price to Buyer (List Price)</span>
+                  <span className="text-lg font-bold text-amber-900 font-mono mt-1">
+                    ${Number(priceMismatchTarget.listing_price || 0).toFixed(2)}
+                  </span>
+                  <span className="text-[10px] text-amber-600 font-medium mt-0.5">
+                    Variance: ${(Number(priceMismatchTarget.unit_price || 0) - Number(priceMismatchTarget.listing_price || 0)).toFixed(2)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-blue-50/60 border border-blue-100 text-[11px] text-zinc-600 leading-relaxed">
+                The actual billed invoice price is kept safe for accounting calculations. If the registered list price is outdated, you can update it directly below.
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPriceMismatchModal(false);
+                  setPriceMismatchTarget(null);
+                }}
+                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+              >
+                Keep Invoice Price (Close)
+              </button>
+              <button
+                type="button"
+                disabled={savingUpdateListingPrice}
+                onClick={handleUpdateListingPrice}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+              >
+                {savingUpdateListingPrice ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                <span>Update List Price to ${Number(priceMismatchTarget.unit_price || 0).toFixed(2)}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Edit Snapshot Cost Price (This Month Only) */}
+      {showCostSnapshotModal && costSnapshotTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col">
+            {/* Modal Header */}
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 shrink-0">
+                  <DollarSign size={14} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-semibold text-zinc-950">Snapshot Cost Price</h2>
+                  <p className="text-[11px] text-zinc-500">Edit internal cost price for this specific month only.</p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowCostSnapshotModal(false);
+                  setCostSnapshotTarget(null);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 flex flex-col gap-3 text-xs">
+              {/* Product & Buyer Context */}
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex flex-col gap-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-zinc-500 font-medium text-[11px] shrink-0">Buyer:</span>
+                  <span className="font-semibold text-zinc-900 text-right">{costSnapshotTarget.buyer_name || costSnapshotTarget.buyer_code}</span>
+                </div>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-zinc-500 font-medium text-[11px] shrink-0">Product:</span>
+                  <span className="font-medium text-zinc-900 text-right break-words">{costSnapshotTarget.product_name || costSnapshotTarget.product_sku}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium text-[11px]">SKU:</span>
+                  <span className="font-mono text-zinc-700">{costSnapshotTarget.product_sku || "(No SKU)"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium text-[11px]">Period / Month:</span>
+                  <span className="font-semibold text-zinc-800">{currentPeriod}</span>
+                </div>
+              </div>
+
+              {/* Informative Rule Notice */}
+              <div className="p-2.5 rounded-lg bg-blue-50/70 border border-blue-200/80 text-[11px] text-blue-900 leading-relaxed">
+                ℹ️ <strong>Snapshot Rule:</strong> This cost price is snapshotted for <strong>{currentPeriod}</strong> only. Saving will recalculate gross profit and margin for this month without altering your product list catalog or past records.
+              </div>
+
+              {/* Input Form */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex flex-col items-center text-center">
+                  <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Invoice Unit Price</span>
+                  <span className="text-base font-bold text-zinc-900 font-mono mt-1">
+                    ${Number(costSnapshotTarget.unit_price || 0).toFixed(2)}
+                  </span>
+                  <span className="text-[10px] text-zinc-400 mt-0.5">Billed Price</span>
+                </div>
+
+                <div className="p-3 rounded-lg border border-slate-300 bg-white flex flex-col justify-center">
+                  <label className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider mb-1 block">Snapshot Cost ($)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={editingCostPrice}
+                    onChange={(e) => setEditingCostPrice(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full h-8 px-2 bg-slate-50 border border-slate-200 rounded text-sm font-mono font-bold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* Live Impact Preview */}
+              {(() => {
+                const cost = parseFloat(editingCostPrice) || 0;
+                const dQty = Number(costSnapshotTarget.demand_qty ?? costSnapshotTarget.quantity ?? 0);
+                const rQty = Number(costSnapshotTarget.reject_qty ?? costSnapshotTarget.cn_quantity ?? 0);
+                const netQty = Math.max(0, dQty - rQty);
+                const totalDemand = Number(costSnapshotTarget.total_demand || (dQty * Number(costSnapshotTarget.unit_price || 0)));
+                const cnAmount = Number(costSnapshotTarget.cn_amount || 0);
+                const nettSales = totalDemand - cnAmount;
+                const totalCost = netQty * cost;
+                const profit = nettSales - totalCost;
+                const margin = nettSales > 0 ? (profit / nettSales) * 100 : 0;
+
+                return (
+                  <div className="p-3 bg-slate-50/90 rounded-lg border border-slate-200 space-y-1 font-mono text-[11px]">
+                    <div className="flex justify-between text-zinc-500 font-sans text-[11px] font-semibold mb-1">
+                      <span>Monthly Impact Calculation</span>
+                    </div>
+                    <div className="flex justify-between text-zinc-600">
+                      <span>Net Sold Qty:</span>
+                      <span>{netQty.toLocaleString()} pcs</span>
+                    </div>
+                    <div className="flex justify-between text-zinc-600">
+                      <span>Nett Sales:</span>
+                      <span>${nettSales.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between text-zinc-600">
+                      <span>Total Cost of Goods:</span>
+                      <span>${totalCost.toFixed(2)}</span>
+                    </div>
+                    <div className="pt-1.5 border-t border-slate-200 flex justify-between font-bold">
+                      <span className="font-sans">Est. Gross Profit:</span>
+                      <span className={profit >= 0 ? "text-emerald-700" : "text-red-600"}>
+                        ${profit.toFixed(2)} ({margin.toFixed(1)}%)
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
+              <button
+                type="button"
+                disabled={savingCostSnapshot}
+                onClick={() => {
+                  setShowCostSnapshotModal(false);
+                  setCostSnapshotTarget(null);
+                }}
+                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={savingCostSnapshot}
+                onClick={handleSaveCostSnapshot}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+              >
+                {savingCostSnapshot ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                <span>Save Month Snapshot</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Dialog */}
       <ConfirmDialog

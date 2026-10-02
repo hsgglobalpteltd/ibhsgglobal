@@ -44,12 +44,12 @@ export interface ChartLayoutItem {
 }
 
 const DEFAULT_LAYOUT: ChartLayoutItem[] = [
-  { id: "channel_pie", title: "Sell In by Channel", visible: true, x: 20, y: 20, width: 350, height: 440, zIndex: 1 },
-  { id: "buyer_pie", title: "Sell In by Buyers", visible: true, x: 390, y: 20, width: 350, height: 440, zIndex: 2 },
-  { id: "sell_through_rate", title: "Sell-Through Rate (%)", visible: true, x: 760, y: 20, width: 360, height: 440, zIndex: 3 },
-  { id: "trend_12m", title: "12-Month Performance Trend", visible: true, x: 20, y: 480, width: 550, height: 460, zIndex: 4 },
-  { id: "sellin_vs_sellout", title: "Sell-In vs Sell-Out Comparison", visible: true, x: 590, y: 480, width: 530, height: 460, zIndex: 5 },
-  { id: "sku_movers", title: "Product Movement (Top & Bottom)", visible: true, x: 20, y: 960, width: 1100, height: 480, zIndex: 6 },
+  { id: "channel_pie", title: "Sell In by Channel", visible: true, x: 20, y: 20, width: 350, height: 580, zIndex: 1 },
+  { id: "buyer_pie", title: "Sell In by Buyers", visible: true, x: 390, y: 20, width: 350, height: 580, zIndex: 2 },
+  { id: "sell_through_rate", title: "Sell-Through Rate (%)", visible: true, x: 760, y: 20, width: 360, height: 580, zIndex: 3 },
+  { id: "trend_12m", title: "12-Month Performance Trend", visible: true, x: 20, y: 620, width: 550, height: 460, zIndex: 4 },
+  { id: "sellin_vs_sellout", title: "Sell-In vs Sell-Out Comparison", visible: true, x: 590, y: 620, width: 530, height: 460, zIndex: 5 },
+  { id: "sku_movers", title: "Product Movement (Top & Bottom)", visible: true, x: 20, y: 1100, width: 1100, height: 480, zIndex: 6 },
 ];
 
 const API_BASE = "https://ib-v2.hsgglobalpteltd.workers.dev";
@@ -182,8 +182,8 @@ export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {
   const [selectedBrand, setSelectedBrand] = React.useState<string>("All Brands");
   const [hoveredChannel, setHoveredChannel] = React.useState<string | null>(null);
   const [hoveredBuyer, setHoveredBuyer] = React.useState<string | null>(null);
-  const [showChannelBreakdown, setShowChannelBreakdown] = React.useState<boolean>(false);
-  const [showBuyerBreakdown, setShowBuyerBreakdown] = React.useState<boolean>(false);
+  const [showChannelBreakdown, setShowChannelBreakdown] = React.useState<boolean>(true);
+  const [showBuyerBreakdown, setShowBuyerBreakdown] = React.useState<boolean>(true);
 
   // 12-Month Trend State & Cache
   const [trendToggle, setTrendToggle] = React.useState<"channel" | "buyer">("channel");
@@ -219,13 +219,14 @@ export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {
             const merged = DEFAULT_LAYOUT.map((def, idx) => {
               const found = parsed.find((p: any) => p.id === def.id);
               if (!found) return def;
+              const minCardHeight = (def.id === "buyer_pie" || def.id === "channel_pie" || def.id === "sell_through_rate") ? 580 : 220;
               return {
                 ...def,
                 ...found,
                 x: typeof found.x === "number" ? Math.max(0, Math.round(found.x)) : def.x,
                 y: typeof found.y === "number" ? Math.max(0, Math.round(found.y)) : def.y,
                 width: typeof found.width === "number" && found.width >= 240 ? Math.round(found.width) : def.width,
-                height: typeof found.height === "number" && found.height >= 220 ? Math.round(found.height) : def.height,
+                height: typeof found.height === "number" && found.height >= minCardHeight ? Math.round(found.height) : def.height,
                 zIndex: typeof found.zIndex === "number" ? found.zIndex : idx + 1,
               };
             });
@@ -1396,10 +1397,11 @@ export function DashboardAnalysisView({ onBack }: DashboardAnalysisViewProps = {
             <button
               type="button"
               onClick={onBack}
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white border border-slate-200 text-xs font-semibold text-zinc-700 hover:text-zinc-950 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+              className="h-[30px] inline-flex items-center gap-1.5 px-3 rounded-full bg-white border border-slate-200/90 text-xs font-semibold text-zinc-700 hover:text-[#0B57D0] hover:bg-blue-50/60 hover:border-blue-200 transition-all shadow-2xs cursor-pointer"
+              title="Back to iB - HSG Global Internal Bridge"
             >
-              <ChevronLeft size={14} />
-              <span>Back</span>
+              <ChevronLeft size={14} className="shrink-0" />
+              <span>Back to iB</span>
             </button>
           )}
           {!onBack && <div className="w-24 hidden md:block" />}
