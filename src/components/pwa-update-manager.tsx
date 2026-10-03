@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { RefreshCw, Sparkles, X } from "lucide-react";
+import { RefreshCw, X } from "lucide-react";
 
 export function PwaUpdateManager() {
   const [updateAvailable, setUpdateAvailable] = React.useState(false);
@@ -123,39 +123,33 @@ export function PwaUpdateManager() {
   if (!updateAvailable) return null;
 
   return (
-    <div className="fixed bottom-6 right-6 z-[99999] max-w-sm w-full animate-in slide-in-from-bottom-5 duration-300 select-none">
-      <div className="bg-white border border-slate-200 rounded-xl shadow-2xl p-4 flex items-center justify-between gap-3 text-zinc-900 font-primary">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-[#D3E3FD] text-[#0B57D0] flex items-center justify-center shrink-0">
-            <Sparkles size={18} />
-          </div>
-          <div className="flex flex-col">
-            <span className="text-xs font-bold text-zinc-950">System Update Ready</span>
-            <span className="text-[11px] text-zinc-500 font-medium leading-tight">
-              A newer version of iB has been deployed.
-            </span>
-          </div>
+    <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-in fade-in duration-200 select-none">
+      <div className="relative bg-white border border-slate-200 rounded-xl shadow-2xl p-5 max-w-sm w-full flex flex-col items-center text-center gap-3 text-zinc-900 font-primary animate-in zoom-in-95 duration-200">
+        <button
+          type="button"
+          onClick={() => setUpdateAvailable(false)}
+          className="absolute top-3 right-3 p-1 text-zinc-400 hover:text-zinc-600 rounded-md hover:bg-zinc-100 transition-colors cursor-pointer"
+          title="Dismiss"
+        >
+          <X size={15} />
+        </button>
+
+        <div className="flex flex-col items-center pt-1">
+          <span className="text-sm font-semibold text-zinc-900">System Update Ready</span>
+          <span className="text-xs text-zinc-500 mt-1">
+            A newer version of iB has been deployed.
+          </span>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleApplyUpdate}
-            disabled={isUpdating}
-            className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] active:scale-95 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-50"
-          >
-            <RefreshCw size={12} className={isUpdating ? "animate-spin" : ""} />
-            <span>{isUpdating ? "Updating..." : "Update"}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setUpdateAvailable(false)}
-            className="p-1 text-zinc-400 hover:text-zinc-600 rounded-md hover:bg-zinc-100 transition-colors cursor-pointer"
-            title="Dismiss"
-          >
-            <X size={14} />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleApplyUpdate}
+          disabled={isUpdating}
+          className="mt-1 h-8.5 px-6 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] active:scale-95 text-white text-xs font-medium flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer disabled:opacity-50"
+        >
+          <RefreshCw size={13} className={isUpdating ? "animate-spin" : ""} />
+          <span>{isUpdating ? "Updating..." : "Update Now"}</span>
+        </button>
       </div>
     </div>
   );

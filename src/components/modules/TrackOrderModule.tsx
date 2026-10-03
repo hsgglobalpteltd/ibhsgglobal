@@ -3470,6 +3470,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           continue;
         }
 
+        const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
+        const isDelivered = orderStatus === "delivered";
+        const isCompleted = matchedOrder.completed === "true" || matchedOrder.completed === true;
+
+        if (!isDelivered && !isCompleted) {
+          notDeliveredCount++;
+          continue;
+        }
+
         matchedCount++;
 
         // Upload matched invoice page photo to Cloudflare R2
@@ -3737,6 +3746,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           continue;
         }
 
+        const orderStatus = String(matchedOrder.status || "").trim().toLowerCase();
+        const isDelivered = orderStatus === "delivered";
+        const isCompleted = matchedOrder.completed === "true" || matchedOrder.completed === true;
+
+        if (!isDelivered && !isCompleted) {
+          notDeliveredCount++;
+          continue;
+        }
+
         matchedCount++;
 
         let finalItemsJson: string | undefined = undefined;
@@ -3803,7 +3821,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       }
 
       showToast(
-        `Bulk completion complete! ${matchedCount} orders updated with invoice.${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
+        `Bulk completion complete! ${matchedCount} orders updated with invoice.${notDeliveredCount > 0 ? ` (${notDeliveredCount} skipped - not delivered yet)` : ""}${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
         "success"
       );
     } catch (err: any) {

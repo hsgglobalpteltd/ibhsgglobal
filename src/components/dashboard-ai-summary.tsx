@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { RefreshCw, Send, Bot, Sparkles, Globe, MessageSquare, Plus, Trash2, ChevronRight, Check, History, Search } from "lucide-react";
+import { RefreshCw, Send, Bot, Sparkles, Globe, MessageSquare, Plus, Trash2, ChevronRight, Check, History, Search, Bookmark, BookmarkCheck } from "lucide-react";
 import {
   fetchDashboardAiBriefing,
   fetchUserChats,
@@ -105,49 +105,53 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     };
   }, [displayedBubbles.length, scrollToBottom]);
 
-  // Silent sync helper: Persist active conversation to local storage and backend D1
-  const persistChatSession = React.useCallback((bubbles: typeof displayedBubbles, chatId = activeChatId) => {
-    if (typeof window === "undefined" || bubbles.length === 0) return;
+  // Persist current chat bubbles locally whenever they change (prevents clearing when switching menus)
+  React.useEffect(() => {
+    if (typeof window !== "undefined" && displayedBubbles.length > 0) {
+      try {
+        localStorage.setItem("ib_briefing_chat_history", JSON.stringify(displayedBubbles));
+        localStorage.setItem("ib_active_chat_id", activeChatId);
+      } catch {}
+    }
+  }, [displayedBubbles, activeChatId]);
 
-    // 1. Save locally immediately
-    try {
-      localStorage.setItem("ib_briefing_chat_history", JSON.stringify(bubbles));
-      localStorage.setItem("ib_active_chat_id", chatId);
-    } catch {}
+  // Manual Save Conversation to Discussions history
+  const handleSaveCurrentConversation = React.useCallback(async () => {
+    if (displayedBubbles.length === 0) {
+      showToast("No messages to save yet", "info");
+      return;
+    }
 
-    // 2. Generate title & preview
-    const firstUserMsg = bubbles.find(b => b.isUser)?.text || "";
-    const firstAiMsg = bubbles.find(b => !b.isUser)?.text || "";
+    const firstUserMsg = displayedBubbles.find(b => b.isUser)?.text || "";
+    const firstAiMsg = displayedBubbles.find(b => !b.isUser)?.text || "";
     const title = firstUserMsg 
       ? (firstUserMsg.length > 32 ? firstUserMsg.slice(0, 30) + "..." : firstUserMsg)
       : "Operations Discussion";
-    const preview = bubbles[bubbles.length - 1]?.text?.slice(0, 75) || firstAiMsg.slice(0, 75) || "";
+    const preview = displayedBubbles[displayedBubbles.length - 1]?.text?.slice(0, 75) || firstAiMsg.slice(0, 75) || "";
 
-    const updatedSession: UserChatSession = {
-      id: chatId,
+    const sessionToSave: UserChatSession = {
+      id: activeChatId,
       user_email: userEmail,
       title,
       preview,
-      messages: bubbles,
+      messages: displayedBubbles,
       created_at: Date.now(),
       updated_at: Date.now(),
     };
 
-    // Update local saved chats list
     setSavedChats((prev) => {
-      const existingIdx = prev.findIndex(c => c.id === chatId);
+      const existingIdx = prev.findIndex(c => c.id === activeChatId);
       let nextList: UserChatSession[];
       if (existingIdx >= 0) {
         nextList = [...prev];
         nextList[existingIdx] = {
           ...nextList[existingIdx],
-          title: prev[existingIdx].title || title,
           preview,
-          messages: bubbles,
+          messages: displayedBubbles,
           updated_at: Date.now(),
         };
       } else {
-        nextList = [updatedSession, ...prev];
+        nextList = [sessionToSave, ...prev];
       }
       try {
         localStorage.setItem("ib_user_saved_chats", JSON.stringify(nextList));
@@ -155,13 +159,14 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
       return nextList;
     });
 
-    // 3. Silent server sync
     if (userEmail) {
-      saveUserChat(updatedSession).catch((err) => {
-        console.warn("Silent chat sync error:", err);
+      saveUserChat(sessionToSave).catch((err) => {
+        console.warn("Save chat server error:", err);
       });
     }
-  }, [activeChatId, userEmail]);
+
+    showToast("Conversation saved to Discussions", "success");
+  }, [displayedBubbles, activeChatId, userEmail]);
 
   // Initial load of server chats (merges into local-first list seamlessly)
   React.useEffect(() => {
@@ -169,7 +174,6 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     fetchUserChats(userEmail).then((res) => {
       if (res?.success && Array.isArray(res.chats) && res.chats.length > 0) {
         setSavedChats((localPrev) => {
-          // Merge server chats with any local chats not yet on server
           const map = new Map<string, UserChatSession>();
           res.chats.forEach(c => map.set(c.id, c));
           localPrev.forEach(c => {
@@ -202,7 +206,7 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     setTimeout(scrollToBottom, 50);
   }, [scrollToBottom]);
 
-  // Start a fresh New Chat session
+  // Start a fresh New Chat session (does not pollute saved discussions)
   const handleStartNewChat = React.useCallback(() => {
     if (nextBubbleTimeoutRef.current) clearTimeout(nextBubbleTimeoutRef.current);
     const newId = `chat_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
@@ -227,9 +231,8 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
           localStorage.setItem("ib_briefing_chat_history", JSON.stringify(freshBubbles));
         } catch {}
       }
-      persistChatSession(freshBubbles, newId);
     }, 250);
-  }, [userName, persistChatSession]);
+  }, [userName]);
 
   // Delete a saved conversation
   const handleDeleteChat = React.useCallback(async (e: React.MouseEvent, chatIdToDelete: string) => {
@@ -387,7 +390,11 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
       { text: textToSend, isUser: true as any, timestamp: timeNow }
     ];
     setDisplayedBubbles(updatedWithUser);
-    persistChatSession(updatedWithUser);
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("ib_briefing_chat_history", JSON.stringify(updatedWithUser));
+      } catch {}
+    }
     setTimeout(scrollToBottom, 20);
 
     try {
@@ -427,7 +434,7 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     } finally {
       setIsGenerating(false);
     }
-  }, [userInput, isGenerating, displayedBubbles, userName, profile, enableWebSearch, persistChatSession, scrollToBottom, startSequentialPopups]);
+  }, [userInput, isGenerating, displayedBubbles, userName, profile, enableWebSearch, scrollToBottom, startSequentialPopups]);
 
   // Request latest update pill shortcut
   const handleRequestLatestUpdate = React.useCallback(() => {
@@ -532,16 +539,13 @@ function getRandomBuddyGreeting(userName: string): string {
 
   const hasLoadedInitialRef = React.useRef(false);
 
-  // Initial trigger on mount or 6 AM cycle transition
+  // Initial trigger on mount: Load greeting only if no previous chat exists in storage
   React.useEffect(() => {
     if (!hasLoadedInitialRef.current) {
       hasLoadedInitialRef.current = true;
-      const currentCycle = getDaily6AmCycleId();
-      let savedCycle = "";
       let hasCachedHistory = false;
       if (typeof window !== "undefined") {
         try {
-          savedCycle = localStorage.getItem("ib_briefing_chat_cycle") || "";
           const cached = localStorage.getItem("ib_briefing_chat_history");
           if (cached) {
             const parsed = JSON.parse(cached);
@@ -552,43 +556,11 @@ function getRandomBuddyGreeting(userName: string): string {
         } catch {}
       }
 
-      if (!hasCachedHistory || (savedCycle && savedCycle !== currentCycle)) {
-        if (typeof window !== "undefined") {
-          try {
-            localStorage.setItem("ib_briefing_chat_cycle", currentCycle);
-            if (savedCycle && savedCycle !== currentCycle) {
-              localStorage.removeItem("ib_briefing_chat_history");
-            }
-          } catch {}
-        }
+      // If completely fresh with no history, load initial greeting
+      if (!hasCachedHistory) {
         handleLoadInitialBriefing();
-      } else if (!savedCycle && typeof window !== "undefined") {
-        try {
-          localStorage.setItem("ib_briefing_chat_cycle", currentCycle);
-        } catch {}
       }
     }
-
-    // Interval check every 30 seconds to automatically clear and start fresh at 6:00 AM if user is active
-    const interval = setInterval(() => {
-      const nowCycle = getDaily6AmCycleId();
-      let activeCycle = "";
-      try {
-        activeCycle = localStorage.getItem("ib_briefing_chat_cycle") || "";
-      } catch {}
-      if (activeCycle && activeCycle !== nowCycle) {
-        try {
-          localStorage.removeItem("ib_briefing_chat_history");
-          localStorage.setItem("ib_briefing_chat_cycle", nowCycle);
-        } catch {}
-        setDisplayedBubbles([]);
-        handleLoadInitialBriefing();
-      }
-    }, 30000);
-
-    return () => {
-      clearInterval(interval);
-    };
   }, [handleLoadInitialBriefing]);
 
   // Clean up timers on unmount
@@ -598,7 +570,7 @@ function getRandomBuddyGreeting(userName: string): string {
     };
   }, []);
 
-  const [isHistoryOpen, setIsHistoryOpen] = React.useState<boolean>(true);
+  const [isHistoryOpen, setIsHistoryOpen] = React.useState<boolean>(false);
 
   return (
     <div className="w-full h-full min-w-0 flex flex-row bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden select-none font-primary">
@@ -630,8 +602,18 @@ function getRandomBuddyGreeting(userName: string): string {
             </div>
           </div>
 
-          {/* Action Buttons: New Chat & Toggle History */}
+          {/* Action Buttons: Save Conversation, New Chat & Toggle History */}
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSaveCurrentConversation}
+              disabled={isGenerating || displayedBubbles.length === 0}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/80 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Save current conversation to Discussions"
+            >
+              <Bookmark className="w-3.5 h-3.5" />
+              <span>Save Chat</span>
+            </button>
             <button
               type="button"
               onClick={handleStartNewChat}
@@ -650,17 +632,17 @@ function getRandomBuddyGreeting(userName: string): string {
                   ? "bg-slate-100 text-zinc-800 border-slate-300/80"
                   : "bg-white text-zinc-500 hover:text-zinc-800 border-slate-200"
               }`}
-              title={isHistoryOpen ? "Hide chat history" : "Show chat history"}
+              title={isHistoryOpen ? "Hide discussions history" : "Show discussions history"}
             >
               <History className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Main Chat Stream Area: Sequential WhatsApp Bubbles */}
+        {/* Main Chat Stream Area: Sequential Bubbles with clean light canvas */}
         <div
           ref={chatScrollRef}
-          className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-3 bg-[#F0F2F5]"
+          className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-3 bg-[#F8F9FC]"
         >
           {displayedBubbles.length > 0 || isShowingIndicator || isGenerating ? (
             <div className="flex flex-col space-y-2.5 w-full">

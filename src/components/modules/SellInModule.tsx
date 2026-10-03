@@ -228,19 +228,28 @@ const MONTH_OPTIONS = [
   { label: "12 - December", value: 12, short: "Dec" },
 ];
 
+const getSingaporeCurrentPeriod = (): string => {
+  const now = new Date();
+  const sgtDate = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+  return sgtDate.toISOString().slice(0, 7);
+};
+
 interface SellInModuleProps {
   profile?: any;
 }
 
 export function SellInModule({ profile }: SellInModuleProps) {
-  // Global Month Filter initialized to previous month (matching sales cycle)
+  // Global Month Filter initialized to Singapore active current month
   const [currentPeriod, setCurrentPeriod] = React.useState<string>(() => {
-    const now = new Date();
-    const prev = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const y = prev.getFullYear();
-    const m = String(prev.getMonth() + 1).padStart(2, "0");
-    return `${y}-${m}`;
+    return getSingaporeCurrentPeriod();
   });
+
+  const isCurrentActiveMonth = currentPeriod === getSingaporeCurrentPeriod();
+  const isFutureMonth = currentPeriod > getSingaporeCurrentPeriod();
+
+  // Missing Invoices Modal State (Track Order health check)
+  const [showMissingInvoicesModal, setShowMissingInvoicesModal] = React.useState<boolean>(false);
+  const [missingInvoicesList, setMissingInvoicesList] = React.useState<any[]>([]);
 
   // TopBar Tab Switcher State: "sellin" | "buyers" | "products" | "reports"
   const [activeMainTab, setActiveMainTab] = React.useState<"sellin" | "buyers" | "products" | "reports">("sellin");
@@ -486,6 +495,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
         if (Array.isArray(data.temp_products)) {
           setTempProductsList(data.temp_products);
         }
+
+        // Check if Track Order has orders missing invoices >3 days for active month
+        if (data.is_current_active_month && Array.isArray(data.live_data?.over_3_days_missing) && data.live_data.over_3_days_missing.length > 0) {
+          if (!sessionStorage.getItem(`dismissed_missing_${period}`)) {
+            setMissingInvoicesList(data.live_data.over_3_days_missing);
+            setShowMissingInvoicesModal(true);
+          }
+        }
       } else {
         setRecords([]);
       }
@@ -631,11 +648,20 @@ export function SellInModule({ profile }: SellInModuleProps) {
   };
 
   const handleNextMonth = () => {
+    if (currentPeriod >= getSingaporeCurrentPeriod()) {
+      showToast("Future periods cannot be previewed.", "info");
+      return;
+    }
     const [y, m] = currentPeriod.split("-").map(Number);
     const nextDate = new Date(y, m, 1);
     const nextY = nextDate.getFullYear();
     const nextM = String(nextDate.getMonth() + 1).padStart(2, "0");
-    setCurrentPeriod(`${nextY}-${nextM}`);
+    const target = `${nextY}-${nextM}`;
+    if (target > getSingaporeCurrentPeriod()) {
+      showToast("Future periods cannot be previewed.", "info");
+      return;
+    }
+    setCurrentPeriod(target);
   };
 
   const formatPeriodLabel = (p: string) => {
@@ -758,24 +784,25 @@ export function SellInModule({ profile }: SellInModuleProps) {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    if (files.length > 1) {
+      showToast("Only 1 master PDF file is allowed per upload. Processing first file.", "info");
+    }
+
+    const file = files[0];
     setParsingInvoices(true);
     setParsingProgress(0);
-    setParsingStatusText(`Preparing ${files.length} document(s)...`);
+    setParsingStatusText(`Preparing ${file.name}...`);
 
     try {
       const allExtractedInvoices: any[] = [];
       let latestFileUrl = "";
-      let latestFileName = "";
+      let latestFileName = file.name;
       let detectedPeriodStr = "";
 
-      // 1. Inspect files and split multi-page PDFs into 8-page batches
-      const filePlans: { file: File; chunks: PdfChunk[] }[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setParsingStatusText(`Inspecting ${file.name}...`);
-        const chunks = await splitPdfIntoChunks(file, 8);
-        filePlans.push({ file, chunks });
-      }
+      // 1. Inspect single PDF and split multi-page PDF into 8-page batches
+      setParsingStatusText(`Inspecting ${file.name}...`);
+      const chunks = await splitPdfIntoChunks(file, 8);
+      const filePlans: { file: File; chunks: PdfChunk[] }[] = [{ file, chunks }];
 
       const totalChunksAcrossFiles = filePlans.reduce((sum, fp) => sum + fp.chunks.length, 0);
       let completedChunks = 0;
@@ -987,24 +1014,25 @@ export function SellInModule({ profile }: SellInModuleProps) {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    if (files.length > 1) {
+      showToast("Only 1 credit note PDF file is allowed per upload. Processing first file.", "info");
+    }
+
+    const file = files[0];
     setParsingCreditNotes(true);
     setParsingCnProgress(0);
-    setParsingCnStatusText(`Preparing ${files.length} credit note document(s)...`);
+    setParsingCnStatusText(`Preparing ${file.name}...`);
 
     try {
       const allExtractedCns: any[] = [];
       let latestFileUrl = "";
-      let latestFileName = "";
+      let latestFileName = file.name;
       let detectedPeriodStr = "";
 
-      // 1. Inspect files and split multi-page PDFs into 8-page batches
-      const filePlans: { file: File; chunks: PdfChunk[] }[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        setParsingCnStatusText(`Inspecting ${file.name}...`);
-        const chunks = await splitPdfIntoChunks(file, 8);
-        filePlans.push({ file, chunks });
-      }
+      // 1. Inspect single PDF and split multi-page PDF into 8-page batches
+      setParsingCnStatusText(`Inspecting ${file.name}...`);
+      const chunks = await splitPdfIntoChunks(file, 8);
+      const filePlans: { file: File; chunks: PdfChunk[] }[] = [{ file, chunks }];
 
       const totalChunksAcrossFiles = filePlans.reduce((sum, fp) => sum + fp.chunks.length, 0);
       let completedChunks = 0;
@@ -1332,49 +1360,37 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   };
 
-  // Open Reset Modal
+  // Open Reset Month Modal
   const handleOpenResetModal = () => {
-    if (existingDataBuyers.length === 0) {
+    if (records.length === 0) {
       showToast("No Sell-In records exist in this period to reset", "error");
       return;
     }
-    setResetBuyer(existingDataBuyers[0]?.value || "");
     setResetConfirmText("");
     setShowResetModal(true);
   };
 
-  // Confirm Buyer Reset
+  // Confirm Month Reset
   const handleConfirmReset = async () => {
-    if (!resetBuyer) {
-      showToast("Please select a buyer to reset", "error");
-      return;
-    }
-    const expected = `reset_sales_${currentPeriod}`.toLowerCase();
-    if (resetConfirmText.trim().toLowerCase() !== expected) {
-      showToast(`Please type "${expected}" exactly to confirm`, "error");
+    const cleanConf = resetConfirmText.trim().toLowerCase();
+    if (cleanConf !== "reset" && cleanConf !== `reset ${currentPeriod}`.toLowerCase()) {
+      showToast(`Please type "reset" to confirm`, "error");
       return;
     }
 
     setResetting(true);
     try {
-      const res = await fetch(`${API_BASE}/api/sellin/reset`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          period: currentPeriod,
-          buyer_name: resetBuyer,
-          confirmation: resetConfirmText.trim()
-        })
+      const res = await fetch(`${API_BASE}/api/sellin/reset-period?period=${encodeURIComponent(currentPeriod)}`, {
+        method: "POST"
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast(data.message || `Reset records for ${resetBuyer}!`, "success");
+        showToast(data.message || `Reset all data for ${formatPeriodLabel(currentPeriod)}!`, "success");
         setShowResetModal(false);
         setResetConfirmText("");
-        setResetBuyer("");
         fetchBatchDetails(currentPeriod, true);
       } else {
-        showToast(data.error || "Failed to reset buyer records", "error");
+        showToast(data.error || "Failed to reset month data", "error");
       }
     } catch (e: any) {
       showToast("Reset error: " + e.message, "error");
@@ -3115,47 +3131,80 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
             {/* Right Action Buttons */}
             <div className="flex items-center gap-2 shrink-0">
-              {/* Reset Month Button */}
-              {records.length > 0 && (
+              {/* Reset Month Button (replaces Reset by Buyer) */}
+              {records.length > 0 && !isCurrentActiveMonth && (
                 <button
                   type="button"
                   onClick={handleOpenResetModal}
                   className="h-8 px-2.5 rounded-lg bg-white border border-red-200 hover:bg-red-50 text-red-600 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                  title={`Reset buyer records for ${currentPeriod}`}
+                  title={`Reset all data for ${formatPeriodLabel(currentPeriod)}`}
                 >
                   <Trash2 size={13} className="text-red-500" />
-                  <span>Reset</span>
+                  <span>Reset Month</span>
                 </button>
               )}
 
               {/* Import Invoices PDF Button */}
-              <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
-                {parsingInvoices ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
-                <span>{parsingInvoices ? "Parsing AI..." : "Import Invoices (PDF)"}</span>
-                <input
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg"
-                  multiple
-                  disabled={parsingInvoices}
-                  onChange={handleInvoicePdfUpload}
-                  className="hidden"
-                />
-              </label>
+              {isCurrentActiveMonth ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    showToast(
+                      `${formatPeriodLabel(currentPeriod)} is currently in progress. Sales figures are synced from Track Orders. Official month-end invoice upload will open on 1st of next month.`,
+                      "info"
+                    );
+                  }}
+                  className="h-8 px-3 rounded-lg bg-slate-100 border border-slate-200 text-zinc-400 text-xs font-medium flex items-center gap-1.5 cursor-not-allowed shadow-2xs opacity-75"
+                  title="Upload disabled during active month"
+                >
+                  <FileText size={13} className="text-zinc-400" />
+                  <span>Import Invoices (PDF)</span>
+                </button>
+              ) : (!batchData?.source_file_url && !records.some((r: any) => r.source_type === "pdf_invoice")) ? (
+                <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
+                  {parsingInvoices ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
+                  <span>{parsingInvoices ? "Parsing AI..." : "Import Invoices (PDF)"}</span>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    multiple={false}
+                    disabled={parsingInvoices}
+                    onChange={handleInvoicePdfUpload}
+                    className="hidden"
+                  />
+                </label>
+              ) : null}
 
               {/* Import Credit Notes PDF Button */}
-              <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
-                {parsingCreditNotes ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
-                <span>{parsingCreditNotes ? "Parsing CN..." : "Import Credit Notes (PDF)"}</span>
-                <input
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg"
-                  multiple
-                  disabled={parsingCreditNotes}
-                  onChange={handleCreditNotePdfUpload}
-                  className="hidden"
-                />
-              </label>
-
+              {isCurrentActiveMonth ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    showToast(
+                      `${formatPeriodLabel(currentPeriod)} is currently in progress. Upload will open at month-end.`,
+                      "info"
+                    );
+                  }}
+                  className="h-8 px-3 rounded-lg bg-slate-100 border border-slate-200 text-zinc-400 text-xs font-medium flex items-center gap-1.5 cursor-not-allowed shadow-2xs opacity-75"
+                  title="Upload disabled during active month"
+                >
+                  <FileText size={13} className="text-zinc-400" />
+                  <span>Import Credit Notes (PDF)</span>
+                </button>
+              ) : (!records.some((r: any) => r.source_type === "pdf_credit_note" || (Array.isArray(r.credit_notes) && r.credit_notes.length > 0))) ? (
+                <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
+                  {parsingCreditNotes ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
+                  <span>{parsingCreditNotes ? "Parsing CN..." : "Import Credit Notes (PDF)"}</span>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    multiple={false}
+                    disabled={parsingCreditNotes}
+                    onChange={handleCreditNotePdfUpload}
+                    className="hidden"
+                  />
+                </label>
+              ) : null}
 
               {/* Export Excel Button */}
               <button
@@ -3186,23 +3235,31 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <span className="text-xs text-zinc-500 font-medium">Loading Sell-In records...</span>
               </div>
             ) : filteredRecords.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-64 gap-3 text-center p-6">
-                <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-zinc-400">
+              <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+                <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0B57D0] flex items-center justify-center mb-3">
                   <FileText size={24} />
                 </div>
                 <div>
-                  <h3 className="text-sm font-semibold text-zinc-800">No Sell-In Records for {currentPeriod}</h3>
-                  <p className="text-xs text-zinc-500 mt-0.5 max-w-sm leading-relaxed">
-                    Upload your Tax Invoice PDF(s) to load this month's demand with AI.
+                  <h3 className="text-sm font-bold text-zinc-900">
+                    {isCurrentActiveMonth 
+                      ? `${formatPeriodLabel(currentPeriod)} is in progress`
+                      : `${formatPeriodLabel(currentPeriod)} is now finished`}
+                  </h3>
+                  <p className="text-xs text-zinc-500 mt-1 max-w-md leading-relaxed">
+                    {isCurrentActiveMonth
+                      ? "Sales figures are actively synced from Track Orders. As invoices are attached to orders in Track Order, live demand will appear here."
+                      : `Upload the official master Tax Invoice (Day 1 to 31) to finalize and close ${formatPeriodLabel(currentPeriod)} Sell-In.`}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 mt-2">
-                  <label className="h-8 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow-2xs">
-                    {parsingInvoices ? <RefreshCw size={12} className="animate-spin text-white" /> : <FileText size={12} className="text-blue-100" />}
-                    <span>{parsingInvoices ? "Parsing AI..." : "Import Invoices (PDF)"}</span>
-                    <input type="file" accept=".pdf,.png,.jpg,.jpeg" multiple disabled={parsingInvoices} onChange={handleInvoicePdfUpload} className="hidden" />
-                  </label>
-                </div>
+                {!isCurrentActiveMonth && (
+                  <div className="flex items-center gap-2 mt-4">
+                    <label className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-98">
+                      {parsingInvoices ? <RefreshCw size={13} className="animate-spin text-white" /> : <FileText size={13} className="text-blue-100" />}
+                      <span>{parsingInvoices ? "Parsing Master Invoice..." : "Upload Master Tax Invoice (PDF)"}</span>
+                      <input type="file" accept=".pdf" multiple={false} disabled={parsingInvoices} onChange={handleInvoicePdfUpload} className="hidden" />
+                    </label>
+                  </div>
+                )}
               </div>
             ) : (
               <table className="w-full text-left border-collapse text-xs">
@@ -3220,7 +3277,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <th className="py-2.5 px-3 w-24 text-right">Reject Qty</th>
                     <th className="py-2.5 px-3 w-24 text-right">CN ($)</th>
                     <th className="py-2.5 px-3 min-w-[160px] text-center">Diagnostic Status</th>
-                    <th className="py-2.5 px-2 w-16 text-center"></th>
+                    <th className="py-2.5 px-2 w-10 text-center"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -3508,9 +3565,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           )}
                         </td>
 
-                        {/* Row Actions: Edit Snapshot Cost & Delete */}
-                        <td className="py-2 px-2 text-center whitespace-nowrap">
-                          <div className="flex items-center justify-center gap-1">
+                        {/* Row Actions: Edit Snapshot Cost */}
+                        <td className="py-2 px-2 text-center whitespace-nowrap w-10">
+                          <div className="flex items-center justify-center">
                             <button
                               type="button"
                               onClick={() => handleOpenCostSnapshotModal(r)}
@@ -3526,21 +3583,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               }
                             >
                               <DollarSign size={13} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setConfirmConfig({
-                                  open: true,
-                                  title: "Delete Demand Record",
-                                  description: `Remove ${r.product_sku} for ${r.buyer_name || r.buyer_code}?`,
-                                  onConfirm: () => handleDeleteRecord(r.id)
-                                });
-                              }}
-                              className="p-1 rounded text-zinc-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
-                              title="Delete Row"
-                            >
-                              <Trash2 size={13} />
                             </button>
                           </div>
                         </td>
@@ -5934,15 +5976,15 @@ export function SellInModule({ profile }: SellInModuleProps) {
       )}
 
       {/* ========================================================= */}
-      {/* 4D. MODAL: RESET BUYER SALES WITH TYPED CONFIRMATION      */}
+      {/* 4D. MODAL: RESET MONTH SALES WITH TYPED CONFIRMATION       */}
       {/* ========================================================= */}
       {showResetModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md flex flex-col overflow-visible animate-in fade-in zoom-in-95 duration-100">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 w-full max-w-md flex flex-col overflow-visible animate-in zoom-in-95 duration-100">
             <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-red-50/50 shrink-0 rounded-t-xl">
               <div className="flex items-center gap-2 text-red-700">
                 <AlertCircle size={16} />
-                <h2 className="text-sm font-bold">Reset Buyer Sell-In Records</h2>
+                <h2 className="text-sm font-bold">Reset Month Records</h2>
               </div>
               <button
                 type="button"
@@ -5955,39 +5997,23 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
             <div className="p-5 space-y-3.5 text-xs overflow-visible">
               <p className="text-zinc-600">
-                Select the specific buyer you want to reset for <span className="font-bold text-zinc-900">{formatPeriodLabel(currentPeriod)}</span>.
+                You are about to reset all Sell-In data for <span className="font-bold text-zinc-900">{formatPeriodLabel(currentPeriod)}</span>.
               </p>
-
-              <div className="relative z-30">
-                <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  Select Retailer / Buyer to Reset
-                </label>
-                <CustomSelect
-                  value={resetBuyer}
-                  onChange={(val) => setResetBuyer(val)}
-                  options={[
-                    { label: `⚠️ All Retailers (Entire Month: ${currentPeriod})`, value: "__all__" },
-                    ...existingDataBuyers.map((b) => ({ label: b.label, value: b.value }))
-                  ]}
-                  placeholder={existingDataBuyers.length === 0 ? "No buyers with data in this period" : "Select Buyer with data..."}
-                  className="w-full"
-                />
-              </div>
 
               <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 space-y-1">
                 <p className="font-bold">⚠️ Warning: Irreversible Action</p>
-                <p className="text-[11px]">
-                  All sell-in records {resetBuyer === "__all__" ? `for all buyers in ${currentPeriod} and uploaded PDF document(s)` : <>for <span className="font-semibold">{resetBuyer || "the selected buyer"}</span> in {currentPeriod}</>} will be permanently removed.
+                <p className="text-[11px] leading-relaxed">
+                  All sell-in records and uploaded Tax Invoice / Credit Note PDF documents for <span className="font-semibold">{formatPeriodLabel(currentPeriod)}</span> will be permanently deleted. This will reopen the upload button so you can upload a new master file.
                 </p>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">
-                  To confirm, type <span className="font-mono font-bold text-red-600 select-all">reset_sales_{currentPeriod}</span> below:
+                  To confirm, type <span className="font-mono font-bold text-red-600 select-all">reset</span> below:
                 </label>
                 <input
                   type="text"
-                  placeholder={`reset_sales_${currentPeriod}`}
+                  placeholder="reset"
                   value={resetConfirmText}
                   onChange={(e) => setResetConfirmText(e.target.value)}
                   className="w-full h-8 px-3 border border-red-300 rounded-lg text-xs font-mono focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500 bg-red-50/30"
@@ -5999,23 +6025,105 @@ export function SellInModule({ profile }: SellInModuleProps) {
               <button
                 type="button"
                 onClick={() => setShowResetModal(false)}
-                className="h-8 px-3 rounded-lg border border-slate-200 text-zinc-700 hover:bg-zinc-100 font-medium text-xs transition-colors"
+                className="h-8 px-3 rounded-lg border border-slate-200 text-zinc-700 hover:bg-zinc-100 font-medium text-xs transition-colors cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleConfirmReset}
-                disabled={resetting || !resetConfirmText.toLowerCase().includes("reset")}
+                disabled={resetting || resetConfirmText.trim().toLowerCase() !== "reset"}
                 className="h-8 px-4 bg-red-600 hover:bg-red-700 text-white rounded-lg font-semibold text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-2xs"
               >
                 {resetting ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                <span>{resetting ? "Resetting..." : "Confirm & Delete"}</span>
+                <span>{resetting ? "Resetting..." : "Confirm & Reset Month"}</span>
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ========================================================= */}
+      {/* 4E. MODAL: MISSING INVOICES IN TRACK ORDER (>3 DAYS)      */}
+      {/* ========================================================= */}
+      {showMissingInvoicesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0 bg-amber-50/60">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-amber-100 border border-amber-300 flex items-center justify-center text-amber-700 shrink-0">
+                  <AlertCircle size={15} />
+                </div>
+                <div>
+                  <h3 className="text-xs font-bold text-zinc-900">Track Order Invoice Update Required</h3>
+                  <p className="text-[10px] text-zinc-500">Orders older than 3 days missing invoice proof</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  sessionStorage.setItem(`dismissed_missing_${currentPeriod}`, "1");
+                  setShowMissingInvoicesModal(false);
+                }}
+                className="w-7 h-7 rounded-lg border border-slate-200 bg-white hover:bg-zinc-100 flex items-center justify-center text-zinc-500 transition-colors cursor-pointer"
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-lg text-amber-900 text-xs leading-relaxed">
+                <span className="font-bold">Notice:</span> Some orders for this month have been without an invoice attachment in <strong>Track Orders</strong> for more than 3 days. Please update invoice proofs in Track Order to enable accurate live sales tracking.
+              </div>
+
+              <div className="border border-slate-200 rounded-lg overflow-hidden max-h-60 overflow-y-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-[#F8F9FA] text-[11px] font-semibold text-zinc-600 border-b border-slate-200 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2">Order ID</th>
+                      <th className="px-3 py-2">Buyer</th>
+                      <th className="px-3 py-2">Date</th>
+                      <th className="px-3 py-2 text-right">Age</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {missingInvoicesList.map((item: any, idx: number) => {
+                      const ageDays = Math.floor((Date.now() - (item.timestamp || Date.now())) / (1000 * 60 * 60 * 24));
+                      const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleDateString('en-GB') : '-';
+                      return (
+                        <tr key={item.id || idx} className="hover:bg-slate-50">
+                          <td className="px-3 py-2 font-mono text-[11px] font-semibold text-zinc-800">{item.id}</td>
+                          <td className="px-3 py-2 text-zinc-700 truncate max-w-[150px]">{item.buyer_name || '-'}</td>
+                          <td className="px-3 py-2 text-zinc-500">{dateStr}</td>
+                          <td className="px-3 py-2 text-right">
+                            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                              {ageDays}d ago
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  sessionStorage.setItem(`dismissed_missing_${currentPeriod}`, "1");
+                  setShowMissingInvoicesModal(false);
+                }}
+                className="h-8 px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg font-semibold text-xs transition-colors cursor-pointer shadow-2xs"
+              >
+                Acknowledge & Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
 
       {/* Modal: Listing Price Discrepancy */}
