@@ -32,6 +32,7 @@ import {
   HelpCircle,
   Clock,
   ChevronRight,
+  ChevronDown,
   Info,
   History,
   FileText,
@@ -42,7 +43,8 @@ import {
   XCircle,
   Eye,
   FileSpreadsheet,
-  AlertCircle
+  AlertCircle,
+  ShieldCheck
 } from "lucide-react";
 import { NavigationTabs, TabItem } from "../navigation-tabs";
 import { showToast } from "@/lib/toast";
@@ -228,10 +230,67 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
   const [products, setProducts] = React.useState<any[]>([]);
   const [brands, setBrands] = React.useState<any[]>([]);
   const [searchProductQuery, setSearchProductQuery] = React.useState("");
+  const [expandedBrands, setExpandedBrands] = React.useState<Record<string, boolean>>({});
 
   // Edit Product Modal
   const [editingProduct, setEditingProduct] = React.useState<any | null>(null);
   const [savingProduct, setSavingProduct] = React.useState(false);
+
+  // Add Catalog Product Modal State
+  const [isAddProductModalOpen, setIsAddProductModalOpen] = React.useState(false);
+  const [addingProduct, setAddingProduct] = React.useState(false);
+  const [newProductForm, setNewProductForm] = React.useState({
+    brands_id: "",
+    display_name: "",
+    product_meta: {
+      Short_Title: "",
+      Category: "Cooking Paste",
+      Short_Des: "",
+      Long_Des: "",
+      Images: [] as string[]
+    },
+    single_barcode: "",
+    carton_barcode: "",
+    carton_weight: "",
+    carton: "12",
+    pallet_ctn: "72",
+    storage_condition: "15°–25°C",
+    shelf_life: "24 Months",
+    carton_l_mm: "",
+    carton_w_mm: "",
+    carton_h_mm: "",
+    list_in_catalog: true
+  });
+
+  // Promote to Master Product State
+  const [promoteSkuInput, setPromoteSkuInput] = React.useState("");
+  const [showPromoteInput, setShowPromoteInput] = React.useState(false);
+  const [isPromoting, setIsPromoting] = React.useState(false);
+
+  // Photo Upload States & Refs for Catalog & Product Modals
+  const [uploadingProductPhoto, setUploadingProductPhoto] = React.useState(false);
+  const addProductPhotoInputRef = React.useRef<HTMLInputElement | null>(null);
+  const editProductPhotoInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  // All merged brands (including brands used in temp products not yet registered in brands_db)
+  const allMergedBrands = React.useMemo(() => {
+    const map = new Map<string, any>();
+    brands.forEach((b) => {
+      map.set(b.id, { ...b, display_name: b.display_name || b.name || b.id });
+    });
+    products.forEach((p) => {
+      if (p.brands_id && !map.has(p.brands_id)) {
+        map.set(p.brands_id, {
+          id: p.brands_id,
+          display_name: p.brands_id,
+          name: p.brands_id,
+          description: "",
+          rank: 999
+        });
+      }
+    });
+    return Array.from(map.values());
+  }, [brands, products]);
 
   // Edit Brand Modal
   const [editingBrand, setEditingBrand] = React.useState<any | null>(null);
@@ -249,7 +308,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
   });
 
   // Customer Service State
-  const [csSubTab, setCsSubTab] = React.useState<"context" | "logs" | "simulator">("context");
+  const [csSubTab, setCsSubTab] = React.useState<"logs" | "context" | "simulator">("logs");
   const [csContexts, setCsContexts] = React.useState<CsContextItem[]>([]);
   const [csContextLoading, setCsContextLoading] = React.useState(false);
   const [csContextSearch, setCsContextSearch] = React.useState("");
@@ -659,31 +718,44 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
   };
 
   // 3. Toggle Product List in Catalog (Project 6 Public Discover)
-  const handleToggleProduct = async (sku: string, currentVal: boolean) => {
+  const handleToggleProduct = async (product: any, currentVal: boolean) => {
     const newVal = !currentVal;
+    const isTemp = Boolean(product.is_temp);
+    const keyVal = isTemp ? product.id : product.sku;
+
     setProducts((prev) =>
-      prev.map((p) => (p.sku === sku ? { ...p, list_in_catalog: newVal } : p))
+      prev.map((p) => ((isTemp ? p.id === keyVal : p.sku === keyVal) ? { ...p, list_in_catalog: newVal } : p))
     );
 
     try {
+      const payload = isTemp
+        ? { id: keyVal, is_temp: true, list_in_catalog: newVal }
+        : { sku: keyVal, list_in_catalog: newVal };
+
       const res = await fetch(`${WORKER_URL}/api/exhibitor/update-product`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sku, list_in_catalog: newVal })
+        body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error("Failed to update product status");
-      showToast(`${sku} ${newVal ? "enabled" : "hidden"} in catalog`, "success");
+      showToast(`${product.display_name || keyVal} ${newVal ? "enabled" : "hidden"} in catalog`, "success");
     } catch (err: any) {
       setProducts((prev) =>
-        prev.map((p) => (p.sku === sku ? { ...p, list_in_catalog: currentVal } : p))
+        prev.map((p) => ((isTemp ? p.id === keyVal : p.sku === keyVal) ? { ...p, list_in_catalog: currentVal } : p))
       );
       showToast(err.message || "Update failed", "error");
     }
   };
 
-  // 3.5 Toggle Product Accept Order (Project 5 Direct Order)
-  const handleToggleAcceptOrder = async (sku: string, currentVal: boolean) => {
+  // 3.5 Toggle Product Accept Order (Ordering Portal)
+  const handleToggleAcceptOrder = async (product: any, currentVal: boolean) => {
+    if (product.is_temp) {
+      showToast("⚠️ This product cannot accept orders because it is not registered in Master Products.", "error");
+      return;
+    }
+
     const newVal = !currentVal;
+    const sku = product.sku;
     setProducts((prev) =>
       prev.map((p) => (p.sku === sku ? { ...p, accept_order: newVal } : p))
     );
@@ -695,12 +767,113 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
         body: JSON.stringify({ sku, accept_order: newVal })
       });
       if (!res.ok) throw new Error("Failed to update product order status");
-      showToast(`${sku} ${newVal ? "accepting orders" : "orders disabled"} (Project 5)`, "success");
+      showToast(`${sku} ${newVal ? "accepting orders" : "orders disabled"} (Ordering Portal)`, "success");
     } catch (err: any) {
       setProducts((prev) =>
         prev.map((p) => (p.sku === sku ? { ...p, accept_order: currentVal } : p))
       );
       showToast(err.message || "Update failed", "error");
+    }
+  };
+
+  // 3.6 Create New Catalog-Only Product
+  const handleAddCatalogProduct = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProductForm.brands_id || !newProductForm.display_name.trim()) {
+      showToast("Brand and Product Name are required", "warning");
+      return;
+    }
+    setAddingProduct(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/exhibitor/add-catalog-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newProductForm)
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "Failed to add catalog product");
+
+      const created = data.product;
+      setProducts((prev) => [...prev, created]);
+      showToast(`Catalog product "${created.display_name}" created successfully!`, "success");
+      setIsAddProductModalOpen(false);
+      setNewProductForm({
+        brands_id: "",
+        display_name: "",
+        product_meta: {
+          Short_Title: "",
+          Category: "Cooking Paste",
+          Short_Des: "",
+          Long_Des: "",
+          Images: []
+        },
+        single_barcode: "",
+        carton_barcode: "",
+        carton_weight: "",
+        carton: "12",
+        pallet_ctn: "72",
+        storage_condition: "15°–25°C",
+        shelf_life: "24 Months",
+        carton_l_mm: "",
+        carton_w_mm: "",
+        carton_h_mm: "",
+        list_in_catalog: true
+      });
+    } catch (err: any) {
+      showToast(err.message || "Failed to add catalog product", "error");
+    } finally {
+      setAddingProduct(false);
+    }
+  };
+
+  // 3.7 Delete Catalog-Only Product
+  const handleDeleteCatalogProduct = async (product: any) => {
+    if (!product || !product.is_temp || !product.id) return;
+    if (!window.confirm(`Are you sure you want to delete catalog product "${product.display_name || product.id}"?`)) return;
+
+    try {
+      const res = await fetch(`${WORKER_URL}/api/exhibitor/delete-catalog-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: product.id })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "Failed to delete product");
+
+      setProducts((prev) => prev.filter((p) => p.id !== product.id));
+      showToast(`Deleted "${product.display_name || product.id}" from catalog`, "success");
+    } catch (err: any) {
+      showToast(err.message || "Failed to delete catalog product", "error");
+    }
+  };
+
+  // 3.8 Promote Catalog Product to Master Product
+  const handlePromoteCatalogProduct = async (product: any, newSku: string) => {
+    const cleanSku = (newSku || "").trim();
+    if (!cleanSku) {
+      showToast("Please enter an official SKU for Master Registration", "warning");
+      return;
+    }
+    setIsPromoting(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/exhibitor/promote-catalog-product`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: product.id, sku: cleanSku })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "Failed to register to Master Products");
+
+      const updatedMasterProd = data.product || { ...product, sku: cleanSku, is_temp: false, accept_order: true };
+      setProducts((prev) => prev.map((p) => (p.id === product.id ? updatedMasterProd : p)));
+      setEditingProduct(updatedMasterProd);
+      setPromoteSkuInput("");
+      setShowPromoteInput(false);
+      showToast(`✅ Successfully registered "${cleanSku}" to Master Products!`, "success");
+    } catch (err: any) {
+      showToast(err.message || "Failed to register to Master", "error");
+    } finally {
+      setIsPromoting(false);
     }
   };
 
@@ -711,15 +884,18 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
     setSavingProduct(true);
 
     try {
+      const isTemp = Boolean(editingProduct.is_temp);
       const res = await fetch(`${WORKER_URL}/api/exhibitor/update-product`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(editingProduct)
       });
       if (!res.ok) throw new Error("Failed to update product details");
-      showToast(`Product ${editingProduct.sku} updated`, "success");
+
+      const keyVal = isTemp ? editingProduct.id : editingProduct.sku;
+      showToast(`Product ${editingProduct.display_name || keyVal} updated`, "success");
       setProducts((prev) =>
-        prev.map((p) => (p.sku === editingProduct.sku ? { ...p, ...editingProduct } : p))
+        prev.map((p) => ((isTemp ? p.id === keyVal : p.sku === keyVal) ? { ...p, ...editingProduct } : p))
       );
       setEditingProduct(null);
     } catch (err: any) {
@@ -918,6 +1094,73 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
     }
   };
 
+  // 6.5 Upload Product Photos (WebP compressed, saved to R2 storage)
+  const handleUploadProductPhotos = async (files: FileList | null, isEditModal: boolean) => {
+    if (!files || files.length === 0) return;
+    setUploadingProductPhoto(true);
+    try {
+      const uploadedUrls: string[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const { base64Data, filename } = await compressImageToWebp(file, 1200, 500 * 1024);
+        const res = await fetch(`${WORKER_URL}/api/exhibitor/upload-logo`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            category: "products",
+            filename: `prod_${Date.now()}_${filename}`,
+            base64Data
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.url) {
+          uploadedUrls.push(data.url);
+        }
+      }
+
+      if (uploadedUrls.length > 0) {
+        if (isEditModal) {
+          setEditingProduct((prev: any) => {
+            if (!prev) return prev;
+            const currentImgs: string[] = Array.isArray(prev.product_meta?.Images)
+              ? prev.product_meta.Images
+              : prev.image
+              ? [prev.image]
+              : [];
+            const merged = [...currentImgs, ...uploadedUrls];
+            return {
+              ...prev,
+              image: merged[0] || prev.image,
+              product_meta: {
+                ...(prev.product_meta || {}),
+                Images: merged
+              }
+            };
+          });
+        } else {
+          setNewProductForm((prev) => {
+            const merged = [...prev.product_meta.Images, ...uploadedUrls];
+            return {
+              ...prev,
+              product_meta: {
+                ...prev.product_meta,
+                Images: merged
+              }
+            };
+          });
+        }
+        showToast(`Uploaded ${uploadedUrls.length} product photo(s) successfully!`, "success");
+      }
+    } catch (err: any) {
+      console.error("Product photo upload failed:", err);
+      showToast(err.message || "Failed to upload photo", "error");
+    } finally {
+      setUploadingProductPhoto(false);
+      if (addProductPhotoInputRef.current) addProductPhotoInputRef.current.value = "";
+      if (editProductPhotoInputRef.current) editProductPhotoInputRef.current.value = "";
+    }
+  };
+
   // 7. Delete File from R2
   const handleDeleteLogo = async (key: string, category: "retailers" | "brands" | "hero") => {
     if (!confirm("Are you sure you want to delete this asset from storage?")) return;
@@ -944,29 +1187,52 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
   // 8. Excel Template Download & Bulk Update Handlers
   const handleDownloadTemplate = () => {
     try {
-      const templateData = (products && products.length > 0 ? products : []).map((p: any) => ({
-        "SKU (Mandatory)": p.sku || "",
-        "Brand ID": p.brands_id || "",
-        "Product Name": p.display_name || "",
-        "List in Catalog (YES/NO)": p.list_in_catalog === true || p.list_in_catalog === 1 ? "YES" : "NO",
-        "Accept Order (YES/NO)": p.accept_order === true || p.accept_order === 1 || p.accept_order === undefined ? "YES" : "NO",
-        "Carton Quantity (EA)": p.carton || 12,
-        "Pallet Carton Count": p.pallet_ctn || 80,
-        "Storage Condition": p.storage_condition || "Ambient 15°–25°C",
-        "Shelf Life": p.shelf_life || "24 Months",
-        "Carton Length (mm)": p.carton_l_mm || 300,
-        "Carton Width (mm)": p.carton_w_mm || 200,
-        "Carton Height (mm)": p.carton_h_mm || 150,
-      }));
+      const templateData = (products && products.length > 0 ? products : []).map((p: any) => {
+        const meta = p.product_meta || {};
+        const imagesStr = Array.isArray(meta.Images) && meta.Images.length > 0 
+          ? meta.Images.join(", ") 
+          : (p.image || "");
+
+        return {
+          "SKU (Mandatory)": p.sku || "",
+          "Brand ID": p.brands_id || "",
+          "Display Title": p.display_name || "",
+          "Short Title": meta.Short_Title || "",
+          "Category": meta.Category || "",
+          "List in Catalog (YES/NO)": p.list_in_catalog === true || p.list_in_catalog === 1 ? "YES" : "NO",
+          "Accept Order (YES/NO)": p.accept_order === true || p.accept_order === 1 || p.accept_order === undefined ? "YES" : "NO",
+          "Short Description": meta.Short_Des || "",
+          "Catalog Description": meta.Long_Des || "",
+          "Photo Gallery URLs": imagesStr,
+          "Single Unit Barcode": p.single_barcode || "",
+          "Carton Barcode": p.carton_barcode || "",
+          "Carton Weight (g)": p.carton_weight || "",
+          "Carton Quantity (EA)": p.carton || 12,
+          "Pallet Carton Count": p.pallet_ctn || 80,
+          "Storage Condition": p.storage_condition || "Ambient 15°–25°C",
+          "Shelf Life": p.shelf_life || "24 Months",
+          "Carton Length (mm)": p.carton_l_mm || 300,
+          "Carton Width (mm)": p.carton_w_mm || 200,
+          "Carton Height (mm)": p.carton_h_mm || 150,
+        };
+      });
 
       // Fallback row if no products loaded
       if (templateData.length === 0) {
         templateData.push({
           "SKU (Mandatory)": "EXAMPLE-SKU-001",
           "Brand ID": "BRAND_NAME",
-          "Product Name": "Sample Product Name",
+          "Display Title": "Sample Product Name",
+          "Short Title": "Sample Short Title",
+          "Category": "Cooking Pastes & Aromatics",
           "List in Catalog (YES/NO)": "YES",
           "Accept Order (YES/NO)": "YES",
+          "Short Description": "Brief product tagline / overview",
+          "Catalog Description": "Detailed official marketing and recipe description...",
+          "Photo Gallery URLs": "https://example.com/photo1.webp, https://example.com/photo2.webp",
+          "Single Unit Barcode": "955604161111",
+          "Carton Barcode": "1955604161118",
+          "Carton Weight (g)": 5600,
           "Carton Quantity (EA)": 12,
           "Pallet Carton Count": 80,
           "Storage Condition": "Ambient 15°–25°C",
@@ -982,18 +1248,26 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
       XLSX.utils.book_append_sheet(wb, ws, "Catalog_Template");
 
       const colWidths = [
-        { wch: 20 },
-        { wch: 15 },
-        { wch: 35 },
-        { wch: 25 },
-        { wch: 25 },
-        { wch: 20 },
-        { wch: 20 },
-        { wch: 25 },
-        { wch: 18 },
-        { wch: 18 },
-        { wch: 18 },
-        { wch: 18 }
+        { wch: 20 }, // SKU
+        { wch: 15 }, // Brand ID
+        { wch: 35 }, // Display Title
+        { wch: 25 }, // Short Title
+        { wch: 25 }, // Category
+        { wch: 22 }, // List in Catalog
+        { wch: 22 }, // Accept Order
+        { wch: 35 }, // Short Description
+        { wch: 45 }, // Catalog Description
+        { wch: 40 }, // Photo Gallery URLs
+        { wch: 20 }, // Single Unit Barcode
+        { wch: 20 }, // Carton Barcode
+        { wch: 18 }, // Carton Weight
+        { wch: 20 }, // Carton Quantity
+        { wch: 20 }, // Pallet Carton Count
+        { wch: 25 }, // Storage Condition
+        { wch: 18 }, // Shelf Life
+        { wch: 18 }, // Length
+        { wch: 18 }, // Width
+        { wch: 18 }  // Height
       ];
       ws["!cols"] = colWidths;
 
@@ -1061,12 +1335,62 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
             }
           }
 
+          // Build product_meta object with all form fields
+          const existingMeta = existing?.product_meta || {};
+          const shortTitle = row["Short Title"] !== undefined 
+            ? String(row["Short Title"] || "").trim() 
+            : (existingMeta.Short_Title || "");
+          const category = row["Category"] !== undefined 
+            ? String(row["Category"] || "").trim() 
+            : (existingMeta.Category || "");
+          const shortDes = row["Short Description"] !== undefined 
+            ? String(row["Short Description"] || "").trim() 
+            : (existingMeta.Short_Des || "");
+          const longDes = row["Catalog Description"] !== undefined 
+            ? String(row["Catalog Description"] || "").trim() 
+            : (existingMeta.Long_Des || "");
+
+          let imagesArray = existingMeta.Images || [];
+          const rawImagesStr = row["Photo Gallery URLs"] ?? row["Images"] ?? row["images"] ?? row["Image URLs"];
+          if (rawImagesStr !== undefined && rawImagesStr !== null) {
+            const splitUrls = String(rawImagesStr)
+              .split(/[\n,]/)
+              .map((s) => s.trim())
+              .filter(Boolean);
+            if (splitUrls.length > 0) {
+              imagesArray = splitUrls;
+            }
+          }
+
+          const product_meta = {
+            ...existingMeta,
+            Short_Title: shortTitle,
+            Category: category,
+            Short_Des: shortDes,
+            Long_Des: longDes,
+            Images: imagesArray
+          };
+
+          const singleBarcode = row["Single Unit Barcode"] !== undefined 
+            ? String(row["Single Unit Barcode"] || "").trim() 
+            : (existing?.single_barcode || "");
+          const cartonBarcode = row["Carton Barcode"] !== undefined 
+            ? String(row["Carton Barcode"] || "").trim() 
+            : (existing?.carton_barcode || "");
+          const cartonWeight = row["Carton Weight (g)"] !== undefined 
+            ? row["Carton Weight (g)"] 
+            : (existing?.carton_weight || "");
+
           parsedItems.push({
             sku,
             brands_id: String(row["Brand ID"] || row["Brand"] || existing?.brands_id || "").trim(),
-            display_name: String(row["Product Name"] || row["display_name"] || existing?.display_name || sku).trim(),
+            display_name: String(row["Display Title"] || row["Product Name"] || row["display_name"] || existing?.display_name || sku).trim(),
             list_in_catalog: listInCatalogVal,
             accept_order: acceptOrderVal,
+            product_meta,
+            single_barcode: singleBarcode,
+            carton_barcode: cartonBarcode,
+            carton_weight: cartonWeight,
             carton: Number(row["Carton Quantity (EA)"] || row["carton"] || existing?.carton || 12),
             pallet_ctn: Number(row["Pallet Carton Count"] || row["pallet_ctn"] || existing?.pallet_ctn || 80),
             storage_condition: String(row["Storage Condition"] || row["storage_condition"] || existing?.storage_condition || "Ambient 15°–25°C").trim(),
@@ -1102,7 +1426,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
     if (bulkPreviewItems.length === 0) return;
     setBulkUpdating(true);
     try {
-      // Parallel update products
+      // Parallel update products with all form fields
       const results = await Promise.all(
         bulkPreviewItems.map((item) =>
           fetch(`${WORKER_URL}/api/exhibitor/update-product`, {
@@ -1113,6 +1437,10 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
               display_name: item.display_name,
               list_in_catalog: item.list_in_catalog,
               accept_order: item.accept_order,
+              product_meta: item.product_meta,
+              single_barcode: item.single_barcode,
+              carton_barcode: item.carton_barcode,
+              carton_weight: item.carton_weight,
               carton: item.carton,
               pallet_ctn: item.pallet_ctn,
               storage_condition: item.storage_condition,
@@ -1139,10 +1467,10 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
   };
 
   const MODULE_TABS: TabItem[] = [
-    { id: "layout", label: "Layout" },
-    { id: "catalog", label: "Catalog" },
-    { id: "setting", label: "Routing & Settings" },
-    { id: "cs", label: "AI Customer Service" },
+    { id: "layout", label: "Web Layout" },
+    { id: "catalog", label: "Catalog Product" },
+    { id: "setting", label: "Setting" },
+    { id: "cs", label: "Customer Service" },
   ];
 
   return (
@@ -1150,23 +1478,64 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
       <NavigationTabs
         tabs={MODULE_TABS}
         activeTabId={activeTab}
-        onTabSelect={(id) => setActiveTab(id as "layout" | "setting" | "cs")}
+        onTabSelect={(id) => setActiveTab(id as "layout" | "catalog" | "setting" | "cs")}
       />
       
       {/* 1. TOP HEADER BAR */}
       <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-base font-bold text-zinc-950">
-            Catalog Web Control Center
+            {activeTab === "cs" ? "Customer Service" : "Catalog Web Control Center"}
           </h1>
           <p className="text-xs text-zinc-500 mt-0.5">
-            Manage live export website layout, rotating slogans, products &amp; brands database, media assets, and trade email routing.
+            {activeTab === "cs"
+              ? "Manage AI knowledge context, review visitor conversation logs, and test live concierge."
+              : "Manage live export website layout, rotating slogans, products & brands database, media assets, and trade email routing."}
           </p>
         </div>
 
-        {/* Top Header Actions */}
+        {/* Top Header Actions / Sub Tabs */}
         <div className="flex items-center gap-2.5">
-          {activeTab !== "cs" && (
+          {activeTab === "cs" ? (
+            <div className="bg-[#F0F4F9] p-0.5 rounded-lg flex items-center gap-1 border border-slate-200">
+              <button
+                type="button"
+                onClick={() => setCsSubTab("logs")}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
+                  csSubTab === "logs"
+                    ? "bg-[#0B57D0] text-white shadow-2xs"
+                    : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-200/50"
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Conversation Logs ({csConversations.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCsSubTab("context")}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
+                  csSubTab === "context"
+                    ? "bg-[#0B57D0] text-white shadow-2xs"
+                    : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-200/50"
+                }`}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Knowledge Context ({csContexts.length})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setCsSubTab("simulator")}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 cursor-pointer ${
+                  csSubTab === "simulator"
+                    ? "bg-[#0B57D0] text-white shadow-2xs"
+                    : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-200/50"
+                }`}
+              >
+                <Bot className="w-3.5 h-3.5" />
+                <span>Test Simulator</span>
+              </button>
+            </div>
+          ) : (
             <button
               onClick={handleSaveConfig}
               disabled={saving || loading}
@@ -1764,6 +2133,26 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                     />
                   </div>
 
+                  {/* EXPAND / COLLAPSE ALL BUTTON */}
+                  <button
+                    onClick={() => {
+                      const allExpanded = brands.length > 0 && brands.every(b => expandedBrands[b.id]);
+                      if (allExpanded) {
+                        setExpandedBrands({});
+                      } else {
+                        const next: Record<string, boolean> = {};
+                        brands.forEach(b => { next[b.id] = true; });
+                        setExpandedBrands(next);
+                      }
+                    }}
+                    type="button"
+                    className="h-8 px-2.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                    title="Expand or collapse all brand sections"
+                  >
+                    <ChevronDown className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${brands.length > 0 && brands.every(b => expandedBrands[b.id]) ? "rotate-180" : ""}`} />
+                    <span>{brands.length > 0 && brands.every(b => expandedBrands[b.id]) ? "Collapse All" : "Expand All"}</span>
+                  </button>
+
                   {/* DOWNLOAD TEMPLATE BUTTON */}
                   <button
                     onClick={handleDownloadTemplate}
@@ -1775,23 +2164,33 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                     <span>Template</span>
                   </button>
 
+                  {/* ADD CATALOG PRODUCT BUTTON */}
+                  <button
+                    onClick={() => setIsAddProductModalOpen(true)}
+                    type="button"
+                    className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] active:scale-98 text-white font-semibold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Catalog Product</span>
+                  </button>
+
                   {/* UPLOAD EXCEL BUTTON */}
                   <button
                     onClick={() => fileInputExcelRef.current?.click()}
                     type="button"
-                    className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] active:scale-98 text-white font-semibold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                    className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
                   >
-                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    <FileSpreadsheet className="w-3.5 h-3.5 text-zinc-500" />
                     <span>Upload Excel</span>
                   </button>
                 </div>
               </div>
 
               {/* Grouped Brand Accordion & Tables */}
-              <div className="space-y-4">
+              <div className="space-y-2.5">
                 {(() => {
                   // Sort brands: Active first, Hidden brands placed below
-                  const sortedBrands = [...brands].sort((a, b) => {
+                  const sortedBrands = [...allMergedBrands].sort((a, b) => {
                     const aActive = products.some(
                       (p) => p.brands_id === a.id && ((p.list_in_catalog === true || p.list_in_catalog === 1) || (p.accept_order === true || p.accept_order === 1))
                     );
@@ -1824,6 +2223,9 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       );
                     });
 
+                    // Collapsed by default unless search query is typed or user expanded
+                    const isExpanded = searchProductQuery.trim().length > 0 ? true : Boolean(expandedBrands[b.id]);
+
                     return (
                     <div
                       key={b.id}
@@ -1832,220 +2234,294 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       }`}
                     >
                       {/* Brand Header Banner with Toggle & Edit */}
-                      <div className="p-3.5 flex flex-wrap items-center justify-between gap-3 bg-[#F8F9FA] border-b border-slate-200">
-                        <div className="flex items-center gap-3">
-                          {/* Brand Toggle Switch */}
-                          <div className="flex items-center gap-2">
+                      <div
+                        onClick={() => {
+                          setExpandedBrands(prev => ({ ...prev, [b.id]: !prev[b.id] }));
+                        }}
+                        className="px-3 py-2 flex flex-wrap items-center justify-between gap-2.5 bg-[#F8F9FA] hover:bg-[#F0F4F9] border-b border-slate-200 cursor-pointer select-none transition-colors"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          {/* Expand / Collapse Chevron */}
+                          <div className="w-5 h-5 rounded flex items-center justify-center text-zinc-500 hover:text-zinc-800 shrink-0">
+                            <ChevronDown
+                              className={`w-4 h-4 transition-transform duration-200 ${
+                                isExpanded ? "rotate-0 text-zinc-700" : "-rotate-90 text-zinc-400"
+                              }`}
+                            />
+                          </div>
+
+                          {/* Small Brand Toggle Switch */}
+                          <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                             <button
+                              type="button"
                               onClick={() => handleToggleBrand(b.id, isBrandVisible)}
-                              className={`w-10 h-5.5 rounded-full transition-colors relative cursor-pointer inline-flex items-center shrink-0 ${
+                              className={`w-7 h-4 rounded-full transition-colors relative cursor-pointer inline-flex items-center shrink-0 ${
                                 isBrandVisible ? "bg-[#0B57D0]" : "bg-slate-300"
                               }`}
                               title={isBrandVisible ? "Brand Visible in Catalog" : "Brand Hidden from Catalog"}
                             >
                               <span
-                                className={`w-4 h-4 rounded-full bg-white shadow-xs transition-transform transform ${
-                                  isBrandVisible ? "translate-x-5" : "translate-x-0.5"
+                                className={`w-3 h-3 rounded-full bg-white shadow-xs transition-transform transform ${
+                                  isBrandVisible ? "translate-x-3.5" : "translate-x-0.5"
                                 }`}
                               />
                             </button>
-                            <span className={`text-xs font-bold ${isBrandVisible ? "text-zinc-900" : "text-zinc-400"}`}>
+                            <span className={`text-[11px] font-bold ${isBrandVisible ? "text-zinc-900" : "text-zinc-400"}`}>
                               {isBrandVisible ? "Visible" : "Hidden"}
                             </span>
                           </div>
 
-                          <div className="h-4 w-px bg-slate-200" />
+                          <div className="h-3.5 w-px bg-slate-200 shrink-0" />
 
                           {/* Brand Identity */}
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h3 className="text-xs font-bold text-zinc-950">
-                                {b.display_name}
-                              </h3>
-                              <span className="font-mono text-[10px] bg-slate-100 text-zinc-600 font-semibold px-1.5 py-0.5 rounded border border-slate-200">
-                                {b.id}
+                          <div className="min-w-0 flex items-center gap-2 flex-wrap">
+                            <h3 className="text-xs font-bold text-zinc-950">
+                              {b.display_name}
+                            </h3>
+                            <span className="font-mono text-[10px] bg-white text-zinc-600 font-semibold px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
+                              {b.id}
+                            </span>
+                            <span className="text-[11px] text-zinc-500 font-medium shrink-0">
+                              ({activeListedCount}/{allBrandProds.length} in catalog • {activeOrderCount}/{allBrandProds.length} accepting orders)
+                            </span>
+                            {b.description && (
+                              <span className="text-[11px] text-zinc-400 truncate max-w-sm hidden xl:inline">
+                                — {b.description}
                               </span>
-                              <span className="text-[11px] text-zinc-500 font-medium">
-                                ({activeListedCount}/{allBrandProds.length} in catalog • {activeOrderCount}/{allBrandProds.length} accepting orders)
-                              </span>
-                            </div>
-                            <p className="text-xs text-zinc-500 max-w-xl truncate mt-0.5">
-                              {b.description || "No official catalog description set"}
-                            </p>
+                            )}
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
                           <button
+                            type="button"
                             onClick={() => setEditingBrand(b)}
-                            className="h-7 px-2.5 rounded-md bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 text-xs font-semibold transition-all cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                            className="h-6.5 px-2 rounded-md bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 text-[11px] font-medium transition-all cursor-pointer inline-flex items-center gap-1 shadow-2xs"
                           >
-                            <Edit2 className="w-3 h-3 text-zinc-500" />
+                            <Edit2 className="w-2.5 h-2.5 text-zinc-500" />
                             <span>Edit Brand</span>
                           </button>
                         </div>
                       </div>
 
-                      {/* Products Table under Brand (Visible only if Brand Toggle is ON) */}
-                      {isBrandVisible ? (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-left text-xs border-collapse">
-                            <thead>
-                              <tr className="bg-slate-50/50 border-b border-slate-200 text-zinc-500 font-bold uppercase tracking-wider text-[10px]">
-                                <th className="py-2 px-3 text-center w-20">In Catalog</th>
-                                <th className="py-2 px-3 text-center w-24">Accept Order</th>
-                                <th className="py-2 px-3 w-28">SKU</th>
-                                <th className="py-2 px-3 w-48">Product Name</th>
-                                <th className="py-2 px-3">Product Details</th>
-                                <th className="py-2 px-3 text-right w-20">Action</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 bg-white">
-                              {brandProds.map((p) => {
-                                const isProductListed = p.list_in_catalog === true || p.list_in_catalog === 1;
-                                const isAcceptOrder = p.accept_order === true || p.accept_order === 1 || p.accept_order === undefined;
-                                const meta = p.product_meta || {};
+                      {/* Products Table under Brand (Visible if Expanded & Brand Toggle is ON) */}
+                      {isExpanded ? (
+                        isBrandVisible ? (
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-left text-xs border-collapse">
+                              <thead>
+                                <tr className="bg-slate-50/70 border-b border-slate-200 text-zinc-500 font-bold uppercase tracking-wider text-[9px]">
+                                  <th className="py-1.5 px-2 text-center w-12" title="Green Tick: Master Product • Gray Tick: Catalog Only">Type</th>
+                                  <th className="py-1.5 px-2 text-center w-16" title="List in Public Catalog">In Catalog</th>
+                                  <th className="py-1.5 px-2 text-center w-20" title="Accept order in Ordering Portal">Accept Order</th>
+                                  <th className="py-1.5 px-2.5 w-24">SKU</th>
+                                  <th className="py-1.5 px-2.5 w-44">Product Name</th>
+                                  <th className="py-1.5 px-2.5">Product Details</th>
+                                  <th className="py-1.5 px-2.5 text-right w-20">Action</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 bg-white">
+                                {brandProds.map((p) => {
+                                  const isProductListed = p.list_in_catalog === true || p.list_in_catalog === 1;
+                                  const isAcceptOrder = p.accept_order === true || p.accept_order === 1;
+                                  const meta = p.product_meta || {};
 
-                                // Check completeness of each section
-                                const hasTitle = Boolean(meta.Short_Title?.trim() || meta.Title?.trim() || p.display_name?.trim());
-                                const hasDescription = Boolean(meta.Short_Des?.trim() || meta.Long_Des?.trim());
-                                const hasPhoto = Boolean(
-                                  (meta.Images && Array.isArray(meta.Images) && meta.Images.length > 0 && meta.Images.some((img: string) => img?.trim())) ||
-                                  p.image?.trim() ||
-                                  p.thumbnail?.trim()
-                                );
-                                const hasPackaging = Boolean(
-                                  p.carton || p.pallet_ctn || p.storage_condition || p.shelf_life || p.carton_weight
-                                );
-                                const hasBarcode = Boolean(p.single_barcode?.trim() || p.carton_barcode?.trim());
+                                  // Check completeness of each section
+                                  const hasTitle = Boolean(meta.Short_Title?.trim() || meta.Title?.trim() || p.display_name?.trim());
+                                  const hasDescription = Boolean(meta.Short_Des?.trim() || meta.Long_Des?.trim());
+                                  const hasPhoto = Boolean(
+                                    (meta.Images && Array.isArray(meta.Images) && meta.Images.length > 0 && meta.Images.some((img: string) => img?.trim())) ||
+                                    p.image?.trim() ||
+                                    p.thumbnail?.trim()
+                                  );
+                                  const hasPackaging = Boolean(
+                                    p.carton || p.pallet_ctn || p.storage_condition || p.shelf_life || p.carton_weight
+                                  );
+                                  const hasBarcode = Boolean(p.single_barcode?.trim() || p.carton_barcode?.trim());
 
-                                return (
-                                  <tr key={p.sku} className="hover:bg-slate-50/70 transition-colors">
-                                    <td className="py-2 px-3 text-center">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleToggleProduct(p.sku, isProductListed)}
-                                        className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer inline-flex items-center ${
-                                          isProductListed ? "bg-emerald-500" : "bg-slate-300"
-                                        }`}
-                                        title={isProductListed ? "In Public Catalog (Project 6 Active)" : "Hidden from Public Catalog (Project 6)"}
-                                      >
-                                        <span
-                                          className={`w-3.5 h-3.5 rounded-full bg-white transition-transform transform ${
-                                            isProductListed ? "translate-x-4.5" : "translate-x-1"
+                                  return (
+                                    <tr key={p.is_temp ? (p.id || p.sku) : p.sku} className="hover:bg-slate-50/60 transition-colors text-[11px]">
+                                      {/* Type Indicator */}
+                                      <td className="py-1.5 px-2 text-center">
+                                        {p.is_temp ? (
+                                          <div className="flex items-center justify-center" title="Catalog Only (Unstocked)">
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-zinc-400" />
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center justify-center" title="Master Product (Registered in Master Products DB)">
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                          </div>
+                                        )}
+                                      </td>
+
+                                      {/* In Catalog Toggle */}
+                                      <td className="py-1.5 px-2 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleProduct(p, isProductListed)}
+                                          className={`w-7 h-4 rounded-full transition-colors relative cursor-pointer inline-flex items-center shrink-0 ${
+                                            isProductListed ? "bg-emerald-500" : "bg-slate-300"
                                           }`}
-                                        />
-                                      </button>
-                                    </td>
-                                    <td className="py-2 px-3 text-center">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleToggleAcceptOrder(p.sku, isAcceptOrder)}
-                                        className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer inline-flex items-center ${
-                                          isAcceptOrder ? "bg-[#0B57D0]" : "bg-slate-300"
-                                        }`}
-                                        title={isAcceptOrder ? "Accepting Orders (Project 5 Active)" : "Orders Disabled (Project 5)"}
-                                      >
-                                        <span
-                                          className={`w-3.5 h-3.5 rounded-full bg-white transition-transform transform ${
-                                            isAcceptOrder ? "translate-x-4.5" : "translate-x-1"
+                                          title={isProductListed ? "Listed in Public Catalog" : "Hidden from Public Catalog"}
+                                        >
+                                          <span
+                                            className={`w-3 h-3 rounded-full bg-white transition-transform transform ${
+                                              isProductListed ? "translate-x-3.5" : "translate-x-0.5"
+                                            }`}
+                                          />
+                                        </button>
+                                      </td>
+
+                                      {/* Accept Order Toggle */}
+                                      <td className="py-1.5 px-2 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleAcceptOrder(p, isAcceptOrder)}
+                                          className={`w-7 h-4 rounded-full transition-colors relative cursor-pointer inline-flex items-center shrink-0 ${
+                                            p.is_temp
+                                              ? "bg-slate-200 opacity-60"
+                                              : isAcceptOrder
+                                              ? "bg-[#0B57D0]"
+                                              : "bg-slate-300"
                                           }`}
-                                        />
-                                      </button>
-                                    </td>
-                                    <td className="py-2 px-3 font-mono font-bold text-zinc-900">
-                                      {p.sku}
-                                    </td>
-                                    <td className="py-2 px-3 font-semibold text-zinc-800 max-w-xs truncate" title={p.display_name}>
-                                      {p.display_name}
-                                    </td>
-                                    <td className="py-2 px-3">
+                                          title={
+                                            p.is_temp
+                                              ? "Cannot accept orders: Not registered in Master Products"
+                                              : isAcceptOrder
+                                              ? "Accept order in Ordering Portal (Active)"
+                                              : "Accept order in Ordering Portal (Disabled)"
+                                          }
+                                        >
+                                          <span
+                                            className={`w-3 h-3 rounded-full bg-white transition-transform transform ${
+                                              !p.is_temp && isAcceptOrder ? "translate-x-3.5" : "translate-x-0.5"
+                                            }`}
+                                          />
+                                        </button>
+                                      </td>
+
+                                      {/* SKU */}
+                                      <td className="py-1.5 px-2.5 font-mono text-[11px]">
+                                        {p.is_temp ? (
+                                          <span className="text-zinc-400 font-bold" title="Unassigned (Catalog Only)">—</span>
+                                        ) : (
+                                          <span className="font-bold text-zinc-900">{p.sku}</span>
+                                        )}
+                                      </td>
+
+                                      {/* Product Name */}
+                                      <td className="py-1.5 px-2.5 font-medium text-zinc-800 max-w-xs truncate text-[11px]" title={p.display_name}>
+                                        {p.display_name}
+                                      </td>
+
                                       {/* Product Details Completeness Matrix */}
-                                      <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                                        <span
-                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
-                                            hasTitle
-                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                              : "bg-slate-100 text-slate-400 border border-slate-200"
-                                          }`}
-                                        >
-                                          {hasTitle ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
-                                          <span>Title</span>
-                                        </span>
+                                      <td className="py-1.5 px-2.5">
+                                        <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                                          <span
+                                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-medium ${
+                                              hasTitle
+                                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                                : "bg-slate-100 text-slate-400 border border-slate-200"
+                                            }`}
+                                          >
+                                            {hasTitle ? <Check className="w-2.5 h-2.5 text-emerald-600 stroke-[2.5]" /> : <span className="w-2 h-2 inline-block border border-slate-300 rounded-xs" />}
+                                            <span>Title</span>
+                                          </span>
 
-                                        <span
-                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
-                                            hasDescription
-                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                              : "bg-slate-100 text-slate-400 border border-slate-200"
-                                          }`}
-                                        >
-                                          {hasDescription ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
-                                          <span>Description</span>
-                                        </span>
+                                          <span
+                                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-medium ${
+                                              hasDescription
+                                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                                : "bg-slate-100 text-slate-400 border border-slate-200"
+                                            }`}
+                                          >
+                                            {hasDescription ? <Check className="w-2.5 h-2.5 text-emerald-600 stroke-[2.5]" /> : <span className="w-2 h-2 inline-block border border-slate-300 rounded-xs" />}
+                                            <span>Description</span>
+                                          </span>
 
-                                        <span
-                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
-                                            hasPhoto
-                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                              : "bg-slate-100 text-slate-400 border border-slate-200"
-                                          }`}
-                                        >
-                                          {hasPhoto ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
-                                          <span>Photo</span>
-                                        </span>
+                                          <span
+                                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-medium ${
+                                              hasPhoto
+                                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                                : "bg-slate-100 text-slate-400 border border-slate-200"
+                                            }`}
+                                          >
+                                            {hasPhoto ? <Check className="w-2.5 h-2.5 text-emerald-600 stroke-[2.5]" /> : <span className="w-2 h-2 inline-block border border-slate-300 rounded-xs" />}
+                                            <span>Photo</span>
+                                          </span>
 
-                                        <span
-                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
-                                            hasPackaging
-                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                              : "bg-slate-100 text-slate-400 border border-slate-200"
-                                          }`}
-                                        >
-                                          {hasPackaging ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
-                                          <span>Packaging Detail</span>
-                                        </span>
+                                          <span
+                                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-medium ${
+                                              hasPackaging
+                                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                                : "bg-slate-100 text-slate-400 border border-slate-200"
+                                            }`}
+                                          >
+                                            {hasPackaging ? <Check className="w-2.5 h-2.5 text-emerald-600 stroke-[2.5]" /> : <span className="w-2 h-2 inline-block border border-slate-300 rounded-xs" />}
+                                            <span>Packaging Detail</span>
+                                          </span>
 
-                                        <span
-                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded font-medium ${
-                                            hasBarcode
-                                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                              : "bg-slate-100 text-slate-400 border border-slate-200"
-                                          }`}
-                                        >
-                                          {hasBarcode ? <Check className="w-3 h-3 text-emerald-600 stroke-[2.5]" /> : <span className="w-2.5 h-2.5 inline-block border border-slate-300 rounded-xs" />}
-                                          <span>Barcode</span>
-                                        </span>
-                                      </div>
-                                    </td>
-                                    <td className="py-2 px-3 text-right">
-                                      <button
-                                        onClick={() => setEditingProduct(p)}
-                                        className="px-2.5 py-1 rounded bg-slate-100 hover:bg-[#0B57D0] hover:text-white text-zinc-700 text-xs font-semibold transition-all cursor-pointer inline-flex items-center gap-1"
-                                      >
-                                        <Edit2 className="w-3 h-3" />
-                                        <span>Edit</span>
-                                      </button>
+                                          <span
+                                            className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded font-medium ${
+                                              hasBarcode
+                                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                                : "bg-slate-100 text-slate-400 border border-slate-200"
+                                            }`}
+                                          >
+                                            {hasBarcode ? <Check className="w-2.5 h-2.5 text-emerald-600 stroke-[2.5]" /> : <span className="w-2 h-2 inline-block border border-slate-300 rounded-xs" />}
+                                            <span>Barcode</span>
+                                          </span>
+                                        </div>
+                                      </td>
+
+                                      {/* Action Buttons */}
+                                      <td className="py-1.5 px-2.5 text-right">
+                                        <div className="flex items-center justify-end gap-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setEditingProduct(p);
+                                              setPromoteSkuInput("");
+                                              setShowPromoteInput(false);
+                                            }}
+                                            className="px-2 py-0.5 rounded bg-slate-100 hover:bg-[#0B57D0] hover:text-white text-zinc-700 text-[11px] font-medium transition-all cursor-pointer inline-flex items-center gap-1"
+                                          >
+                                            <Edit2 className="w-2.5 h-2.5" />
+                                            <span>Edit</span>
+                                          </button>
+
+                                          {p.is_temp && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeleteCatalogProduct(p)}
+                                              className="p-1 rounded bg-slate-100 hover:bg-rose-600 hover:text-white text-zinc-500 text-[11px] transition-all cursor-pointer"
+                                              title="Delete Catalog Product"
+                                            >
+                                              <Trash2 className="w-3 h-3" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                                {brandProds.length === 0 && (
+                                  <tr>
+                                    <td colSpan={6} className="py-3 text-center text-xs text-slate-400">
+                                      No products assigned to this brand.
                                     </td>
                                   </tr>
-                                );
-                              })}
-                              {brandProds.length === 0 && (
-                                <tr>
-                                  <td colSpan={7} className="py-4 text-center text-xs text-slate-400">
-                                    No products assigned to this brand.
-                                  </td>
-                                </tr>
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <div className="px-4 py-2.5 text-[11px] text-zinc-400 bg-slate-50/50 italic flex items-center justify-between">
-                          <span>Brand and its {brandProds.length} products are hidden from the public export catalog.</span>
-                          <span className="font-semibold text-zinc-500">Brand Header Only</span>
-                        </div>
-                      )}
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <div className="px-3 py-2 text-[11px] text-zinc-400 bg-slate-50/50 italic flex items-center justify-between">
+                            <span>Brand and its {brandProds.length} products are hidden from the public export catalog.</span>
+                            <span className="font-semibold text-zinc-500">Brand Header Only</span>
+                          </div>
+                        )
+                      ) : null}
                     </div>
                   );
                 });
@@ -2393,66 +2869,13 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
             </div>
           </div>
         ) : (
-          /* TAB 3: AI CUSTOMER SERVICE / CHAT CONCIERGE */
-          <div className="space-y-4 w-full flex flex-col flex-1 h-full min-h-[600px]">
-            {/* Top Sub-Tab Switcher Bar */}
-            <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-xs flex flex-wrap items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-[#0B57D0]/10 flex items-center justify-center text-[#0B57D0]">
-                  <Bot className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-zinc-900">AI Concierge &amp; Live Chat Center</h3>
-                  <p className="text-[11px] text-zinc-500">Manage knowledge base context, review visitor chats, and test live AI concierge.</p>
-                </div>
-              </div>
-
-              {/* Sub Tabs */}
-              <div className="bg-[#F8F9FA] p-0.5 rounded-lg flex items-center gap-1 border border-slate-200">
-                <button
-                  type="button"
-                  onClick={() => setCsSubTab("context")}
-                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                    csSubTab === "context"
-                      ? "bg-[#0B57D0] text-white shadow-xs"
-                      : "text-zinc-600 hover:text-zinc-900"
-                  }`}
-                >
-                  <BookOpen className="w-3.5 h-3.5" />
-                  <span>Knowledge Context ({csContexts.length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCsSubTab("logs")}
-                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                    csSubTab === "logs"
-                      ? "bg-[#0B57D0] text-white shadow-xs"
-                      : "text-zinc-600 hover:text-zinc-900"
-                  }`}
-                >
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>Conversation Logs ({csConversations.length})</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCsSubTab("simulator")}
-                  className={`px-3 py-1 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
-                    csSubTab === "simulator"
-                      ? "bg-[#0B57D0] text-white shadow-xs"
-                      : "text-zinc-600 hover:text-zinc-900"
-                  }`}
-                >
-                  <Bot className="w-3.5 h-3.5" />
-                  <span>Test Simulator</span>
-                </button>
-              </div>
-            </div>
-
+          /* TAB 4: CUSTOMER SERVICE / AI CONCIERGE */
+          <div className="w-full flex flex-col flex-1 h-full min-h-[500px]">
             {/* SubTab 1: KNOWLEDGE CONTEXT */}
             {csSubTab === "context" && (
               <div className="bg-white rounded-lg border border-slate-200 shadow-xs flex flex-col flex-1 overflow-hidden">
                 {/* Action Bar */}
-                <div className="p-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-[#F8F9FA]/60">
+                <div className="p-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-[#F8F9FA]">
                   <div className="flex items-center gap-2 flex-1 max-w-lg">
                     <div className="relative flex-1">
                       <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
@@ -2461,13 +2884,13 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                         placeholder="Search knowledge context by title, content or category..."
                         value={csContextSearch}
                         onChange={(e) => setCsContextSearch(e.target.value)}
-                        className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                        className="w-full pl-9 pr-3 h-8 text-xs font-normal text-zinc-800 bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
                       />
                     </div>
                     <select
                       value={csSelectedCategory}
                       onChange={(e) => setCsSelectedCategory(e.target.value)}
-                      className="text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      className="h-8 text-xs font-normal text-zinc-700 bg-white border border-slate-200 rounded-lg px-2.5 focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
                     >
                       <option value="all">All Categories</option>
                       {CS_CATEGORY_OPTIONS.map((cat) => (
@@ -2477,15 +2900,6 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={fetchCsContexts}
-                      disabled={csContextLoading}
-                      className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${csContextLoading ? "animate-spin" : ""}`} />
-                      <span>Refresh</span>
-                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -2500,7 +2914,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                         });
                         setIsCsContextModalOpen(true);
                       }}
-                      className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                      className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Add New Context</span>
@@ -2511,20 +2925,20 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                 {/* Table */}
                 <div className="flex-1 overflow-auto">
                   <table className="w-full text-xs text-left border-collapse">
-                    <thead className="bg-slate-50 text-zinc-600 font-semibold border-b border-slate-200 sticky top-0 z-10">
+                    <thead className="bg-slate-50 text-zinc-500 font-medium text-[11px] uppercase tracking-wider border-b border-slate-200 sticky top-0 z-10">
                       <tr>
-                        <th className="px-3.5 py-2.5 w-[70px]">Rank</th>
-                        <th className="px-3.5 py-2.5 w-[160px]">Category</th>
-                        <th className="px-3.5 py-2.5 w-[220px]">Title &amp; Knowledge Focus</th>
-                        <th className="px-3.5 py-2.5">Context Knowledge Preview</th>
-                        <th className="px-3.5 py-2.5 w-[100px]">Status</th>
-                        <th className="px-3.5 py-2.5 w-[100px] text-right">Actions</th>
+                        <th className="px-3 py-2.5 w-[60px]">Rank</th>
+                        <th className="px-3 py-2.5 w-[160px]">Category</th>
+                        <th className="px-3 py-2.5 w-[220px]">Title &amp; Knowledge Focus</th>
+                        <th className="px-3 py-2.5">Context Knowledge Preview</th>
+                        <th className="px-3 py-2.5 w-[100px]">Status</th>
+                        <th className="px-3 py-2.5 w-[80px] text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {csContextLoading ? (
                         <tr>
-                          <td colSpan={6} className="px-3.5 py-8 text-center text-zinc-400 italic">
+                          <td colSpan={6} className="px-3 py-8 text-center text-zinc-400 italic">
                             <div className="flex items-center justify-center gap-2">
                               <RefreshCw className="w-4 h-4 animate-spin text-[#0B57D0]" />
                               <span>Loading knowledge context...</span>
@@ -2533,50 +2947,48 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                         </tr>
                       ) : filteredCsContexts.length === 0 ? (
                         <tr>
-                          <td colSpan={6} className="px-3.5 py-8 text-center text-zinc-400 italic">
+                          <td colSpan={6} className="px-3 py-8 text-center text-zinc-400 italic">
                             No knowledge context entries found.
                           </td>
                         </tr>
                       ) : (
                         filteredCsContexts.map((row) => (
-                          <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
-                            <td className="px-3.5 py-2.5">
-                              <span className="font-mono text-xs font-semibold px-2 py-0.5 bg-zinc-100 rounded text-zinc-700">
-                                #{row.priority || 1}
-                              </span>
+                          <tr key={row.id} className="hover:bg-slate-50/70 transition-colors">
+                            <td className="px-3 py-2.5 text-xs font-normal text-zinc-500">
+                              #{row.priority || 1}
                             </td>
-                            <td className="px-3.5 py-2.5">
-                              <span className="text-xs font-semibold px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded-md whitespace-nowrap">
+                            <td className="px-3 py-2.5">
+                              <span className="text-xs font-normal px-2 py-0.5 bg-slate-100 text-slate-700 border border-slate-200 rounded whitespace-nowrap">
                                 {row.category}
                               </span>
                             </td>
-                            <td className="px-3.5 py-2.5">
+                            <td className="px-3 py-2.5">
                               <div className="flex flex-col">
-                                <span className="text-xs font-bold text-zinc-900">{row.title}</span>
-                                <span className="text-[10px] text-zinc-400 font-mono">ID: {row.id}</span>
+                                <span className="text-xs font-medium text-zinc-800">{row.title}</span>
+                                <span className="text-[10px] text-zinc-400 font-mono font-normal">ID: {row.id}</span>
                               </div>
                             </td>
-                            <td className="px-3.5 py-2.5">
-                              <p className="text-xs text-zinc-600 line-clamp-2 leading-relaxed">
+                            <td className="px-3 py-2.5">
+                              <p className="text-xs text-zinc-600 font-normal line-clamp-2 leading-relaxed">
                                 {row.content}
                               </p>
                             </td>
-                            <td className="px-3.5 py-2.5">
+                            <td className="px-3 py-2.5">
                               <button
                                 type="button"
                                 onClick={() => handleToggleCsActive(row)}
-                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-normal transition-all cursor-pointer ${
                                   row.is_active
                                     ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
                                     : "bg-zinc-100 text-zinc-500 border border-zinc-200 hover:bg-zinc-200"
                                 }`}
                               >
                                 {row.is_active ? <CheckCircle2 className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
-                                {row.is_active ? "Active" : "Inactive"}
+                                <span>{row.is_active ? "Active" : "Inactive"}</span>
                               </button>
                             </td>
-                            <td className="px-3.5 py-2.5 text-right">
-                              <div className="flex items-center justify-end gap-1.5">
+                            <td className="px-3 py-2.5 text-right">
+                              <div className="flex items-center justify-end gap-1">
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -2591,7 +3003,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                                     });
                                     setIsCsContextModalOpen(true);
                                   }}
-                                  className="p-1.5 text-zinc-500 hover:text-[#0B57D0] hover:bg-zinc-100 rounded-md transition-all cursor-pointer"
+                                  className="p-1.5 text-zinc-400 hover:text-[#0B57D0] hover:bg-slate-100 rounded transition-all cursor-pointer"
                                   title="Edit Context"
                                 >
                                   <Edit2 className="w-3.5 h-3.5" />
@@ -2602,7 +3014,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                                     setDeletingCsContextId(row.id);
                                     setCsDeleteConfirmOpen(true);
                                   }}
-                                  className="p-1.5 text-zinc-500 hover:text-red-600 hover:bg-red-50 rounded-md transition-all cursor-pointer"
+                                  className="p-1.5 text-zinc-400 hover:text-rose-600 hover:bg-rose-50 rounded transition-all cursor-pointer"
                                   title="Delete Context"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -2622,7 +3034,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
             {csSubTab === "logs" && (
               <div className="bg-white rounded-lg border border-slate-200 shadow-xs flex flex-col flex-1 overflow-hidden">
                 {/* Search & Actions */}
-                <div className="p-3 border-b border-slate-200 flex items-center justify-between gap-3 bg-[#F8F9FA]/60">
+                <div className="p-3 border-b border-slate-200 flex items-center justify-between gap-3 bg-[#F8F9FA]">
                   <div className="relative flex-1 max-w-md">
                     <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
                     <input
@@ -2630,32 +3042,22 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       placeholder="Search chats by ID, visitor, or keywords..."
                       value={csLogsSearch}
                       onChange={(e) => setCsLogsSearch(e.target.value)}
-                      className="w-full pl-9 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      className="w-full pl-9 pr-3 h-8 text-xs font-normal text-zinc-800 bg-white border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
                     />
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={fetchCsConversations}
-                    disabled={csLogsLoading}
-                    className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${csLogsLoading ? "animate-spin" : ""}`} />
-                    <span>Refresh Logs</span>
-                  </button>
                 </div>
 
                 {/* Table */}
                 <div className="flex-1 overflow-auto">
                   <table className="w-full text-xs text-left border-collapse">
-                    <thead className="bg-slate-50 text-zinc-600 font-semibold border-b border-slate-200 sticky top-0 z-10">
+                    <thead className="bg-slate-50 text-zinc-500 font-medium text-[11px] uppercase tracking-wider border-b border-slate-200 sticky top-0 z-10">
                       <tr>
-                        <th className="px-3.5 py-2.5 w-[150px]">Conversation ID</th>
+                        <th className="px-3.5 py-2.5 w-[140px]">Conversation ID</th>
                         <th className="px-3.5 py-2.5 w-[180px]">Visitor / Contact</th>
-                        <th className="px-3.5 py-2.5 w-[80px]">Turns</th>
-                        <th className="px-3.5 py-2.5">Latest Message Preview</th>
+                        <th className="px-3.5 py-2.5 w-[80px] text-center">Turns</th>
+                        <th className="px-3.5 py-2.5">Latest Visitor Inquiry</th>
                         <th className="px-3.5 py-2.5 w-[140px]">Last Activity</th>
-                        <th className="px-3.5 py-2.5 w-[110px] text-right">Transcript</th>
+                        <th className="px-3.5 py-2.5 w-[120px] text-right">Transcript</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -2677,62 +3079,69 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       ) : (
                         filteredCsConversations.map((row) => {
                           const msgs = row.messages || [];
-                          const lastMsg = msgs[msgs.length - 1];
+                          const visitorMsgs = msgs.filter((m: any) => m.sender === "visitor" || m.role === "user");
+                          const lastVisitorMsg = visitorMsgs.length > 0 ? visitorMsgs[visitorMsgs.length - 1] : null;
+                          const fallbackMsg = msgs[msgs.length - 1];
+
                           return (
-                            <tr key={row.id} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="px-3.5 py-2.5 font-mono font-bold text-[#0B57D0]">
+                            <tr key={row.id} className="hover:bg-slate-50/70 transition-colors">
+                              <td className="px-3.5 py-2.5 font-mono text-xs font-medium text-[#0B57D0] whitespace-nowrap">
                                 {row.id}
                               </td>
                               <td className="px-3.5 py-2.5">
                                 <div className="flex flex-col">
-                                  <span className="font-semibold text-zinc-900">
+                                  <span className={`text-xs ${row.visitor_name && row.visitor_name !== "Anonymous Visitor" ? "font-semibold text-zinc-900" : "font-normal text-zinc-600 italic"}`}>
                                     {row.visitor_name || "Anonymous Visitor"}
                                   </span>
                                   {row.visitor_contact && (
-                                    <span className="text-[11px] text-zinc-500 font-mono">
+                                    <span className="text-[11px] text-zinc-500 font-mono font-normal">
                                       {row.visitor_contact}
                                     </span>
                                   )}
-                                  <span className="text-[10px] text-zinc-400 font-mono truncate max-w-[150px]">
-                                    {row.session_id}
-                                  </span>
                                 </div>
                               </td>
-                              <td className="px-3.5 py-2.5">
-                                <span className="text-xs font-semibold px-2 py-0.5 bg-zinc-100 rounded text-zinc-700">
-                                  {row.messages?.length || 0} msgs
+                              <td className="px-3.5 py-2.5 text-center whitespace-nowrap">
+                                <span className="text-xs font-normal px-2 py-0.5 bg-slate-100 rounded text-zinc-600 inline-block whitespace-nowrap">
+                                  {msgs.length} msgs
                                 </span>
                               </td>
                               <td className="px-3.5 py-2.5">
-                                {lastMsg ? (
-                                  <div className="flex items-start gap-1.5 max-w-xl">
-                                    <span className={`text-[10px] font-bold uppercase px-1 rounded ${
-                                      lastMsg.sender === "visitor" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"
-                                    }`}>
-                                      {lastMsg.sender === "visitor" ? "Visitor" : "Agent"}
+                                {lastVisitorMsg ? (
+                                  <div className="flex items-center gap-2 max-w-xl">
+                                    <span className="text-[10px] font-medium uppercase px-1.5 py-0.2 rounded bg-blue-50 text-[#0B57D0] border border-blue-200/60 shrink-0">
+                                      Visitor
                                     </span>
-                                    <span className="text-xs text-zinc-600 truncate">
-                                      {lastMsg.text}
+                                    <span className="text-xs text-zinc-700 font-normal truncate" title={lastVisitorMsg.text}>
+                                      {lastVisitorMsg.text}
+                                    </span>
+                                  </div>
+                                ) : fallbackMsg ? (
+                                  <div className="flex items-center gap-2 max-w-xl">
+                                    <span className="text-[10px] font-medium uppercase px-1.5 py-0.2 rounded bg-slate-100 text-zinc-600 shrink-0">
+                                      {fallbackMsg.sender === "agent" ? "Agent" : "Visitor"}
+                                    </span>
+                                    <span className="text-xs text-zinc-500 font-normal truncate" title={fallbackMsg.text}>
+                                      {fallbackMsg.text}
                                     </span>
                                   </div>
                                 ) : (
                                   <span className="text-xs text-zinc-400 italic">No messages</span>
                                 )}
                               </td>
-                              <td className="px-3.5 py-2.5 font-mono text-zinc-600">
+                              <td className="px-3.5 py-2.5 font-mono text-xs text-zinc-500 font-normal whitespace-nowrap">
                                 {row.updated_at ? new Date(row.updated_at).toLocaleString("en-SG", { dateStyle: "short", timeStyle: "short" }) : "-"}
                               </td>
-                              <td className="px-3.5 py-2.5 text-right">
+                              <td className="px-3.5 py-2.5 text-right whitespace-nowrap">
                                 <button
                                   type="button"
                                   onClick={() => {
                                     setSelectedCsConversation(row);
                                     setIsCsTranscriptModalOpen(true);
                                   }}
-                                  className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-[#0B57D0] text-xs font-semibold inline-flex items-center gap-1 transition-all shadow-xs cursor-pointer"
+                                  className="h-7 px-3 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 hover:text-[#0B57D0] text-xs font-medium inline-flex items-center gap-1.5 transition-all shadow-2xs cursor-pointer whitespace-nowrap shrink-0"
                                 >
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>View Chat</span>
+                                  <Eye className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
+                                  <span className="whitespace-nowrap">View Chat</span>
                                 </button>
                               </td>
                             </tr>
@@ -2749,10 +3158,10 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
             {csSubTab === "simulator" && (
               <div className="bg-white rounded-lg border border-slate-200 shadow-xs flex flex-col flex-1 overflow-hidden max-w-4xl mx-auto w-full min-h-[500px]">
                 {/* Simulator Header */}
-                <div className="bg-[#F8F9FA] border-b border-slate-200 px-4 py-3 flex items-center justify-between">
+                <div className="bg-[#F8F9FA] border-b border-slate-200 px-4 py-2.5 flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></div>
-                    <span className="text-xs font-bold text-zinc-900">Live Customer Service Concierge Simulator</span>
+                    <span className="text-xs font-semibold text-zinc-800">Live Customer Service Concierge Simulator</span>
                   </div>
                   <button
                     type="button"
@@ -2764,10 +3173,10 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                         timestamp: Date.now()
                       }
                     ])}
-                    className="text-xs text-zinc-500 hover:text-zinc-900 flex items-center gap-1 cursor-pointer"
+                    className="text-xs text-zinc-500 hover:text-zinc-800 flex items-center gap-1 cursor-pointer"
                   >
-                    <RefreshCw className="w-3 h-3" />
-                    Clear Chat
+                    <RefreshCw className="w-3 h-3 text-zinc-400" />
+                    <span>Clear Chat</span>
                   </button>
                 </div>
 
@@ -2781,17 +3190,17 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                         className={`flex items-start gap-2 ${isVisitor ? "flex-row-reverse" : "flex-row"}`}
                       >
                         <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 text-white ${
-                          isVisitor ? "bg-amber-600" : "bg-[#1B4D2E]"
+                          isVisitor ? "bg-amber-600" : "bg-[#0B57D0]"
                         }`}>
                           {isVisitor ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
                         </div>
 
                         <div className={`max-w-[75%] rounded-lg p-3 text-xs leading-relaxed shadow-2xs ${
                           isVisitor
-                            ? "bg-[#0B57D0] text-white rounded-tr-none"
-                            : "bg-white text-zinc-800 border border-zinc-200 rounded-tl-none"
+                            ? "bg-[#0B57D0] text-white rounded-tr-none font-normal"
+                            : "bg-white text-zinc-800 border border-zinc-200 rounded-tl-none font-normal"
                         }`}>
-                          <div className="font-semibold text-[10px] mb-1 opacity-75">
+                          <div className="font-medium text-[10px] mb-1 opacity-80">
                             {isVisitor ? "Visitor (You)" : "HSG Support Concierge"}
                           </div>
                           <div className="whitespace-pre-wrap">{msg.text}</div>
@@ -2802,13 +3211,13 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
 
                   {simulatorLoading && (
                     <div className="flex items-start gap-2">
-                      <div className="w-7 h-7 rounded-full bg-[#1B4D2E] text-white flex items-center justify-center shrink-0">
+                      <div className="w-7 h-7 rounded-full bg-[#0B57D0] text-white flex items-center justify-center shrink-0">
                         <Bot className="w-4 h-4" />
                       </div>
-                      <div className="bg-white border border-zinc-200 rounded-lg rounded-tl-none p-3 text-xs text-zinc-500 flex items-center gap-1.5 shadow-2xs">
-                        <div className="w-1.5 h-1.5 bg-[#1B4D2E] rounded-full animate-bounce"></div>
-                        <div className="w-1.5 h-1.5 bg-[#1B4D2E] rounded-full animate-bounce [animation-delay:0.2s]"></div>
-                        <div className="w-1.5 h-1.5 bg-[#1B4D2E] rounded-full animate-bounce [animation-delay:0.4s]"></div>
+                      <div className="bg-white border border-zinc-200 rounded-lg rounded-tl-none p-3 text-xs text-zinc-500 flex items-center gap-1.5 shadow-2xs font-normal">
+                        <div className="w-1.5 h-1.5 bg-[#0B57D0] rounded-full animate-bounce"></div>
+                        <div className="w-1.5 h-1.5 bg-[#0B57D0] rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                        <div className="w-1.5 h-1.5 bg-[#0B57D0] rounded-full animate-bounce [animation-delay:0.4s]"></div>
                         <span className="ml-1 text-[11px]">Thinking with live catalog context...</span>
                       </div>
                     </div>
@@ -2824,15 +3233,15 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                     onChange={(e) => setSimulatorInput(e.target.value)}
                     placeholder="Ask anything about products, delivery MOQ, brands, or company details..."
                     disabled={simulatorLoading}
-                    className="flex-1 text-xs px-3 py-2 bg-zinc-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                    className="flex-1 text-xs px-3 py-2 bg-zinc-50 border border-slate-200 rounded-lg focus:bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-normal"
                   />
                   <button
                     type="submit"
                     disabled={!simulatorInput.trim() || simulatorLoading}
-                    className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
+                    className="px-4 py-2 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-lg text-xs font-medium flex items-center gap-1.5 disabled:opacity-50 transition-all cursor-pointer shadow-xs"
                   >
                     <Send className="w-3.5 h-3.5" />
-                    Send
+                    <span>Send</span>
                   </button>
                 </form>
               </div>
@@ -2848,7 +3257,17 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
             <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div>
                 <h3 className="font-bold text-sm text-zinc-900">Edit Product Specifications &amp; Catalog Data</h3>
-                <span className="font-mono text-xs text-[#0B57D0] font-semibold">{editingProduct.sku}</span>
+                <div className="flex items-center gap-2 mt-0.5">
+                  {editingProduct.is_temp ? (
+                    <span className="font-mono text-xs text-zinc-600 font-semibold bg-zinc-100 px-2 py-0.5 rounded border border-zinc-200">
+                      Catalog Only (Unstocked)
+                    </span>
+                  ) : (
+                    <span className="font-mono text-xs text-[#0B57D0] font-semibold bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                      SKU: {editingProduct.sku}
+                    </span>
+                  )}
+                </div>
               </div>
               <button
                 onClick={() => setEditingProduct(null)}
@@ -2859,6 +3278,61 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
             </div>
 
             <form onSubmit={handleSaveProduct} className="p-5 overflow-y-auto space-y-4 flex-1">
+              {/* REGISTER TO MASTER INLINE PROMOTION SECTION (for Catalog-Only Products) */}
+              {editingProduct.is_temp && (
+                <div className="p-3 bg-amber-50/70 border border-amber-200/80 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
+                      <Info className="w-3.5 h-3.5 text-amber-600" />
+                      <span>Catalog-Only Showcase Product</span>
+                    </div>
+                    <p className="text-[11px] text-amber-700/90 mt-0.5">
+                      Enter an official SKU to register this item into Master Products inventory and enable order acceptance.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
+                    {showPromoteInput ? (
+                      <div className="flex items-center gap-1.5 w-full sm:w-auto">
+                        <input
+                          type="text"
+                          placeholder="Enter Master SKU..."
+                          value={promoteSkuInput}
+                          onChange={(e) => setPromoteSkuInput(e.target.value.toUpperCase())}
+                          className="h-8 px-2.5 rounded-lg border border-amber-300 bg-white font-mono text-xs font-bold text-zinc-900 uppercase focus:outline-none focus:ring-2 focus:ring-[#0B57D0]"
+                          autoFocus
+                        />
+                        <button
+                          type="button"
+                          disabled={isPromoting || !promoteSkuInput.trim()}
+                          onClick={() => handlePromoteCatalogProduct(editingProduct, promoteSkuInput)}
+                          className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                        >
+                          {isPromoting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                          <span>Confirm</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setShowPromoteInput(false); setPromoteSkuInput(""); }}
+                          className="h-8 px-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-zinc-600 text-xs cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setShowPromoteInput(true)}
+                        className="h-8 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Register to Master</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Product Titles & Category */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="sm:col-span-2">
@@ -2917,23 +3391,26 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                     className="w-4 h-4 rounded text-[#0B57D0] focus:ring-[#0B57D0]"
                   />
                   <div>
-                    <span className="text-xs font-bold text-zinc-900 block">List in Catalog (Project 6)</span>
+                    <span className="text-xs font-bold text-zinc-900 block">List in Catalog</span>
                     <span className="text-[10px] text-zinc-500">Show product in public discovery catalog</span>
                   </div>
                 </label>
 
-                <label className="flex items-center gap-2.5 cursor-pointer">
+                <label className={`flex items-center gap-2.5 ${editingProduct.is_temp ? "opacity-60 cursor-not-allowed" : "cursor-pointer"}`}>
                   <input
                     type="checkbox"
-                    checked={editingProduct.accept_order !== false && editingProduct.accept_order !== 0}
+                    disabled={editingProduct.is_temp}
+                    checked={!editingProduct.is_temp && editingProduct.accept_order !== false && editingProduct.accept_order !== 0}
                     onChange={(e) =>
                       setEditingProduct({ ...editingProduct, accept_order: e.target.checked })
                     }
                     className="w-4 h-4 rounded text-[#0B57D0] focus:ring-[#0B57D0]"
                   />
                   <div>
-                    <span className="text-xs font-bold text-zinc-900 block">Accept Orders (Project 5)</span>
-                    <span className="text-[10px] text-zinc-500">Enable direct order submission for this SKU</span>
+                    <span className="text-xs font-bold text-zinc-900 block">Accept Order in Ordering Portal</span>
+                    <span className="text-[10px] text-zinc-500">
+                      {editingProduct.is_temp ? "Requires Master Product registration" : "Enable direct order submission for this product"}
+                    </span>
                   </div>
                 </label>
               </div>
@@ -2973,42 +3450,116 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                 </div>
               </div>
 
-              {/* Multi-Photo Image URLs Gallery */}
-              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-2">
+              {/* Product Photo Gallery */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <label className="block text-xs font-bold text-zinc-900">Product Photo Gallery (Multiple Photos)</label>
-                    <span className="text-[10px] text-zinc-500">Add comma or newline-separated image URLs (e.g. from R2 or Cloudinary)</span>
+                    <label className="block text-xs font-bold text-zinc-900">Product Photo Gallery</label>
+                    <p className="text-[10px] text-zinc-500">Upload photos directly. The first photo is used as the primary cover.</p>
                   </div>
-                  <span className="text-[10px] text-[#0B57D0] font-semibold">
-                    {((editingProduct.product_meta?.Images && Array.isArray(editingProduct.product_meta.Images)) ? editingProduct.product_meta.Images.length : 0)} Photo(s)
-                  </span>
+                  <label className={`h-8 px-3 rounded-lg bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs flex items-center gap-1.5 cursor-pointer border border-slate-200 shadow-xs transition-colors ${uploadingProductPhoto ? "opacity-50 pointer-events-none" : ""}`}>
+                    {uploadingProductPhoto ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                        <span>Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5 text-zinc-500" />
+                        <span>+ Upload Photo(s)</span>
+                      </>
+                    )}
+                    <input
+                      ref={editProductPhotoInputRef}
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleUploadProductPhotos(e.target.files, true)}
+                    />
+                  </label>
                 </div>
-                <textarea
-                  rows={2}
-                  placeholder="https://pub-....r2.dev/...webp, https://pub-....r2.dev/...webp"
-                  value={
-                    Array.isArray(editingProduct.product_meta?.Images)
-                      ? editingProduct.product_meta.Images.join("\n")
-                      : editingProduct.image || ""
+
+                {/* Thumbnails Grid */}
+                {(() => {
+                  const imgs: string[] = Array.isArray(editingProduct.product_meta?.Images) && editingProduct.product_meta.Images.length > 0
+                    ? editingProduct.product_meta.Images
+                    : editingProduct.image
+                    ? [editingProduct.image]
+                    : [];
+
+                  if (imgs.length === 0) {
+                    return (
+                      <div className="py-6 border border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center text-center bg-white">
+                        <ImageIcon className="w-6 h-6 text-zinc-300 mb-1" />
+                        <span className="text-xs text-zinc-500 font-medium">No photos uploaded yet</span>
+                        <span className="text-[10px] text-zinc-400">Click &ldquo;+ Upload Photo(s)&rdquo; above to add images.</span>
+                      </div>
+                    );
                   }
-                  onChange={(e) => {
-                    const rawVal = e.target.value;
-                    const imgs = rawVal
-                      .split(/[\n,]/)
-                      .map((s) => s.trim())
-                      .filter(Boolean);
-                    setEditingProduct({
-                      ...editingProduct,
-                      product_meta: {
-                        ...(editingProduct.product_meta || {}),
-                        Images: imgs
-                      },
-                      image: imgs[0] || editingProduct.image || ""
-                    });
-                  }}
-                  className="w-full p-2.5 rounded-lg border border-slate-200 text-xs font-mono text-zinc-900 bg-white resize-none focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                />
+
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
+                      {imgs.map((imgUrl, idx) => (
+                        <div
+                          key={idx}
+                          className="group relative rounded-lg overflow-hidden border border-slate-200 bg-white h-24 flex items-center justify-center shadow-2xs"
+                        >
+                          <img
+                            src={imgUrl}
+                            alt={`Photo ${idx + 1}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                          {idx === 0 && (
+                            <span className="absolute top-1 left-1 bg-[#0B57D0] text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-xs">
+                              Cover
+                            </span>
+                          )}
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5">
+                            {idx > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const reordered = [imgUrl, ...imgs.filter((_, i) => i !== idx)];
+                                  setEditingProduct({
+                                    ...editingProduct,
+                                    image: reordered[0],
+                                    product_meta: {
+                                      ...(editingProduct.product_meta || {}),
+                                      Images: reordered
+                                    }
+                                  });
+                                }}
+                                title="Set as primary cover"
+                                className="px-1.5 py-1 rounded bg-white text-zinc-800 text-[10px] font-semibold hover:bg-slate-100 cursor-pointer shadow-xs"
+                              >
+                                Set Cover
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const remaining = imgs.filter((_, i) => i !== idx);
+                                setEditingProduct({
+                                  ...editingProduct,
+                                  image: remaining[0] || "",
+                                  product_meta: {
+                                    ...(editingProduct.product_meta || {}),
+                                    Images: remaining
+                                  }
+                                });
+                              }}
+                              title="Delete photo"
+                              className="w-6 h-6 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center cursor-pointer shadow-xs"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Barcodes & Weight */}
@@ -3397,11 +3948,13 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
               {/* Metadata Summary */}
               <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
                 <div>
-                  <span className="text-[10px] font-bold text-zinc-400 block uppercase">Visitor</span>
-                  <span className="font-semibold text-zinc-800">{selectedCsConversation.visitor_name || "Anonymous Visitor"}</span>
+                  <span className="text-[10px] font-bold text-zinc-400 block uppercase">Visitor / Buyer</span>
+                  <span className={`font-semibold ${selectedCsConversation.visitor_name && selectedCsConversation.visitor_name !== "Anonymous Visitor" ? "text-zinc-900" : "text-zinc-500 italic"}`}>
+                    {selectedCsConversation.visitor_name || "Anonymous Visitor"}
+                  </span>
                 </div>
                 <div>
-                  <span className="text-[10px] font-bold text-zinc-400 block uppercase">Contact</span>
+                  <span className="text-[10px] font-bold text-zinc-400 block uppercase">Contact Info</span>
                   <span className="font-mono text-zinc-800">{selectedCsConversation.visitor_contact || "-"}</span>
                 </div>
                 <div>
@@ -3515,9 +4068,13 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                 <thead>
                   <tr className="bg-slate-50 border-b border-slate-200 text-zinc-500 font-bold uppercase tracking-wider text-[10px]">
                     <th className="py-2.5 px-3">SKU</th>
-                    <th className="py-2.5 px-3">Product Name</th>
+                    <th className="py-2.5 px-3">Display Title</th>
+                    <th className="py-2.5 px-3">Category</th>
                     <th className="py-2.5 px-3 text-center">In Catalog?</th>
                     <th className="py-2.5 px-3 text-center">Accept Order?</th>
+                    <th className="py-2.5 px-3">Single Barcode</th>
+                    <th className="py-2.5 px-3">Carton Barcode</th>
+                    <th className="py-2.5 px-3">Weight (g)</th>
                     <th className="py-2.5 px-3">Carton (EA)</th>
                     <th className="py-2.5 px-3">Pallet (CTN)</th>
                     <th className="py-2.5 px-3">Storage</th>
@@ -3534,6 +4091,9 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       <td className="py-2.5 px-3 font-medium text-zinc-800 max-w-xs truncate">
                         {item.display_name}
                       </td>
+                      <td className="py-2.5 px-3 text-zinc-600 truncate max-w-[120px]">
+                        {item.product_meta?.Category || "-"}
+                      </td>
                       <td className="py-2.5 px-3 text-center">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           item.list_in_catalog ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-slate-100 text-slate-500"
@@ -3547,6 +4107,15 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                         }`}>
                           {item.accept_order !== false ? "YES" : "NO"}
                         </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-zinc-700 font-mono text-[11px]">
+                        {item.single_barcode || "-"}
+                      </td>
+                      <td className="py-2.5 px-3 text-zinc-700 font-mono text-[11px]">
+                        {item.carton_barcode || "-"}
+                      </td>
+                      <td className="py-2.5 px-3 text-zinc-700 font-mono">
+                        {item.carton_weight || "-"}
                       </td>
                       <td className="py-2.5 px-3 text-zinc-700 font-mono">
                         {item.carton}
@@ -3602,6 +4171,364 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+      {/* ADD CATALOG-ONLY PRODUCT MODAL */}
+      {isAddProductModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-xl border border-slate-200 max-w-2xl w-full shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-sm text-zinc-900">Add Catalog Product</h3>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-zinc-100 text-zinc-600 border border-zinc-200">
+                    Catalog Only • No Stock
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 mt-0.5">
+                  Add non-stocked product for digital catalog showcase and export preview. No SKU required.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddProductModalOpen(false)}
+                className="w-7 h-7 rounded-lg hover:bg-slate-200 flex items-center justify-center text-zinc-500 cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddCatalogProduct} className="p-5 space-y-4 overflow-y-auto max-h-[calc(90vh-120px)]">
+              {/* Brand & Category */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-zinc-700">Brand Name *</label>
+                    <span className="text-[10px] text-zinc-400">Type new brand or select existing</span>
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    list="existing-brands-list"
+                    placeholder="e.g. Resepi Ibunda"
+                    value={newProductForm.brands_id}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, brands_id: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                  <datalist id="existing-brands-list">
+                    {allMergedBrands.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.display_name || b.name || b.id}
+                      </option>
+                    ))}
+                  </datalist>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Category / Tag</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Cooking Paste"
+                    value={newProductForm.product_meta.Category}
+                    onChange={(e) =>
+                      setNewProductForm({
+                        ...newProductForm,
+                        product_meta: { ...newProductForm.product_meta, Category: e.target.value }
+                      })
+                    }
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              {/* Product Title */}
+              <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">Product Title *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Resepi Ibunda Sambal Belacan 200g"
+                  value={newProductForm.display_name}
+                  onChange={(e) => setNewProductForm({ ...newProductForm, display_name: e.target.value })}
+                  className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                />
+              </div>
+
+              {/* Short & Long Descriptions */}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Short Description (Summary / Tagline)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Authentic traditional spicy shrimp paste for culinary seasoning..."
+                    value={newProductForm.product_meta.Short_Des}
+                    onChange={(e) =>
+                      setNewProductForm({
+                        ...newProductForm,
+                        product_meta: { ...newProductForm.product_meta, Short_Des: e.target.value }
+                      })
+                    }
+                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Catalog Description (Long Marketing &amp; Recipe Story)</label>
+                  <textarea
+                    rows={3}
+                    placeholder="Official marketing, taste profile & recipe description for the catalog..."
+                    value={newProductForm.product_meta.Long_Des}
+                    onChange={(e) =>
+                      setNewProductForm({
+                        ...newProductForm,
+                        product_meta: { ...newProductForm.product_meta, Long_Des: e.target.value }
+                      })
+                    }
+                    className="w-full p-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white resize-none focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              {/* Product Photo Gallery */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-900">Product Photo Gallery</label>
+                    <p className="text-[10px] text-zinc-500">Upload photos directly. First photo is used as the primary cover.</p>
+                  </div>
+                  <label className={`h-8 px-3 rounded-lg bg-white hover:bg-slate-50 text-zinc-700 font-semibold text-xs flex items-center gap-1.5 cursor-pointer border border-slate-200 shadow-xs transition-colors ${uploadingProductPhoto ? "opacity-50 pointer-events-none" : ""}`}>
+                    {uploadingProductPhoto ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                        <span>Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5 text-zinc-500" />
+                        <span>+ Upload Photo(s)</span>
+                      </>
+                    )}
+                    <input
+                      ref={addProductPhotoInputRef}
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleUploadProductPhotos(e.target.files, false)}
+                    />
+                  </label>
+                </div>
+
+                {/* Thumbnails Grid */}
+                {(() => {
+                  const imgs = newProductForm.product_meta.Images || [];
+
+                  if (imgs.length === 0) {
+                    return (
+                      <div className="py-6 border border-dashed border-slate-300 rounded-lg flex flex-col items-center justify-center text-center bg-white">
+                        <ImageIcon className="w-6 h-6 text-zinc-300 mb-1" />
+                        <span className="text-xs text-zinc-500 font-medium">No photos uploaded yet</span>
+                        <span className="text-[10px] text-zinc-400">Click &ldquo;+ Upload Photo(s)&rdquo; above to add images.</span>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2.5">
+                      {imgs.map((imgUrl, idx) => (
+                        <div
+                          key={idx}
+                          className="group relative rounded-lg overflow-hidden border border-slate-200 bg-white h-24 flex items-center justify-center shadow-2xs"
+                        >
+                          <img
+                            src={imgUrl}
+                            alt={`Photo ${idx + 1}`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                          />
+                          {idx === 0 && (
+                            <span className="absolute top-1 left-1 bg-[#0B57D0] text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow-xs">
+                              Cover
+                            </span>
+                          )}
+                          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5">
+                            {idx > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const reordered = [imgUrl, ...imgs.filter((_, i) => i !== idx)];
+                                  setNewProductForm({
+                                    ...newProductForm,
+                                    product_meta: {
+                                      ...newProductForm.product_meta,
+                                      Images: reordered
+                                    }
+                                  });
+                                }}
+                                title="Set as primary cover"
+                                className="px-1.5 py-1 rounded bg-white text-zinc-800 text-[10px] font-semibold hover:bg-slate-100 cursor-pointer shadow-xs"
+                              >
+                                Set Cover
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const remaining = imgs.filter((_, i) => i !== idx);
+                                setNewProductForm({
+                                  ...newProductForm,
+                                  product_meta: {
+                                    ...newProductForm.product_meta,
+                                    Images: remaining
+                                  }
+                                });
+                              }}
+                              title="Delete photo"
+                              className="w-6 h-6 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center cursor-pointer shadow-xs"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Barcodes & Weight */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Single Unit Barcode</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 955604161111"
+                    value={newProductForm.single_barcode}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, single_barcode: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-mono bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Carton Barcode (ITF-14)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 1955604161118"
+                    value={newProductForm.carton_barcode}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, carton_barcode: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-mono bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Carton Weight (g)</label>
+                  <input
+                    type="number"
+                    step="any"
+                    placeholder="e.g. 5600 (grams)"
+                    value={newProductForm.carton_weight}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, carton_weight: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              {/* Packaging & Pallet Logistics */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">EA / Carton</label>
+                  <input
+                    type="text"
+                    value={newProductForm.carton}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, carton: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">CTN / Pallet</label>
+                  <input
+                    type="number"
+                    value={newProductForm.pallet_ctn}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, pallet_ctn: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Storage Condition</label>
+                  <input
+                    type="text"
+                    value={newProductForm.storage_condition}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, storage_condition: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Shelf Life</label>
+                  <input
+                    type="text"
+                    value={newProductForm.shelf_life}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, shelf_life: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              {/* Dimensions */}
+              <div className="grid grid-cols-3 gap-3 pt-1">
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Length (mm)</label>
+                  <input
+                    type="number"
+                    value={newProductForm.carton_l_mm}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, carton_l_mm: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Width (mm)</label>
+                  <input
+                    type="number"
+                    value={newProductForm.carton_w_mm}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, carton_w_mm: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-zinc-700 mb-1">Height (mm)</label>
+                  <input
+                    type="number"
+                    value={newProductForm.carton_h_mm}
+                    onChange={(e) => setNewProductForm({ ...newProductForm, carton_h_mm: e.target.value })}
+                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="pt-3.5 border-t border-slate-200 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddProductModalOpen(false)}
+                  className="h-8 px-4 rounded-lg border border-slate-200 text-zinc-700 hover:bg-slate-50 text-xs font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={addingProduct}
+                  className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold cursor-pointer disabled:opacity-50 transition-colors shadow-xs flex items-center gap-1.5"
+                >
+                  {addingProduct ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>Creating Product...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Catalog Product</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

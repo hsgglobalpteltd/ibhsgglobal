@@ -25,7 +25,10 @@ import {
   AlertCircle,
   Printer,
   SlidersHorizontal,
-  DollarSign
+  DollarSign,
+  RotateCcw,
+  ChevronUp,
+  BarChart3
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -234,6 +237,44 @@ const getSingaporeCurrentPeriod = (): string => {
   return sgtDate.toISOString().slice(0, 7);
 };
 
+const ITEM_TYPES = [
+  {
+    value: "product",
+    label: "Product",
+    shortLabel: "Product",
+    description: "Standard physical merchandise for inventory resale. Included in demand quantities.",
+    badgeClass: "bg-slate-100 text-zinc-700 border-slate-200/90 hover:bg-slate-200/70"
+  },
+  {
+    value: "rebate",
+    label: "Sale Rebate / Discount",
+    shortLabel: "Sale Rebate",
+    description: "Invoice line rebates, trade discounts, or promotional allowances. Demand qty is 0.",
+    badgeClass: "bg-amber-50 text-amber-800 border-amber-200/80 hover:bg-amber-100"
+  },
+  {
+    value: "fee",
+    label: "Reg / Listing Fee",
+    shortLabel: "Reg / Fee",
+    description: "Slotting fees, registration charges, or administrative fees. Demand qty is 0.",
+    badgeClass: "bg-purple-50 text-purple-700 border-purple-200/80 hover:bg-purple-100"
+  },
+  {
+    value: "service",
+    label: "Delivery / Service Charge",
+    shortLabel: "Delivery",
+    description: "Transportation, pallet charges, or delivery handling fee. Demand qty is 0.",
+    badgeClass: "bg-teal-50 text-teal-700 border-teal-200/80 hover:bg-teal-100"
+  },
+  {
+    value: "bcrs",
+    label: "BCRS (Container Return Scheme)",
+    shortLabel: "BCRS",
+    description: "Beverage Container Return Scheme deposit/mark ($0.10). Demand qty is 0.",
+    badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-200/80 hover:bg-emerald-100"
+  }
+];
+
 interface SellInModuleProps {
   profile?: any;
 }
@@ -348,7 +389,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [brandsList, setBrandsList] = React.useState<any[]>([]);
 
   // Sub-filter tab in Sell-In view
-  const [subFilterTab, setSubFilterTab] = React.useState<"all" | "si" | "cn" | "unresolved">("all");
+  const [subFilterTab, setSubFilterTab] = React.useState<"all" | "si" | "cn" | "non_sales" | "unresolved">("all");
   const [searchTerm, setSearchTerm] = React.useState<string>("");
   const [channelFilter, setChannelFilter] = React.useState<string>("all");
   const [brandFilter, setBrandFilter] = React.useState<string>("all");
@@ -407,7 +448,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [newBuyerCode, setNewBuyerCode] = React.useState<string>("");
   const [newBuyerName, setNewBuyerName] = React.useState<string>("");
   const [newBuyerChannel, setNewBuyerChannel] = React.useState<string>("Retailer");
-  const [newBuyerPaymentTerm, setNewBuyerPaymentTerm] = React.useState<string>("90");
+  const [newBuyerPaymentTerm, setNewBuyerPaymentTerm] = React.useState<string>("3");
   const [newBuyerStoreGroups, setNewBuyerStoreGroups] = React.useState<Array<{ group_name: string; store_count: number }>>([
     { group_name: "", store_count: 1 }
   ]);
@@ -453,6 +494,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [productSearchTerm, setProductSearchTerm] = React.useState<string>("");
   const [savingAssignProduct, setSavingAssignProduct] = React.useState<boolean>(false);
 
+  // Assign / Edit Item Type Modal State (Product / Rebate / Fee / Service)
+  const [showAssignItemTypeModal, setShowAssignItemTypeModal] = React.useState<boolean>(false);
+  const [assignItemTypeTarget, setAssignItemTypeTarget] = React.useState<any | null>(null);
+  const [selectedItemType, setSelectedItemType] = React.useState<string>("product");
+  const [isItemTypeDropdownOpen, setIsItemTypeDropdownOpen] = React.useState<boolean>(false);
+  const [applyItemTypeToAllMatching, setApplyItemTypeToAllMatching] = React.useState<boolean>(true);
+  const [savingAssignItemType, setSavingAssignItemType] = React.useState<boolean>(false);
+
   // Price Mismatch Modal State
   const [showPriceMismatchModal, setShowPriceMismatchModal] = React.useState<boolean>(false);
   const [priceMismatchTarget, setPriceMismatchTarget] = React.useState<any | null>(null);
@@ -462,18 +511,29 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [showCostSnapshotModal, setShowCostSnapshotModal] = React.useState<boolean>(false);
   const [costSnapshotTarget, setCostSnapshotTarget] = React.useState<any | null>(null);
   const [editingCostPrice, setEditingCostPrice] = React.useState<string>("");
+  const [isEditingCostPrice, setIsEditingCostPrice] = React.useState<boolean>(false);
   const [savingCostSnapshot, setSavingCostSnapshot] = React.useState<boolean>(false);
+
+  // View Mode: "summary" (Default when Published) vs "details" (Line-by-line items)
+  const [sellinViewMode, setSellinViewMode] = React.useState<"summary" | "details">("details");
+  const [summaryBuyerSearch, setSummaryBuyerSearch] = React.useState<string>("");
+  const [summarySkuSearch, setSummarySkuSearch] = React.useState<string>("");
+  const [expandedBuyerKeys, setExpandedBuyerKeys] = React.useState<Record<string, boolean>>({});
 
   // Confirmation dialog
   const [confirmConfig, setConfirmConfig] = React.useState<{
     open: boolean;
     title: string;
     description: string;
+    confirmText?: string;
+    variant?: "danger" | "default" | "dark" | "primary";
     onConfirm: () => void;
   }>({
     open: false,
     title: "",
     description: "",
+    confirmText: "Confirm",
+    variant: "dark",
     onConfirm: () => {},
   });
 
@@ -484,7 +544,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
       const res = await fetch(`${API_BASE}/api/sellin/batch-details?period=${encodeURIComponent(period)}`);
       if (res.ok) {
         const data = await res.json();
-        setBatchData(data.batch || null);
+        const batch = data.batch || null;
+        setBatchData(batch);
+        if (batch?.status === "published") {
+          setSellinViewMode("summary");
+        } else {
+          setSellinViewMode("details");
+        }
         setRecords(Array.isArray(data.records) ? data.records : []);
         setBuyersList(Array.isArray(data.buyers) ? data.buyers : []);
         setChannelsList(Array.isArray(data.channels) ? data.channels : []);
@@ -681,28 +747,35 @@ export function SellInModule({ profile }: SellInModuleProps) {
     let cnAmount = 0;
     let cnQty = 0;
     let unresolvedCount = 0;
+    let nonSalesCount = 0;
     let totalCost = 0;
 
     records.forEach((r) => {
-      const dQty = Number(r.demand_qty ?? r.quantity ?? 0);
-      const cQty = Number(r.reject_qty ?? r.cn_quantity ?? 0);
+      const isNonProduct = r.item_type && r.item_type !== "product";
+      const dQty = isNonProduct ? 0 : Number(r.demand_qty ?? r.quantity ?? 0);
+      const cQty = isNonProduct ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
       const netQty = dQty - cQty;
-      const cPrice = Number(r.cost_price || 0);
+      const cPrice = isNonProduct ? 0 : Number(r.cost_price || 0);
       totalCost += Math.max(0, netQty) * cPrice;
 
       grossDemand += Number(r.total_demand || 0);
       demandQty += dQty;
       cnAmount += Number(r.cn_amount || 0);
       cnQty += cQty;
-      if ((r.validation_status && r.validation_status !== "valid") || r.has_price_mismatch) {
-        unresolvedCount++;
+
+      if (isNonProduct) {
+        nonSalesCount++;
+      } else {
+        if ((r.validation_status && r.validation_status !== "valid") || r.has_price_mismatch) {
+          unresolvedCount++;
+        }
       }
     });
 
     const netAmount = grossDemand - cnAmount;
     const grossProfit = netAmount - totalCost;
     const marginPercent = netAmount > 0 ? (grossProfit / netAmount) * 100 : 0;
-    return { grossDemand, demandQty, cnAmount, cnQty, netAmount, unresolvedCount, totalCost, grossProfit, marginPercent };
+    return { grossDemand, demandQty, cnAmount, cnQty, netAmount, unresolvedCount, nonSalesCount, totalCost, grossProfit, marginPercent };
   }, [records]);
 
   // Distinct Brands from records (excluding unbranded)
@@ -753,9 +826,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
   // Filtered Records for Sell-In Tab
   const filteredRecords = React.useMemo(() => {
     return records.filter((r) => {
-      if (subFilterTab === "si" && Number(r.quantity || 0) <= 0) return false;
-      if (subFilterTab === "cn" && Number(r.cn_amount || 0) <= 0) return false;
+      const isNonProduct = r.item_type && r.item_type !== "product";
+      if (subFilterTab === "si" && (isNonProduct || Number(r.quantity || 0) <= 0)) return false;
+      if (subFilterTab === "cn" && (isNonProduct || Number(r.cn_amount || 0) <= 0)) return false;
+      if (subFilterTab === "non_sales" && !isNonProduct) return false;
       if (subFilterTab === "unresolved") {
+        if (isNonProduct) return false;
         const isInvalid = r.validation_status && r.validation_status !== "valid";
         const isMismatch = Boolean(r.has_price_mismatch);
         if (!isInvalid && !isMismatch) return false;
@@ -771,13 +847,271 @@ export function SellInModule({ profile }: SellInModuleProps) {
         const sku = String(r.product_sku || "").toLowerCase();
         const name = String(r.product_name || "").toLowerCase();
         const brand = String(r.brand || "").toLowerCase();
-        if (!buyer.includes(q) && !bcode.includes(q) && !sku.includes(q) && !name.includes(q) && !brand.includes(q)) {
+        const itType = String(r.item_type || "").toLowerCase();
+        if (!buyer.includes(q) && !bcode.includes(q) && !sku.includes(q) && !name.includes(q) && !brand.includes(q) && !itType.includes(q)) {
           return false;
         }
       }
       return true;
     });
   }, [records, subFilterTab, channelFilter, brandFilter, searchTerm]);
+
+  // Compiled Summary Datamart: pre-aggregated figures, expected cash collection, buyers & SKUs
+  const compiledSummaryData = React.useMemo(() => {
+    if (batchData?.sellin_summary?.buyers_summary && batchData?.sellin_summary?.sku_summary) {
+      return batchData.sellin_summary;
+    }
+
+    const calcColl = (pStr: string, tStr: string) => {
+      const parts = (pStr || "").split("-").map(Number);
+      const y = parts[0] || new Date().getFullYear();
+      const m = parts[1] || (new Date().getMonth() + 1);
+      const t = Math.max(0, parseInt(String(tStr || "3").replace(/[^0-9]/g, ""), 10) || 0);
+      const d = new Date(Date.UTC(y, m - 1, 15));
+      d.setUTCDate(d.getUTCDate() + t);
+      const cY = d.getUTCFullYear();
+      const cM = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const mNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      return {
+        period: `${cY}-${cM}`,
+        label: `${mNames[d.getUTCMonth()]} ${cY}`
+      };
+    };
+
+    const buyerTermMap = new Map<string, any>();
+    (buyersList || []).forEach((b: any) => {
+      const term = String(b.payment_term || "90").replace(/[^0-9]/g, "") || "90";
+      const info = {
+        term,
+        buyer_name: String(b.buyer_name || b.name || "").trim(),
+        buyer_code: String(b.buyer_code || b.code || "").trim(),
+        channel: String(b.channel || "Retailer").trim()
+      };
+      if (b.buyer_code) buyerTermMap.set(String(b.buyer_code).trim().toLowerCase(), info);
+      if (b.buyer_name) buyerTermMap.set(String(b.buyer_name).trim().toLowerCase(), info);
+      if (b.id) buyerTermMap.set(String(b.id).trim().toLowerCase(), info);
+    });
+
+    const skuMap = new Map<string, any>();
+    const buyerMap = new Map<string, any>();
+    const collMap = new Map<string, any>();
+
+    let totalDemandQty = 0;
+    let totalDemandAmount = 0;
+    let totalCnQty = 0;
+    let totalCnAmount = 0;
+    let totalNonSalesAmount = 0;
+    let netAmount = 0;
+    let totalCostAmount = 0;
+
+    (records || []).forEach((r: any) => {
+      const isNonProduct = r.item_type && r.item_type !== "product";
+      const dQty = isNonProduct ? 0 : Number(r.demand_qty ?? r.quantity ?? 0);
+      const cQty = isNonProduct ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
+      const netQty = dQty - cQty;
+      const up = Number(r.unit_price || 0);
+      const dAmt = isNonProduct ? Number(r.total_demand || 0) : dQty * up;
+      const cAmt = Number(r.cn_amount || 0);
+      const nAmt = dAmt - cAmt;
+      const cPrice = isNonProduct ? 0 : Number(r.cost_price || 0);
+      const rowCost = isNonProduct ? 0 : (Math.max(0, netQty) * cPrice);
+
+      if (isNonProduct) {
+        totalNonSalesAmount += dAmt;
+      } else {
+        totalDemandQty += dQty;
+        totalCnQty += cQty;
+      }
+      totalDemandAmount += dAmt;
+      totalCnAmount += cAmt;
+      netAmount += nAmt;
+      totalCostAmount += rowCost;
+
+      const skuCode = String(r.product_sku || "").trim();
+      const bBrand = String(r.brand || "Unassigned Brand").trim();
+
+      if (!isNonProduct && skuCode) {
+        let s = skuMap.get(skuCode);
+        if (!s) {
+          s = {
+            sku: skuCode,
+            name: r.product_name || skuCode,
+            brand: bBrand,
+            demand_qty: 0,
+            reject_qty: 0,
+            net_qty: 0,
+            gross_amount: 0,
+            cn_amount: 0,
+            net_amount: 0,
+            unit_cost: cPrice,
+            total_cost: 0,
+            gross_profit: 0,
+            margin_percent: 0
+          };
+        }
+        s.demand_qty += dQty;
+        s.reject_qty += cQty;
+        s.net_qty += netQty;
+        s.gross_amount += dAmt;
+        s.cn_amount += cAmt;
+        s.net_amount += nAmt;
+        s.total_cost += rowCost;
+        if (cPrice > 0 && !s.unit_cost) s.unit_cost = cPrice;
+        s.gross_profit = s.net_amount - s.total_cost;
+        s.margin_percent = s.net_amount > 0 ? (s.gross_profit / s.net_amount) * 100 : 0;
+        skuMap.set(skuCode, s);
+      }
+
+      const bCode = String(r.buyer_code || "").trim();
+      const bName = String(r.buyer_name || bCode || "Unknown Buyer").trim();
+      const bKey = (bCode || bName).toLowerCase();
+      const isRegistered = buyerTermMap.has(bKey) || buyerTermMap.has(bCode.toLowerCase()) || buyerTermMap.has(bName.toLowerCase());
+      const bInfo = buyerTermMap.get(bKey) || buyerTermMap.get(bCode.toLowerCase()) || buyerTermMap.get(bName.toLowerCase()) || {
+        term: "3", // For unregistered buyer, payment term is 3 days
+        buyer_name: bName,
+        buyer_code: bCode,
+        channel: r.channel || "Retailer"
+      };
+
+      const term = bInfo.term || (isRegistered ? "90" : "3");
+      const { period: collPeriod, label: collLabel } = calcColl(currentPeriod, term);
+
+      let bEntry = buyerMap.get(bKey);
+      if (!bEntry) {
+        bEntry = {
+          buyer_code: bInfo.buyer_code || bCode,
+          buyer_name: bInfo.buyer_name || bName,
+          channel: bInfo.channel || r.channel || "Retailer",
+          payment_term: term,
+          expected_collection_period: collPeriod,
+          expected_collection_label: collLabel,
+          demand_qty: 0,
+          demand_amount: 0,
+          reject_qty: 0,
+          reject_amount: 0,
+          non_sales_amount: 0,
+          net_amount: 0,
+          items: new Map<string, any>(),
+          non_sales_items: []
+        };
+      }
+
+      if (isNonProduct) {
+        bEntry.non_sales_amount += dAmt;
+        bEntry.net_amount += nAmt;
+        bEntry.non_sales_items.push({
+          item_type: r.item_type,
+          description: r.product_name || "Charge / Fee",
+          amount: dAmt
+        });
+      } else {
+        bEntry.demand_qty += dQty;
+        bEntry.demand_amount += dAmt;
+        bEntry.reject_qty += cQty;
+        bEntry.reject_amount += cAmt;
+        bEntry.net_amount += nAmt;
+
+        const buyerSku = skuCode || r.product_name;
+        const bItem = bEntry.items.get(buyerSku) || {
+          sku: skuCode,
+          name: r.product_name || skuCode,
+          brand: bBrand,
+          qty: 0,
+          reject_qty: 0,
+          net_qty: 0,
+          unit_price: up,
+          total_demand: 0,
+          cn_amount: 0,
+          nett_amount: 0
+        };
+        bItem.qty += dQty;
+        bItem.reject_qty += cQty;
+        bItem.net_qty += netQty;
+        bItem.total_demand += dAmt;
+        bItem.cn_amount += cAmt;
+        bItem.nett_amount += nAmt;
+        bEntry.items.set(buyerSku, bItem);
+      }
+      buyerMap.set(bKey, bEntry);
+
+      const coll = collMap.get(collPeriod) || {
+        period: collPeriod,
+        label: collLabel,
+        amount: 0,
+        buyer_count: 0,
+        buyers: []
+      };
+      coll.amount += nAmt;
+      const dispName = bInfo.buyer_name || bName;
+      if (!coll.buyers.includes(dispName)) {
+        coll.buyers.push(dispName);
+        coll.buyer_count = coll.buyers.length;
+      }
+      collMap.set(collPeriod, coll);
+    });
+
+    const buyersSummary = Array.from(buyerMap.values())
+      .sort((a, b) => b.net_amount - a.net_amount)
+      .map((b) => ({
+        ...b,
+        items: Array.from(b.items.values()).sort((x: any, y: any) => y.nett_amount - x.nett_amount)
+      }));
+
+    const skuSummary = Array.from(skuMap.values()).sort((a, b) => b.net_amount - a.net_amount);
+    const cashCollectionTimeline = Array.from(collMap.values()).sort((a, b) => a.period.localeCompare(b.period));
+
+    const grossProfit = netAmount - totalCostAmount;
+    const marginPercent = netAmount > 0 ? (grossProfit / netAmount) * 100 : 0;
+
+    return {
+      period: currentPeriod,
+      total_demand_qty: totalDemandQty,
+      total_demand_amount: totalDemandAmount,
+      total_cn_qty: totalCnQty,
+      total_cn_amount: totalCnAmount,
+      total_non_sales_amount: totalNonSalesAmount,
+      total_net_qty: totalDemandQty - totalCnQty,
+      net_amount: netAmount,
+      total_cost_amount: totalCostAmount,
+      gross_profit: grossProfit,
+      margin_percent: marginPercent,
+      buyers_summary: buyersSummary,
+      sku_summary: skuSummary,
+      cash_collection_timeline: cashCollectionTimeline
+    };
+  }, [batchData, records, buyersList, currentPeriod]);
+
+  // Summary filtered buyers
+  const filteredSummaryBuyers = React.useMemo(() => {
+    const list = compiledSummaryData?.buyers_summary || [];
+    if (!summaryBuyerSearch.trim()) return list;
+    const q = summaryBuyerSearch.toLowerCase().trim();
+    return list.filter((b: any) =>
+      String(b.buyer_code || "").toLowerCase().includes(q) ||
+      String(b.buyer_name || "").toLowerCase().includes(q) ||
+      String(b.channel || "").toLowerCase().includes(q)
+    );
+  }, [compiledSummaryData, summaryBuyerSearch]);
+
+  // Summary filtered SKUs
+  const filteredSummarySkus = React.useMemo(() => {
+    const list = compiledSummaryData?.sku_summary || [];
+    if (!summarySkuSearch.trim()) return list;
+    const q = summarySkuSearch.toLowerCase().trim();
+    return list.filter((s: any) =>
+      String(s.sku || "").toLowerCase().includes(q) ||
+      String(s.product_name || "").toLowerCase().includes(q) ||
+      String(s.brand || "").toLowerCase().includes(q)
+    );
+  }, [compiledSummaryData, summarySkuSearch]);
+
+  // Toggle expanded state for buyer items in summary
+  const toggleBuyerExpand = (key: string) => {
+    setExpandedBuyerKeys((prev) => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
 
   // Handle Tax Invoice PDF/Image Upload and AI Parsing with 8-page batching
   const handleInvoicePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1260,7 +1594,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
           buyer_code: code,
           buyer_name: name || code,
           channel: channel || "Retailer",
-          payment_term: (payment_term || "90").replace(/[^0-9]/g, "") || "90",
+          payment_term: (payment_term || "3").replace(/[^0-9]/g, "") || "3",
           store_groups: validGroups,
           period: currentPeriod
         })
@@ -1271,7 +1605,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         setShowAddBuyerModal(false);
         setNewBuyerCode("");
         setNewBuyerName("");
-        setNewBuyerPaymentTerm("90");
+        setNewBuyerPaymentTerm("3");
         setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
         fetchBatchDetails(currentPeriod);
       } else {
@@ -1351,13 +1685,61 @@ export function SellInModule({ profile }: SellInModuleProps) {
       const data = await res.json();
       if (res.ok && data.success) {
         showToast(data.message || "Batch published successfully!", "success");
-        fetchBatchDetails(currentPeriod);
+        setSellinViewMode("summary");
+        fetchBatchDetails(currentPeriod, true);
       } else {
         showToast(data.error || "Failed to publish batch", "error");
       }
     } catch (e: any) {
       showToast(e.message || "Publish failed", "error");
     }
+  };
+
+  const handlePublishBatchWithConfirm = () => {
+    setConfirmConfig({
+      open: true,
+      title: `Publish ${formatPeriodLabel(currentPeriod)} Sell-In`,
+      description: `Are you sure you want to publish ${formatPeriodLabel(currentPeriod)} Sell-In? This will compile the official financial summary, cash collection timeline, and buyer breakdown.`,
+      confirmText: "Publish",
+      variant: "primary",
+      onConfirm: async () => {
+        await handlePublishBatch();
+      }
+    });
+  };
+
+  const [revokingBatch, setRevokingBatch] = React.useState<boolean>(false);
+  const handleRevokePublish = () => {
+    setConfirmConfig({
+      open: true,
+      title: "Revoke Published Batch",
+      description: `Are you sure you want to revoke ${formatPeriodLabel(currentPeriod)} back to Draft Inflow? This will unlock the month, allow row editing, and restore the Reset button.`,
+      onConfirm: async () => {
+        setRevokingBatch(true);
+        try {
+          const res = await fetch(`${API_BASE}/api/sellin/revoke-publish`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              period: currentPeriod,
+              user: profile?.full_name || profile?.email || "Admin"
+            })
+          });
+          const data = await res.json();
+          if (res.ok && data.success) {
+            showToast(data.message || `Revoked ${formatPeriodLabel(currentPeriod)} back to Draft Inflow!`, "success");
+            setSellinViewMode("details");
+            fetchBatchDetails(currentPeriod, true);
+          } else {
+            showToast(data.error || "Failed to revoke batch", "error");
+          }
+        } catch (e: any) {
+          showToast(e.message || "Revoke error", "error");
+        } finally {
+          setRevokingBatch(false);
+        }
+      }
+    });
   };
 
   // Open Reset Month Modal
@@ -1676,6 +2058,30 @@ export function SellInModule({ profile }: SellInModuleProps) {
         });
         bodyRows.push(totRow);
 
+        // Distribute remaining page width equally across all month columns
+        // A4 landscape width = 297mm. Left margin = 14mm, right margin = 14mm. Usable width = 269mm.
+        const totalUsableWidth = 297 - 14 - 14;
+        const fixedLeftWidth = channelWidth + buyerWidth + storesWidth;
+        const remainingForMonths = Math.max(totalUsableWidth - fixedLeftWidth, 50);
+        // Each period has 2 columns: Qty and Amount. Total sub-columns = periods.length * 2.
+        // We can allocate ~38% to Qty and ~62% to Amount for each month pair, or split evenly.
+        const pairWidth = remainingForMonths / Math.max(periods.length, 1);
+        const monthQtyWidth = Number((pairWidth * 0.38).toFixed(2));
+        const monthAmtWidth = Number((pairWidth - monthQtyWidth).toFixed(2));
+
+        const colStyles: Record<number, any> = {
+          0: { cellWidth: channelWidth, halign: "center", fontStyle: "bold" },
+          1: { cellWidth: buyerWidth, halign: "left", overflow: "ellipsize" },
+          2: { cellWidth: storesWidth, halign: "center" }
+        };
+
+        periods.forEach((_: any, pIdx: number) => {
+          const colQtyIdx = 3 + (pIdx * 2);
+          const colAmtIdx = 3 + (pIdx * 2) + 1;
+          colStyles[colQtyIdx] = { cellWidth: monthQtyWidth, halign: "right" };
+          colStyles[colAmtIdx] = { cellWidth: monthAmtWidth, halign: "right" };
+        });
+
         autoTable(doc, {
           startY: 19,
           head: [headRow1, headRow2],
@@ -1689,11 +2095,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
             lineWidth: 0.2,
             textColor: [30, 41, 59]
           },
-          columnStyles: {
-            0: { cellWidth: channelWidth, halign: "center", fontStyle: "bold" },
-            1: { cellWidth: buyerWidth, halign: "left", overflow: "ellipsize" },
-            2: { cellWidth: storesWidth, halign: "center" }
-          },
+          columnStyles: colStyles,
           headStyles: {
             fillColor: [248, 250, 252],
             textColor: [15, 23, 42],
@@ -2301,6 +2703,73 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   };
 
+  // Open Assign Item Type Modal
+  const handleOpenAssignItemTypeModal = (record: any) => {
+    setAssignItemTypeTarget(record);
+    setSelectedItemType(record.item_type || "product");
+    setIsItemTypeDropdownOpen(false);
+    setApplyItemTypeToAllMatching(true);
+    setShowAssignItemTypeModal(true);
+  };
+
+  // Save Assign Item Type
+  const handleSaveAssignItemType = async () => {
+    if (!assignItemTypeTarget || !selectedItemType) return;
+    setSavingAssignItemType(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/assign-item-type`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: assignItemTypeTarget.id,
+          period: currentPeriod,
+          item_type: selectedItemType,
+          target_name: assignItemTypeTarget.product_name,
+          apply_to_all_matching: applyItemTypeToAllMatching
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        const typeObj = ITEM_TYPES.find((t) => t.value === selectedItemType);
+        showToast(`Item type changed to "${typeObj?.label || selectedItemType}"!`, "success");
+        setShowAssignItemTypeModal(false);
+        setAssignItemTypeTarget(null);
+
+        // Optimistically update records state
+        const targetDescLower = String(assignItemTypeTarget.product_name || "").trim().toLowerCase();
+        setRecords((prev) =>
+          prev.map((r) => {
+            const isDirect = r.id === assignItemTypeTarget.id;
+            const isDescMatch =
+              applyItemTypeToAllMatching &&
+              Boolean(targetDescLower && String(r.product_name || "").trim().toLowerCase() === targetDescLower);
+            if (isDirect || isDescMatch) {
+              const isNonProduct = selectedItemType !== "product";
+              return {
+                ...r,
+                item_type: selectedItemType,
+                product_sku: isNonProduct ? "" : r.product_sku,
+                quantity: isNonProduct ? 0 : r.quantity,
+                demand_qty: isNonProduct ? 0 : r.demand_qty,
+                cost_price: isNonProduct ? 0 : r.cost_price,
+                validation_status: isNonProduct ? "valid" : r.validation_status
+              };
+            }
+            return r;
+          })
+        );
+
+        fetchBatchDetails(currentPeriod, true);
+      } else {
+        showToast(data.error || "Failed to update item type", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Failed to update item type", "error");
+    } finally {
+      setSavingAssignItemType(false);
+    }
+  };
+
   // Open Assign Product Modal
   const handleOpenAssignProductModal = (row: any) => {
     setAssignProductTarget(row);
@@ -2427,6 +2896,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
     setCostSnapshotTarget(record);
     const existingCost = record.cost_price !== undefined && record.cost_price !== null ? Number(record.cost_price) : 0;
     setEditingCostPrice(existingCost > 0 ? String(existingCost) : "");
+    setIsEditingCostPrice(false);
     setShowCostSnapshotModal(true);
   };
 
@@ -2803,6 +3273,43 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }));
   }, [channelsList]);
 
+  // Source PDF URLs (Invoice and Credit Note)
+  const invoiceSourceUrl = React.useMemo(() => {
+    if (batchData?.source_file_url) return batchData.source_file_url;
+    const recWithInv = records.find(
+      (r: any) =>
+        r.invoice_file_url ||
+        (r.source_type !== "pdf_credit_note" && r.source_file_url) ||
+        r.invoices?.[0]?.source_file_url
+    );
+    return recWithInv?.invoice_file_url || (recWithInv?.source_type !== "pdf_credit_note" ? recWithInv?.source_file_url : "") || recWithInv?.invoices?.[0]?.source_file_url || "";
+  }, [batchData, records]);
+
+  const cnSourceUrl = React.useMemo(() => {
+    if (batchData?.cn_file_url) return batchData.cn_file_url;
+    const recWithCn = records.find(
+      (r: any) =>
+        r.cn_file_url ||
+        (r.source_type === "pdf_credit_note" && r.source_file_url) ||
+        r.credit_notes?.find((c: any) => c.source_file_url)
+    );
+    return recWithCn?.cn_file_url || (recWithCn?.source_type === "pdf_credit_note" ? recWithCn?.source_file_url : "") || recWithCn?.credit_notes?.find((c: any) => c.source_file_url)?.source_file_url || "";
+  }, [batchData, records]);
+
+  // Dynamic Date Range for Million System Instructions (e.g. 01/09/2025 to 30/09/2025)
+  const periodDateRange = React.useMemo(() => {
+    const [yStr, mStr] = currentPeriod.split("-");
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    if (!y || !m) return { start: "01/01/2025", end: "31/01/2025" };
+    const lastDay = new Date(y, m, 0).getDate();
+    const padM = String(m).padStart(2, "0");
+    return {
+      start: `01/${padM}/${y}`,
+      end: `${String(lastDay).padStart(2, "0")}/${padM}/${y}`
+    };
+  }, [currentPeriod]);
+
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary select-none animate-in fade-in duration-150">
       {/* ========================================================================= */}
@@ -2863,59 +3370,60 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <span className="text-[10px] text-zinc-400 font-normal">({kpis.marginPercent.toFixed(1)}%)</span>
               </div>
 
-              {/* Diagnostics Alert / Validation Status Pill */}
-              {kpis.unresolvedCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActiveMainTab("sellin");
-                    setSubFilterTab("unresolved");
-                  }}
-                  className="h-7 px-2 rounded-md bg-slate-50 hover:bg-slate-100 text-zinc-700 text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer border border-slate-200"
-                >
-                  <AlertTriangle size={11} className="text-amber-600 shrink-0" />
-                  <span>{kpis.unresolvedCount} Diagnostics</span>
-                </button>
-              ) : (
-                <div className="h-7 flex items-center gap-1 text-zinc-600 text-[11px] font-medium px-2 rounded-md bg-slate-50 border border-slate-200">
-                  <CheckCircle2 size={11} className="shrink-0 text-emerald-600" />
-                  <span>Validated</span>
-                </div>
+              {/* Diagnostics Alert / Validation Status Pill (Draft mode only) */}
+              {batchData?.status !== "published" && (
+                kpis.unresolvedCount > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveMainTab("sellin");
+                      setSubFilterTab("unresolved");
+                    }}
+                    className="h-7 px-2 rounded-md bg-slate-50 hover:bg-slate-100 text-zinc-700 text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer border border-slate-200"
+                  >
+                    <AlertTriangle size={11} className="text-amber-600 shrink-0" />
+                    <span>{kpis.unresolvedCount} Diagnostics</span>
+                  </button>
+                ) : (
+                  <div className="h-7 flex items-center gap-1 text-zinc-600 text-[11px] font-medium px-2 rounded-md bg-slate-50 border border-slate-200">
+                    <CheckCircle2 size={11} className="shrink-0 text-emerald-600" />
+                    <span>Validated</span>
+                  </div>
+                )
               )}
 
-              {/* Month Selector Capsule with Fixed Width */}
-              <div className="h-7 w-[160px] flex items-center justify-between px-1.5 rounded-md bg-[#F8F9FA] border border-slate-200 hover:bg-slate-100 transition-all">
+              {/* Action Buttons in Top Container */}
+              {records.length > 0 && !isCurrentActiveMonth && batchData?.status !== "published" && (
                 <button
                   type="button"
-                  onClick={handlePrevMonth}
-                  disabled={loading}
-                  className="w-4.5 h-4.5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-white transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
-                  title="Previous Month"
+                  onClick={handleOpenResetModal}
+                  className="h-7 px-2 rounded-md bg-white border border-red-200 hover:bg-red-50 text-red-600 text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                  title={`Reset all data for ${formatPeriodLabel(currentPeriod)}`}
                 >
-                  ‹
+                  <Trash2 size={11} className="text-red-500" />
+                  <span>Reset Month</span>
                 </button>
-                <label className="relative flex-1 flex items-center justify-center gap-1 px-1 cursor-pointer overflow-hidden">
-                  <Calendar size={11} className="text-[#0B57D0] shrink-0" />
-                  <span className="text-[11px] font-medium text-zinc-800 tracking-tight whitespace-nowrap truncate text-center">
-                    {formatPeriodLabel(currentPeriod)}
-                  </span>
-                  <input
-                    type="month"
-                    value={currentPeriod}
-                    onChange={(e) => e.target.value && setCurrentPeriod(e.target.value)}
-                    className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                  />
-                </label>
+              )}
+
+              <button
+                type="button"
+                onClick={handleExportExcel}
+                className="h-7 px-2 rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                title="Export current Sell-In rows to Excel"
+              >
+                <Download size={11} className="text-zinc-500" />
+                <span>Export</span>
+              </button>
+
+              {batchData?.status !== "published" && (
                 <button
                   type="button"
-                  onClick={handleNextMonth}
-                  disabled={loading}
-                  className="w-4.5 h-4.5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-white transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
-                  title="Next Month"
+                  onClick={handlePublishBatchWithConfirm}
+                  className="h-7 px-3 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-medium flex items-center justify-center transition-all cursor-pointer shadow-2xs active:scale-98"
                 >
-                  ›
+                  <span>Publish</span>
                 </button>
-              </div>
+              )}
             </div>
           </>
         ) : activeMainTab === "buyers" ? (
@@ -3049,183 +3557,312 @@ export function SellInModule({ profile }: SellInModuleProps) {
       {/* ========================================================================= */}
       {activeMainTab === "sellin" && (
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          {/* Filter & Action Toolbar */}
-          <div className="px-4 py-2 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-            {/* Left Sub-filters & Custom Dropdowns */}
-            <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
-              {/* Sub-filter tabs */}
-              <div className="flex items-center p-0.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+          {/* Published View Mode Navigation Bar (Dedicated Level: ONLY appears when Published) */}
+          {batchData?.status === "published" && (
+            <div className="px-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-6">
                 <button
                   type="button"
-                  onClick={() => setSubFilterTab("all")}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
-                    subFilterTab === "all" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
+                  onClick={() => setSellinViewMode("summary")}
+                  className={`py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                    sellinViewMode === "summary"
+                      ? "border-[#0B57D0] text-[#0B57D0]"
+                      : "border-transparent text-zinc-500 hover:text-zinc-800 hover:border-slate-300"
                   }`}
                 >
-                  All ({records.length})
+                  <BarChart3 size={14} />
+                  <span>Summary View</span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setSubFilterTab("si")}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
-                    subFilterTab === "si" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
+                  onClick={() => setSellinViewMode("details")}
+                  className={`py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
+                    sellinViewMode === "details"
+                      ? "border-[#0B57D0] text-[#0B57D0]"
+                      : "border-transparent text-zinc-500 hover:text-zinc-800 hover:border-slate-300"
                   }`}
                 >
-                  Demand Inflow
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSubFilterTab("cn")}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
-                    subFilterTab === "cn" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
-                  }`}
-                >
-                  Adjustments (CN)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSubFilterTab("unresolved")}
-                  className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1 ${
-                    subFilterTab === "unresolved" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
-                  }`}
-                >
-                  <span>Diagnostics</span>
-                  {kpis.unresolvedCount > 0 && (
-                    <span className="w-4 h-4 rounded-full bg-amber-500 text-white text-[10px] font-medium flex items-center justify-center">
-                      {kpis.unresolvedCount}
-                    </span>
-                  )}
+                  <FileText size={14} />
+                  <span>Detailed Sell-In ({records.length})</span>
                 </button>
               </div>
 
-              {/* Search Bar */}
-              <div className="relative max-w-[220px] flex-1">
-                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                <input
-                  type="text"
-                  placeholder="Search buyer, SKU, brand..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full h-8 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
+              {/* Right side indicators, Source Files, & Month Selector */}
+              <div className="flex items-center gap-2 py-1.5 shrink-0">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <CheckCircle2 size={12} className="text-emerald-600" />
+                  <span>Published Snapshot</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={handleRevokePublish}
+                  disabled={revokingBatch}
+                  className="h-7 px-2.5 rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-98 disabled:opacity-50"
+                  title="Revoke published status back to Draft Inflow"
+                >
+                  <RotateCcw size={12} className={revokingBatch ? "animate-spin text-zinc-500" : "text-zinc-500"} />
+                  <span>{revokingBatch ? "Revoking..." : "Revoke Publish"}</span>
+                </button>
+
+                {/* Source Invoice & Credit Note Download / View Buttons (Historical months only) */}
+                {!isCurrentActiveMonth && invoiceSourceUrl && (
+                  <a
+                    href={invoiceSourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                    title="Download / View Source Invoice PDF"
+                  >
+                    <FileText size={13} className="text-[#0B57D0]" />
+                    <span>Source Invoice</span>
+                  </a>
+                )}
+
+                {!isCurrentActiveMonth && cnSourceUrl && (
+                  <a
+                    href={cnSourceUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                    title="Download / View Source Credit Note PDF"
+                  >
+                    <FileText size={13} className="text-zinc-600" />
+                    <span>Source Credit Note</span>
+                  </a>
+                )}
+
+                {/* Month Selector Capsule with Fixed Width */}
+                <div className="h-8 w-[185px] min-w-[185px] shrink-0 flex items-center justify-between px-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 transition-all shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={handlePrevMonth}
+                    disabled={loading}
+                    className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
+                    title="Previous Month"
+                  >
+                    ‹
+                  </button>
+                  <label className="relative flex-1 flex items-center justify-center gap-1.5 px-1 cursor-pointer">
+                    <Calendar size={13} className="text-[#0B57D0] shrink-0" />
+                    <span className="text-xs font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center">
+                      {formatPeriodLabel(currentPeriod)}
+                    </span>
+                    <input
+                      type="month"
+                      value={currentPeriod}
+                      onChange={(e) => e.target.value && setCurrentPeriod(e.target.value)}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleNextMonth}
+                    disabled={loading}
+                    className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
+                    title="Next Month"
+                  >
+                    ›
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Filter & Action Toolbar (Only shown in Draft OR when viewing Detailed Sell-In) */}
+          {(batchData?.status !== "published" || sellinViewMode === "details") && (
+            <div className="px-4 py-2 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              {/* Left Sub-filters & Custom Dropdowns */}
+              <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
+                {/* Sub-filter tabs */}
+                <div className="flex items-center p-0.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setSubFilterTab("all")}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                      subFilterTab === "all" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
+                    }`}
+                  >
+                    All ({records.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubFilterTab("si")}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                      subFilterTab === "si" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
+                    }`}
+                  >
+                    Demand Inflow
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubFilterTab("non_sales")}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                      subFilterTab === "non_sales" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
+                    }`}
+                  >
+                    <span>Non-Sales</span>
+                    {kpis.nonSalesCount > 0 && (
+                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-medium ${subFilterTab === "non_sales" ? "bg-white/20 text-white" : "bg-slate-100 text-zinc-600 border border-slate-200"}`}>
+                        {kpis.nonSalesCount}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSubFilterTab("cn")}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                      subFilterTab === "cn" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
+                    }`}
+                  >
+                    Returns & Rejects
+                  </button>
+                  {batchData?.status !== "published" && (
+                    <button
+                      type="button"
+                      onClick={() => setSubFilterTab("unresolved")}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                        subFilterTab === "unresolved" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
+                      }`}
+                    >
+                      <span>Diagnostics</span>
+                      {kpis.unresolvedCount > 0 && (
+                        <span className="w-4 h-4 rounded-full bg-amber-500 text-white text-[10px] font-medium flex items-center justify-center">
+                          {kpis.unresolvedCount}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative max-w-[200px] flex-1">
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                  <input
+                    type="text"
+                    placeholder="Search buyer, SKU, brand..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="w-full h-8 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                {/* Custom Channel Filter Dropdown */}
+                <CustomSelect
+                  value={channelFilter}
+                  onChange={setChannelFilter}
+                  options={channelFilterOptions}
+                  placeholder="All Channels"
+                  minWidth="min-w-[120px]"
+                />
+
+                {/* Custom Brand Filter Dropdown */}
+                <CustomSelect
+                  value={brandFilter}
+                  onChange={setBrandFilter}
+                  options={brandFilterOptions}
+                  placeholder="All Brands"
+                  minWidth="min-w-[110px]"
                 />
               </div>
 
-              {/* Custom Channel Filter Dropdown */}
-              <CustomSelect
-                value={channelFilter}
-                onChange={setChannelFilter}
-                options={channelFilterOptions}
-                placeholder="All Channels"
-                minWidth="min-w-[130px]"
-              />
+              {/* Right Action Area (Draft Mode Only): Source Files & Month Selector */}
+              {batchData?.status !== "published" && (
+                <div className="flex items-center gap-2 shrink-0">
+                  {/* Source Invoice & Credit Note Download / View Buttons (Historical months only) */}
+                  {!isCurrentActiveMonth && invoiceSourceUrl && (
+                    <a
+                      href={invoiceSourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                      title="Download / View Source Invoice PDF"
+                    >
+                      <FileText size={13} className="text-[#0B57D0]" />
+                      <span>Source Invoice</span>
+                    </a>
+                  )}
 
-              {/* Custom Brand Filter Dropdown */}
-              <CustomSelect
-                value={brandFilter}
-                onChange={setBrandFilter}
-                options={brandFilterOptions}
-                placeholder="All Brands"
-                minWidth="min-w-[120px]"
-              />
-            </div>
+                  {!isCurrentActiveMonth && cnSourceUrl && (
+                    <a
+                      href={cnSourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
+                      title="Download / View Source Credit Note PDF"
+                    >
+                      <FileText size={13} className="text-zinc-600" />
+                      <span>Source Credit Note</span>
+                    </a>
+                  )}
 
-            {/* Right Action Buttons */}
-            <div className="flex items-center gap-2 shrink-0">
-              {/* Reset Month Button (replaces Reset by Buyer) */}
-              {records.length > 0 && !isCurrentActiveMonth && (
-                <button
-                  type="button"
-                  onClick={handleOpenResetModal}
-                  className="h-8 px-2.5 rounded-lg bg-white border border-red-200 hover:bg-red-50 text-red-600 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                  title={`Reset all data for ${formatPeriodLabel(currentPeriod)}`}
-                >
-                  <Trash2 size={13} className="text-red-500" />
-                  <span>Reset Month</span>
-                </button>
+                  {/* Import Buttons when no source file yet (Historical months only) */}
+                  {!isCurrentActiveMonth && !invoiceSourceUrl && (
+                    <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
+                      {parsingInvoices ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
+                      <span>{parsingInvoices ? "Parsing AI..." : "Upload Invoice"}</span>
+                      <input
+                        type="file"
+                        accept=".pdf"
+                        multiple={false}
+                        disabled={parsingInvoices}
+                        onChange={handleInvoicePdfUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+
+                  {!isCurrentActiveMonth && !cnSourceUrl && (
+                    <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
+                      {parsingCreditNotes ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
+                      <span>{parsingCreditNotes ? "Parsing CN..." : "Upload Credit Note"}</span>
+                      <input
+                        type="file"
+                        accept=".pdf"
+                        multiple={false}
+                        disabled={parsingCreditNotes}
+                        onChange={handleCreditNotePdfUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+
+                  {/* Month Selector Capsule with Fixed Width */}
+                  <div className="h-8 w-[185px] min-w-[185px] shrink-0 flex items-center justify-between px-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 transition-all shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={handlePrevMonth}
+                      disabled={loading}
+                      className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
+                      title="Previous Month"
+                    >
+                      ‹
+                    </button>
+                    <label className="relative flex-1 flex items-center justify-center gap-1.5 px-1 cursor-pointer">
+                      <Calendar size={13} className="text-[#0B57D0] shrink-0" />
+                      <span className="text-xs font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center">
+                        {formatPeriodLabel(currentPeriod)}
+                      </span>
+                      <input
+                        type="month"
+                        value={currentPeriod}
+                        onChange={(e) => e.target.value && setCurrentPeriod(e.target.value)}
+                        className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleNextMonth}
+                      disabled={loading}
+                      className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
+                      title="Next Month"
+                    >
+                      ›
+                    </button>
+                  </div>
+                </div>
               )}
-
-              {/* Import Invoices PDF Button */}
-              {isCurrentActiveMonth ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    showToast(
-                      `${formatPeriodLabel(currentPeriod)} is currently in progress. Sales figures are synced from Track Orders. Official month-end invoice upload will open on 1st of next month.`,
-                      "info"
-                    );
-                  }}
-                  className="h-8 px-3 rounded-lg bg-slate-100 border border-slate-200 text-zinc-400 text-xs font-medium flex items-center gap-1.5 cursor-not-allowed shadow-2xs opacity-75"
-                  title="Upload disabled during active month"
-                >
-                  <FileText size={13} className="text-zinc-400" />
-                  <span>Import Invoices (PDF)</span>
-                </button>
-              ) : (!batchData?.source_file_url && !records.some((r: any) => r.source_type === "pdf_invoice")) ? (
-                <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
-                  {parsingInvoices ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
-                  <span>{parsingInvoices ? "Parsing AI..." : "Import Invoices (PDF)"}</span>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    multiple={false}
-                    disabled={parsingInvoices}
-                    onChange={handleInvoicePdfUpload}
-                    className="hidden"
-                  />
-                </label>
-              ) : null}
-
-              {/* Import Credit Notes PDF Button */}
-              {isCurrentActiveMonth ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    showToast(
-                      `${formatPeriodLabel(currentPeriod)} is currently in progress. Upload will open at month-end.`,
-                      "info"
-                    );
-                  }}
-                  className="h-8 px-3 rounded-lg bg-slate-100 border border-slate-200 text-zinc-400 text-xs font-medium flex items-center gap-1.5 cursor-not-allowed shadow-2xs opacity-75"
-                  title="Upload disabled during active month"
-                >
-                  <FileText size={13} className="text-zinc-400" />
-                  <span>Import Credit Notes (PDF)</span>
-                </button>
-              ) : (!records.some((r: any) => r.source_type === "pdf_credit_note" || (Array.isArray(r.credit_notes) && r.credit_notes.length > 0))) ? (
-                <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
-                  {parsingCreditNotes ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
-                  <span>{parsingCreditNotes ? "Parsing CN..." : "Import Credit Notes (PDF)"}</span>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    multiple={false}
-                    disabled={parsingCreditNotes}
-                    onChange={handleCreditNotePdfUpload}
-                    className="hidden"
-                  />
-                </label>
-              ) : null}
-
-              {/* Export Excel Button */}
-              <button
-                type="button"
-                onClick={handleExportExcel}
-                className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                title="Export current Sell-In rows to Excel"
-              >
-                <Download size={13} className="text-zinc-500" />
-              </button>
-
-              {/* Publish Snapshot Button */}
-              <button
-                type="button"
-                onClick={handlePublishBatch}
-                className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center justify-center transition-all cursor-pointer shadow-2xs active:scale-98"
-              >
-                <span>Publish</span>
-              </button>
             </div>
-          </div>
+          )}
 
           {/* Table Viewport Area */}
           <div className="flex-1 min-h-0 overflow-auto bg-white">
@@ -3234,50 +3871,483 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <div className="w-8 h-8 rounded-full border-2 border-slate-200 border-t-[#0B57D0] animate-spin" />
                 <span className="text-xs text-zinc-500 font-medium">Loading Sell-In records...</span>
               </div>
-            ) : filteredRecords.length === 0 ? (
+            ) : records.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center px-4">
-                <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0B57D0] flex items-center justify-center mb-3">
-                  <FileText size={24} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-zinc-900">
-                    {isCurrentActiveMonth 
-                      ? `${formatPeriodLabel(currentPeriod)} is in progress`
-                      : `${formatPeriodLabel(currentPeriod)} is now finished`}
-                  </h3>
-                  <p className="text-xs text-zinc-500 mt-1 max-w-md leading-relaxed">
-                    {isCurrentActiveMonth
-                      ? "Sales figures are actively synced from Track Orders. As invoices are attached to orders in Track Order, live demand will appear here."
-                      : `Upload the official master Tax Invoice (Day 1 to 31) to finalize and close ${formatPeriodLabel(currentPeriod)} Sell-In.`}
-                  </p>
-                </div>
-                {!isCurrentActiveMonth && (
-                  <div className="flex items-center gap-2 mt-4">
-                    <label className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-98">
-                      {parsingInvoices ? <RefreshCw size={13} className="animate-spin text-white" /> : <FileText size={13} className="text-blue-100" />}
-                      <span>{parsingInvoices ? "Parsing Master Invoice..." : "Upload Master Tax Invoice (PDF)"}</span>
-                      <input type="file" accept=".pdf" multiple={false} disabled={parsingInvoices} onChange={handleInvoicePdfUpload} className="hidden" />
-                    </label>
+                {isCurrentActiveMonth ? (
+                  <>
+                    <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0B57D0] flex items-center justify-center mb-3">
+                      <FileText size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-bold text-zinc-900">
+                        {formatPeriodLabel(currentPeriod)} is currently in progress
+                      </h3>
+                      <p className="text-xs text-zinc-500 mt-1 max-w-md leading-relaxed">
+                        Sales figures are actively synced from Track Orders. As invoices are attached to orders in Track Order, live demand will appear here automatically.
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-col items-center max-w-lg mx-auto py-6 text-center px-4 w-full">
+                    <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mb-3 shadow-2xs">
+                      <AlertTriangle size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-zinc-900">
+                        {formatPeriodLabel(currentPeriod)} has ended — Master Tax Invoice Required
+                      </h3>
+                      <p className="text-xs text-zinc-500 mt-1">
+                        Follow the instructions below to export and upload official sales data from Million System.
+                      </p>
+                    </div>
+
+                    {/* Step-by-Step Instructions Card */}
+                    <div className="mt-4 w-full text-left bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                      {/* Notice Header Banner */}
+                      <div className="p-3.5 bg-amber-50/80 border-b border-amber-200/80 flex items-start gap-2.5">
+                        <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                        <p className="text-xs text-amber-950 font-medium leading-relaxed">
+                          <span className="font-bold">Important:</span> Ensure all Sales Invoices and Credit Notes for <span className="font-bold">{formatPeriodLabel(currentPeriod)}</span> are fully recorded in <strong>Million System</strong> before exporting to PDF.
+                        </p>
+                      </div>
+
+                      {/* Steps list */}
+                      <div className="p-4 space-y-3 divide-y divide-slate-100">
+                        <div className="flex items-start gap-3">
+                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
+                          <div className="text-xs text-zinc-700 leading-relaxed">
+                            Log in to <strong>Million System</strong> and go to the <strong>Sales</strong> page.
+                          </div>
+                        </div>
+
+                        <div className="pt-3 flex items-start gap-3">
+                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
+                          <div className="text-xs text-zinc-700 leading-relaxed">
+                            At the bottom footer menu, locate and click <strong>Print Bill</strong>.
+                          </div>
+                        </div>
+
+                        <div className="pt-3 flex items-start gap-3">
+                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
+                          <div className="text-xs text-zinc-700 leading-relaxed">
+                            Select <strong className="text-zinc-900">Sales Invoice</strong>, set the Date Range from <strong className="font-mono bg-slate-100 px-1 py-0.5 rounded text-zinc-800">{periodDateRange.start}</strong> to <strong className="font-mono bg-slate-100 px-1 py-0.5 rounded text-zinc-800">{periodDateRange.end}</strong>, then click <strong>Print</strong>.
+                          </div>
+                        </div>
+
+                        <div className="pt-3 flex items-start gap-3">
+                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">4</span>
+                          <div className="text-xs text-zinc-700 leading-relaxed">
+                            Choose <strong>Print to PDF</strong>, rename the exported file to <strong className="font-mono text-[#0B57D0]">{currentPeriod}.pdf</strong>, and upload it via <strong className="text-[#0B57D0]">Upload Invoice</strong> in the toolbar above.
+                          </div>
+                        </div>
+
+                        <div className="pt-3 flex items-start gap-3">
+                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">5</span>
+                          <div className="text-xs text-zinc-700 leading-relaxed">
+                            Repeat the same steps for <strong className="text-zinc-900">Credit Note</strong> (if any) with the same date range, and upload it via <strong className="text-[#0B57D0]">Upload Credit Note</strong>.
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
+              </div>
+            ) : sellinViewMode === "summary" ? (
+              <div className="p-4 space-y-5 bg-[#F8F9FA]/60 min-h-full">
+                {/* 1. FINANCIAL SUMMARY METRIC CARDS */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs">
+                    <span className="text-[11px] font-medium text-zinc-500">Gross Sales Demand</span>
+                    <div className="text-lg font-bold text-zinc-900 mt-0.5 font-mono">
+                      ${(compiledSummaryData?.total_demand_amount ?? kpis.grossDemand).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <span className="text-[11px] text-zinc-400">
+                      {(compiledSummaryData?.total_demand_qty ?? kpis.demandQty).toLocaleString()} units demanded
+                    </span>
+                  </div>
+
+                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs">
+                    <span className="text-[11px] font-medium text-zinc-500">Returns & Non-Sales Deductions</span>
+                    <div className="text-lg font-bold text-zinc-700 mt-0.5 font-mono">
+                      -${((compiledSummaryData?.total_cn_amount ?? kpis.cnAmount) + (compiledSummaryData?.total_non_sales_amount ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <span className="text-[11px] text-zinc-400">
+                      {(compiledSummaryData?.total_cn_qty ?? kpis.cnQty).toLocaleString()} returned units
+                    </span>
+                  </div>
+
+                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs">
+                    <span className="text-[11px] font-medium text-zinc-500">Net Receivable Revenue</span>
+                    <div className="text-lg font-bold text-[#0B57D0] mt-0.5 font-mono">
+                      ${(compiledSummaryData?.net_revenue ?? compiledSummaryData?.net_amount ?? kpis.netAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <span className="text-[11px] text-zinc-400">
+                      {(compiledSummaryData?.total_net_qty ?? (kpis.demandQty - kpis.cnQty)).toLocaleString()} net deliverable units
+                    </span>
+                  </div>
+
+                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs">
+                    <span className="text-[11px] font-medium text-zinc-500">Gross Profit & Margin</span>
+                    <div className={`text-lg font-bold mt-0.5 font-mono ${(compiledSummaryData?.gross_profit ?? kpis.grossProfit) >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                      ${(compiledSummaryData?.gross_profit ?? kpis.grossProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <span className="text-[11px] text-zinc-400">
+                      {(compiledSummaryData?.margin_percent ?? kpis.marginPercent).toFixed(1)}% margin (COGS: ${(compiledSummaryData?.total_cost_amount ?? kpis.totalCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                    </span>
+                  </div>
+                </div>
+
+                {/* 2. EXPECTED CASH COLLECTION TIMELINE */}
+                <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
+                  <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                        Expected Cash Collection Schedule
+                      </h3>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        Forecasted cash inflow month calculated from individual buyer payment terms (e.g. 30, 60, 90 days from mid-month).
+                      </p>
+                    </div>
+                    <span className="text-[11px] text-zinc-500 font-medium">
+                      {(compiledSummaryData?.cash_collection_timeline || []).length} scheduled collection periods
+                    </span>
+                  </div>
+                  
+                  {(!compiledSummaryData?.cash_collection_timeline || compiledSummaryData.cash_collection_timeline.length === 0) ? (
+                    <div className="p-6 text-center text-xs text-zinc-400">
+                      No payment terms configured for buyers in this period.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 p-4">
+                      {compiledSummaryData.cash_collection_timeline.map((item: any) => (
+                        <div 
+                          key={item.period} 
+                          className="p-3.5 rounded-lg border border-slate-200 bg-[#F8F9FA]/40 hover:bg-white hover:border-[#0B57D0]/40 transition-all flex flex-col justify-between"
+                        >
+                          <div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{item.period}</span>
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-100">
+                                {item.buyer_count || item.buyers?.length || 0} {(item.buyer_count || item.buyers?.length || 0) === 1 ? "buyer" : "buyers"}
+                              </span>
+                            </div>
+                            <div className="text-sm font-bold text-zinc-900 mt-1">
+                              {item.label}
+                            </div>
+                            <div className="text-base font-bold text-[#0B57D0] mt-1 font-mono">
+                              ${(item.expected_amount ?? item.amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </div>
+                          </div>
+                          <div 
+                            className="text-[10px] text-zinc-500 mt-2 truncate pt-2 border-t border-slate-100" 
+                            title={Array.isArray(item.buyers) ? item.buyers.join(", ") : ""}
+                          >
+                            {Array.isArray(item.buyers) ? item.buyers.join(", ") : ""}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. BUYER BREAKDOWN & ORDERS */}
+                <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
+                  <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                        Buyer Breakdown & Orders ({filteredSummaryBuyers.length})
+                      </h3>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        Itemized demand, return deductions, credit notes, payment terms, and net receivable per customer.
+                      </p>
+                    </div>
+
+                    <div className="relative w-64">
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        type="text"
+                        placeholder="Search buyer, code, channel..."
+                        value={summaryBuyerSearch}
+                        onChange={(e) => setSummaryBuyerSearch(e.target.value)}
+                        className="w-full h-7 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="bg-[#F8F9FA] border-b border-slate-200 text-[11px] font-medium text-zinc-500">
+                        <tr>
+                          <th className="py-2.5 px-3 w-10 text-center">#</th>
+                          <th className="py-2.5 px-3 min-w-[200px]">Buyer Name & Code</th>
+                          <th className="py-2.5 px-3 w-28">Channel</th>
+                          <th className="py-2.5 px-3 w-24 text-center">Payment Term</th>
+                          <th className="py-2.5 px-3 w-32 text-center">Expected Month</th>
+                          <th className="py-2.5 px-3 w-24 text-right">Demand (pcs)</th>
+                          <th className="py-2.5 px-3 w-28 text-right">Gross Demand ($)</th>
+                          <th className="py-2.5 px-3 w-24 text-right">CN Deduct ($)</th>
+                          <th className="py-2.5 px-3 w-24 text-right">Non-Sales ($)</th>
+                          <th className="py-2.5 px-3 w-28 text-right">Net Receivable ($)</th>
+                          <th className="py-2.5 px-3 w-20 text-center">Items</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredSummaryBuyers.map((b: any, bIdx: number) => {
+                          const isExpanded = Boolean(expandedBuyerKeys[b.buyer_code || b.buyer_name]);
+                          const buyerNetAmt = b.net_receivable ?? b.net_amount ?? 0;
+                          const buyerCnAmt = b.cn_amount ?? b.reject_amount ?? 0;
+                          const itemsCount = Array.isArray(b.items) ? b.items.length : 0;
+                          const nonSalesCount = Array.isArray(b.non_sales_items) ? b.non_sales_items.length : 0;
+
+                          return (
+                            <React.Fragment key={b.buyer_code || b.buyer_name || bIdx}>
+                              <tr className="hover:bg-slate-50/80 transition-colors">
+                                <td className="py-2.5 px-3 text-center text-zinc-400 font-mono text-[11px]">{bIdx + 1}</td>
+                                <td className="py-2.5 px-3">
+                                  <div className="font-semibold text-zinc-900">{b.buyer_name || "—"}</div>
+                                  <div className="text-[11px] text-zinc-400 font-mono">{b.buyer_code}</div>
+                                </td>
+                                <td className="py-2.5 px-3">
+                                  <span className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
+                                    {b.channel || "Retailer"}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-center text-zinc-700 font-mono">
+                                  {b.payment_term || "90"} Days
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-[#0B57D0] border border-blue-100">
+                                    {b.expected_collection_label || b.expected_collection_period || "—"}
+                                  </span>
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-zinc-800 font-mono font-medium">
+                                  {Number(b.demand_qty || 0).toLocaleString()}
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-zinc-800 font-mono">
+                                  ${Number(b.demand_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-zinc-600 font-mono">
+                                  {buyerCnAmt > 0 ? `-$${Number(buyerCnAmt).toFixed(2)}` : "-"}
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-zinc-500 font-mono">
+                                  {Number(b.non_sales_amount || 0) > 0 ? `-$${Number(b.non_sales_amount).toFixed(2)}` : "-"}
+                                </td>
+                                <td className="py-2.5 px-3 text-right text-[#0B57D0] font-mono font-bold">
+                                  ${Number(buyerNetAmt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </td>
+                                <td className="py-2.5 px-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleBuyerExpand(b.buyer_code || b.buyer_name)}
+                                    className="px-2 py-1 rounded bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 text-[10.5px] font-medium inline-flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                                    title="View itemized products purchased"
+                                  >
+                                    <span>{itemsCount} {itemsCount === 1 ? "SKU" : "SKUs"}</span>
+                                    {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                                  </button>
+                                </td>
+                              </tr>
+
+                              {/* Expanded Itemized Order Details */}
+                              {isExpanded && (
+                                <tr className="bg-slate-50/50">
+                                  <td colSpan={11} className="py-3 px-6 border-y border-slate-200/80">
+                                    <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-2xs">
+                                      <div className="text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-2 flex items-center justify-between">
+                                        <span>Product Deliveries for {b.buyer_name}</span>
+                                        <span className="text-zinc-400 font-normal">
+                                          {itemsCount} line items {nonSalesCount > 0 ? `+ ${nonSalesCount} deductions` : ""}
+                                        </span>
+                                      </div>
+                                      <table className="w-full text-left border-collapse text-xs">
+                                        <thead className="border-b border-slate-100 text-[10.5px] font-medium text-zinc-400 bg-slate-50/60">
+                                          <tr>
+                                            <th className="py-1.5 px-2.5">Product SKU & Name</th>
+                                            <th className="py-1.5 px-2.5 w-28">Brand</th>
+                                            <th className="py-1.5 px-2.5 w-20 text-right">Demand Qty</th>
+                                            <th className="py-1.5 px-2.5 w-24 text-right">Unit Price</th>
+                                            <th className="py-1.5 px-2.5 w-24 text-right">Total Demand</th>
+                                            <th className="py-1.5 px-2.5 w-24 text-right">CN Rejects</th>
+                                            <th className="py-1.5 px-2.5 w-24 text-right">Net Amount</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                          {(b.items || []).map((it: any, itIdx: number) => {
+                                            const itNetAmt = it.nett_amount ?? it.net_receivable ?? (Number(it.total_demand || 0) - Number(it.cn_amount || 0));
+                                            return (
+                                              <tr key={it.sku || itIdx} className="hover:bg-slate-50/60 text-[11px]">
+                                                <td className="py-1.5 px-2.5">
+                                                  <span className="font-semibold text-zinc-900">{it.sku || "—"}</span>
+                                                  <span className="text-zinc-600 ml-2">{it.name || "—"}</span>
+                                                </td>
+                                                <td className="py-1.5 px-2.5 text-zinc-600">{it.brand || "—"}</td>
+                                                <td className="py-1.5 px-2.5 text-right font-mono text-zinc-800">
+                                                  {Number(it.qty ?? it.demand_qty ?? 0).toLocaleString()}
+                                                </td>
+                                                <td className="py-1.5 px-2.5 text-right font-mono text-zinc-600">
+                                                  ${Number(it.unit_price || 0).toFixed(2)}
+                                                </td>
+                                                <td className="py-1.5 px-2.5 text-right font-mono text-zinc-800">
+                                                  ${Number(it.total_demand ?? it.demand_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </td>
+                                                <td className="py-1.5 px-2.5 text-right font-mono text-zinc-500">
+                                                  {Number(it.cn_amount || 0) > 0 ? `-$${Number(it.cn_amount).toFixed(2)}` : "-"}
+                                                </td>
+                                                <td className="py-1.5 px-2.5 text-right font-mono font-semibold text-zinc-900">
+                                                  ${Number(itNetAmt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+
+                                      {/* Non sales items for this buyer */}
+                                      {Array.isArray(b.non_sales_items) && b.non_sales_items.length > 0 && (
+                                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2">
+                                          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Non-Sales Deductions:</span>
+                                          {b.non_sales_items.map((ns: any, nsIdx: number) => (
+                                            <span key={nsIdx} className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-red-50 text-red-700 border border-red-200">
+                                              {ns.description}: -${Number(ns.amount || 0).toFixed(2)}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                {/* 4. SKU OUTPUT SUMMARY (Product Catalog Only) */}
+                <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
+                  <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                        SKU Output Summary ({filteredSummarySkus.length})
+                      </h3>
+                      <p className="text-[11px] text-zinc-500 mt-0.5">
+                        Compiled physical product volumes, net shipments, revenue, inventory COGS, and gross profit margins.
+                      </p>
+                    </div>
+
+                    <div className="relative w-64">
+                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                      <input
+                        type="text"
+                        placeholder="Search SKU, name, brand..."
+                        value={summarySkuSearch}
+                        onChange={(e) => setSummarySkuSearch(e.target.value)}
+                        className="w-full h-7 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="bg-[#F8F9FA] border-b border-slate-200 text-[11px] font-medium text-zinc-500">
+                        <tr>
+                          <th className="py-2.5 px-3 w-10 text-center">#</th>
+                          <th className="py-2.5 px-3 w-32">Product SKU</th>
+                          <th className="py-2.5 px-3 min-w-[200px]">Product Description</th>
+                          <th className="py-2.5 px-3 w-28">Brand</th>
+                          <th className="py-2.5 px-3 w-24 text-right">Demand (pcs)</th>
+                          <th className="py-2.5 px-3 w-24 text-right">Reject (pcs)</th>
+                          <th className="py-2.5 px-3 w-24 text-right">Net Qty (pcs)</th>
+                          <th className="py-2.5 px-3 w-28 text-right">Demand ($)</th>
+                          <th className="py-2.5 px-3 w-24 text-right">CN ($)</th>
+                          <th className="py-2.5 px-3 w-28 text-right">Net Revenue ($)</th>
+                          <th className="py-2.5 px-3 w-24 text-right">Unit Cost ($)</th>
+                          <th className="py-2.5 px-3 w-28 text-right">Total COGS ($)</th>
+                          <th className="py-2.5 px-3 w-28 text-right">Gross Profit ($)</th>
+                          <th className="py-2.5 px-3 w-20 text-right">Margin (%)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredSummarySkus.map((s: any, sIdx: number) => {
+                          const sNetRev = s.net_revenue ?? s.net_amount ?? (Number(s.demand_amount || 0) - Number(s.cn_amount || 0));
+                          const sProfit = s.gross_profit ?? (sNetRev - Number(s.total_cost || 0));
+                          const sMargin = s.margin_percent ?? (sNetRev > 0 ? (sProfit / sNetRev) * 100 : 0);
+
+                          return (
+                            <tr key={s.sku || sIdx} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="py-2.5 px-3 text-center text-zinc-400 font-mono text-[11px]">{sIdx + 1}</td>
+                              <td className="py-2.5 px-3 font-semibold text-zinc-900 font-mono">{s.sku}</td>
+                              <td className="py-2.5 px-3 text-zinc-700">{s.product_name || "—"}</td>
+                              <td className="py-2.5 px-3 text-zinc-600">{s.brand || "—"}</td>
+                              <td className="py-2.5 px-3 text-right font-mono text-zinc-800">{Number(s.demand_qty || 0).toLocaleString()}</td>
+                              <td className="py-2.5 px-3 text-right font-mono text-zinc-500">
+                                {Number(s.reject_qty || 0) > 0 ? Number(s.reject_qty).toLocaleString() : "-"}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-semibold text-zinc-900">
+                                {Number(s.net_qty || (Number(s.demand_qty || 0) - Number(s.reject_qty || 0))).toLocaleString()}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-zinc-800">
+                                ${Number(s.demand_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-zinc-500">
+                                {Number(s.cn_amount || 0) > 0 ? `-$${Number(s.cn_amount).toFixed(2)}` : "-"}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono font-semibold text-[#0B57D0]">
+                                ${Number(sNetRev).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-zinc-600">
+                                ${Number(s.cost_price || 0).toFixed(2)}
+                              </td>
+                              <td className="py-2.5 px-3 text-right font-mono text-zinc-600">
+                                ${Number(s.total_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td className={`py-2.5 px-3 text-right font-mono font-semibold ${sProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                                ${Number(sProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                              <td className={`py-2.5 px-3 text-right font-mono font-semibold ${sMargin >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                                {Number(sMargin).toFixed(1)}%
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : filteredRecords.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+                <div className="w-12 h-12 rounded-xl bg-slate-100 text-zinc-400 flex items-center justify-center mb-3">
+                  <Search size={22} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-900">No matching Sell-In records</h3>
+                  <p className="text-xs text-zinc-500 mt-1 max-w-sm leading-relaxed">
+                    No records match your active search or filter criteria. Try clearing your search term or adjusting filters.
+                  </p>
+                </div>
               </div>
             ) : (
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 shadow-2xs">
-                  <tr className="text-[11px] font-medium text-zinc-500">
-                    <th className="py-2.5 px-3 w-12 text-center">#</th>
-                    <th className="py-2.5 px-3 w-20">Source</th>
-                    <th className="py-2.5 px-3 min-w-[150px]">Buyer</th>
-                    <th className="py-2.5 px-3 min-w-[120px]">Channel</th>
-                    <th className="py-2.5 px-3 w-[160px] max-w-[170px]">Product SKU & Description</th>
-                    <th className="py-2.5 px-3 min-w-[110px]">Brand</th>
-                    <th className="py-2.5 px-3 w-24 text-right">Demand Qty</th>
-                    <th className="py-2.5 px-3 w-28 text-right">Unit Price ($)</th>
-                    <th className="py-2.5 px-3 w-28 text-right">Total Demand</th>
-                    <th className="py-2.5 px-3 w-24 text-right">Reject Qty</th>
-                    <th className="py-2.5 px-3 w-24 text-right">CN ($)</th>
-                    <th className="py-2.5 px-3 min-w-[160px] text-center">Diagnostic Status</th>
-                    <th className="py-2.5 px-2 w-10 text-center"></th>
+                  <tr className="text-[11px] font-medium text-zinc-500 whitespace-nowrap">
+                    <th className="py-2.5 px-3 w-12 text-center whitespace-nowrap">#</th>
+                    <th className="py-2.5 px-2 w-14 text-center whitespace-nowrap"></th>
+                    {batchData?.status !== "published" && (
+                      <th className="py-2.5 px-3 min-w-[150px] text-center whitespace-nowrap">Diagnostic Status</th>
+                    )}
+                    <th className="py-2.5 px-3 w-[150px] max-w-[150px] whitespace-nowrap">Buyer</th>
+                    <th className="py-2.5 px-3 min-w-[120px] whitespace-nowrap">Channel</th>
+                    <th className="py-2.5 px-3 min-w-[110px] whitespace-nowrap">Type</th>
+                    <th className="py-2.5 px-3 w-[160px] max-w-[170px] whitespace-nowrap">Product SKU & Description</th>
+                    <th className="py-2.5 px-3 min-w-[110px] whitespace-nowrap">Brand</th>
+                    <th className="py-2.5 px-3 min-w-[105px] text-right whitespace-nowrap">Unit Price ($)</th>
+                    <th className="py-2.5 px-3 min-w-[105px] text-right bg-emerald-50/80 text-emerald-900 border-x border-emerald-100 whitespace-nowrap">Demand Qty</th>
+                    <th className="py-2.5 px-3 min-w-[105px] text-right bg-emerald-50/80 text-emerald-900 border-r border-emerald-100 whitespace-nowrap">Total $</th>
+                    <th className="py-2.5 px-3 min-w-[105px] text-right bg-red-50/80 text-red-900 border-r border-red-100 whitespace-nowrap">Reject Qty</th>
+                    <th className="py-2.5 px-3 min-w-[105px] text-right bg-red-50/80 text-red-900 border-r border-red-100 whitespace-nowrap">Total $</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -3297,210 +4367,49 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           {idx + 1}
                         </td>
 
-                        {/* Source */}
-                        <td className="py-2 px-3">
-                          {(() => {
-                            const isCnOnly = r.source_type === "pdf_credit_note";
-                            const hasInvoices = !isCnOnly && (!!r.source_file_url || (Array.isArray(r.invoices) && r.invoices.length > 0));
-                            const invoiceUrl = !isCnOnly ? r.source_file_url : (r.invoices?.[0]?.source_file_url || "");
-                            
-                            const hasCns = (Array.isArray(r.credit_notes) && r.credit_notes.length > 0) || isCnOnly;
-                            const cnUrl = r.credit_notes?.find((c: any) => c.source_file_url)?.source_file_url || (isCnOnly ? r.source_file_url : "");
-
-                            if (hasInvoices && hasCns && invoiceUrl && cnUrl) {
-                              return (
-                                <div className="flex items-center gap-1.5 whitespace-nowrap">
-                                  <a
-                                    href={invoiceUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-[#0B57D0] hover:bg-blue-100 text-[10.5px] font-mono font-medium transition-colors"
-                                    title={`View Invoice: ${r.source_file_name || 'Invoice'}`}
-                                  >
-                                    <FileText size={10} className="text-[#0B57D0]" />
-                                    <span>INV</span>
-                                  </a>
-                                  <span className="text-zinc-300">•</span>
-                                  <a
-                                    href={cnUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-zinc-700 hover:bg-slate-200 text-[10.5px] font-mono font-medium transition-colors"
-                                    title="View Credit Note"
-                                  >
-                                    <FileText size={10} className="text-zinc-500" />
-                                    <span>CN</span>
-                                  </a>
-                                </div>
-                              );
-                            }
-
-                            if (hasCns && cnUrl) {
-                              return (
-                                <a
-                                  href={cnUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-zinc-700 hover:bg-slate-200 text-[10.5px] font-mono font-medium transition-colors"
-                                  title={`View Credit Note: ${r.source_file_name || 'Credit Note'}`}
-                                >
-                                  <FileText size={10} className="text-zinc-500" />
-                                  <span className="truncate max-w-[85px]">{r.source_file_name || "CN"}</span>
-                                </a>
-                              );
-                            }
-
-                            if (hasInvoices && invoiceUrl) {
-                              return (
-                                <a
-                                  href={invoiceUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-[#0B57D0] hover:underline inline-flex items-center gap-1 text-[10.5px] font-mono group"
-                                  title={`View source invoice: ${r.source_file_name || 'Invoice'}`}
-                                >
-                                  <FileText size={11} className="shrink-0 text-blue-600 group-hover:scale-110 transition-transform" />
-                                  <span className="truncate max-w-[85px]">{r.source_file_name || "INVOICE"}</span>
-                                </a>
-                              );
-                            }
-
-                            return (
-                              <span className="text-[10.5px] font-mono text-zinc-500">
-                                {r.source_type?.toUpperCase() || "INVOICE"}
-                              </span>
-                            );
-                          })()}
-                        </td>
-
-                        {/* Buyer Code & Name */}
-                        <td className="py-2 px-3">
-                          {(() => {
-                            const matchedBuyer = buyersList.find((b) => 
-                              (r.buyer_code && (b.buyer_code === r.buyer_code || b.id === r.buyer_code)) ||
-                              (b.buyer_name && r.buyer_name && b.buyer_name.trim().toLowerCase() === r.buyer_name.trim().toLowerCase())
-                            );
-                            const displayCode = r.buyer_code || matchedBuyer?.buyer_code || "";
-                            const displayName = r.buyer_name || matchedBuyer?.buyer_name || displayCode || "Unknown Buyer";
-
-                            return (
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-zinc-800 font-medium truncate" title={displayName}>
-                                  {displayName}
-                                </span>
-                                {displayCode ? (
-                                  <span className="text-[10px] text-zinc-500 font-mono font-medium">{displayCode}</span>
-                                ) : (
-                                  <span className="text-[10px] text-amber-600 font-medium italic">Unregistered Buyer</span>
-                                )}
-                              </div>
-                            );
-                          })()}
-                        </td>
-
-                        {/* Channel */}
-                        <td className="py-2 px-3">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAssignChannelTarget(r);
-                              setSelectedAssignChannel(r.channel || channelsList[0]?.channel_name || "Retailer");
-                              setApplyChannelToAllBuyerRows(true);
-                              setShowAssignChannelModal(true);
-                            }}
-                            className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0B57D0] border border-slate-200/80 hover:border-blue-200 transition-colors cursor-pointer inline-flex items-center gap-1 group"
-                            title="Click to assign sales channel"
-                          >
-                            <span>{r.channel || "Retailer"}</span>
-                            <Edit2 size={9} className="text-zinc-400 group-hover:text-[#0B57D0] opacity-60 group-hover:opacity-100" />
-                          </button>
-                        </td>
-
-                        {/* Product SKU & Name */}
-                        <td className="py-2 px-3 w-[160px] max-w-[170px] overflow-hidden">
-                          <div className="flex flex-col min-w-0 max-w-[160px]">
-                            <span 
-                              className="text-zinc-800 truncate block font-medium" 
-                              title={r.product_name || r.product_sku || ""}
-                            >
-                              {r.product_name || r.product_sku || "(No Description)"}
-                            </span>
-                            <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
-                              <span 
-                                className={`text-[10px] font-mono truncate shrink min-w-0 max-w-[130px] ${!r.product_sku ? "text-amber-600 font-semibold" : "text-zinc-500"}`}
-                                title={r.product_sku || "(Blank SKU)"}
-                              >
-                                {r.product_sku || "(Blank SKU)"}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => handleOpenAssignProductModal(r)}
-                                className="p-0.5 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer inline-flex items-center justify-center group shrink-0"
-                                title="Click to assign master product SKU"
-                              >
-                                <Edit2 size={10} className="group-hover:scale-110 transition-transform" />
-                              </button>
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* Brand */}
-                        <td className="py-2 px-3 text-zinc-600">
-                          {r.brand || "Unassigned"}
-                        </td>
-
-                        {/* Demand Quantity */}
-                        <td className="py-2 px-3 text-right text-zinc-800 font-mono">
-                          <div className="flex items-center justify-end gap-1.5">
-                            <span>{Number(r.demand_qty ?? r.quantity ?? 0).toLocaleString()}</span>
-                            {Array.isArray(r.invoices) && r.invoices.length > 0 && (
+                        {/* Row Actions: Invoice/CN Breakdown & Edit Snapshot Cost (At Very Left Side) */}
+                        <td className="py-2 px-2 text-center whitespace-nowrap w-14">
+                          <div className="flex items-center justify-center gap-1">
+                            {((Array.isArray(r.invoices) && r.invoices.length > 0) || 
+                              (Array.isArray(r.credit_notes) && r.credit_notes.length > 0) || 
+                              Number(r.demand_qty ?? r.quantity ?? 0) > 0 ||
+                              Number(r.reject_qty ?? r.cn_quantity ?? 0) > 0 ||
+                              !!r.source_file_url ||
+                              !!r.invoice_file_url ||
+                              !!r.cn_file_url) && (
                               <button
                                 type="button"
                                 onClick={() => setSelectedInvoiceBreakdownRow(r)}
                                 className="p-1 rounded hover:bg-blue-50 text-[#0B57D0] transition-colors cursor-pointer inline-flex items-center justify-center"
-                                title={`Click to view invoice breakdown (${r.invoices.length} invoice${r.invoices.length === 1 ? '' : 's'})`}
+                                title="View invoice & credit note breakdown"
                               >
                                 <FileText size={13} />
                               </button>
                             )}
-                          </div>
-                        </td>
-
-                        {/* Unit Price ($/pcs) - 100% from Invoice, non-editable */}
-                        <td className="py-2 px-3 text-right text-zinc-800 font-mono">
-                          <div className="flex flex-col items-end gap-0.5">
-                            <span>${Number(r.unit_price || 0).toFixed(2)}</span>
-                            {r.has_price_mismatch && (
+                            {batchData?.status !== "published" && (
                               <button
                                 type="button"
-                                onClick={() => handleOpenPriceMismatchModal(r)}
-                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-sans font-medium bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 transition-colors cursor-pointer"
-                                title={`Invoice: $${Number(r.unit_price || 0).toFixed(2)} vs List Price: $${Number(r.listing_price || 0).toFixed(2)}. Click to review or update.`}
+                                onClick={() => handleOpenCostSnapshotModal(r)}
+                                className={`p-1 rounded transition-colors cursor-pointer ${
+                                  Number(r.cost_price || 0) > 0 
+                                    ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" 
+                                    : "text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50"
+                                }`}
+                                title={
+                                  Number(r.cost_price || 0) > 0 
+                                    ? `Snapshot Cost: $${Number(r.cost_price).toFixed(2)} (Click to edit for this month)` 
+                                    : "Set Snapshot Cost Price for this month"
+                                }
                               >
-                                <AlertTriangle size={10} className="text-amber-600 shrink-0" />
-                                <span>List Price: ${Number(r.listing_price || 0).toFixed(2)}</span>
+                                <DollarSign size={13} />
                               </button>
                             )}
                           </div>
                         </td>
 
-                        {/* Total Gross Demand ($) */}
-                        <td className="py-2 px-3 text-right text-zinc-800 font-mono font-medium">
-                          ${Number(r.total_demand || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </td>
-
-                        {/* Reject Qty */}
-                        <td className="py-2 px-3 text-right text-zinc-600 font-mono">
-                          {Number(r.reject_qty ?? r.cn_quantity ?? 0) > 0 ? Number(r.reject_qty ?? r.cn_quantity ?? 0).toLocaleString() : "-"}
-                        </td>
-
-                        {/* CN Amount ($) */}
-                        <td className="py-2 px-3 text-right text-zinc-500 font-mono">
-                          {Number(r.cn_amount || 0) > 0 ? `-$${Number(r.cn_amount).toFixed(2)}` : "-"}
-                        </td>
-
-                        {/* 3-Tier Diagnostic Badges & Actions */}
-                        <td className="py-2 px-3 text-center">
+                        {/* 3-Tier Diagnostic Badges & Actions (Then Diagnose) */}
+                        {batchData?.status !== "published" && (
+                          <td className="py-2 px-3 text-center">
                           {isUnregistered ? (
                             <button
                               type="button"
@@ -3508,7 +4417,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                 setNewBuyerCode(r.buyer_code);
                                 setNewBuyerName(r.buyer_name || r.buyer_code);
                                 setNewBuyerChannel(r.source_type === "tiktok" ? "TikTok" : "Retailer");
-                                setNewBuyerPaymentTerm("90");
+                                setNewBuyerPaymentTerm("3");
                                 setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
                                 setShowAddBuyerModal(true);
                               }}
@@ -3564,27 +4473,162 @@ export function SellInModule({ profile }: SellInModuleProps) {
                             </span>
                           )}
                         </td>
+                      )}
 
-                        {/* Row Actions: Edit Snapshot Cost */}
-                        <td className="py-2 px-2 text-center whitespace-nowrap w-10">
-                          <div className="flex items-center justify-center">
+                        {/* Buyer Code & Name */}
+                        <td className="py-2 px-3 w-[150px] max-w-[150px] overflow-hidden">
+                          {(() => {
+                            const matchedBuyer = buyersList.find((b) => 
+                              (r.buyer_code && (b.buyer_code === r.buyer_code || b.id === r.buyer_code)) ||
+                              (b.buyer_name && r.buyer_name && b.buyer_name.trim().toLowerCase() === r.buyer_name.trim().toLowerCase())
+                            );
+                            const displayCode = r.buyer_code || matchedBuyer?.buyer_code || "";
+                            const displayName = r.buyer_name || matchedBuyer?.buyer_name || displayCode || "Unknown Buyer";
+
+                            return (
+                              <div className="flex flex-col min-w-0 max-w-[140px]">
+                                <span className="text-zinc-800 font-medium truncate block" title={displayName}>
+                                  {displayName}
+                                </span>
+                                {displayCode ? (
+                                  <span className="text-[10px] text-zinc-500 font-mono font-medium truncate block" title={displayCode}>{displayCode}</span>
+                                ) : (
+                                  <span className="text-[10px] text-amber-600 font-medium italic truncate block">Unregistered Buyer</span>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </td>
+
+                        {/* Channel */}
+                        <td className="py-2 px-3">
+                          {batchData?.status === "published" ? (
+                            <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200/80 inline-flex items-center">
+                              {r.channel || "Retailer"}
+                            </span>
+                          ) : (
                             <button
                               type="button"
-                              onClick={() => handleOpenCostSnapshotModal(r)}
-                              className={`p-1 rounded transition-colors cursor-pointer ${
-                                Number(r.cost_price || 0) > 0 
-                                  ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" 
-                                  : "text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50"
-                              }`}
-                              title={
-                                Number(r.cost_price || 0) > 0 
-                                  ? `Snapshot Cost: $${Number(r.cost_price).toFixed(2)} (Click to edit for this month)` 
-                                  : "Set Snapshot Cost Price for this month"
-                              }
+                              onClick={() => {
+                                setAssignChannelTarget(r);
+                                setSelectedAssignChannel(r.channel || channelsList[0]?.channel_name || "Retailer");
+                                setApplyChannelToAllBuyerRows(true);
+                                setShowAssignChannelModal(true);
+                              }}
+                              className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0B57D0] border border-slate-200/80 hover:border-blue-200 transition-colors cursor-pointer inline-flex items-center gap-1 group"
+                              title="Click to assign sales channel"
                             >
-                              <DollarSign size={13} />
+                              <span>{r.channel || "Retailer"}</span>
+                              <Edit2 size={9} className="text-zinc-400 group-hover:text-[#0B57D0] opacity-60 group-hover:opacity-100" />
                             </button>
+                          )}
+                        </td>
+
+                        {/* Type */}
+                        <td className="py-2 px-3">
+                          {(() => {
+                            const itType = r.item_type || "product";
+                            const config = ITEM_TYPES.find((t) => t.value === itType) || ITEM_TYPES[0];
+                            if (batchData?.status === "published") {
+                              return (
+                                <span className={`px-2 py-0.5 rounded text-[11px] font-medium border inline-flex items-center ${config.badgeClass}`}>
+                                  {config.shortLabel}
+                                </span>
+                              );
+                            }
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAssignItemTypeModal(r)}
+                                className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer inline-flex items-center gap-1 group ${config.badgeClass}`}
+                                title={`Type: ${config.label}. Click to assign or edit.`}
+                              >
+                                <span>{config.shortLabel}</span>
+                                <Edit2 size={9} className="opacity-60 group-hover:opacity-100" />
+                              </button>
+                            );
+                          })()}
+                        </td>
+
+                        {/* Product SKU & Name */}
+                        <td className="py-2 px-3 w-[160px] max-w-[170px] overflow-hidden">
+                          <div className="flex flex-col min-w-0 max-w-[160px]">
+                            <span 
+                              className="text-zinc-800 truncate block font-medium" 
+                              title={r.product_name || r.product_sku || ""}
+                            >
+                              {r.product_name || r.product_sku || "(No Description)"}
+                            </span>
+                            <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                              <span 
+                                className={`text-[10px] font-mono truncate shrink min-w-0 max-w-[130px] ${!r.product_sku ? "text-amber-600 font-semibold" : "text-zinc-500"}`}
+                                title={r.product_sku || "(Blank SKU)"}
+                              >
+                                {r.product_sku || "(Blank SKU)"}
+                              </span>
+                              {batchData?.status !== "published" && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAssignProductModal(r)}
+                                  className="p-0.5 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer inline-flex items-center justify-center group shrink-0"
+                                  title="Click to assign master product SKU"
+                                >
+                                  <Edit2 size={10} className="group-hover:scale-110 transition-transform" />
+                                </button>
+                              )}
+                            </div>
                           </div>
+                        </td>
+
+                        {/* Brand */}
+                        <td className="py-2 px-3 text-zinc-600">
+                          {r.brand || "Unassigned"}
+                        </td>
+
+                        {/* Unit Price ($/pcs) - 100% from Invoice, non-editable */}
+                        <td className="py-2 px-3 text-right text-zinc-800 font-mono">
+                          <div className="flex items-center justify-end gap-1.5">
+                            {r.has_price_mismatch && (
+                              batchData?.status === "published" ? (
+                                <span
+                                  className="p-0.5 rounded-full text-amber-600 inline-flex items-center justify-center shrink-0 cursor-default"
+                                  title={`List Price : $${Number(r.listing_price || 0).toFixed(2)}`}
+                                >
+                                  <AlertCircle size={13} className="stroke-[2.2]" />
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenPriceMismatchModal(r)}
+                                  className="p-0.5 rounded-full text-amber-600 hover:text-amber-700 hover:bg-amber-100/70 transition-colors cursor-pointer inline-flex items-center justify-center shrink-0"
+                                  title={`List Price : $${Number(r.listing_price || 0).toFixed(2)}`}
+                                >
+                                  <AlertCircle size={13} className="stroke-[2.2]" />
+                                </button>
+                              )
+                            )}
+                            <span>${Number(r.unit_price || 0).toFixed(2)}</span>
+                          </div>
+                        </td>
+
+                        {/* Demand Quantity - Light Green */}
+                        <td className="py-2 px-3 text-right text-emerald-950 font-mono bg-emerald-50/50 border-x border-emerald-100/50 whitespace-nowrap">
+                          <span>{Number(r.demand_qty ?? r.quantity ?? 0).toLocaleString()}</span>
+                        </td>
+
+                        {/* Total Demand ($) - Light Green */}
+                        <td className="py-2 px-3 text-right text-emerald-950 font-mono font-medium bg-emerald-50/50 border-r border-emerald-100/50 whitespace-nowrap">
+                          ${Number(r.total_demand || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+
+                        {/* Reject Qty - Light Red */}
+                        <td className="py-2 px-3 text-right text-red-950 font-mono bg-red-50/50 border-r border-red-100/50 whitespace-nowrap">
+                          {Number(r.reject_qty ?? r.cn_quantity ?? 0) > 0 ? Number(r.reject_qty ?? r.cn_quantity ?? 0).toLocaleString() : "-"}
+                        </td>
+
+                        {/* CN Total ($) - Light Red */}
+                        <td className="py-2 px-3 text-right text-red-950 font-mono bg-red-50/50 border-r border-red-100/50 whitespace-nowrap">
+                          {Number(r.cn_amount || 0) > 0 ? `-$${Number(r.cn_amount).toFixed(2)}` : "-"}
                         </td>
                       </tr>
                     );
@@ -5155,58 +6199,90 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
-                  {Array.isArray(selectedInvoiceBreakdownRow.invoices) && selectedInvoiceBreakdownRow.invoices.length > 0 ? (
-                    selectedInvoiceBreakdownRow.invoices.map((inv: any, idx: number) => (
+                  {(() => {
+                    const invs = Array.isArray(selectedInvoiceBreakdownRow.invoices) && selectedInvoiceBreakdownRow.invoices.length > 0
+                      ? selectedInvoiceBreakdownRow.invoices
+                      : (Number(selectedInvoiceBreakdownRow.total_demand || 0) > 0 || Number(selectedInvoiceBreakdownRow.demand_qty ?? selectedInvoiceBreakdownRow.quantity ?? 0) > 0)
+                        ? [{
+                            invoice_no: selectedInvoiceBreakdownRow.invoice_file_name || selectedInvoiceBreakdownRow.source_file_name || "Invoice",
+                            invoice_date: "-",
+                            qty: Number(selectedInvoiceBreakdownRow.demand_qty ?? selectedInvoiceBreakdownRow.quantity ?? 0),
+                            unit_price: Number(selectedInvoiceBreakdownRow.unit_price || 0),
+                            amount: Number(selectedInvoiceBreakdownRow.total_demand || 0)
+                          }]
+                        : [];
+
+                    if (invs.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={5} className="py-3 text-center text-zinc-400 text-xs">
+                            No invoice breakdown details available.
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return invs.map((inv: any, idx: number) => (
                       <tr key={idx}>
                         <td className="py-2 px-2 text-[#0B57D0] font-semibold">{inv.invoice_no}</td>
-                        <td className="py-2 px-2 text-zinc-600">{inv.invoice_date}</td>
+                        <td className="py-2 px-2 text-zinc-600">{inv.invoice_date || "-"}</td>
                         <td className="py-2 px-2 text-right text-zinc-800 font-semibold">{inv.qty}</td>
                         <td className="py-2 px-2 text-right text-zinc-600">${Number(inv.unit_price || 0).toFixed(2)}</td>
                         <td className="py-2 px-2 text-right text-zinc-900 font-semibold">${Number(inv.amount || 0).toFixed(2)}</td>
                       </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={5} className="py-3 text-center text-zinc-400 text-xs">
-                        No invoice breakdown details available.
-                      </td>
-                    </tr>
-                  )}
+                    ));
+                  })()}
                 </tbody>
               </table>
 
-              {Array.isArray(selectedInvoiceBreakdownRow.credit_notes) && selectedInvoiceBreakdownRow.credit_notes.length > 0 && (
-                <div className="mt-4 pt-3 border-t border-slate-200">
-                  <div className="text-xs font-semibold text-zinc-900 mb-2 flex items-center gap-1.5">
-                    <span>Credit Notes / Rejects</span>
-                    <span className="text-[10px] bg-slate-100 text-zinc-700 px-1.5 py-0.5 rounded border border-slate-200 font-mono">
-                      {selectedInvoiceBreakdownRow.credit_notes.length}
-                    </span>
-                  </div>
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 text-zinc-500 font-medium border-b border-slate-200 text-[11px]">
-                        <th className="py-1.5 px-2">CN No</th>
-                        <th className="py-1.5 px-2">Date</th>
-                        <th className="py-1.5 px-2 text-right">Reject Qty</th>
-                        <th className="py-1.5 px-2 text-right">Unit Price</th>
-                        <th className="py-1.5 px-2 text-right">CN Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 font-mono">
-                      {selectedInvoiceBreakdownRow.credit_notes.map((cn: any, idx: number) => (
-                        <tr key={idx}>
-                          <td className="py-2 px-2 text-zinc-900 font-semibold">{cn.cn_no}</td>
-                          <td className="py-2 px-2 text-zinc-600">{cn.cn_date}</td>
-                          <td className="py-2 px-2 text-right text-zinc-800 font-semibold">{cn.qty}</td>
-                          <td className="py-2 px-2 text-right text-zinc-600">${Number(cn.unit_price || 0).toFixed(2)}</td>
-                          <td className="py-2 px-2 text-right text-zinc-900 font-semibold">-${Number(cn.amount || 0).toFixed(2)}</td>
+              {(() => {
+                const cns = Array.isArray(selectedInvoiceBreakdownRow.credit_notes) && selectedInvoiceBreakdownRow.credit_notes.length > 0
+                  ? selectedInvoiceBreakdownRow.credit_notes
+                  : (Number(selectedInvoiceBreakdownRow.cn_amount || 0) > 0 || Number(selectedInvoiceBreakdownRow.reject_qty ?? selectedInvoiceBreakdownRow.cn_quantity ?? 0) > 0)
+                    ? [{
+                        cn_no: selectedInvoiceBreakdownRow.cn_file_name || selectedInvoiceBreakdownRow.source_file_name || "Credit Note",
+                        cn_date: "-",
+                        qty: Number(selectedInvoiceBreakdownRow.reject_qty ?? selectedInvoiceBreakdownRow.cn_quantity ?? 0),
+                        unit_price: Number(selectedInvoiceBreakdownRow.unit_price || 0),
+                        amount: Number(selectedInvoiceBreakdownRow.cn_amount || 0)
+                      }]
+                    : [];
+
+                if (cns.length === 0) return null;
+
+                return (
+                  <div className="mt-4 pt-3 border-t border-slate-200">
+                    <div className="text-xs font-semibold text-zinc-900 mb-2 flex items-center gap-1.5">
+                      <span>Credit Notes / Rejects</span>
+                      <span className="text-[10px] bg-slate-100 text-zinc-700 px-1.5 py-0.5 rounded border border-slate-200 font-mono">
+                        {cns.length}
+                      </span>
+                    </div>
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 text-zinc-500 font-medium border-b border-slate-200 text-[11px]">
+                          <th className="py-1.5 px-2">CN No</th>
+                          <th className="py-1.5 px-2">Date</th>
+                          <th className="py-1.5 px-2 text-right">Reject Qty</th>
+                          <th className="py-1.5 px-2 text-right">Unit Price</th>
+                          <th className="py-1.5 px-2 text-right">CN Amount</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-mono">
+                        {cns.map((cn: any, idx: number) => (
+                          <tr key={idx}>
+                            <td className="py-2 px-2 text-zinc-900 font-semibold">{cn.cn_no}</td>
+                            <td className="py-2 px-2 text-zinc-600">{cn.cn_date || "-"}</td>
+                            <td className="py-2 px-2 text-right text-zinc-800 font-semibold">{cn.qty}</td>
+                            <td className="py-2 px-2 text-right text-zinc-600">${Number(cn.unit_price || 0).toFixed(2)}</td>
+                            <td className="py-2 px-2 text-right text-zinc-900 font-semibold">-${Number(cn.amount || 0).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end">
@@ -5550,6 +6626,195 @@ export function SellInModule({ profile }: SellInModuleProps) {
               >
                 {savingEditBuyer ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
                 <span>Save Changes</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Assign / Edit Item Type */}
+      {showAssignItemTypeModal && assignItemTypeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md bg-white rounded-xl border border-slate-200 shadow-2xl overflow-visible animate-in zoom-in-95 duration-100 flex flex-col">
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0 rounded-t-xl">
+              <div>
+                <h2 className="text-sm font-semibold text-zinc-950">Assign Item Type</h2>
+                <p className="text-xs text-zinc-500">Categorize this invoice row as merchandise, rebate, fee, or delivery charge.</p>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowAssignItemTypeModal(false);
+                  setAssignItemTypeTarget(null);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-4 flex flex-col gap-3.5 text-xs">
+              {/* Item Context Card */}
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex flex-col gap-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-zinc-500 font-medium text-[11px] shrink-0">Item:</span>
+                  <span className="font-semibold text-zinc-900 text-right break-words">
+                    {assignItemTypeTarget.product_name || assignItemTypeTarget.product_sku || "(No Description)"}
+                  </span>
+                </div>
+                {assignItemTypeTarget.product_sku && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-zinc-500 font-medium text-[11px]">Invoice Code:</span>
+                    <span className="font-mono text-zinc-700">{assignItemTypeTarget.product_sku}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium text-[11px]">Buyer:</span>
+                  <span className="text-zinc-700 font-medium">{assignItemTypeTarget.buyer_name || assignItemTypeTarget.buyer_code || "-"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-500 font-medium text-[11px]">Line Amount:</span>
+                  <span className="font-mono font-semibold text-zinc-800">${Number(assignItemTypeTarget.total_demand || 0).toFixed(2)}</span>
+                </div>
+              </div>
+
+              {/* Dropdown Selection with Details */}
+              {(() => {
+                const selectedConfig = ITEM_TYPES.find((t) => t.value === selectedItemType) || ITEM_TYPES[0];
+
+                return (
+                  <div className="flex flex-col gap-2">
+                    <label className="font-semibold text-zinc-800 text-xs flex items-center justify-between">
+                      <span>Select Item Classification <span className="text-red-500">*</span></span>
+                      <span className="text-[11px] text-zinc-400 font-normal">Categorize item</span>
+                    </label>
+
+                    {/* Relative dropdown container */}
+                    <div className="relative">
+                      {/* Invisible backdrop to close dropdown on outside click */}
+                      {isItemTypeDropdownOpen && (
+                        <div
+                          className="fixed inset-0 z-20 cursor-default"
+                          onClick={() => setIsItemTypeDropdownOpen(false)}
+                        />
+                      )}
+
+                      {/* Dropdown Trigger */}
+                      <button
+                        type="button"
+                        onClick={() => setIsItemTypeDropdownOpen(!isItemTypeDropdownOpen)}
+                        className="w-full h-11 px-3 bg-white border border-slate-300 hover:border-slate-400 rounded-lg flex items-center justify-between transition-all cursor-pointer shadow-2xs focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] relative z-10"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-xs font-semibold text-zinc-900 truncate">
+                            {selectedConfig.label}
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border shrink-0 ${selectedConfig.badgeClass}`}>
+                            {selectedConfig.shortLabel}
+                          </span>
+                        </div>
+                        <ChevronDown
+                          size={14}
+                          className={cn("text-zinc-500 shrink-0 transition-transform duration-150", isItemTypeDropdownOpen && "rotate-180")}
+                        />
+                      </button>
+
+                      {/* Dropdown Menu Options with Details */}
+                      {isItemTypeDropdownOpen && (
+                        <div className="absolute top-full left-0 right-0 mt-1.5 bg-white rounded-lg border border-slate-200 shadow-xl z-30 overflow-hidden divide-y divide-slate-100 max-h-[280px] overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
+                          {ITEM_TYPES.map((t) => {
+                            const isSelected = selectedItemType === t.value;
+                            return (
+                              <div
+                                key={t.value}
+                                onClick={() => {
+                                  setSelectedItemType(t.value);
+                                  setIsItemTypeDropdownOpen(false);
+                                }}
+                                className={cn(
+                                  "p-3 transition-colors cursor-pointer flex items-start justify-between gap-3 text-left",
+                                  isSelected ? "bg-blue-50/80 hover:bg-blue-50" : "hover:bg-slate-50"
+                                )}
+                              >
+                                <div className="flex flex-col min-w-0 flex-1">
+                                  <div className="flex items-center gap-2">
+                                    <span className={cn("text-xs font-semibold", isSelected ? "text-[#0B57D0]" : "text-zinc-900")}>
+                                      {t.label}
+                                    </span>
+                                    <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium border shrink-0", t.badgeClass)}>
+                                      {t.shortLabel}
+                                    </span>
+                                  </div>
+                                  <span className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                                    {t.description}
+                                  </span>
+                                </div>
+                                {isSelected && (
+                                  <Check size={14} className="text-[#0B57D0] shrink-0 mt-0.5" />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Classification Details Box */}
+                    <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex flex-col gap-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-zinc-700">Classification Details:</span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${selectedConfig.badgeClass}`}>
+                          {selectedConfig.shortLabel}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-zinc-600 leading-relaxed">
+                        {selectedConfig.description}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Checkbox: Apply to all matching items in this period */}
+              {assignItemTypeTarget.product_name && (
+                <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-blue-50/50 border border-blue-100 cursor-pointer text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={applyItemTypeToAllMatching}
+                    onChange={(e) => setApplyItemTypeToAllMatching(e.target.checked)}
+                    className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 mt-0.5"
+                  />
+                  <div className="flex flex-col">
+                    <span className="text-xs font-semibold text-zinc-800">
+                      Apply to all rows matching this item in {formatPeriodLabel(currentPeriod)}
+                    </span>
+                    <span className="text-[11px] text-zinc-500 leading-tight mt-0.5">
+                      Classifies all invoice lines with description "{assignItemTypeTarget.product_name}" as {ITEM_TYPES.find(t => t.value === selectedItemType)?.label}.
+                    </span>
+                  </div>
+                </label>
+              )}
+            </div>
+
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAssignItemTypeModal(false);
+                  setAssignItemTypeTarget(null);
+                }}
+                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={savingAssignItemType}
+                onClick={handleSaveAssignItemType}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+              >
+                {savingAssignItemType ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                <span>Save Item Type</span>
               </button>
             </div>
           </div>
@@ -6295,19 +7560,60 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   <span className="text-[10px] text-zinc-400 mt-0.5">Billed Price</span>
                 </div>
 
-                <div className="p-3 rounded-lg border border-slate-300 bg-white flex flex-col justify-center">
-                  <label className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider mb-1 block">Snapshot Cost ($)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={editingCostPrice}
-                    onChange={(e) => setEditingCostPrice(e.target.value)}
-                    placeholder="0.00"
-                    className="w-full h-8 px-2 bg-slate-50 border border-slate-200 rounded text-sm font-mono font-bold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                    autoFocus
-                  />
-                </div>
+                {!isEditingCostPrice ? (
+                  <div
+                    onClick={() => setIsEditingCostPrice(true)}
+                    className="p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100/60 hover:border-slate-300 transition-colors flex flex-col items-center text-center relative cursor-pointer group"
+                    title="Click to edit Snapshot Cost"
+                  >
+                    <div className="w-full flex items-center justify-center relative">
+                      <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Snapshot Cost ($)</span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setIsEditingCostPrice(true);
+                        }}
+                        className="absolute right-0 flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold text-[#0B57D0] hover:bg-blue-100/60 rounded cursor-pointer transition-colors"
+                      >
+                        <Edit2 size={10} />
+                        <span>Edit</span>
+                      </button>
+                    </div>
+                    <span className="text-base font-bold text-zinc-900 font-mono mt-1">
+                      ${(parseFloat(editingCostPrice) || 0).toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-zinc-400 mt-0.5">Land Cost</span>
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-lg border border-[#0B57D0]/40 bg-white flex flex-col justify-center">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider">Snapshot Cost ($)</label>
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingCostPrice(false)}
+                        className="text-[10px] font-semibold text-[#0B57D0] hover:underline cursor-pointer"
+                      >
+                        Done
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={editingCostPrice}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "" || /^\d*\.?\d*$/.test(val)) {
+                          setEditingCostPrice(val);
+                        }
+                      }}
+                      placeholder="0.00"
+                      className="w-full h-8 px-2 bg-slate-50 border border-slate-200 rounded text-sm font-mono font-bold text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      autoFocus
+                    />
+                    <span className="text-[10px] text-zinc-400 mt-1">Land Cost</span>
+                  </div>
+                )}
               </div>
 
               {/* Live Impact Preview */}
@@ -6371,7 +7677,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
               >
                 {savingCostSnapshot ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                <span>Save Month Snapshot</span>
+                <span>Save</span>
               </button>
             </div>
           </div>
@@ -6384,6 +7690,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
         onOpenChange={(open) => setConfirmConfig((prev) => ({ ...prev, open }))}
         title={confirmConfig.title}
         description={confirmConfig.description}
+        confirmText={confirmConfig.confirmText}
+        variant={confirmConfig.variant}
         onConfirm={confirmConfig.onConfirm}
         onCancel={() => setConfirmConfig((prev) => ({ ...prev, open: false }))}
       />

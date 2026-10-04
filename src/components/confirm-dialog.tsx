@@ -21,7 +21,7 @@ interface ConfirmDialogProps {
   confirmText?: string;
   onConfirm: () => void;
   onCancel?: () => void;
-  variant?: "danger" | "default" | "dark";
+  variant?: "danger" | "default" | "dark" | "primary";
 }
 
 export function ConfirmDialog({
@@ -65,7 +65,9 @@ export function ConfirmDialog({
           <AlertDialogAction
             onClick={handleConfirm}
             className={`h-8 px-4 text-xs font-bold rounded-lg border transition-all select-none cursor-pointer flex items-center justify-center gap-1.5 focus:outline-none
-              ${variant === "danger" 
+              ${variant === "primary"
+                ? "border-[#0B57D0] bg-[#0B57D0] text-white hover:bg-[#0842A0] active:scale-98"
+                : variant === "danger" 
                 ? "border-red-700 bg-red-600 text-white hover:bg-red-700" 
                 : variant === "dark" 
                 ? "border-zinc-900 bg-zinc-800 text-[#EEEEEE] hover:bg-zinc-900" 

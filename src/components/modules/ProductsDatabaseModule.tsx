@@ -452,9 +452,11 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
     const idKey = activeTab === "brands" ? 'id' : 'sku';
 
     const targetItem = data.find(
-      (item) => String(item.id || item[idKey]) === String(rowId) || String(item[idKey]) === String(rowId)
+      (item) => String(item.id || item[idKey]) === String(rowId) || String(item[idKey]) === String(rowId) || String(item.sku) === String(rowId)
     );
     if (!targetItem) return;
+
+    const deleteVal = targetItem[idKey] || targetItem.sku || targetItem.id;
 
     try {
       const endpoint = activeTab === "brands" ? `${API_BASE}/api/brands` : `${API_BASE}/api/products`;
@@ -465,23 +467,35 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
         },
         body: JSON.stringify({
           action: "delete",
+          sku: deleteVal,
+          id: deleteVal,
           data: {
-            [idKey]: targetItem[idKey]
+            [idKey]: deleteVal,
+            sku: deleteVal,
+            id: deleteVal
           }
         })
       });
 
-      if (!res.ok) throw new Error(`Server returned status ${res.status}`);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `Server returned status ${res.status}`);
+      }
       const result = await res.json();
       if (!result.success) throw new Error(result.error || "Failed to delete record");
 
       // Update local state and localStorage
-      const updatedList = data.filter((item) => String(item[idKey]) !== String(targetItem[idKey]));
+      const updatedList = data.filter((item) => {
+        const itemVal = item[idKey] || item.sku || item.id;
+        return String(itemVal) !== String(deleteVal);
+      });
       setData(updatedList);
       localStorage.setItem(`${sheet}_data`, JSON.stringify(updatedList));
 
       // Pull fresh data in background
       fetchFreshData(sheet, false);
+
+      showToast(`${activeTab === "brands" ? "Brand" : "Product"} (${deleteVal}) deleted successfully!`, "success");
 
     } catch (err: any) {
       showToast("Delete failed: " + err.message, "error");

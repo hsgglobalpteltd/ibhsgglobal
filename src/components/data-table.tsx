@@ -45,11 +45,28 @@ const getFormattedTextValue = (row: any, accessor: string) => {
 
 const getRowId = (row: any): string => {
   if (!row) return "";
-  if (row.id !== undefined && row.id !== null) return String(row.id);
-  if (row.ID !== undefined && row.ID !== null) return String(row.ID);
-  if (row.SKU !== undefined && row.SKU !== null) return String(row.SKU);
-  if (row.email !== undefined && row.email !== null) return String(row.email);
-  if (row.Email !== undefined && row.Email !== null) return String(row.Email);
+  if (row.id !== undefined && row.id !== null && row.id !== "") return String(row.id);
+  if (row.ID !== undefined && row.ID !== null && row.ID !== "") return String(row.ID);
+  if (row.sku !== undefined && row.sku !== null && row.sku !== "") return String(row.sku);
+  if (row.SKU !== undefined && row.SKU !== null && row.SKU !== "") return String(row.SKU);
+  if (row.email !== undefined && row.email !== null && row.email !== "") return String(row.email);
+  if (row.Email !== undefined && row.Email !== null && row.Email !== "") return String(row.Email);
+  if (row.code !== undefined && row.code !== null && row.code !== "") return String(row.code);
+  if (row.Code !== undefined && row.Code !== null && row.Code !== "") return String(row.Code);
+  if (row.order_id !== undefined && row.order_id !== null && row.order_id !== "") return String(row.order_id);
+  if (row.key !== undefined && row.key !== null && row.key !== "") return String(row.key);
+  if (row.Key !== undefined && row.Key !== null && row.Key !== "") return String(row.Key);
+
+  // Case-insensitive fallback check for common identifier keys
+  const keys = Object.keys(row);
+  for (const k of keys) {
+    const lk = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (lk === 'id' || lk === 'sku' || lk === 'email' || lk.endsWith('id') || lk.endsWith('key') || lk.endsWith('code')) {
+      if (row[k] !== undefined && row[k] !== null && String(row[k]) !== '') {
+        return String(row[k]);
+      }
+    }
+  }
   return "";
 };
 
@@ -984,8 +1001,8 @@ export function DataTable({
       <ConfirmDialog
         open={deleteRowId !== null}
         onOpenChange={(open) => { if (!open) setDeleteRowId(null); }}
-        title="Delete Audit Log Entry"
-        description={`Are you sure you want to delete audit log entry ${deleteRowId}? This action cannot be undone.`}
+        title="Delete Record"
+        description={`Are you sure you want to delete ${deleteRowId ? `"${deleteRowId}"` : "this record"}? This action cannot be undone.`}
         confirmText="Delete"
         variant="danger"
         onConfirm={handleConfirmDelete}

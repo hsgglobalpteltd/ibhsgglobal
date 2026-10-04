@@ -3,6 +3,22 @@
 import * as React from "react";
 import { RefreshCw, X } from "lucide-react";
 
+function isDevelopmentEnvironment(): boolean {
+  if (typeof window === "undefined") return false;
+  if (process.env.NODE_ENV === "development") return true;
+
+  const hostname = window.location.hostname;
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname.startsWith("192.168.") ||
+    hostname.startsWith("10.") ||
+    hostname.endsWith(".local") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  );
+}
+
 export function PwaUpdateManager() {
   const [updateAvailable, setUpdateAvailable] = React.useState(false);
   const [waitingWorker, setWaitingWorker] = React.useState<ServiceWorker | null>(null);
@@ -11,7 +27,7 @@ export function PwaUpdateManager() {
 
   // 1. Service Worker Update Detection & Periodic Polling
   React.useEffect(() => {
-    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    if (typeof window === "undefined" || !("serviceWorker" in navigator) || isDevelopmentEnvironment()) return;
 
     let registrationRef: ServiceWorkerRegistration | null = null;
 
@@ -79,7 +95,7 @@ export function PwaUpdateManager() {
 
   // 2. Client Build Version Heartbeat (Detects Next.js redeployments)
   React.useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || isDevelopmentEnvironment()) return;
 
     const checkBuildVersion = async () => {
       try {
@@ -120,7 +136,7 @@ export function PwaUpdateManager() {
     }
   };
 
-  if (!updateAvailable) return null;
+  if (!updateAvailable || isDevelopmentEnvironment()) return null;
 
   return (
     <div className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/25 backdrop-blur-[2px] p-4 animate-in fade-in duration-200 select-none">
