@@ -859,12 +859,14 @@ export async function fetchDashboardAiBriefing(
   skipGreeting = false,
   message?: string,
   history?: any[],
-  enableWebSearch = false
+  enableWebSearch = false,
+  signal?: AbortSignal
 ): Promise<{ success: boolean; text: string; is_ai?: boolean; source?: string; router_intent?: string; data?: any; error?: string }> {
   const token = await getFreshToken();
   const sessionHeaders = getSessionIdHeader();
   const res = await fetch(`${WORKER_URL}/api/dashboard/ai-briefing`, {
     method: "POST",
+    signal,
     headers: {
       "Content-Type": "application/json",
       ...(token ? { "Authorization": `Bearer ${token}` } : {}),

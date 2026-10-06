@@ -95,6 +95,7 @@ import {
   WfeTaskAttachment,
   WfeTaskLog,
 } from "@/lib/api";
+import { safeLocalStorageSet, safeLocalStorageGet, safeLocalStorageRemove } from "@/lib/storage";
 
 // -------------------------------------------------------------
 // TYPES & INTERFACES (100% Live Database wfe_ Schema)
@@ -488,10 +489,10 @@ export default function WorkspaceStandalonePage() {
       const result = await signInWithPopup(auth, googleProvider);
       if (result.user && result.user.email) {
         const token = await result.user.getIdToken();
-        let sid = localStorage.getItem("session_id");
+        let sid = safeLocalStorageGet("session_id");
         if (!sid) {
           sid = "sess_" + Math.random().toString(36).substring(2, 15) + "_" + Date.now();
-          localStorage.setItem("session_id", sid);
+          safeLocalStorageSet("session_id", sid);
         }
         let dbProf: any = null;
         try {
@@ -502,8 +503,8 @@ export default function WorkspaceStandalonePage() {
           name: result.user.displayName || result.user.email,
           role: "Operator"
         };
-        localStorage.setItem("ib_user_profile", JSON.stringify(profile));
-        localStorage.setItem("ib_auth_token", token);
+        safeLocalStorageSet("ib_user_profile", profile);
+        if (token) safeLocalStorageSet("ib_auth_token", token);
         setCurrentUser(profile);
         setIsGuest(false);
         setAccessDenied(false);
@@ -537,7 +538,7 @@ export default function WorkspaceStandalonePage() {
     // Helper to extract cached logged-in profile from browser storage
     const getCachedProfile = () => {
       try {
-        const raw = localStorage.getItem("ib_user_profile") || sessionStorage.getItem("ib_user_profile");
+        const raw = safeLocalStorageGet("ib_user_profile") || (typeof sessionStorage !== "undefined" ? sessionStorage.getItem("ib_user_profile") : null);
         if (raw) {
           const parsed = typeof raw === "string" && raw.startsWith("{") ? JSON.parse(raw) : { email: raw };
           const email = parsed.email || parsed.user_email;
@@ -571,10 +572,10 @@ export default function WorkspaceStandalonePage() {
     const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser && fbUser.email) {
         const token = await fbUser.getIdToken().catch(() => "");
-        let sid = localStorage.getItem("session_id");
+        let sid = safeLocalStorageGet("session_id");
         if (!sid) {
           sid = "sess_" + Math.random().toString(36).substring(2, 15) + "_" + Date.now();
-          localStorage.setItem("session_id", sid);
+          safeLocalStorageSet("session_id", sid);
         }
         let freshProf: any = null;
         if (token) {
@@ -587,8 +588,8 @@ export default function WorkspaceStandalonePage() {
           name: fbUser.displayName || fbUser.email,
           role: "Operator"
         };
-        localStorage.setItem("ib_user_profile", JSON.stringify(activeProfile));
-        if (token) localStorage.setItem("ib_auth_token", token);
+        safeLocalStorageSet("ib_user_profile", activeProfile);
+        if (token) safeLocalStorageSet("ib_auth_token", token);
 
         setCurrentUser(activeProfile);
         setIsGuest(false);
@@ -609,7 +610,7 @@ export default function WorkspaceStandalonePage() {
             if (res && res.success) {
               const projectExists = res.teamspaces && res.teamspaces.some((ts: any) => ts.id === targetProj);
               if (!projectExists && targetProj !== "wfe_root") {
-                localStorage.removeItem("wfe_guest_session_" + targetProj);
+                safeLocalStorageRemove("wfe_guest_session_" + targetProj);
                 setAccessDenied(true);
                 setShowGateModal(false);
                 setLoading(false);
@@ -683,7 +684,7 @@ export default function WorkspaceStandalonePage() {
               return;
             } else {
               // Guest: redirect to invalid link screen
-              localStorage.removeItem(`wfe_guest_session_${currentTargetId}`);
+              safeLocalStorageRemove(`wfe_guest_session_${currentTargetId}`);
               setCurrentUser(null);
               setShowGateModal(false);
               setAccessDenied(true);
@@ -702,14 +703,14 @@ export default function WorkspaceStandalonePage() {
 
         // Revoke guest session if manager has changed the project PIN
         if (isGuest && currentTargetId && currentTargetId !== "wfe_root") {
-          const storedGuest = localStorage.getItem(`wfe_guest_session_${currentTargetId}`);
+          const storedGuest = safeLocalStorageGet(`wfe_guest_session_${currentTargetId}`);
           if (storedGuest) {
             try {
               const parsed = JSON.parse(storedGuest);
               const livePin = res.shareSettings?.security_pin ? String(res.shareSettings.security_pin).trim() : "";
               if (!livePin || livePin.length >= 30 || (parsed.pin && String(parsed.pin).trim() !== livePin)) {
                 // PIN changed or unset! Revoke session immediately
-                localStorage.removeItem(`wfe_guest_session_${currentTargetId}`);
+                safeLocalStorageRemove(`wfe_guest_session_${currentTargetId}`);
                 setCurrentUser(null);
                 setShowGateModal(true);
                 showToast("Project security PIN has been updated by the manager. Please sign in again.", "error");
@@ -823,7 +824,7 @@ export default function WorkspaceStandalonePage() {
           pin: gatePin.trim(),
         };
         // Persist session in localStorage for this project
-        localStorage.setItem(`wfe_guest_session_${targetWorkspaceId}`, JSON.stringify(sessionPayload));
+        safeLocalStorageSet(`wfe_guest_session_${targetWorkspaceId}`, sessionPayload);
         setCurrentUser(sessionPayload);
         setIsGuest(true);
         setShowGateModal(false);
@@ -1449,11 +1450,14 @@ export default function WorkspaceStandalonePage() {
     const userEmail = (currentUser?.email || "").toLowerCase().trim();
     const userPrefix = userEmail.includes("@") ? userEmail.split("@")[0] : "";
 
+    if (p === "me" || p === "myself") return true;
+
     return Boolean(
       (userName && p === userName) ||
       (userEmail && p === userEmail) ||
       (userPrefix && p === userPrefix) ||
-      (userName && userName.split(" ").some((part) => part.length >= 2 && p.includes(part)))
+      (userName && userName.split(" ").some((part) => part.length >= 2 && (p.includes(part) || part.includes(p)))) ||
+      (userPrefix && (p.includes(userPrefix) || userPrefix.includes(p)))
     );
   };
 
@@ -1464,21 +1468,39 @@ export default function WorkspaceStandalonePage() {
     if (isAssigneeCurrentUser(p)) return "Me";
 
     const pLower = p.toLowerCase();
-    // 1. Look up in current teamspace members
-    const mem = currentTeamspaceMembers.find(
+    
+    // 1. Exact match in current teamspace members
+    const memExact = currentTeamspaceMembers.find(
       (m) => (m.email && m.email.toLowerCase() === pLower) || (m.name && m.name.toLowerCase() === pLower)
     ) || projectMembers.find(
       (m) => (m.email && m.email.toLowerCase() === pLower) || (m.name && m.name.toLowerCase() === pLower)
     );
-    if (mem && mem.name && !mem.name.includes("@")) return mem.name;
+    if (memExact && memExact.name && !memExact.name.includes("@")) return memExact.name;
 
-    // 2. Look up in registered database users
-    const reg = registeredUsers.find(
+    // 2. Exact match in registered database users
+    const regExact = registeredUsers.find(
       (u) => (u.email && u.email.toLowerCase() === pLower) || (u.name && u.name.toLowerCase() === pLower)
     );
-    if (reg && reg.name && !reg.name.includes("@")) return reg.name;
+    if (regExact && regExact.name && !regExact.name.includes("@")) return regExact.name;
 
-    // 3. If raw email string (e.g. abdurrahmanmarikan@gmail.com), convert email handle to human readable name
+    // 3. Fuzzy match in current teamspace members (e.g. "rahman" in "Rahman marikan")
+    const memFuzzy = currentTeamspaceMembers.find(
+      (m) => (m.name && (m.name.toLowerCase().includes(pLower) || pLower.includes(m.name.toLowerCase()))) ||
+             (m.email && (m.email.toLowerCase().includes(pLower) || pLower.includes(m.email.split("@")[0].toLowerCase())))
+    ) || projectMembers.find(
+      (m) => (m.name && (m.name.toLowerCase().includes(pLower) || pLower.includes(m.name.toLowerCase()))) ||
+             (m.email && (m.email.toLowerCase().includes(pLower) || pLower.includes(m.email.split("@")[0].toLowerCase())))
+    );
+    if (memFuzzy && memFuzzy.name && !memFuzzy.name.includes("@")) return memFuzzy.name;
+
+    // 4. Fuzzy match in registered users
+    const regFuzzy = registeredUsers.find(
+      (u) => (u.name && (u.name.toLowerCase().includes(pLower) || pLower.includes(u.name.toLowerCase()))) ||
+             (u.email && (u.email.toLowerCase().includes(pLower) || pLower.includes(u.email.split("@")[0].toLowerCase())))
+    );
+    if (regFuzzy && regFuzzy.name && !regFuzzy.name.includes("@")) return regFuzzy.name;
+
+    // 5. If raw email string (e.g. abdurrahmanmarikan@gmail.com), convert email handle to human readable name
     if (p.includes("@")) {
       const prefix = p.split("@")[0].replace(/[._-]/g, " ");
       return prefix
@@ -1493,19 +1515,8 @@ export default function WorkspaceStandalonePage() {
 
   const isTaskAssignedToCurrentUser = (task: WfeTask | null | undefined): boolean => {
     if (!task || !task.assigned_to) return false;
-    const assigned = task.assigned_to.toLowerCase();
-    const userName = (currentUser?.name || "").toLowerCase().trim();
-    const userEmail = (currentUser?.email || "").toLowerCase().trim();
-    const userPrefix = userEmail.includes("@") ? userEmail.split("@")[0] : "";
-
-    const assignedNames = task.assigned_to.split(",").map((s) => s.trim().toLowerCase());
-
-    return Boolean(
-      (userName && (assigned.includes(userName) || assignedNames.includes(userName))) ||
-      (userEmail && (assigned.includes(userEmail) || assignedNames.includes(userEmail))) ||
-      (userPrefix && (assigned.includes(userPrefix) || assignedNames.includes(userPrefix))) ||
-      (userName && userName.split(" ").some((part) => part.length >= 2 && assigned.includes(part)))
-    );
+    const parts = task.assigned_to.split(",").map((s) => s.trim()).filter(Boolean);
+    return parts.some((p) => isAssigneeCurrentUser(p));
   };
 
   const canUserMoveTask = (task: WfeTask | null | undefined): { canMove: boolean; reason?: string } => {
@@ -2024,25 +2035,21 @@ export default function WorkspaceStandalonePage() {
 
   const saveDocDraft = (page: WfePage) => {
     if (typeof window !== "undefined" && page?.id) {
-      try {
-        localStorage.setItem(
-          `ib_doc_draft_${page.id}`,
-          JSON.stringify({
-            title: page.title,
-            icon: page.icon,
-            content_blocks: page.content_blocks || [],
-            updated_at: Date.now(),
-          })
-        );
-      } catch {}
+      safeLocalStorageSet(
+        `ib_doc_draft_${page.id}`,
+        {
+          title: page.title,
+          icon: page.icon,
+          content_blocks: page.content_blocks || [],
+          updated_at: Date.now(),
+        }
+      );
     }
   };
 
   const clearDocDraft = (pageId: string) => {
     if (typeof window !== "undefined" && pageId) {
-      try {
-        localStorage.removeItem(`ib_doc_draft_${pageId}`);
-      } catch {}
+      safeLocalStorageRemove(`ib_doc_draft_${pageId}`);
     }
   };
 
@@ -2613,19 +2620,7 @@ export default function WorkspaceStandalonePage() {
         if (!t.title.toLowerCase().includes(q)) return false;
       }
       if (activeTab === "my") {
-        const assigned = (t.assigned_to || "").toLowerCase();
-        if (!assigned) return false;
-        const userName = (currentUser?.name || "").toLowerCase().trim();
-        const userEmail = (currentUser?.email || "").toLowerCase().trim();
-        const userPrefix = userEmail.includes("@") ? userEmail.split("@")[0] : "";
-        
-        const isAssigned =
-          (userName && assigned.includes(userName)) ||
-          (userEmail && assigned.includes(userEmail)) ||
-          (userPrefix && assigned.includes(userPrefix)) ||
-          (userName && userName.split(" ").some((part) => part.length >= 2 && assigned.includes(part)));
-
-        return Boolean(isAssigned);
+        return isTaskAssignedToCurrentUser(t);
       }
       if (activeTab === "sprint") {
         // Current Sprint: Active items currently being worked on (In Progress, In Review, or Urgent/High priority not yet complete)
@@ -3048,7 +3043,7 @@ export default function WorkspaceStandalonePage() {
               type="button"
               onClick={() => {
                 if (targetWorkspaceId) {
-                  localStorage.removeItem(`wfe_guest_session_${targetWorkspaceId}`);
+                  safeLocalStorageRemove(`wfe_guest_session_${targetWorkspaceId}`);
                 }
                 setCurrentUser(null);
                 setIsGuest(false);
@@ -5020,7 +5015,32 @@ export default function WorkspaceStandalonePage() {
                               setIsAssigneeDropdownOpen(true);
                             }}
                             onKeyDown={(e) => {
-                              if (e.key === "Backspace" && !assigneeSearchQuery && selectedAssignees.length > 0) {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                if (filteredPeople.length > 0) {
+                                  const topPerson = filteredPeople[0];
+                                  const isAlready = selectedAssignees.some((n) => n.toLowerCase() === (topPerson.name || "").toLowerCase());
+                                  if (!isAlready) {
+                                    setEditingTask({
+                                      ...editingTask,
+                                      assigned_to: [...selectedAssignees, topPerson.name].join(", "),
+                                    });
+                                  }
+                                  setAssigneeSearchQuery("");
+                                  setIsAssigneeDropdownOpen(false);
+                                } else if (assigneeSearchQuery.trim()) {
+                                  const customName = assigneeSearchQuery.trim();
+                                  const isAlready = selectedAssignees.some((n) => n.toLowerCase() === customName.toLowerCase());
+                                  if (!isAlready) {
+                                    setEditingTask({
+                                      ...editingTask,
+                                      assigned_to: [...selectedAssignees, customName].join(", "),
+                                    });
+                                  }
+                                  setAssigneeSearchQuery("");
+                                  setIsAssigneeDropdownOpen(false);
+                                }
+                              } else if (e.key === "Backspace" && !assigneeSearchQuery && selectedAssignees.length > 0) {
                                 const next = selectedAssignees.slice(0, -1);
                                 setEditingTask({
                                   ...editingTask,

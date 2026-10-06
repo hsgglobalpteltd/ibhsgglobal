@@ -31,7 +31,7 @@ export function safeLocalStorageSet(key: string, value: any): boolean {
     } catch (e: any) {
       console.warn(`LocalStorage quota exceeded when setting "${key}". Purging temporary caches...`, e);
       
-      // Purge heavy non-essential cached tables and temporary data
+      // 1. Purge standard heavy non-essential cached tables and temporary data
       const purgeKeys = [
         "last_invoice_pdf",
         "dispose_goods_data",
@@ -44,6 +44,7 @@ export function safeLocalStorageSet(key: string, value: any): boolean {
         "Setting_API_data",
         "ib_workspace_cache",
         "ib_briefing_chat_history",
+        "ib_user_saved_chats",
         "pos_display_sync",
       ];
       
@@ -53,13 +54,41 @@ export function safeLocalStorageSet(key: string, value: any): boolean {
         } catch {}
       }
 
+      // 2. Clear any old drafts or heavy items
+      try {
+        const protectedKeys = new Set(["ib_user_profile", "ib_auth_profile", "ib_auth_token", "session_id"]);
+        for (let i = 0; i < localStorage.length; i++) {
+          const lKey = localStorage.key(i);
+          if (lKey && !protectedKeys.has(lKey)) {
+            if (lKey.startsWith("ib_doc_draft_") || lKey.startsWith("wfe_guest_session_") || lKey.startsWith("chat_")) {
+              localStorage.removeItem(lKey);
+            }
+          }
+        }
+      } catch {}
+
       // Retry setting the critical auth/session key
       try {
         localStorage.setItem(key, strVal);
         return true;
       } catch (retryErr) {
-        console.warn(`LocalStorage still full after purging non-essential keys for "${key}". Skipping cache.`, retryErr);
-        return false;
+        // Last resort: clear all non-protected keys
+        try {
+          const protectedKeys = new Set(["ib_user_profile", "ib_auth_profile", "ib_auth_token", "session_id"]);
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && !protectedKeys.has(k) && k !== key) {
+              keysToRemove.push(k);
+            }
+          }
+          keysToRemove.forEach((k) => localStorage.removeItem(k));
+          localStorage.setItem(key, strVal);
+          return true;
+        } catch (finalErr) {
+          console.warn(`LocalStorage still full after deep purge for "${key}".`, finalErr);
+          return false;
+        }
       }
     }
   } catch (err) {

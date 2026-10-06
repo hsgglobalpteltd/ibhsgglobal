@@ -28,7 +28,9 @@ import {
   DollarSign,
   RotateCcw,
   ChevronUp,
-  BarChart3
+  BarChart3,
+  Eye,
+  EyeOff
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -109,6 +111,10 @@ async function splitPdfIntoChunks(
       totalPages: 1
     }];
   }
+}
+
+function normalizeBuyerName(name?: string | null): string {
+  return (name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 // Reusable Custom Dropdown Component (No Native Browser Select)
@@ -257,28 +263,28 @@ const ITEM_TYPES = [
     label: "Sale Rebate / Discount",
     shortLabel: "Sale Rebate",
     description: "Invoice line rebates, trade discounts, or promotional allowances. Demand qty is 0.",
-    badgeClass: "bg-amber-50 text-amber-800 border-amber-200/80 hover:bg-amber-100"
+    badgeClass: "bg-slate-100 text-zinc-700 border-slate-200/90 hover:bg-slate-200/70"
   },
   {
     value: "fee",
     label: "Reg / Listing Fee",
     shortLabel: "Reg / Fee",
     description: "Slotting fees, registration charges, or administrative fees. Demand qty is 0.",
-    badgeClass: "bg-purple-50 text-purple-700 border-purple-200/80 hover:bg-purple-100"
+    badgeClass: "bg-slate-100 text-zinc-700 border-slate-200/90 hover:bg-slate-200/70"
   },
   {
     value: "service",
     label: "Delivery / Service Charge",
     shortLabel: "Delivery",
     description: "Transportation, pallet charges, or delivery handling fee. Demand qty is 0.",
-    badgeClass: "bg-teal-50 text-teal-700 border-teal-200/80 hover:bg-teal-100"
+    badgeClass: "bg-slate-100 text-zinc-700 border-slate-200/90 hover:bg-slate-200/70"
   },
   {
     value: "bcrs",
     label: "BCRS (Container Return Scheme)",
     shortLabel: "BCRS",
     description: "Beverage Container Return Scheme deposit/mark ($0.10). Demand qty is 0.",
-    badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-200/80 hover:bg-emerald-100"
+    badgeClass: "bg-slate-100 text-zinc-700 border-slate-200/90 hover:bg-slate-200/70"
   }
 ];
 
@@ -438,6 +444,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [savingInvoices, setSavingInvoices] = React.useState<boolean>(false);
   const [selectedInvoiceBreakdownRow, setSelectedInvoiceBreakdownRow] = React.useState<any | null>(null);
   const [activeAssignBuyerInvoiceIndex, setActiveAssignBuyerInvoiceIndex] = React.useState<number | null>(null);
+  const [togglingInvoiceIdx, setTogglingInvoiceIdx] = React.useState<number | null>(null);
+  const [showMonthPickerModal, setShowMonthPickerModal] = React.useState<boolean>(false);
+  const [monthPickerYear, setMonthPickerYear] = React.useState<number>(() => {
+    const parts = (currentPeriod || "").split("-");
+    return parts[0] ? Number(parts[0]) : new Date().getFullYear();
+  });
 
   // Credit Notes PDF Parsing & Import States
   const [parsingCreditNotes, setParsingCreditNotes] = React.useState<boolean>(false);
@@ -454,7 +466,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [showAddBuyerModal, setShowAddBuyerModal] = React.useState<boolean>(false);
   const [newBuyerCode, setNewBuyerCode] = React.useState<string>("");
   const [newBuyerName, setNewBuyerName] = React.useState<string>("");
-  const [newBuyerChannel, setNewBuyerChannel] = React.useState<string>("Retailer");
+  const [newBuyerChannel, setNewBuyerChannel] = React.useState<string>("");
   const [newBuyerPaymentTerm, setNewBuyerPaymentTerm] = React.useState<string>("3");
   const [newBuyerStoreGroups, setNewBuyerStoreGroups] = React.useState<Array<{ group_name: string; store_count: number }>>([
     { group_name: "", store_count: 1 }
@@ -583,10 +595,15 @@ export function SellInModule({ profile }: SellInModuleProps) {
           setTempProductsList(data.temp_products);
         }
 
-        // Check if Track Order has orders missing invoices >3 days for active month
-        if (data.is_current_active_month && Array.isArray(data.live_data?.over_3_days_missing) && data.live_data.over_3_days_missing.length > 0) {
-          if (!sessionStorage.getItem(`dismissed_missing_${period}`)) {
-            setMissingInvoicesList(data.live_data.over_3_days_missing);
+        // Check if Track Order has deliver orders missing invoices >3 days for active month (exclude return orders)
+        if (data.is_current_active_month && Array.isArray(data.live_data?.over_3_days_missing)) {
+          const deliverOrdersOnly = data.live_data.over_3_days_missing.filter((item: any) => {
+            const ordId = String(item.id || "").trim();
+            const ordType = String(item.type || "").trim().toLowerCase();
+            return !ordId.startsWith("RET-") && ordType !== "return";
+          });
+          if (deliverOrdersOnly.length > 0 && !sessionStorage.getItem(`dismissed_missing_${period}`)) {
+            setMissingInvoicesList(deliverOrdersOnly);
             setShowMissingInvoicesModal(true);
           }
         }
@@ -751,6 +768,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
     setCurrentPeriod(target);
   };
 
+  const openMonthPicker = () => {
+    const parts = (currentPeriod || "").split("-");
+    const y = parts[0] ? Number(parts[0]) : new Date().getFullYear();
+    setMonthPickerYear(y);
+    setShowMonthPickerModal(true);
+  };
+
   const formatPeriodLabel = (p: string) => {
     try {
       const [y, m] = p.split("-").map(Number);
@@ -793,9 +817,16 @@ export function SellInModule({ profile }: SellInModuleProps) {
         const isDirectConsumer = 
           String(r.channel || "").trim().toLowerCase() === "direct consumer" ||
           String(r.buyer_name || "").toLowerCase().startsWith("cash sales");
-        const isUnresolvedBuyer = !isDirectConsumer && r.validation_status === "unregistered_buyer";
-        const isNoListing = !isDirectConsumer && r.validation_status === "no_listing";
-        const isUnmappedSku = r.validation_status === "unmapped_sku";
+        const isRegisteredInDb = buyersList.some((b) => 
+          (r.buyer_code && (b.buyer_code === r.buyer_code || b.id === r.buyer_code)) ||
+          (b.buyer_name && r.buyer_name && (
+            b.buyer_name.trim().toLowerCase() === r.buyer_name.trim().toLowerCase() ||
+            normalizeBuyerName(b.buyer_name) === normalizeBuyerName(r.buyer_name)
+          ))
+        );
+        const isUnresolvedBuyer = !isDirectConsumer && (r.validation_status === "unregistered_buyer" || !isRegisteredInDb);
+        const isNoListing = !isDirectConsumer && !isUnresolvedBuyer && r.validation_status === "no_listing";
+        const isUnmappedSku = !isUnresolvedBuyer && r.validation_status === "unmapped_sku";
         if (isUnresolvedBuyer || isNoListing || isUnmappedSku || r.has_price_mismatch) {
           unresolvedCount++;
         }
@@ -806,7 +837,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
     const grossProfit = netAmount - totalCost;
     const marginPercent = netAmount > 0 ? (grossProfit / netAmount) * 100 : 0;
     return { grossDemand, demandQty, cnAmount, cnQty, netAmount, unresolvedCount, nonSalesCount, totalCost, grossProfit, marginPercent };
-  }, [records]);
+  }, [records, buyersList]);
 
   // Distinct Brands from records (excluding unbranded)
   const availableBrands = React.useMemo(() => {
@@ -873,9 +904,16 @@ export function SellInModule({ profile }: SellInModuleProps) {
         const isDirectConsumer = 
           String(r.channel || "").trim().toLowerCase() === "direct consumer" ||
           String(r.buyer_name || "").toLowerCase().startsWith("cash sales");
-        const isUnresolvedBuyer = !isDirectConsumer && r.validation_status === "unregistered_buyer";
-        const isNoListing = !isDirectConsumer && r.validation_status === "no_listing";
-        const isUnmappedSku = r.validation_status === "unmapped_sku";
+        const isRegisteredInDb = buyersList.some((b) => 
+          (r.buyer_code && (b.buyer_code === r.buyer_code || b.id === r.buyer_code)) ||
+          (b.buyer_name && r.buyer_name && (
+            b.buyer_name.trim().toLowerCase() === r.buyer_name.trim().toLowerCase() ||
+            normalizeBuyerName(b.buyer_name) === normalizeBuyerName(r.buyer_name)
+          ))
+        );
+        const isUnresolvedBuyer = !isDirectConsumer && (r.validation_status === "unregistered_buyer" || !isRegisteredInDb);
+        const isNoListing = !isDirectConsumer && !isUnresolvedBuyer && r.validation_status === "no_listing";
+        const isUnmappedSku = !isUnresolvedBuyer && r.validation_status === "unmapped_sku";
         const isMismatch = Boolean(r.has_price_mismatch);
         if (!isUnresolvedBuyer && !isNoListing && !isUnmappedSku && !isMismatch) return false;
       }
@@ -897,7 +935,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       }
       return true;
     });
-  }, [records, subFilterTab, channelFilter, brandFilter, searchTerm]);
+  }, [records, subFilterTab, channelFilter, brandFilter, searchTerm, buyersList]);
 
   // Compiled Summary Datamart: pre-aggregated figures, expected cash collection, buyers & SKUs
   const compiledSummaryData = React.useMemo(() => {
@@ -928,7 +966,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         term,
         buyer_name: String(b.buyer_name || b.name || "").trim(),
         buyer_code: String(b.buyer_code || b.code || "").trim(),
-        channel: String(b.channel || "Retailer").trim()
+        channel: String(b.channel || "").trim()
       };
       if (b.buyer_code) buyerTermMap.set(String(b.buyer_code).trim().toLowerCase(), info);
       if (b.buyer_name) buyerTermMap.set(String(b.buyer_name).trim().toLowerCase(), info);
@@ -1014,7 +1052,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         term: "3", // For unregistered buyer, payment term is 3 days
         buyer_name: bName,
         buyer_code: bCode,
-        channel: r.channel || "Retailer"
+        channel: r.channel || ""
       };
 
       const term = bInfo.term || (isRegistered ? "90" : "3");
@@ -1025,7 +1063,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         bEntry = {
           buyer_code: bInfo.buyer_code || bCode,
           buyer_name: bInfo.buyer_name || bName,
-          channel: bInfo.channel || r.channel || "Retailer",
+          channel: r.channel || bInfo.channel || "",
           payment_term: term,
           expected_collection_period: collPeriod,
           expected_collection_label: collLabel,
@@ -1332,7 +1370,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       const targetInv = { ...updated[invIdx] };
       targetInv.buyer_code = buyer.buyer_code;
       targetInv.buyer_name = buyer.buyer_name;
-      targetInv.channel = buyer.channel || "Retailer";
+      targetInv.channel = buyer.channel || "";
       targetInv.is_unregistered = false;
 
       targetInv.items = targetInv.items.map((it: any) => ({
@@ -1562,7 +1600,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       const targetCn = { ...updated[cnIdx] };
       targetCn.buyer_code = buyer.buyer_code;
       targetCn.buyer_name = buyer.buyer_name;
-      targetCn.channel = buyer.channel || "Retailer";
+      targetCn.channel = buyer.channel || "";
       targetCn.is_unregistered = false;
 
       targetCn.items = targetCn.items.map((it: any) => ({
@@ -1637,7 +1675,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         body: JSON.stringify({
           buyer_code: code,
           buyer_name: name || code,
-          channel: channel || "Retailer",
+          channel: channel || "",
           payment_term: (payment_term || "3").replace(/[^0-9]/g, "") || "3",
           store_groups: validGroups,
           period: currentPeriod
@@ -2024,7 +2062,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         // Group buyers by channel for clean rowSpan merging
         const channelGroups = new Map<string, any[]>();
         (brand.buyers || []).forEach((b: any) => {
-          const ch = (b.channel || "Retailer").trim();
+          const ch = (b.channel || "Not Set").trim();
           if (!channelGroups.has(ch)) channelGroups.set(ch, []);
           channelGroups.get(ch)!.push(b);
         });
@@ -2234,7 +2272,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         rows.push(row2);
 
         brand.buyers.forEach((b: any) => {
-          const bRow: any[] = [b.channel || "Retailer", b.buyer_name, b.total_store || 1];
+          const bRow: any[] = [b.channel || "Not Set", b.buyer_name, b.total_store || 1];
           periods.forEach((p: any) => {
             const m = b.monthly_data?.[p.period] || { qty: 0, amount: 0 };
             bRow.push(m.qty || 0);
@@ -2354,7 +2392,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
               brand_name: brand.brand_name,
               buyer_code: bCode || matchedBuyer.buyer_code || "",
               buyer_name: bName || matchedBuyer.buyer_name || "",
-              channel: b.channel || matchedBuyer.channel || "Retailer",
+              channel: b.channel || matchedBuyer.channel || "",
               available_groups: matchedBuyer.store_groups,
               selected_groups: selectedGroups,
               assigned_store_count: assignedCount
@@ -2769,25 +2807,32 @@ export function SellInModule({ profile }: SellInModuleProps) {
           period: currentPeriod,
           item_type: selectedItemType,
           target_name: assignItemTypeTarget.product_name,
+          target_sku: assignItemTypeTarget.product_sku,
           apply_to_all_matching: applyItemTypeToAllMatching
         })
       });
       const data = await res.json();
       if (res.ok && data.success) {
         const typeObj = ITEM_TYPES.find((t) => t.value === selectedItemType);
-        showToast(`Item type changed to "${typeObj?.label || selectedItemType}"!`, "success");
+        if (selectedItemType !== "product") {
+          showToast(`Item categorized as "${typeObj?.label || selectedItemType}"! Non-sales items appear under the "Non-Sales" tab.`, "success");
+        } else {
+          showToast(`Item type changed to "${typeObj?.label || selectedItemType}"!`, "success");
+        }
         setShowAssignItemTypeModal(false);
         setAssignItemTypeTarget(null);
 
         // Optimistically update records state
         const targetDescLower = String(assignItemTypeTarget.product_name || "").trim().toLowerCase();
+        const targetSkuLower = String(assignItemTypeTarget.product_sku || "").trim().toLowerCase();
         setRecords((prev) =>
           prev.map((r) => {
             const isDirect = r.id === assignItemTypeTarget.id;
-            const isDescMatch =
-              applyItemTypeToAllMatching &&
-              Boolean(targetDescLower && String(r.product_name || "").trim().toLowerCase() === targetDescLower);
-            if (isDirect || isDescMatch) {
+            const rDesc = String(r.product_name || "").trim().toLowerCase();
+            const rSku = String(r.product_sku || "").trim().toLowerCase();
+            const isDescMatch = applyItemTypeToAllMatching && Boolean(targetDescLower && (rDesc === targetDescLower || (targetDescLower.length > 4 && rDesc.includes(targetDescLower))));
+            const isSkuMatch = applyItemTypeToAllMatching && Boolean(targetSkuLower && rSku === targetSkuLower);
+            if (isDirect || isDescMatch || isSkuMatch) {
               const isNonProduct = selectedItemType !== "product";
               return {
                 ...r,
@@ -3163,7 +3208,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       })(),
       "Buyer Code": r.buyer_code,
       "Buyer Name": r.buyer_name,
-      "Channel": r.channel || "Retailer",
+      "Channel": r.channel || "Not Set",
       "Product SKU": r.product_sku,
       "Product Name": r.product_name,
       "Brand": r.brand || "Unassigned",
@@ -3275,7 +3320,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
           };
           const buyer_code = String(getVal(["buyercode", "code", "custcode"]) || row["buyer_code"] || "").trim();
           const buyer_name = String(getVal(["buyername", "name", "customername"]) || row["buyer_name"] || buyer_code).trim();
-          const channel = String(getVal(["channel", "saleschannel", "group"]) || row["channel"] || "Retailer").trim();
+          const channel = String(getVal(["channel", "saleschannel", "group"]) || row["channel"] || "").trim();
           return { buyer_code, buyer_name, channel };
         }).filter((b) => b.buyer_code.length > 0);
 
@@ -3342,7 +3387,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
     setEditingBuyer(buyer);
     setEditBuyerCode(buyer.buyer_code || "");
     setEditBuyerName(buyer.buyer_name || "");
-    setEditBuyerChannel(buyer.channel || channelsList[0]?.channel_name || "Retailer");
+    setEditBuyerChannel(buyer.channel || "");
     setEditBuyerPaymentTerm(String(buyer.payment_term || "90").replace(/[^0-9]/g, "") || "90");
     setEditBuyerStoreGroups(
       Array.isArray(buyer.store_groups) && buyer.store_groups.length > 0
@@ -3370,7 +3415,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         body: JSON.stringify({
           buyer_code: editBuyerCode.trim(),
           buyer_name: editBuyerName.trim(),
-          channel: editBuyerChannel || "Retailer",
+          channel: editBuyerChannel || "",
           payment_term: editBuyerPaymentTerm.replace(/[^0-9]/g, "") || "90",
           store_groups: validGroups,
           period: currentPeriod
@@ -3475,10 +3520,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
   }, [availableBrands]);
 
   const buyersChannelSelectOptions = React.useMemo(() => {
-    return channelsList.map((ch) => ({
+    const list = channelsList.map((ch) => ({
       label: ch.channel_name || ch.name,
       value: ch.channel_name || ch.name
     }));
+    return [
+      { label: "-- Not Set --", value: "" },
+      ...list
+    ];
   }, [channelsList]);
 
   // Source PDF URLs (Invoice and Credit Note)
@@ -3701,7 +3750,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   onClick={() => {
                     const initial: Record<string, any> = {};
                     buyersList.forEach((b) => {
-                      initial[b.id] = { buyer_code: b.buyer_code, buyer_name: b.buyer_name, channel: b.channel || "Retailer" };
+                      initial[b.id] = { buyer_code: b.buyer_code, buyer_name: b.buyer_name, channel: b.channel || "" };
                     });
                     setBuyerDrafts(initial);
                     setIsEditMode(true);
@@ -3719,7 +3768,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 onClick={() => {
                   setNewBuyerCode("");
                   setNewBuyerName("");
-                  setNewBuyerChannel(channelsList[0]?.channel_name || "Retailer");
+                  setNewBuyerChannel("");
                   setNewBuyerPaymentTerm("90");
                   setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
                   setShowAddBuyerModal(true);
@@ -3850,18 +3899,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   >
                     ‹
                   </button>
-                  <label className="relative flex-1 flex items-center justify-center gap-1.5 px-1 cursor-pointer">
+                  <button
+                    type="button"
+                    onClick={openMonthPicker}
+                    className="relative flex-1 flex items-center justify-center gap-1.5 px-1 py-1 rounded hover:bg-slate-100/70 transition-colors cursor-pointer"
+                    title="Click to select month & year directly"
+                  >
                     <Calendar size={13} className="text-[#0B57D0] shrink-0" />
                     <span className="text-xs font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center">
                       {formatPeriodLabel(currentPeriod)}
                     </span>
-                    <input
-                      type="month"
-                      value={currentPeriod}
-                      onChange={(e) => e.target.value && setCurrentPeriod(e.target.value)}
-                      className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                    />
-                  </label>
+                  </button>
                   <button
                     type="button"
                     onClick={handleNextMonth}
@@ -4045,18 +4093,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     >
                       ‹
                     </button>
-                    <label className="relative flex-1 flex items-center justify-center gap-1.5 px-1 cursor-pointer">
+                    <button
+                      type="button"
+                      onClick={openMonthPicker}
+                      className="relative flex-1 flex items-center justify-center gap-1.5 px-1 py-1 rounded hover:bg-slate-100/70 transition-colors cursor-pointer"
+                      title="Click to select month & year directly"
+                    >
                       <Calendar size={13} className="text-[#0B57D0] shrink-0" />
                       <span className="text-xs font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center">
                         {formatPeriodLabel(currentPeriod)}
                       </span>
-                      <input
-                        type="month"
-                        value={currentPeriod}
-                        onChange={(e) => e.target.value && setCurrentPeriod(e.target.value)}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full"
-                      />
-                    </label>
+                    </button>
                     <button
                       type="button"
                       onClick={handleNextMonth}
@@ -4316,8 +4363,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                   <div className="text-[11px] text-zinc-400 font-mono">{b.buyer_code}</div>
                                 </td>
                                 <td className="py-2.5 px-3">
-                                  <span className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
-                                    {b.channel || "Retailer"}
+                                  <span className={`px-2 py-0.5 rounded text-[10.5px] font-medium border ${
+                                    !b.channel || b.channel === "Not Set"
+                                      ? "bg-amber-50 text-amber-700 border-amber-200 italic"
+                                      : "bg-slate-100 text-zinc-600 border-slate-200"
+                                  }`}>
+                                    {b.channel || "Not Set"}
                                   </span>
                                 </td>
                                 <td className="py-2.5 px-3 text-center text-zinc-700 font-mono">
@@ -4564,10 +4615,20 @@ export function SellInModule({ profile }: SellInModuleProps) {
                       String(r.channel || "").trim().toLowerCase() === "direct consumer" ||
                       String(r.buyer_name || "").toLowerCase().startsWith("cash sales");
 
-                    const isUnregistered = !isDirectConsumer && r.validation_status === "unregistered_buyer";
-                    const isNoListing = !isDirectConsumer && r.validation_status === "no_listing";
-                    const isUnmappedSku = r.validation_status === "unmapped_sku";
-                    const isValid = r.validation_status === "valid" || (!isUnregistered && !isNoListing && !isUnmappedSku);
+                    const matchedBuyer = buyersList.find((b) => 
+                      (r.buyer_code && (b.buyer_code === r.buyer_code || b.id === r.buyer_code)) ||
+                      (b.buyer_name && r.buyer_name && (
+                        b.buyer_name.trim().toLowerCase() === r.buyer_name.trim().toLowerCase() ||
+                        normalizeBuyerName(b.buyer_name) === normalizeBuyerName(r.buyer_name)
+                      ))
+                    );
+
+                    const isUnregistered = !isDirectConsumer && r.item_type !== "settlement" && (
+                      r.validation_status === "unregistered_buyer" || !matchedBuyer
+                    );
+                    const isNoListing = !isDirectConsumer && !isUnregistered && r.validation_status === "no_listing";
+                    const isUnmappedSku = !isUnregistered && r.validation_status === "unmapped_sku";
+                    const isValid = r.validation_status === "valid" && !isUnregistered && !isNoListing && !isUnmappedSku;
 
                     return (
                       <tr 
@@ -4630,7 +4691,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               onClick={() => {
                                 setNewBuyerCode(r.buyer_code);
                                 setNewBuyerName(r.buyer_name || r.buyer_code);
-                                setNewBuyerChannel(r.source_type === "tiktok" ? "TikTok" : "Retailer");
+                                setNewBuyerChannel(r.channel || (r.source_type === "tiktok" ? "TikTok" : ""));
                                 setNewBuyerPaymentTerm("3");
                                 setNewBuyerStoreGroups([{ group_name: "", store_count: 1 }]);
                                 setShowAddBuyerModal(true);
@@ -4741,22 +4802,30 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         {/* Channel */}
                         <td className="py-2 px-3">
                           {batchData?.status === "published" ? (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200/80 inline-flex items-center">
-                              {r.channel || "Retailer"}
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-medium border inline-flex items-center ${
+                              !r.channel || r.channel === "Not Set"
+                                ? "bg-amber-50 text-amber-700 border-amber-200 italic"
+                                : "bg-slate-100 text-slate-700 border-slate-200/80"
+                            }`}>
+                              {r.channel || "Not Set"}
                             </span>
                           ) : (
                             <button
                               type="button"
                               onClick={() => {
                                 setAssignChannelTarget(r);
-                                setSelectedAssignChannel(r.channel || channelsList[0]?.channel_name || "Retailer");
+                                setSelectedAssignChannel(r.channel || "Not Set");
                                 setApplyChannelToAllBuyerRows(true);
                                 setShowAssignChannelModal(true);
                               }}
-                              className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0B57D0] border border-slate-200/80 hover:border-blue-200 transition-colors cursor-pointer inline-flex items-center gap-1 group"
+                              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer inline-flex items-center gap-1 group ${
+                                !r.channel || r.channel === "Not Set"
+                                  ? "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200 italic"
+                                  : "bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0B57D0] border-slate-200/80 hover:border-blue-200"
+                              }`}
                               title="Click to assign sales channel"
                             >
-                              <span>{r.channel || "Retailer"}</span>
+                              <span>{r.channel || "Not Set"}</span>
                               <Edit2 size={9} className="text-zinc-400 group-hover:text-[#0B57D0] opacity-60 group-hover:opacity-100" />
                             </button>
                           )}
@@ -4834,6 +4903,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                     </button>
                                   </div>
                                 </div>
+                              ) : (r.item_type && r.item_type !== "product") ? (
+                                <span className="text-[10px] font-mono text-zinc-400 italic">
+                                  — (Non-Inventory Item)
+                                </span>
                               ) : (
                                 <>
                                   <span 
@@ -4860,7 +4933,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                         {/* Brand */}
                         <td className="py-2 px-3 text-zinc-600">
-                          {r.brand || "Unassigned"}
+                          {(() => {
+                            if (r.item_type && r.item_type !== "product") {
+                              if (r.brand && r.brand !== "Unassigned Brand" && r.brand !== "Unassigned") return r.brand;
+                              if (r.item_type === "bcrs") return "BCRS";
+                              if (r.item_type === "rebate") return "Sale Rebate";
+                              if (r.item_type === "fee") return "Fee";
+                              if (r.item_type === "service") return "Service";
+                              if (r.item_type === "settlement") return "Settlement";
+                              return "Non-Product";
+                            }
+                            return r.brand || "Unassigned";
+                          })()}
                         </td>
 
                         {/* Unit Price ($/pcs) - 100% from Invoice, non-editable */}
@@ -4981,7 +5065,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredBuyers.map((b, idx) => {
-                    const draft = buyerDrafts[b.id] || { buyer_code: b.buyer_code, buyer_name: b.buyer_name, channel: b.channel || "Retailer" };
+                    const draft = buyerDrafts[b.id] || { buyer_code: b.buyer_code, buyer_name: b.buyer_name, channel: b.channel || "" };
 
                     return (
                       <tr key={b.id || idx} className="hover:bg-slate-50/80 transition-colors">
@@ -5040,8 +5124,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               minWidth="min-w-[130px]"
                             />
                           ) : (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200/80 whitespace-nowrap">
-                              {b.channel || "Retailer"}
+                            <span className={`px-2 py-0.5 rounded text-[11px] font-medium border whitespace-nowrap ${
+                              !b.channel || b.channel === "Not Set"
+                                ? "bg-amber-50 text-amber-700 border-amber-200 italic"
+                                : "bg-slate-100 text-slate-700 border-slate-200/80"
+                            }`}>
+                              {b.channel || "Not Set"}
                             </span>
                           )}
                         </td>
@@ -5638,7 +5726,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                 </span>
                               )}
                               <span className="text-[10px] text-zinc-400">
-                                ({b.channel || "Retailer"})
+                                ({b.channel || "Not Set"})
                               </span>
                             </div>
 
@@ -6052,7 +6140,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                             onClick={() => {
                               setNewBuyerName(inv.customer_name);
                               setNewBuyerCode(inv.customer_name.replace(/[^a-zA-Z0-9]/g, "").substring(0, 10).toUpperCase());
-                              setNewBuyerChannel("Retailer");
+                              setNewBuyerChannel("");
                               setShowAddBuyerModal(true);
                             }}
                             className="h-6 px-2 rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-medium flex items-center gap-1 cursor-pointer"
@@ -6300,7 +6388,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                             onClick={() => {
                               setNewBuyerName(cn.customer_name);
                               setNewBuyerCode(cn.customer_name.replace(/[^a-zA-Z0-9]/g, "").substring(0, 10).toUpperCase());
-                              setNewBuyerChannel("Retailer");
+                              setNewBuyerChannel("");
                               setShowAddBuyerModal(true);
                             }}
                             className="h-6 px-2 rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-medium flex items-center gap-1 cursor-pointer"
@@ -6474,6 +6562,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <th className="py-1.5 px-2 text-right">Qty</th>
                     <th className="py-1.5 px-2 text-right">Unit Price</th>
                     <th className="py-1.5 px-2 text-right">Amount</th>
+                    <th className="py-1.5 px-2 text-center w-12">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
@@ -6493,22 +6582,127 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     if (invs.length === 0) {
                       return (
                         <tr>
-                          <td colSpan={5} className="py-3 text-center text-zinc-400 text-xs">
+                          <td colSpan={6} className="py-3 text-center text-zinc-400 text-xs">
                             No invoice breakdown details available.
                           </td>
                         </tr>
                       );
                     }
 
-                    return invs.map((inv: any, idx: number) => (
-                      <tr key={idx}>
-                        <td className="py-2 px-2 text-[#0B57D0] font-semibold">{inv.invoice_no}</td>
-                        <td className="py-2 px-2 text-zinc-600">{inv.invoice_date || "-"}</td>
-                        <td className="py-2 px-2 text-right text-zinc-800 font-semibold">{inv.qty}</td>
-                        <td className="py-2 px-2 text-right text-zinc-600">${Number(inv.unit_price || 0).toFixed(2)}</td>
-                        <td className="py-2 px-2 text-right text-zinc-900 font-semibold">${Number(inv.amount || 0).toFixed(2)}</td>
-                      </tr>
-                    ));
+                    const handleToggleExclusion = async (invIdx: number, inv: any) => {
+                      if (!selectedInvoiceBreakdownRow?.id || togglingInvoiceIdx !== null) return;
+                      setTogglingInvoiceIdx(invIdx);
+                      try {
+                        const nextExcluded = !inv.is_excluded;
+                        const targetRecordId = inv.parent_record_id || selectedInvoiceBreakdownRow.id;
+                        const res = await fetch(`${API_BASE}/api/sellin/toggle-invoice-exclusion`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            record_id: targetRecordId,
+                            invoice_index: invIdx,
+                            invoice_no: inv.invoice_no,
+                            is_excluded: nextExcluded
+                          })
+                        });
+                        const data = await res.json();
+                        if (res.ok && data.success) {
+                          // Update local modal state immediately without truncating consolidated invoices
+                          const updatedInvs = Array.isArray(selectedInvoiceBreakdownRow.invoices) ? [...selectedInvoiceBreakdownRow.invoices] : [];
+                          if (updatedInvs[invIdx]) {
+                            updatedInvs[invIdx] = { ...updatedInvs[invIdx], is_excluded: nextExcluded };
+                          }
+
+                          const invQty = Number(inv.qty || 0);
+                          const invAmt = Number(inv.amount || (invQty * Number(inv.unit_price || 0)) || 0);
+                          const deltaQty = nextExcluded ? -invQty : invQty;
+                          const deltaAmt = nextExcluded ? -invAmt : invAmt;
+                          const nextDemandQty = Math.max(0, Number(selectedInvoiceBreakdownRow.demand_qty ?? selectedInvoiceBreakdownRow.quantity ?? 0) + deltaQty);
+                          const nextTotalDemand = Math.max(0, Number(selectedInvoiceBreakdownRow.total_demand || 0) + deltaAmt);
+
+                          setSelectedInvoiceBreakdownRow((prev: any) => ({
+                            ...prev,
+                            invoices: updatedInvs,
+                            quantity: nextDemandQty,
+                            demand_qty: nextDemandQty,
+                            total_demand: nextTotalDemand
+                          }));
+                          showToast(nextExcluded ? `Excluded invoice ${inv.invoice_no} from demand` : `Restored invoice ${inv.invoice_no} to demand`, "success");
+                          // Optimistically update main table records immediately
+                          setRecords((prevRecs) =>
+                            prevRecs.map((rec) =>
+                              rec.id === selectedInvoiceBreakdownRow.id
+                                ? {
+                                    ...rec,
+                                    invoices: updatedInvs,
+                                    quantity: nextDemandQty,
+                                    demand_qty: nextDemandQty,
+                                    total_demand: nextTotalDemand
+                                  }
+                                : rec
+                            )
+                          );
+                          // Refresh batch details in background silently
+                          fetchBatchDetails(currentPeriod, true);
+                        } else {
+                          showToast(data.error || "Failed to update invoice exclusion", "error");
+                        }
+                      } catch (err: any) {
+                        showToast(err.message || "Failed to toggle invoice exclusion", "error");
+                      } finally {
+                        setTogglingInvoiceIdx(null);
+                      }
+                    };
+
+                    return invs.map((inv: any, idx: number) => {
+                      const isExcluded = Boolean(inv.is_excluded);
+                      return (
+                        <tr key={idx} className={isExcluded ? "bg-slate-50/70 opacity-60 text-zinc-400" : ""}>
+                          <td className="py-2 px-2">
+                            <span className={cn("font-semibold", isExcluded ? "line-through text-zinc-400" : "text-[#0B57D0]")}>
+                              {inv.invoice_no}
+                            </span>
+                            {isExcluded && (
+                              <span className="ml-1.5 text-[9px] font-sans px-1 py-0.2 rounded bg-zinc-200 text-zinc-600 uppercase font-medium">
+                                Excluded
+                              </span>
+                            )}
+                          </td>
+                          <td className={cn("py-2 px-2", isExcluded ? "line-through text-zinc-400" : "text-zinc-600")}>
+                            {inv.invoice_date || "-"}
+                          </td>
+                          <td className={cn("py-2 px-2 text-right font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-800")}>
+                            {inv.qty}
+                          </td>
+                          <td className={cn("py-2 px-2 text-right", isExcluded ? "line-through text-zinc-400" : "text-zinc-600")}>
+                            ${Number(inv.unit_price || 0).toFixed(2)}
+                          </td>
+                          <td className={cn("py-2 px-2 text-right font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-900")}>
+                            ${Number(inv.amount || 0).toFixed(2)}
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            {Array.isArray(selectedInvoiceBreakdownRow.invoices) && selectedInvoiceBreakdownRow.invoices.length > 0 ? (
+                              <button
+                                type="button"
+                                disabled={togglingInvoiceIdx !== null}
+                                onClick={() => handleToggleExclusion(idx, inv)}
+                                className={cn(
+                                  "p-1 rounded cursor-pointer transition-colors inline-flex items-center justify-center",
+                                  isExcluded 
+                                    ? "text-zinc-400 hover:text-zinc-700 hover:bg-zinc-200/60" 
+                                    : "text-zinc-500 hover:text-[#0B57D0] hover:bg-blue-50"
+                                )}
+                                title={isExcluded ? "Include back in calculation" : "Exclude from calculation"}
+                              >
+                                {isExcluded ? <EyeOff size={13} className="text-zinc-500" /> : <Eye size={13} />}
+                              </button>
+                            ) : (
+                              <span className="text-zinc-300">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    });
                   })()}
                 </tbody>
               </table>
@@ -6571,6 +6765,97 @@ export function SellInModule({ profile }: SellInModuleProps) {
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Month Picker (Year by Year) */}
+      {showMonthPickerModal && (
+        <div
+          onClick={() => setShowMonthPickerModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-[290px] bg-white rounded-xl border border-slate-200 shadow-2xl p-3.5 flex flex-col animate-in zoom-in-95 duration-100"
+          >
+            {/* Header: Prev Year, Year, Next Year, Close */}
+            <div className="flex items-center justify-between pb-2.5 border-b border-slate-100">
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setMonthPickerYear((prev) => prev - 1)}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-600 hover:text-[#0B57D0] hover:bg-slate-100 transition-colors cursor-pointer"
+                  title="Previous Year"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="text-sm font-bold text-zinc-900 tracking-tight font-mono px-1">
+                  {monthPickerYear}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setMonthPickerYear((prev) => prev + 1)}
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-600 hover:text-[#0B57D0] hover:bg-slate-100 transition-colors cursor-pointer"
+                  title="Next Year"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMonthPickerModal(false)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* 12 Months Grid (3 x 4) */}
+            <div className="grid grid-cols-3 gap-2 pt-3">
+              {[
+                { name: "Jan", num: "01" },
+                { name: "Feb", num: "02" },
+                { name: "Mar", num: "03" },
+                { name: "Apr", num: "04" },
+                { name: "May", num: "05" },
+                { name: "Jun", num: "06" },
+                { name: "Jul", num: "07" },
+                { name: "Aug", num: "08" },
+                { name: "Sep", num: "09" },
+                { name: "Oct", num: "10" },
+                { name: "Nov", num: "11" },
+                { name: "Dec", num: "12" },
+              ].map((m) => {
+                const targetPeriod = `${monthPickerYear}-${m.num}`;
+                const isSelected = targetPeriod === currentPeriod;
+                const isFuture = targetPeriod > getSingaporeCurrentPeriod();
+
+                return (
+                  <button
+                    key={m.num}
+                    type="button"
+                    disabled={isFuture}
+                    onClick={() => {
+                      if (isFuture) return;
+                      setCurrentPeriod(targetPeriod);
+                      setShowMonthPickerModal(false);
+                    }}
+                    className={`w-full h-10 rounded-lg text-xs font-semibold flex items-center justify-center transition-all cursor-pointer ${
+                      isSelected
+                        ? "bg-[#0B57D0] text-white shadow-xs"
+                        : isFuture
+                        ? "text-zinc-300 bg-slate-50/60 cursor-not-allowed border border-dashed border-slate-200/60"
+                        : "text-zinc-700 bg-white hover:bg-[#E8F0FE] hover:text-[#0B57D0] hover:border-[#0B57D0]/40 border border-slate-200 shadow-2xs"
+                    }`}
+                    title={isFuture ? "Future period cannot be selected" : `${m.name} ${monthPickerYear}`}
+                  >
+                    <span>{m.name}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -6972,7 +7257,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                       {/* Invisible backdrop to close dropdown on outside click */}
                       {isItemTypeDropdownOpen && (
                         <div
-                          className="fixed inset-0 z-20 cursor-default"
+                          className="fixed inset-0 z-10 cursor-default"
                           onClick={() => setIsItemTypeDropdownOpen(false)}
                         />
                       )}
@@ -6981,7 +7266,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                       <button
                         type="button"
                         onClick={() => setIsItemTypeDropdownOpen(!isItemTypeDropdownOpen)}
-                        className="w-full h-11 px-3 bg-white border border-slate-300 hover:border-slate-400 rounded-lg flex items-center justify-between transition-all cursor-pointer shadow-2xs focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] relative z-10"
+                        className="w-full h-11 px-3 bg-white border border-slate-300 hover:border-slate-400 rounded-lg flex items-center justify-between transition-all cursor-pointer shadow-2xs focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] relative z-20"
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-xs font-semibold text-zinc-900 truncate">
@@ -7003,14 +7288,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           {ITEM_TYPES.map((t) => {
                             const isSelected = selectedItemType === t.value;
                             return (
-                              <div
+                              <button
+                                type="button"
                                 key={t.value}
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
                                   setSelectedItemType(t.value);
                                   setIsItemTypeDropdownOpen(false);
                                 }}
                                 className={cn(
-                                  "p-3 transition-colors cursor-pointer flex items-start justify-between gap-3 text-left",
+                                  "w-full p-3 transition-colors cursor-pointer flex items-start justify-between gap-3 text-left focus:outline-none",
                                   isSelected ? "bg-blue-50/80 hover:bg-blue-50" : "hover:bg-slate-50"
                                 )}
                               >
@@ -7030,7 +7318,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                 {isSelected && (
                                   <Check size={14} className="text-[#0B57D0] shrink-0 mt-0.5" />
                                 )}
-                              </div>
+                              </button>
                             );
                           })}
                         </div>
@@ -7140,7 +7428,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 })()}
                 <div className="flex items-center justify-between">
                   <span className="text-zinc-500 font-medium text-[11px]">Current Channel:</span>
-                  <span className="text-zinc-700 font-medium">{assignChannelTarget.channel || "Retailer"}</span>
+                  <span className={`font-medium ${!assignChannelTarget.channel || assignChannelTarget.channel === "Not Set" ? "text-amber-700 italic" : "text-zinc-700"}`}>
+                    {assignChannelTarget.channel || "Not Set"}
+                  </span>
                 </div>
               </div>
 
@@ -7152,10 +7442,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <CustomSelect
                   value={selectedAssignChannel}
                   onChange={setSelectedAssignChannel}
-                  options={channelsList.map((ch) => ({
-                    label: ch.channel_name,
-                    value: ch.channel_name
-                  }))}
+                  options={[
+                    { label: "-- Clear Channel (Not Set) --", value: "Not Set" },
+                    ...channelsList.map((ch) => ({
+                      label: ch.channel_name,
+                      value: ch.channel_name
+                    }))
+                  ]}
                   placeholder="Select registered channel..."
                   className="w-full"
                   minWidth="w-full"
@@ -7630,7 +7923,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {missingInvoicesList.map((item: any, idx: number) => {
+                    {missingInvoicesList
+                      .filter((item: any) => !String(item.id || "").startsWith("RET-") && String(item.type || "").toLowerCase() !== "return")
+                      .map((item: any, idx: number) => {
                       const ageDays = Math.floor((Date.now() - (item.timestamp || Date.now())) / (1000 * 60 * 60 * 24));
                       const dateStr = item.timestamp ? new Date(item.timestamp).toLocaleDateString('en-GB') : '-';
                       return (
@@ -7733,7 +8028,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                 {/* Listing Sheet Contract Price */}
                 <div className="p-3 rounded-lg border border-amber-200 bg-amber-50/50 flex flex-col items-center text-center">
-                  <span className="text-[10.5px] font-medium text-amber-700 uppercase tracking-wider">Price to Buyer (List Price)</span>
+                  <span className="text-[10.5px] font-medium text-amber-700 uppercase tracking-wider">Buyer Cost Price (Listing Sheet)</span>
                   <span className="text-lg font-bold text-amber-900 font-mono mt-1">
                     ${Number(priceMismatchTarget.listing_price || 0).toFixed(2)}
                   </span>
@@ -7744,7 +8039,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </div>
 
               <div className="p-2.5 rounded-lg bg-blue-50/60 border border-blue-100 text-[11px] text-zinc-600 leading-relaxed">
-                The actual billed invoice price is kept safe for accounting calculations. If the registered list price is outdated, you can update it directly below.
+                The actual billed invoice price is kept safe for accounting calculations. If the registered Buyer Cost Price in Market Price is outdated, you can update it directly below.
               </div>
             </div>
 
@@ -7767,7 +8062,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
               >
                 {savingUpdateListingPrice ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                <span>Update List Price to ${Number(priceMismatchTarget.unit_price || 0).toFixed(2)}</span>
+                <span>Update Listing Buyer Price to ${Number(priceMismatchTarget.unit_price || 0).toFixed(2)}</span>
               </button>
             </div>
           </div>

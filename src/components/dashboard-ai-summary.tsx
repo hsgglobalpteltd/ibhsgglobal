@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { RefreshCw, Send, Bot, Sparkles, Globe, MessageSquare, Plus, Trash2, ChevronRight, Check, History, Search, Bookmark, BookmarkCheck } from "lucide-react";
+import { RefreshCw, Send, Bot, Sparkles, Globe, MessageSquare, Plus, Trash2, ChevronRight, Check, History, Search, Bookmark, BookmarkCheck, Copy, Square } from "lucide-react";
 import {
   fetchDashboardAiBriefing,
   fetchUserChats,
@@ -28,6 +28,213 @@ function getDaily6AmCycleId(date = new Date()): string {
   return `${y}-${m}-${day}_06:00`;
 }
 
+// -----------------------------------------------------------------------------
+// Rich Markdown & Table Renderer for iBuddy Chat Bubbles
+// Supports: Headers (#, ##, ###), Markdown Tables (| a | b |), Bullet lists,
+// Bold (**text**), Inline Code (`code`), and Key-Value Header/Body layouts.
+// -----------------------------------------------------------------------------
+function renderFormattedInlineText(text: string): React.ReactNode {
+  if (!text) return null;
+
+  // Split by inline markdown code (`code`) and bold (**bold**)
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g);
+  return parts.map((part, idx) => {
+    if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
+      return (
+        <code
+          key={idx}
+          className="px-1.5 py-0.5 mx-0.5 rounded bg-slate-100 border border-slate-200 text-[11px] font-mono text-[#0B57D0]"
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    if (part.startsWith("**") && part.endsWith("**") && part.length >= 4) {
+      return (
+        <strong key={idx} className="font-bold text-zinc-950">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+}
+
+function renderMarkdownTable(lines: string[], keyPrefix: number | string): React.ReactNode {
+  if (lines.length === 0) return null;
+
+  // Filter out divider line (e.g. |---|---|)
+  const isDivider = (l: string) => /^\s*\|?([\s-:]+\|)+[\s-:]*$/.test(l);
+  const dataLines = lines.filter((l) => !isDivider(l));
+  if (dataLines.length === 0) return null;
+
+  const parseRow = (line: string) => {
+    const raw = line.trim();
+    const stripped = raw.replace(/^\|/, "").replace(/\|$/, "");
+    return stripped.split("|").map((cell) => cell.trim());
+  };
+
+  const headerRow = parseRow(dataLines[0]);
+  const bodyRows = dataLines.slice(1).map(parseRow);
+
+  return (
+    <div key={`tbl-${keyPrefix}`} className="my-2 w-full overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-2xs">
+      <table className="w-full text-left text-xs border-collapse font-sans">
+        <thead className="bg-[#F8F9FA] text-zinc-800 border-b border-slate-200">
+          <tr>
+            {headerRow.map((h, i) => (
+              <th key={i} className="px-3 py-2 font-bold text-[11px] uppercase tracking-wider text-zinc-700 whitespace-nowrap">
+                {renderFormattedInlineText(h)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100 text-zinc-800">
+          {bodyRows.map((row, rIdx) => (
+            <tr key={rIdx} className={rIdx % 2 === 1 ? "bg-[#FDFDFE]" : "bg-white hover:bg-blue-50/40 transition-colors"}>
+              {row.map((cell, cIdx) => (
+                <td key={cIdx} className="px-3 py-2 text-xs whitespace-nowrap text-zinc-800">
+                  {renderFormattedInlineText(cell)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BubbleRichText({ text, isUser = false }: { text: string; isUser?: boolean }) {
+  if (!text) return null;
+
+  const lines = text.split(/\r?\n/);
+  const elements: React.ReactNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const rawLine = lines[i];
+    const trimmed = rawLine.trim();
+
+    // 1. Detect Markdown Table block (| ... |)
+    if (trimmed.startsWith("|") && trimmed.endsWith("|") && trimmed.includes("|")) {
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith("|") && lines[i].trim().endsWith("|")) {
+        tableLines.push(lines[i]);
+        i++;
+      }
+      elements.push(renderMarkdownTable(tableLines, `tbl-${i}`));
+      continue;
+    }
+
+    // 2. Headings (# Header, ## Header, ### Header)
+    const h1Match = trimmed.match(/^#\s+(.+)$/);
+    const h2Match = trimmed.match(/^##\s+(.+)$/);
+    const h3Match = trimmed.match(/^###\s+(.+)$/);
+
+    if (h1Match) {
+      elements.push(
+        <h1 key={`h1-${i}`} className="text-sm sm:text-[14px] font-bold text-zinc-950 mt-2 mb-1 border-b border-slate-200/80 pb-1">
+          {renderFormattedInlineText(h1Match[1])}
+        </h1>
+      );
+      i++;
+      continue;
+    }
+    if (h2Match) {
+      elements.push(
+        <h2 key={`h2-${i}`} className="text-xs sm:text-[13px] font-bold text-zinc-900 mt-2 mb-1 flex items-center gap-1.5 text-[#0B57D0]">
+          {renderFormattedInlineText(h2Match[1])}
+        </h2>
+      );
+      i++;
+      continue;
+    }
+    if (h3Match) {
+      elements.push(
+        <h3 key={`h3-${i}`} className="text-xs font-bold text-zinc-800 mt-1.5 mb-0.5">
+          {renderFormattedInlineText(h3Match[1])}
+        </h3>
+      );
+      i++;
+      continue;
+    }
+
+    // 3. Bullet points (* bullet, - bullet)
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.+)$/);
+    if (bulletMatch) {
+      elements.push(
+        <div key={`bullet-${i}`} className="flex items-start gap-2 my-0.5 text-xs sm:text-[13px] leading-relaxed">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#0B57D0] mt-1.5 shrink-0" />
+          <div className="flex-1 min-w-0">{renderFormattedInlineText(bulletMatch[1])}</div>
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // 4. Numbered list (1. item, 2. item)
+    const numMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+    if (numMatch) {
+      elements.push(
+        <div key={`num-${i}`} className="flex items-start gap-2 my-0.5 text-xs sm:text-[13px] leading-relaxed">
+          <span className="text-[11px] font-bold text-[#0B57D0] shrink-0 min-w-[14px]">{numMatch[1]}.</span>
+          <div className="flex-1 min-w-0">{renderFormattedInlineText(numMatch[2])}</div>
+        </div>
+      );
+      i++;
+      continue;
+    }
+
+    // 5. Header / Body Colon Pattern (e.g. "Header Title:" or "**Title:** Body...")
+    if (trimmed.length > 0) {
+      elements.push(
+        <div key={`p-${i}`} className="text-xs sm:text-[13px] leading-relaxed my-0.5">
+          {renderFormattedInlineText(rawLine)}
+        </div>
+      );
+    } else {
+      // Empty line spacer
+      elements.push(<div key={`sp-${i}`} className="h-1.5" />);
+    }
+
+    i++;
+  }
+
+  return <div className={`w-full ${isUser ? "text-[#041E49]" : "text-zinc-800"} space-y-0.5`}>{elements}</div>;
+}
+
+// Helper to intelligently split text into bubbles while keeping markdown tables intact
+function splitTextIntoRichBubbles(rawText: string): string[] {
+  if (!rawText || !rawText.trim()) return [];
+
+  // If text contains a markdown table, split preserving table blocks
+  const paragraphs = rawText.split(/\n\n+/);
+  const bubbles: string[] = [];
+  let currentTableAccumulator: string[] = [];
+  let isInsideTable = false;
+
+  for (const para of paragraphs) {
+    const trimmed = para.trim();
+    if (!trimmed) continue;
+
+    const lines = trimmed.split("\n").map(l => l.trim());
+    const isAllTableLines = lines.every(l => (l.startsWith("|") && l.endsWith("|")) || /^\s*\|?([\s-:]+\|)+[\s-:]*$/.test(l));
+
+    if (isAllTableLines) {
+      // Append directly as a complete table bubble or combined
+      bubbles.push(trimmed);
+    } else if (lines.some(l => l.startsWith("|") && l.endsWith("|"))) {
+      // Contains both header/text and table, keep together in a rich bubble
+      bubbles.push(trimmed);
+    } else {
+      bubbles.push(trimmed);
+    }
+  }
+
+  return bubbles.filter(Boolean);
+}
+
 export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProps) {
   const isAdmin = profile?.role === "Administrator" || profile?.role === "Admin";
   const userEmail = (profile?.email || "").toLowerCase().trim();
@@ -37,6 +244,40 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
   const [lastGeneratedAt, setLastGeneratedAt] = React.useState<string>("");
   const [isGeminiLive, setIsGeminiLive] = React.useState<boolean | null>(null);
   
+  // Track recently copied bubble index for visual checkmark
+  const [copiedIndex, setCopiedIndex] = React.useState<number | null>(null);
+
+  const handleCopyBubble = React.useCallback(async (text: string, index: number) => {
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedIndex(index);
+      showToast("Copied to clipboard", "success");
+      setTimeout(() => {
+        setCopiedIndex((current) => (current === index ? null : current));
+      }, 2000);
+    } catch (_) {
+      // Fallback for older browsers
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+        setCopiedIndex(index);
+        showToast("Copied to clipboard", "success");
+        setTimeout(() => {
+          setCopiedIndex((current) => (current === index ? null : current));
+        }, 2000);
+      } catch (err: any) {
+        showToast("Failed to copy text", "error");
+      }
+    }
+  }, []);
+
   // External Data (Web Search) toggle state - default is false (Internal only)
   const [enableWebSearch, setEnableWebSearch] = React.useState<boolean>(false);
 
@@ -82,8 +323,25 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
   const [isTypingComplete, setIsTypingComplete] = React.useState<boolean>(true);
 
   const nextBubbleTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const abortControllerRef = React.useRef<AbortController | null>(null);
   const chatScrollRef = React.useRef<HTMLDivElement | null>(null);
   const messagesEndRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Stop generation function - aborts in-flight network request and cancels bubble popups
+  const handleStopGeneration = React.useCallback(() => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    if (nextBubbleTimeoutRef.current) {
+      clearTimeout(nextBubbleTimeoutRef.current);
+      nextBubbleTimeoutRef.current = null;
+    }
+    setIsGenerating(false);
+    setIsShowingIndicator(false);
+    setIsTypingComplete(true);
+    showToast("Generation stopped", "info");
+  }, []);
 
   // Auto-scroll helper that smoothly scrolls to the latest bottom bubble
   const scrollToBottom = React.useCallback((behavior: ScrollBehavior = "smooth") => {
@@ -168,23 +426,18 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     showToast("Conversation saved to Discussions", "success");
   }, [displayedBubbles, activeChatId, userEmail]);
 
-  // Initial load of server chats (merges into local-first list seamlessly)
+  // Initial load of server chats (authoritative server sync updates local list)
   React.useEffect(() => {
     if (!userEmail) return;
     fetchUserChats(userEmail).then((res) => {
-      if (res?.success && Array.isArray(res.chats) && res.chats.length > 0) {
-        setSavedChats((localPrev) => {
-          const map = new Map<string, UserChatSession>();
-          res.chats.forEach(c => map.set(c.id, c));
-          localPrev.forEach(c => {
-            if (!map.has(c.id)) map.set(c.id, c);
-          });
-          const merged = Array.from(map.values()).sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+      if (res?.success && Array.isArray(res.chats)) {
+        const sorted = [...res.chats].sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+        setSavedChats(sorted);
+        if (typeof window !== "undefined") {
           try {
-            localStorage.setItem("ib_user_saved_chats", JSON.stringify(merged));
+            localStorage.setItem("ib_user_saved_chats", JSON.stringify(sorted));
           } catch {}
-          return merged;
-        });
+        }
       }
     }).catch(() => {});
   }, [userEmail]);
@@ -334,11 +587,14 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
   // Initial load or fresh briefing
   const handleLoadInitialBriefing = React.useCallback(async () => {
     if (nextBubbleTimeoutRef.current) clearTimeout(nextBubbleTimeoutRef.current);
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     setIsGenerating(true);
     setIsShowingIndicator(true);
     try {
-      const res = await fetchDashboardAiBriefing(userName, profile, false);
+      const res = await fetchDashboardAiBriefing(userName, profile, false, undefined, undefined, false, controller.signal);
       
       console.log("🤖 [iB Gemini AI] Initial Briefing Response:", {
         is_ai: res?.is_ai,
@@ -357,14 +613,18 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
       const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
       setLastGeneratedAt(now);
 
-      const parsed = text.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+      const parsed = splitTextIntoRichBubbles(text);
       startSequentialPopups(parsed, false, isAi);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === "AbortError" || controller.signal.aborted) {
+        console.log("Initial briefing aborted by user.");
+        return;
+      }
       console.error("❌ [iB Gemini AI] Initial Briefing Failed:", err);
       setIsGeminiLive(false);
       const fallbackText = `Good morning, ${userName}.\n\nToday we have orders on route, and drivers are active on schedule.`;
       setFullBriefingText(fallbackText);
-      const parsed = fallbackText.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+      const parsed = splitTextIntoRichBubbles(fallbackText);
       startSequentialPopups(parsed, false, false);
     } finally {
       setIsGenerating(false);
@@ -378,6 +638,9 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     const textToSend = (customMessage !== undefined ? customMessage : userInput).trim();
     if (!textToSend || isGenerating) return;
     if (nextBubbleTimeoutRef.current) clearTimeout(nextBubbleTimeoutRef.current);
+    if (abortControllerRef.current) abortControllerRef.current.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     setUserInput("");
     setIsGenerating(true);
@@ -404,8 +667,9 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
         profile, 
         true, 
         textToSend, 
-        updatedWithUser,
-        enableWebSearch
+        updatedWithUser.slice(-100),
+        enableWebSearch,
+        controller.signal
       );
       
       console.log("🤖 [iB Gemini AI] Response Details:", {
@@ -423,13 +687,17 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
       let text = res?.text || `Live update: All operations are currently proceeding on schedule.`;
       // Ensure no raw action blocks leak into chat bubbles
       text = text.replace(/```(?:wfe_action|json)?\s*\{[\s\S]*?\}\s*```/gi, "").trim();
-      const parsed = text.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+      const parsed = splitTextIntoRichBubbles(text);
       startSequentialPopups(parsed, true, isAi);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.name === "AbortError" || controller.signal.aborted) {
+        console.log("Message request aborted by user.");
+        return;
+      }
       console.error("❌ [iB Gemini AI] Request Failed:", err);
       setIsGeminiLive(false);
       const fallbackText = `Live update: All operations are currently proceeding on schedule.`;
-      const parsed = fallbackText.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+      const parsed = splitTextIntoRichBubbles(fallbackText);
       startSequentialPopups(parsed, true, false);
     } finally {
       setIsGenerating(false);
@@ -652,12 +920,33 @@ function getRandomBuddyGreeting(userName: string): string {
 
                 if (isUser) {
                   return (
-                    <div key={index} className="flex justify-end w-full">
-                      <div className="relative bg-[#D3E3FD] text-zinc-900 border border-blue-200/60 text-xs sm:text-[13px] font-normal leading-relaxed shadow-xs px-4 py-2 rounded-2xl rounded-tr-xs max-w-[85%] transition-all animate-in fade-in duration-150">
-                        <div className="text-[#041E49] pr-5 pb-0.5 whitespace-pre-wrap">
-                          {item.text}
+                    <div key={index} className="flex justify-end w-full group">
+                      <div className="relative bg-[#D3E3FD] text-zinc-900 border border-blue-200/60 text-xs sm:text-[13px] font-normal leading-relaxed shadow-xs px-4 py-2 rounded-2xl rounded-tr-xs max-w-[85%] transition-all animate-in fade-in duration-150 select-text cursor-text">
+                        <div className="pr-5 pb-0.5 select-text">
+                          <BubbleRichText text={item.text} isUser={true} />
                         </div>
-                        <div className="flex items-center justify-end text-[9px] text-blue-800/60 font-medium select-none -mt-1">
+                        <div className="flex items-center justify-between gap-3 text-[9px] text-blue-800/60 font-medium select-none -mt-1 pt-1 border-t border-blue-200/30">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleCopyBubble(item.text, index);
+                            }}
+                            className="inline-flex items-center gap-1 text-[10px] text-blue-800/70 hover:text-[#0B57D0] opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                            title="Copy message text"
+                          >
+                            {copiedIndex === index ? (
+                              <>
+                                <Check size={11} className="text-emerald-600" />
+                                <span className="text-emerald-700 font-semibold">Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy size={11} />
+                                <span>Copy</span>
+                              </>
+                            )}
+                          </button>
                           <span>{item.timestamp || "Now"}</span>
                         </div>
                       </div>
@@ -666,9 +955,9 @@ function getRandomBuddyGreeting(userName: string): string {
                 }
 
                 return (
-                  <div key={index} className="flex justify-start w-full">
+                  <div key={index} className="flex justify-start w-full group">
                     <div
-                      className={`relative bg-white text-zinc-900 border border-slate-200/60 text-xs sm:text-[13px] leading-relaxed font-sans shadow-xs px-4 py-2.5 max-w-[92%] transition-all animate-in fade-in zoom-in-95 duration-200 ${
+                      className={`relative bg-white text-zinc-900 border border-slate-200/60 text-xs sm:text-[13px] leading-relaxed font-sans shadow-xs px-4 py-2.5 max-w-[92%] transition-all animate-in fade-in zoom-in-95 duration-200 select-text cursor-text ${
                         isFirst
                           ? "rounded-2xl rounded-tl-xs"
                           : "rounded-2xl rounded-tl-md"
@@ -679,17 +968,40 @@ function getRandomBuddyGreeting(userName: string): string {
                         <span className="absolute -left-1.5 top-0 w-2.5 h-2.5 bg-white border-l border-t border-slate-200/60 [clip-path:polygon(100%_0,0_0,100%_100%)] pointer-events-none" />
                       )}
 
-                      <div className="text-zinc-800 pr-5 pb-0.5 whitespace-pre-wrap">
-                        {item.text}
+                      <div className="pr-5 pb-0.5 select-text">
+                        <BubbleRichText text={item.text} isUser={false} />
                       </div>
-                      <div className="flex items-center justify-end gap-1.5 text-[9px] text-zinc-400 select-none -mt-1">
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full ${
-                            (item as any).isAi === false ? "bg-rose-500" : "bg-emerald-500"
-                          }`}
-                          title={(item as any).isAi === false ? "Rule Fallback" : "Live AI"}
-                        />
-                        <span>{item.timestamp || "Now"}</span>
+                      <div className="flex items-center justify-between gap-3 text-[9px] text-zinc-400 select-none -mt-1 pt-1 border-t border-slate-100/80">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleCopyBubble(item.text, index);
+                          }}
+                          className="inline-flex items-center gap-1 text-[10px] text-zinc-500 hover:text-[#0B57D0] opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                          title="Copy response text"
+                        >
+                          {copiedIndex === index ? (
+                            <>
+                              <Check size={11} className="text-emerald-600" />
+                              <span className="text-emerald-700 font-semibold">Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={11} />
+                              <span>Copy</span>
+                            </>
+                          )}
+                        </button>
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              (item as any).isAi === false ? "bg-rose-500" : "bg-emerald-500"
+                            }`}
+                            title={(item as any).isAi === false ? "Rule Fallback" : "Live AI"}
+                          />
+                          <span>{item.timestamp || "Now"}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -827,15 +1139,27 @@ function getRandomBuddyGreeting(userName: string): string {
                 )}
               </button>
 
-              <button
-                type="submit"
-                disabled={isGenerating || !userInput.trim()}
-                className="h-8 px-3.5 flex items-center justify-center gap-1.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white cursor-pointer transition-all shadow-2xs disabled:opacity-30 disabled:cursor-not-allowed active:scale-95 text-xs font-semibold"
-                title="Send message (Enter to send, Shift+Enter for new line)"
-              >
-                <span>Send</span>
-                <Send size={12} />
-              </button>
+              {isGenerating ? (
+                <button
+                  type="button"
+                  onClick={handleStopGeneration}
+                  className="h-8 px-3.5 flex items-center justify-center gap-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white cursor-pointer transition-all shadow-2xs active:scale-95 text-xs font-semibold animate-pulse"
+                  title="Stop generating response"
+                >
+                  <Square size={11} className="fill-current" />
+                  <span>Stop</span>
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  disabled={!userInput.trim()}
+                  className="h-8 px-3.5 flex items-center justify-center gap-1.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white cursor-pointer transition-all shadow-2xs disabled:opacity-30 disabled:cursor-not-allowed active:scale-95 text-xs font-semibold"
+                  title="Send message (Enter to send, Shift+Enter for new line)"
+                >
+                  <span>Send</span>
+                  <Send size={12} />
+                </button>
+              )}
             </div>
           </form>
         </div>
