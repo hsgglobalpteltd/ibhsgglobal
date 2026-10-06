@@ -546,6 +546,39 @@ const getOrderEditsRemark = (oldOrder: DbOrder, newFields: Partial<DbOrder>): st
   return changes.length > 0 ? `Edited: ${changes.join(", ")}` : "Order details updated";
 };
 
+// Create a top-half cropped snapshot from an invoice page image data URL
+export const createTopHalfSnapshot = (dataUrl: string): Promise<string> => {
+  return new Promise((resolve) => {
+    if (!dataUrl || !dataUrl.startsWith("data:image/")) {
+      resolve(dataUrl || "");
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const cropHeight = Math.floor(h * 0.52);
+        canvas.width = w;
+        canvas.height = cropHeight;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, w, cropHeight, 0, 0, w, cropHeight);
+          resolve(canvas.toDataURL("image/jpeg", 0.85));
+        } else {
+          resolve(dataUrl);
+        }
+      } catch (_) {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+};
+
 // Check if an order was completed today (Singapore Time / UTC+8)
 export const isOrderDoneToday = (order: DbOrder): boolean => {
   const isDelivered = order.type !== "Return" && (order.status === "Delivered" || String(order.completed) === "true" || order.completed === true);
@@ -853,6 +886,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const [invoiceNumberInput, setInvoiceNumberInput] = React.useState<string>("");
   const [creditNoteInput, setCreditNoteInput] = React.useState<string>("");
   const [invoiceAmountInput, setInvoiceAmountInput] = React.useState<string>("");
+  const [completeInvoiceFile, setCompleteInvoiceFile] = React.useState<File | null>(null);
+  const [completeInvoicePreview, setCompleteInvoicePreview] = React.useState<string>("");
+  const [completeInvoiceUploading, setCompleteInvoiceUploading] = React.useState<boolean>(false);
 
   // Edit Completed Invoice Modal States
   const [isEditInvoiceModalOpen, setIsEditInvoiceModalOpen] = React.useState<boolean>(false);
@@ -866,6 +902,42 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   // Revoke Complete Confirmation States
   const [isRevokeCompleteConfirmOpen, setIsRevokeCompleteConfirmOpen] = React.useState<boolean>(false);
   const [pendingRevokeCompleteOrder, setPendingRevokeCompleteOrder] = React.useState<DbOrder | null>(null);
+
+  // Unmatched Invoice Resolution Wizard States
+  interface UnresolvedInvoiceItem {
+    invoiceNumber: string;
+    invoiceAmount: string | number;
+    items?: any[];
+    pageNumbers?: any[];
+    firstPageDataUrl?: string;
+    topSnapshotDataUrl?: string;
+    rawPoRef?: string;
+  }
+  const [unresolvedInvoicesQueue, setUnresolvedInvoicesQueue] = React.useState<UnresolvedInvoiceItem[]>([]);
+  const [unresolvedQueueIndex, setUnresolvedQueueIndex] = React.useState<number>(0);
+  const [isResolutionWizardOpen, setIsResolutionWizardOpen] = React.useState<boolean>(false);
+  const [wizardInvoiceNum, setWizardInvoiceNum] = React.useState<string>("");
+  const [wizardInvoiceAmount, setWizardInvoiceAmount] = React.useState<string>("");
+  const [wizardSelectedOrderIds, setWizardSelectedOrderIds] = React.useState<Record<string, boolean>>({});
+  const [wizardSearchQuery, setWizardSearchQuery] = React.useState<string>("");
+  const [wizardSaving, setWizardSaving] = React.useState<boolean>(false);
+  const [wizardShowFullPreview, setWizardShowFullPreview] = React.useState<boolean>(false);
+
+  // Invoice Discrepancy & Revision Review States
+  interface InvoiceDiscrepancyItem {
+    order: DbOrder;
+    newInvoiceNumber: string;
+    oldInvoiceNumber: string;
+    newInvoiceAmount: string;
+    oldInvoiceAmount: string;
+    items?: any[];
+    firstPageDataUrl?: string;
+    topSnapshotDataUrl?: string;
+  }
+  const [invoiceDiscrepancyQueue, setInvoiceDiscrepancyQueue] = React.useState<InvoiceDiscrepancyItem[]>([]);
+  const [discrepancyQueueIndex, setDiscrepancyQueueIndex] = React.useState<number>(0);
+  const [isDiscrepancyModalOpen, setIsDiscrepancyModalOpen] = React.useState<boolean>(false);
+  const [discrepancySaving, setDiscrepancySaving] = React.useState<boolean>(false);
 
   // Link Store input and dropdown states
   const [linkStoreInputValues, setLinkStoreInputValues] = React.useState<Record<string, string>>({});
@@ -1007,6 +1079,56 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     });
     return map;
   }, [jobHistoryList]);
+
+  // Memoized candidate Delivered orders for the Unmatched Invoice Resolution Wizard
+  const wizardCandidateOrders = React.useMemo(() => {
+    return dbOrders
+      .filter((o) => {
+        if (o.type === "Return") return false;
+        const st = String(o.status || "").trim().toLowerCase();
+        if (st !== "delivered") return false;
+        const isComp = o.completed === "true" || o.completed === true;
+        if (isComp) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const timeA = Number(a.delivered_at || a.timestamp || 0);
+        const timeB = Number(b.delivered_at || b.timestamp || 0);
+        return timeB - timeA;
+      });
+  }, [dbOrders]);
+
+  const filteredWizardCandidateOrders = React.useMemo(() => {
+    const q = wizardSearchQuery.trim().toLowerCase();
+    if (!q) return wizardCandidateOrders;
+    return wizardCandidateOrders.filter((o) => {
+      const doNum = String(o.do_number || "").toLowerCase();
+      const refNum = String(o.ref_number || "").toLowerCase();
+      const addr = String(o.deliver_to || "").toLowerCase();
+      const pos = String(o.poscode || "").toLowerCase();
+      const mark = String(o.mark || "").toLowerCase();
+      return doNum.includes(q) || refNum.includes(q) || addr.includes(q) || pos.includes(q) || mark.includes(q);
+    });
+  }, [wizardCandidateOrders, wizardSearchQuery]);
+
+  // Group candidate orders by Date (DD/MM/YYYY)
+  const groupedWizardCandidateOrders = React.useMemo(() => {
+    const groups: Record<string, DbOrder[]> = {};
+    filteredWizardCandidateOrders.forEach((o) => {
+      let dateKey = "Recent Delivered Orders";
+      const ts = Number(o.delivered_at || o.timestamp || 0);
+      if (ts > 0) {
+        const d = new Date(ts);
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const yyyy = d.getFullYear();
+        dateKey = `${dd}/${mm}/${yyyy}`;
+      }
+      if (!groups[dateKey]) groups[dateKey] = [];
+      groups[dateKey].push(o);
+    });
+    return groups;
+  }, [filteredWizardCandidateOrders]);
 
   React.useEffect(() => {
     if (activeTab === "delivery" || activeDeliveryTab === "dispatch") {
@@ -2178,7 +2300,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     }
   };
 
-  const handleCompleteReturnOrder = async (order: DbOrder, creditNoteNum?: string, invoiceAmount?: number | string) => {
+  const handleCompleteReturnOrder = async (order: DbOrder, creditNoteNum?: string, invoiceAmount?: number | string, photoInvoiceUrl?: string) => {
     let currentLogs: LogEntry[] = [];
     try {
       currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
@@ -2192,6 +2314,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         remark: creditNoteNum 
           ? `Return marked as Complete (Credit Note: ${creditNoteNum}, Amount: ${invoiceAmount || "0"})` 
           : `Return marked as Complete (Amount: ${invoiceAmount || "0"})`,
+        photoUrl: photoInvoiceUrl || order.photo_invoice || undefined,
         timestamp: Date.now()
       }
     ];
@@ -2205,6 +2328,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               completed: "true", 
               credit_note_number: creditNoteNum || "", 
               invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+              photo_invoice: photoInvoiceUrl !== undefined ? photoInvoiceUrl : o.photo_invoice,
               logs: JSON.stringify(updatedLogs) 
             }
           : o
@@ -2221,6 +2345,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         completed: "true",
         credit_note_number: creditNoteNum || "",
         invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+        photo_invoice: photoInvoiceUrl !== undefined ? photoInvoiceUrl : order.photo_invoice,
         logs: JSON.stringify(updatedLogs)
       }
     };
@@ -3449,24 +3574,63 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       let matchedCount = 0;
       let ignoredBlankRef = 0;
       let notDeliveredCount = 0;
+      let alreadyCompletedSkippedCount = 0;
       let noMatchCount = 0;
+      const unresolvedInvoices: UnresolvedInvoiceItem[] = [];
+      const discrepancyInvoices: InvoiceDiscrepancyItem[] = [];
 
       for (let invIdx = 0; invIdx < unifiedInvoices.length; invIdx++) {
         const inv = unifiedInvoices[invIdx];
         const { invoiceNumber, poRef, invoiceAmount, items, pageNumbers } = inv;
 
-        if (!poRef || !poRef.trim()) {
+        const cleanRef = String(poRef || "").trim();
+
+        // Helper to extract page images for preview and snapshot
+        const getInvoicePageImages = async () => {
+          const itemPageIndices = Array.isArray(pageNumbers) && pageNumbers.length > 0
+            ? pageNumbers.map((pn: any) => parseInt(pn, 10) - 1).filter((n: number) => !isNaN(n) && n >= 0 && n < invoicePdfImages.length)
+            : [];
+          const firstPageIdx = itemPageIndices.length > 0 ? itemPageIndices[0] : (invIdx < invoicePdfImages.length ? invIdx : 0);
+          const firstPageDataUrl = invoicePdfImages[firstPageIdx] || "";
+          let topSnapshot = "";
+          if (firstPageDataUrl) {
+            topSnapshot = await createTopHalfSnapshot(firstPageDataUrl);
+          }
+          return { firstPageDataUrl, topSnapshot };
+        };
+
+        if (!cleanRef) {
           ignoredBlankRef++;
+          const { firstPageDataUrl, topSnapshot } = await getInvoicePageImages();
+          unresolvedInvoices.push({
+            invoiceNumber: invoiceNumber || "",
+            invoiceAmount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+            items: items || [],
+            pageNumbers: pageNumbers || [],
+            firstPageDataUrl,
+            topSnapshotDataUrl: topSnapshot,
+            rawPoRef: ""
+          });
           continue;
         }
 
         // Find matching order in dbOrders based on ref_number
         const matchedOrder = dbOrders.find(
-          (o) => String(o.ref_number).trim().toLowerCase() === String(poRef).trim().toLowerCase()
+          (o) => String(o.ref_number).trim().toLowerCase() === cleanRef.toLowerCase()
         );
 
         if (!matchedOrder) {
           noMatchCount++;
+          const { firstPageDataUrl, topSnapshot } = await getInvoicePageImages();
+          unresolvedInvoices.push({
+            invoiceNumber: invoiceNumber || "",
+            invoiceAmount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+            items: items || [],
+            pageNumbers: pageNumbers || [],
+            firstPageDataUrl,
+            topSnapshotDataUrl: topSnapshot,
+            rawPoRef: cleanRef
+          });
           continue;
         }
 
@@ -3477,6 +3641,39 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         if (!isDelivered && !isCompleted) {
           notDeliveredCount++;
           continue;
+        }
+
+        // Check if order is ALREADY completed with an invoice before
+        const hasExistingInvoice = isCompleted && Boolean(matchedOrder.invoice_number || matchedOrder.photo_invoice);
+        if (hasExistingInvoice) {
+          const parseAmt = (val: any) => parseFloat(String(val || "").replace(/[^0-9.-]/g, "")) || 0;
+          const oldAmt = parseAmt(matchedOrder.invoice_amount);
+          const newAmt = parseAmt(invoiceAmount);
+          const oldInvNum = String(matchedOrder.invoice_number || "").trim();
+          const newInvNum = String(invoiceNumber || "").trim();
+
+          const hasAmountDiff = newAmt > 0 && oldAmt > 0 && Math.abs(newAmt - oldAmt) > 0.01;
+          const hasInvNumDiff = Boolean(newInvNum && oldInvNum && newInvNum.toLowerCase() !== oldInvNum.toLowerCase());
+
+          if (hasAmountDiff || hasInvNumDiff) {
+            // Amount or Invoice Number changed: Add to Discrepancy Queue for user review
+            const { firstPageDataUrl, topSnapshot } = await getInvoicePageImages();
+            discrepancyInvoices.push({
+              order: matchedOrder,
+              newInvoiceNumber: newInvNum || oldInvNum,
+              oldInvoiceNumber: oldInvNum,
+              newInvoiceAmount: invoiceAmount !== undefined ? String(invoiceAmount) : String(oldAmt),
+              oldInvoiceAmount: matchedOrder.invoice_amount || "0",
+              items: items || [],
+              firstPageDataUrl,
+              topSnapshotDataUrl: topSnapshot
+            });
+            continue;
+          } else {
+            // Amount and Invoice Number are identical: ALWAYS SKIP (prevents double work / duplicate uploads)
+            alreadyCompletedSkippedCount++;
+            continue;
+          }
         }
 
         matchedCount++;
@@ -3599,10 +3796,36 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         );
       }
 
-      showToast(
-        `Bulk completion complete! ${matchedCount} orders updated with invoice.${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
-        "success"
-      );
+      if (discrepancyInvoices.length > 0) {
+        setInvoiceDiscrepancyQueue(discrepancyInvoices);
+        setDiscrepancyQueueIndex(0);
+        setIsDiscrepancyModalOpen(true);
+      }
+
+      if (unresolvedInvoices.length > 0) {
+        setUnresolvedInvoicesQueue(unresolvedInvoices);
+        setUnresolvedQueueIndex(0);
+        setWizardInvoiceNum(unresolvedInvoices[0].invoiceNumber || "");
+        setWizardInvoiceAmount(unresolvedInvoices[0].invoiceAmount ? String(unresolvedInvoices[0].invoiceAmount) : "");
+        setWizardSelectedOrderIds({});
+        setWizardSearchQuery("");
+        setWizardShowFullPreview(false);
+        setIsResolutionWizardOpen(true);
+        showToast(
+          `Auto-matched ${matchedCount} order(s). ${alreadyCompletedSkippedCount > 0 ? `(${alreadyCompletedSkippedCount} already completed skipped) ` : ""}${discrepancyInvoices.length > 0 ? `(${discrepancyInvoices.length} discrepancy review) ` : ""}Opening resolution wizard for ${unresolvedInvoices.length} unassigned invoice(s)...`,
+          "info"
+        );
+      } else if (discrepancyInvoices.length > 0) {
+        showToast(
+          `Auto-matched ${matchedCount} order(s). ${alreadyCompletedSkippedCount > 0 ? `(${alreadyCompletedSkippedCount} already completed skipped) ` : ""}Please review ${discrepancyInvoices.length} invoice update(s) with changed amounts.`,
+          "info"
+        );
+      } else {
+        showToast(
+          `Bulk completion complete! ${matchedCount} orders updated with invoice.${alreadyCompletedSkippedCount > 0 ? ` (${alreadyCompletedSkippedCount} already completed skipped)` : ""}${notDeliveredCount > 0 ? ` (${notDeliveredCount} skipped - not delivered yet)` : ""}`,
+          "success"
+        );
+      }
 
     } catch (err: any) {
       showToast(err.message || "Failed to process bulk invoices.", "error");
@@ -3610,6 +3833,297 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       setInvoiceLoading(false);
       setInvoiceLoadingText("Parsing Invoices...");
       e.target.value = "";
+    }
+  };
+
+  // Unmatched Invoice Resolution Wizard Handlers
+  const handleToggleWizardOrder = (orderId: string) => {
+    setWizardSelectedOrderIds((prev) => {
+      const next = { ...prev };
+      if (next[orderId]) {
+        delete next[orderId];
+      } else {
+        next[orderId] = true;
+      }
+      return next;
+    });
+  };
+
+  const advanceWizardQueue = () => {
+    const nextIdx = unresolvedQueueIndex + 1;
+    if (nextIdx < unresolvedInvoicesQueue.length) {
+      setUnresolvedQueueIndex(nextIdx);
+      const nextInv = unresolvedInvoicesQueue[nextIdx];
+      setWizardInvoiceNum(nextInv.invoiceNumber || "");
+      setWizardInvoiceAmount(nextInv.invoiceAmount ? String(nextInv.invoiceAmount) : "");
+      setWizardSelectedOrderIds({});
+      setWizardSearchQuery("");
+      setWizardShowFullPreview(false);
+    } else {
+      setIsResolutionWizardOpen(false);
+      setUnresolvedInvoicesQueue([]);
+      setUnresolvedQueueIndex(0);
+      showToast("All unassigned invoices have been resolved!", "success");
+    }
+  };
+
+  const handleWizardSkip = () => {
+    advanceWizardQueue();
+  };
+
+  const handleWizardAttachAndDone = async () => {
+    const selectedIds = Object.keys(wizardSelectedOrderIds).filter((id) => wizardSelectedOrderIds[id]);
+    if (selectedIds.length === 0) {
+      showToast("Please select at least one order to attach to this invoice.", "error");
+      return;
+    }
+
+    const currentInv = unresolvedInvoicesQueue[unresolvedQueueIndex];
+    if (!currentInv) return;
+
+    setWizardSaving(true);
+    try {
+      const selectedOrders = dbOrders.filter((o) => selectedIds.includes(o.id));
+      const selectedDoNumbers = selectedOrders.map((o) => o.do_number || o.id).filter(Boolean);
+
+      // Upload invoice photo to R2 if we have image data
+      let uploadedPhotoUrl = "";
+      const sourceImageDataUrl = currentInv.firstPageDataUrl || currentInv.topSnapshotDataUrl;
+      if (sourceImageDataUrl && sourceImageDataUrl.startsWith("data:image/")) {
+        try {
+          const base64Content = sourceImageDataUrl.split(",")[1];
+          const byteCharacters = atob(base64Content);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let b = 0; b < byteCharacters.length; b++) {
+            byteNumbers[b] = byteCharacters.charCodeAt(b);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: "image/jpeg" });
+          const primaryDO = selectedOrders[0]?.do_number || "INV";
+          const fileName = `Track_Orders/Invoice_Proof/${primaryDO}_${Date.now()}.jpg`;
+
+          const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+            method: "POST",
+            headers: { "Content-Type": "image/jpeg" },
+            body: blob
+          });
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json() as any;
+            if (uploadData.success && uploadData.url) {
+              uploadedPhotoUrl = uploadData.url;
+            }
+          }
+        } catch (uploadErr) {
+          console.error("Failed to upload manual resolution invoice photo:", uploadErr);
+        }
+      }
+
+      const isMultiDo = selectedOrders.length > 1;
+      const cleanInvNum = wizardInvoiceNum.trim();
+      const cleanInvAmt = wizardInvoiceAmount.trim();
+      const multiDoRemark = isMultiDo
+        ? `Archived & Verified in Bulk (Invoice: ${cleanInvNum || "-"}, Amount: ${cleanInvAmt || "-"}) • Multi-DO Match (${selectedDoNumbers.join(", ")})`
+        : `Archived & Verified (Invoice: ${cleanInvNum || "-"}, Amount: ${cleanInvAmt || "-"})`;
+
+      // Update each selected order
+      for (const order of selectedOrders) {
+        let currentLogs: LogEntry[] = [];
+        try {
+          currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
+        } catch (_) {}
+        if (!Array.isArray(currentLogs)) currentLogs = [];
+
+        const updatedLogs = [
+          ...currentLogs,
+          {
+            action: "Completed by Admin",
+            actionBy: profile?.name || "Admin",
+            remark: multiDoRemark,
+            photoUrl: uploadedPhotoUrl || order.photo_invoice || undefined,
+            timestamp: Date.now()
+          }
+        ];
+
+        const payloadData: any = {
+          id: order.id,
+          status: "Delivered",
+          completed: "true",
+          invoice_number: cleanInvNum,
+          invoice_amount: cleanInvAmt,
+          photo_invoice: uploadedPhotoUrl || order.photo_invoice || "",
+          logs: JSON.stringify(updatedLogs)
+        };
+
+        await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "update", data: payloadData })
+        }).catch((err) => console.error("Failed to save wizard order:", order.id, err));
+
+        setDbOrders((prev) =>
+          prev.map((o) =>
+            o.id === order.id
+              ? {
+                  ...o,
+                  status: "Delivered",
+                  completed: "true",
+                  invoice_number: cleanInvNum,
+                  invoice_amount: cleanInvAmt,
+                  photo_invoice: uploadedPhotoUrl || o.photo_invoice || "",
+                  logs: JSON.stringify(updatedLogs)
+                }
+              : o
+          )
+        );
+      }
+
+      showToast(`Linked Invoice ${cleanInvNum || ""} to ${selectedOrders.length} order(s)!`, "success");
+      advanceWizardQueue();
+    } catch (err: any) {
+      showToast(err.message || "Failed to attach invoice.", "error");
+    } finally {
+      setWizardSaving(false);
+    }
+  };
+
+  // Invoice Discrepancy & Revision Review Handlers
+  const handleDiscrepancySkip = () => {
+    const nextIdx = discrepancyQueueIndex + 1;
+    if (nextIdx < invoiceDiscrepancyQueue.length) {
+      setDiscrepancyQueueIndex(nextIdx);
+    } else {
+      setIsDiscrepancyModalOpen(false);
+      setInvoiceDiscrepancyQueue([]);
+      setDiscrepancyQueueIndex(0);
+      showToast("Finished reviewing invoice discrepancies.", "info");
+    }
+  };
+
+  const handleDiscrepancyUpdate = async () => {
+    const currentItem = invoiceDiscrepancyQueue[discrepancyQueueIndex];
+    if (!currentItem) return;
+
+    setDiscrepancySaving(true);
+    try {
+      const { order, newInvoiceNumber, newInvoiceAmount, oldInvoiceAmount, items, firstPageDataUrl, topSnapshotDataUrl } = currentItem;
+
+      // 1. Delete old photo from R2 if present
+      if (order.photo_invoice) {
+        deleteR2PhotoUrls(order.photo_invoice);
+      }
+
+      // 2. Upload new photo to R2 if image data is present
+      let uploadedPhotoUrl = "";
+      const sourceImageDataUrl = firstPageDataUrl || topSnapshotDataUrl;
+      if (sourceImageDataUrl && sourceImageDataUrl.startsWith("data:image/")) {
+        try {
+          const base64Content = sourceImageDataUrl.split(",")[1];
+          const byteCharacters = atob(base64Content);
+          const byteNumbers = new Array(byteCharacters.length);
+          for (let b = 0; b < byteCharacters.length; b++) {
+            byteNumbers[b] = byteCharacters.charCodeAt(b);
+          }
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: "image/jpeg" });
+          const fileName = `Track_Orders/Invoice_Proof/${order.do_number || "INV"}_${Date.now()}.jpg`;
+
+          const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+            method: "POST",
+            headers: { "Content-Type": "image/jpeg" },
+            body: blob
+          });
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json() as any;
+            if (uploadData.success && uploadData.url) {
+              uploadedPhotoUrl = uploadData.url;
+            }
+          }
+        } catch (uploadErr) {
+          console.error("Failed to upload revised invoice photo:", uploadErr);
+        }
+      }
+
+      let finalItemsJson: string | undefined = undefined;
+      let itemsRemark = "";
+      if (Array.isArray(items) && items.length > 0) {
+        const cleanItems = items
+          .map((it: any) => ({
+            sku: String(it.sku || it.name || it.item || "Unknown SKU").trim(),
+            qty: Number(it.qty || it.quantity || 1) || 1
+          }))
+          .filter((it: any) => Boolean(it.sku));
+
+        if (cleanItems.length > 0) {
+          finalItemsJson = JSON.stringify(cleanItems);
+          itemsRemark = ` • Updated Items (${cleanItems.length} items)`;
+        }
+      }
+
+      let currentLogs: LogEntry[] = [];
+      try {
+        currentLogs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
+      } catch (_) {}
+      if (!Array.isArray(currentLogs)) currentLogs = [];
+
+      const updatedLogs = [
+        ...currentLogs,
+        {
+          action: "Invoice Revised by Admin",
+          actionBy: profile?.name || "Admin",
+          remark: `Invoice details updated (Amount: $${oldInvoiceAmount || "0"} → $${newInvoiceAmount || "0"}, Inv#: ${newInvoiceNumber || "-"})${itemsRemark}`,
+          photoUrl: uploadedPhotoUrl || order.photo_invoice || undefined,
+          timestamp: Date.now()
+        }
+      ];
+
+      const payloadData: any = {
+        id: order.id,
+        status: "Delivered",
+        completed: "true",
+        invoice_number: newInvoiceNumber,
+        invoice_amount: newInvoiceAmount,
+        photo_invoice: uploadedPhotoUrl || order.photo_invoice || "",
+        logs: JSON.stringify(updatedLogs)
+      };
+      if (finalItemsJson !== undefined) {
+        payloadData.items = finalItemsJson;
+      }
+
+      await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/track-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "update", data: payloadData })
+      });
+
+      setDbOrders((prev) =>
+        prev.map((o) =>
+          o.id === order.id
+            ? {
+                ...o,
+                invoice_number: newInvoiceNumber,
+                invoice_amount: newInvoiceAmount,
+                photo_invoice: uploadedPhotoUrl || o.photo_invoice || "",
+                ...(finalItemsJson !== undefined ? { items: finalItemsJson } : {}),
+                logs: JSON.stringify(updatedLogs)
+              }
+            : o
+        )
+      );
+
+      showToast(`Updated order ${order.do_number} with revised invoice amount $${newInvoiceAmount}!`, "success");
+
+      const nextIdx = discrepancyQueueIndex + 1;
+      if (nextIdx < invoiceDiscrepancyQueue.length) {
+        setDiscrepancyQueueIndex(nextIdx);
+      } else {
+        setIsDiscrepancyModalOpen(false);
+        setInvoiceDiscrepancyQueue([]);
+        setDiscrepancyQueueIndex(0);
+      }
+    } catch (err: any) {
+      showToast(err.message || "Failed to update revised invoice.", "error");
+    } finally {
+      setDiscrepancySaving(false);
     }
   };
 
@@ -3727,7 +4241,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       let matchedCount = 0;
       let ignoredBlankRef = 0;
       let notDeliveredCount = 0;
+      let alreadyCompletedSkippedCount = 0;
       let noMatchCount = 0;
+      const excelDiscrepancyInvoices: InvoiceDiscrepancyItem[] = [];
 
       for (const inv of parsedInvoices) {
         const { invoiceNumber, poRef, invoiceAmount, items } = inv;
@@ -3753,6 +4269,34 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         if (!isDelivered && !isCompleted) {
           notDeliveredCount++;
           continue;
+        }
+
+        // Check if order is ALREADY completed with an invoice before
+        const hasExistingInvoice = isCompleted && Boolean(matchedOrder.invoice_number);
+        if (hasExistingInvoice) {
+          const parseAmt = (val: any) => parseFloat(String(val || "").replace(/[^0-9.-]/g, "")) || 0;
+          const oldAmt = parseAmt(matchedOrder.invoice_amount);
+          const newAmt = parseAmt(invoiceAmount);
+          const oldInvNum = String(matchedOrder.invoice_number || "").trim();
+          const newInvNum = String(invoiceNumber || "").trim();
+
+          const hasAmountDiff = newAmt > 0 && oldAmt > 0 && Math.abs(newAmt - oldAmt) > 0.01;
+          const hasInvNumDiff = Boolean(newInvNum && oldInvNum && newInvNum.toLowerCase() !== oldInvNum.toLowerCase());
+
+          if (hasAmountDiff || hasInvNumDiff) {
+            excelDiscrepancyInvoices.push({
+              order: matchedOrder,
+              newInvoiceNumber: newInvNum || oldInvNum,
+              oldInvoiceNumber: oldInvNum,
+              newInvoiceAmount: invoiceAmount !== undefined ? String(invoiceAmount) : String(oldAmt),
+              oldInvoiceAmount: matchedOrder.invoice_amount || "0",
+              items: items || []
+            });
+            continue;
+          } else {
+            alreadyCompletedSkippedCount++;
+            continue;
+          }
         }
 
         matchedCount++;
@@ -3820,10 +4364,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         );
       }
 
-      showToast(
-        `Bulk completion complete! ${matchedCount} orders updated with invoice.${notDeliveredCount > 0 ? ` (${notDeliveredCount} skipped - not delivered yet)` : ""}${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
-        "success"
-      );
+      if (excelDiscrepancyInvoices.length > 0) {
+        setInvoiceDiscrepancyQueue(excelDiscrepancyInvoices);
+        setDiscrepancyQueueIndex(0);
+        setIsDiscrepancyModalOpen(true);
+        showToast(
+          `Auto-matched ${matchedCount} order(s). ${alreadyCompletedSkippedCount > 0 ? `(${alreadyCompletedSkippedCount} already completed skipped) ` : ""}Please review ${excelDiscrepancyInvoices.length} invoice discrepancy update(s).`,
+          "info"
+        );
+      } else {
+        showToast(
+          `Bulk completion complete! ${matchedCount} orders updated with invoice.${alreadyCompletedSkippedCount > 0 ? ` (${alreadyCompletedSkippedCount} already completed skipped)` : ""}${notDeliveredCount > 0 ? ` (${notDeliveredCount} skipped - not delivered yet)` : ""}${noMatchCount > 0 ? ` (${noMatchCount} not matched)` : ""}`,
+          "success"
+        );
+      }
     } catch (err: any) {
       showToast(err.message || "Failed to process bulk invoices.", "error");
     } finally {
@@ -5800,7 +6354,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   };
 
   // Complete Action: marks Completed = true
-  const handleCompleteOrder = async (order: DbOrder, invoiceNum?: string, invoiceAmount?: number | string) => {
+  const handleCompleteOrder = async (order: DbOrder, invoiceNum?: string, invoiceAmount?: number | string, photoInvoiceUrl?: string) => {
     // --- INSTANT UPDATE (OPTIMISTIC UI) ---
     let currentLogs: LogEntry[] = [];
     try {
@@ -5815,6 +6369,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         remark: invoiceNum 
           ? `Archived & Verified (Invoice: ${invoiceNum}, Amount: ${invoiceAmount || "0"})` 
           : `Archived & Verified (Amount: ${invoiceAmount || "0"})`,
+        photoUrl: photoInvoiceUrl || order.photo_invoice || undefined,
         timestamp: Date.now()
       }
     ];
@@ -5830,6 +6385,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               completed: "true", 
               invoice_number: invoiceNum || "", 
               invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+              photo_invoice: photoInvoiceUrl !== undefined ? photoInvoiceUrl : o.photo_invoice,
               logs: JSON.stringify(updatedLogs) 
             }
           : o
@@ -5848,6 +6404,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         completed: "true",
         invoice_number: invoiceNum || "",
         invoice_amount: invoiceAmount !== undefined ? String(invoiceAmount) : "",
+        photo_invoice: photoInvoiceUrl !== undefined ? photoInvoiceUrl : order.photo_invoice,
         logs: JSON.stringify(updatedLogs)
       }
     };
@@ -6677,6 +7234,9 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     setPendingCompleteOrder(order);
     setInvoiceNumberInput("");
     setInvoiceAmountInput("");
+    setCompleteInvoiceFile(null);
+    setCompleteInvoicePreview("");
+    setCompleteInvoiceUploading(false);
     setIsCompleteConfirmOpen(true);
   };
 
@@ -6684,19 +7244,91 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     setPendingCompleteOrder(order);
     setCreditNoteInput("");
     setInvoiceAmountInput("");
+    setCompleteInvoiceFile(null);
+    setCompleteInvoicePreview("");
+    setCompleteInvoiceUploading(false);
     setIsCompleteConfirmOpen(true);
   };
 
-  const handleContinueComplete = () => {
+  const handleCompleteInvoiceFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCompleteInvoiceFile(file);
+
+    try {
+      if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+        const pdfjsLib = await loadPdfJs();
+        const arrayBuffer = await file.arrayBuffer();
+        const pdfDoc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const page = await pdfDoc.getPage(1);
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement("canvas");
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          const fullDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+          const snapshotUrl = await createTopHalfSnapshot(fullDataUrl);
+          setCompleteInvoicePreview(snapshotUrl);
+        }
+      } else {
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+          const dataUrl = evt.target?.result as string;
+          if (dataUrl) {
+            const snapshotUrl = await createTopHalfSnapshot(dataUrl);
+            setCompleteInvoicePreview(snapshotUrl);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    } catch (err: any) {
+      console.error("Failed to generate preview for invoice file:", err);
+      showToast("Could not preview document thumbnail: " + (err?.message || "Unknown error"), "warning");
+    }
+  };
+
+  const handleContinueComplete = async () => {
     if (!pendingCompleteOrder) return;
+
+    let uploadedPhotoUrl = "";
+    if (completeInvoiceFile) {
+      setCompleteInvoiceUploading(true);
+      try {
+        showToast("Uploading invoice document...", "info");
+        const ext = completeInvoiceFile.name.split('.').pop() || "jpg";
+        const fileName = `Track_Orders/Invoice_Proof/${pendingCompleteOrder.do_number}_${Date.now()}.${ext}`;
+        const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(fileName)}`, {
+          method: "POST",
+          headers: { "Content-Type": completeInvoiceFile.type || "image/jpeg" },
+          body: completeInvoiceFile
+        });
+        if (!uploadRes.ok) throw new Error("Invoice document upload failed");
+        const uploadData = await uploadRes.json() as any;
+        if (uploadData.success && uploadData.url) {
+          uploadedPhotoUrl = uploadData.url;
+        }
+      } catch (uploadErr: any) {
+        console.error("Invoice upload error:", uploadErr);
+        showToast("Failed to upload invoice document: " + uploadErr.message, "error");
+        setCompleteInvoiceUploading(false);
+        return;
+      } finally {
+        setCompleteInvoiceUploading(false);
+      }
+    }
+
     setIsCompleteConfirmOpen(false);
     
     if (pendingCompleteOrder.type === "Return") {
-      handleCompleteReturnOrder(pendingCompleteOrder, creditNoteInput.trim(), invoiceAmountInput.trim());
+      handleCompleteReturnOrder(pendingCompleteOrder, creditNoteInput.trim(), invoiceAmountInput.trim(), uploadedPhotoUrl);
     } else {
-      handleCompleteOrder(pendingCompleteOrder, invoiceNumberInput.trim(), invoiceAmountInput.trim());
+      handleCompleteOrder(pendingCompleteOrder, invoiceNumberInput.trim(), invoiceAmountInput.trim(), uploadedPhotoUrl);
     }
     setPendingCompleteOrder(null);
+    setCompleteInvoiceFile(null);
+    setCompleteInvoicePreview("");
   };
 
   // Items Side Panel Drawer Control
@@ -10484,6 +11116,346 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         </div>
       )}
 
+      {/* UNMATCHED INVOICE RESOLUTION WIZARD MODAL */}
+      {isResolutionWizardOpen && unresolvedInvoicesQueue.length > 0 && unresolvedInvoicesQueue[unresolvedQueueIndex] && (
+        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-5xl w-full h-[88vh] overflow-hidden flex flex-col animate-zoom-in">
+            {/* Header */}
+            <div className="px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0">
+              <div className="flex items-center gap-3">
+                <span className="font-bold text-sm text-zinc-950">
+                  Unmatched Invoice Resolution
+                </span>
+                <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-full text-[11px] font-bold">
+                  Invoice {unresolvedQueueIndex + 1} of {unresolvedInvoicesQueue.length}
+                </span>
+                {unresolvedInvoicesQueue[unresolvedQueueIndex]?.rawPoRef && (
+                  <span className="bg-slate-100 text-zinc-600 px-2 py-0.5 rounded text-[11px] font-mono">
+                    Unmatched Ref: {unresolvedInvoicesQueue[unresolvedQueueIndex].rawPoRef}
+                  </span>
+                )}
+              </div>
+              <button 
+                onClick={() => {
+                  setIsResolutionWizardOpen(false);
+                  showToast("Resolution wizard closed. Remaining unassigned invoices skipped.", "info");
+                }}
+                className="text-zinc-400 hover:text-zinc-600 focus:outline-none cursor-pointer p-1 rounded hover:bg-slate-200/60"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* 2-Column Body */}
+            <div className="flex-1 flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-slate-200 min-h-0 overflow-hidden">
+              {/* Left Column: Top-Half Snapshot Preview & Meta Inputs */}
+              <div className="w-full md:w-1/2 p-4 flex flex-col min-h-0 overflow-y-auto gap-3.5 bg-slate-50/40">
+                {/* Meta Inputs Card */}
+                <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs space-y-2.5">
+                  <div className="text-xs font-bold text-zinc-800 flex items-center justify-between">
+                    <span>Invoice Details</span>
+                    <span className="text-[10px] text-zinc-500 font-normal">Edit OCR values if needed</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="text-[11px] font-semibold text-zinc-600 block mb-1">Invoice Number *</label>
+                      <input
+                        type="text"
+                        value={wizardInvoiceNum}
+                        onChange={(e) => setWizardInvoiceNum(e.target.value)}
+                        placeholder="e.g. 250165807"
+                        className="w-full h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 text-xs font-medium focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-zinc-600 block mb-1">Total Amount ($) *</label>
+                      <input
+                        type="text"
+                        value={wizardInvoiceAmount}
+                        onChange={(e) => setWizardInvoiceAmount(e.target.value)}
+                        placeholder="e.g. 540.20"
+                        className="w-full h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 text-xs font-medium focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Snapshot Preview Card */}
+                <div className="bg-white p-3 rounded-lg border border-slate-200 shadow-xs flex-1 flex flex-col min-h-[280px]">
+                  <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100">
+                    <span className="text-xs font-bold text-zinc-800">
+                      {wizardShowFullPreview ? "Full Invoice Page Preview" : "Top-Half Invoice Snapshot"}
+                    </span>
+                    {unresolvedInvoicesQueue[unresolvedQueueIndex]?.firstPageDataUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setWizardShowFullPreview((prev) => !prev)}
+                        className="text-[11px] text-[#0B57D0] hover:text-[#0842A0] font-semibold flex items-center gap-1 cursor-pointer"
+                      >
+                        {wizardShowFullPreview ? "Show Top Half" : "Show Full Page"}
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex-1 min-h-[220px] bg-slate-100/70 rounded-md border border-slate-200 flex items-center justify-center overflow-auto p-2">
+                    {unresolvedInvoicesQueue[unresolvedQueueIndex]?.firstPageDataUrl || unresolvedInvoicesQueue[unresolvedQueueIndex]?.topSnapshotDataUrl ? (
+                      <img
+                        src={
+                          wizardShowFullPreview
+                            ? (unresolvedInvoicesQueue[unresolvedQueueIndex].firstPageDataUrl || unresolvedInvoicesQueue[unresolvedQueueIndex].topSnapshotDataUrl)
+                            : (unresolvedInvoicesQueue[unresolvedQueueIndex].topSnapshotDataUrl || unresolvedInvoicesQueue[unresolvedQueueIndex].firstPageDataUrl)
+                        }
+                        alt="Invoice Paper Snapshot"
+                        className="max-w-full max-h-[380px] object-contain rounded shadow-xs"
+                      />
+                    ) : (
+                      <div className="text-xs text-zinc-400 italic">No image preview available for this invoice</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Column: Candidate Delivered Orders */}
+              <div className="w-full md:w-1/2 p-4 flex flex-col min-h-0 bg-white">
+                {/* Search & Info */}
+                <div className="space-y-2 pb-3 border-b border-slate-200 shrink-0">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-zinc-900">Select Delivered Orders to Attach</span>
+                    <span className="text-[11px] font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded">
+                      {wizardCandidateOrders.length} candidate(s)
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" size={14} />
+                    <input
+                      type="text"
+                      placeholder="Search DO number, store, address, ref..."
+                      value={wizardSearchQuery}
+                      onChange={(e) => setWizardSearchQuery(e.target.value)}
+                      className="w-full h-8 pl-8 pr-3 text-xs rounded-md border border-slate-200 bg-slate-50 focus:bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]"
+                    />
+                  </div>
+                </div>
+
+                {/* Candidate Orders List */}
+                <div className="flex-1 min-h-0 overflow-y-auto py-2 space-y-3 pr-1">
+                  {Object.keys(groupedWizardCandidateOrders).length === 0 ? (
+                    <div className="p-8 text-center text-xs text-zinc-400">
+                      No uncompleted Delivered orders found matching your search.
+                    </div>
+                  ) : (
+                    Object.entries(groupedWizardCandidateOrders).map(([dateLabel, groupOrders]) => (
+                      <div key={dateLabel} className="space-y-1.5">
+                        <div className="text-[11px] font-bold text-zinc-600 uppercase tracking-wider px-1 pt-1 flex items-center justify-between">
+                          <span>📅 {dateLabel}</span>
+                          <span className="text-zinc-400 font-normal">({groupOrders.length})</span>
+                        </div>
+                        {groupOrders.map((order) => {
+                          const isChecked = Boolean(wizardSelectedOrderIds[order.id]);
+                          let itemCount = 0;
+                          try {
+                            const parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
+                            if (Array.isArray(parsedItems)) {
+                              itemCount = parsedItems.reduce((acc: number, it: any) => acc + (Number(it.qty || it.quantity || 1) || 1), 0);
+                            }
+                          } catch (_) {}
+
+                          return (
+                            <div
+                              key={order.id}
+                              onClick={() => handleToggleWizardOrder(order.id)}
+                              className={`p-2.5 rounded-lg border transition-all cursor-pointer flex items-start gap-2.5 ${
+                                isChecked
+                                  ? "border-[#0B57D0] bg-[#E8F0FE]/50 shadow-xs"
+                                  : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {}} // Handled by parent container click
+                                className="mt-0.5 h-4 w-4 rounded border-slate-300 text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
+                              />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-xs font-bold text-zinc-950">
+                                    {order.do_number || "NO DO"}
+                                  </span>
+                                  <span className="text-[10px] text-zinc-500 font-mono">
+                                    Ref: {order.ref_number || "-"}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-zinc-600 truncate mt-0.5">
+                                  {order.deliver_to || order.poscode || "No store address"}
+                                </p>
+                                <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                  <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded font-medium">
+                                    📦 {itemCount} items
+                                  </span>
+                                  {order.mark && (
+                                    <span className="text-[10px] bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded font-bold">
+                                      Mark {order.mark}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Footer Controls */}
+            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+              <div className="text-xs font-semibold text-zinc-700">
+                {Object.keys(wizardSelectedOrderIds).filter((id) => wizardSelectedOrderIds[id]).length > 0 ? (
+                  <span className="text-[#0B57D0]">
+                    ✓ {Object.keys(wizardSelectedOrderIds).filter((id) => wizardSelectedOrderIds[id]).length} order(s) selected
+                    {Object.keys(wizardSelectedOrderIds).filter((id) => wizardSelectedOrderIds[id]).length > 1 && " (Multi-DO Match)"}
+                  </span>
+                ) : (
+                  <span className="text-zinc-500">Select 1 or more orders to attach this invoice</span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleWizardSkip}
+                  disabled={wizardSaving}
+                  className="px-3.5 py-1.5 text-xs text-zinc-700 hover:bg-slate-200/80 rounded-md border border-slate-300 font-medium cursor-pointer transition-colors"
+                >
+                  Skip Invoice
+                </button>
+                <button
+                  type="button"
+                  onClick={handleWizardAttachAndDone}
+                  disabled={
+                    wizardSaving ||
+                    Object.keys(wizardSelectedOrderIds).filter((id) => wizardSelectedOrderIds[id]).length === 0
+                  }
+                  className="bg-[#0B57D0] hover:bg-[#0842A0] active:scale-98 text-white text-xs font-semibold px-4 py-1.5 rounded-md disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-xs flex items-center gap-1.5"
+                >
+                  {wizardSaving ? (
+                    "Attaching & Saving..."
+                  ) : (
+                    <>
+                      Attach & Done
+                      {Object.keys(wizardSelectedOrderIds).filter((id) => wizardSelectedOrderIds[id]).length > 0 &&
+                        ` (${Object.keys(wizardSelectedOrderIds).filter((id) => wizardSelectedOrderIds[id]).length})`}
+                      {" →"}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* INVOICE DISCREPANCY & REVISION REVIEW MODAL */}
+      {isDiscrepancyModalOpen && invoiceDiscrepancyQueue.length > 0 && invoiceDiscrepancyQueue[discrepancyQueueIndex] && (
+        <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
+          <div className="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden flex flex-col animate-zoom-in">
+            {/* Header */}
+            <div className="px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-slate-50 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <span className="font-bold text-sm text-zinc-950">
+                  Invoice Update Detected
+                </span>
+                <span className="bg-blue-50 text-blue-800 border border-blue-200 px-2.5 py-0.5 rounded-full text-[11px] font-bold">
+                  Review {discrepancyQueueIndex + 1} of {invoiceDiscrepancyQueue.length}
+                </span>
+              </div>
+              <button 
+                onClick={() => {
+                  setIsDiscrepancyModalOpen(false);
+                  showToast("Discrepancy review closed. Remaining updates skipped.", "info");
+                }}
+                className="text-zinc-400 hover:text-zinc-600 focus:outline-none cursor-pointer p-1 rounded hover:bg-slate-200/60"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-5 flex flex-col gap-4 text-xs">
+              {/* Order Info Badge */}
+              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-zinc-900">
+                    Order: {invoiceDiscrepancyQueue[discrepancyQueueIndex].order.do_number || "NO DO"}
+                  </span>
+                  <span className="text-[11px] font-mono text-zinc-600">
+                    Ref: {invoiceDiscrepancyQueue[discrepancyQueueIndex].order.ref_number || "-"}
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 truncate">
+                  {invoiceDiscrepancyQueue[discrepancyQueueIndex].order.deliver_to || invoiceDiscrepancyQueue[discrepancyQueueIndex].order.poscode || "No store address"}
+                </p>
+              </div>
+
+              {/* Comparison Boxes */}
+              <div className="grid grid-cols-2 gap-3">
+                {/* Old Record */}
+                <div className="p-3 rounded-lg border border-slate-200 bg-white space-y-1.5">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-400 block">
+                    Current Recorded Invoice
+                  </span>
+                  <div className="text-xs font-semibold text-zinc-700">
+                    Inv #: {invoiceDiscrepancyQueue[discrepancyQueueIndex].oldInvoiceNumber || "(None)"}
+                  </div>
+                  <div className="text-sm font-bold text-zinc-800">
+                    ${parseFloat(String(invoiceDiscrepancyQueue[discrepancyQueueIndex].oldInvoiceAmount || "0").replace(/[^0-9.-]/g, "")).toFixed(2)}
+                  </div>
+                </div>
+
+                {/* New Upload */}
+                <div className="p-3 rounded-lg border border-[#0B57D0]/40 bg-[#E8F0FE]/40 space-y-1.5">
+                  <span className="text-[10px] uppercase font-bold tracking-wider text-[#0B57D0] block">
+                    New Uploaded Invoice
+                  </span>
+                  <div className="text-xs font-semibold text-zinc-900">
+                    Inv #: {invoiceDiscrepancyQueue[discrepancyQueueIndex].newInvoiceNumber || "(None)"}
+                  </div>
+                  <div className="text-sm font-bold text-[#0B57D0]">
+                    ${parseFloat(String(invoiceDiscrepancyQueue[discrepancyQueueIndex].newInvoiceAmount || "0").replace(/[^0-9.-]/g, "")).toFixed(2)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-md bg-amber-50/70 border border-amber-200/80 text-[11px] text-amber-900 leading-relaxed">
+                ℹ️ This order is already marked as completed. The newly uploaded invoice contains a different amount or invoice number. Would you like to update the order with the new amount and replace the invoice document?
+              </div>
+            </div>
+
+            {/* Footer Controls */}
+            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+              <button
+                type="button"
+                onClick={handleDiscrepancySkip}
+                disabled={discrepancySaving}
+                className="px-3.5 py-1.5 text-xs text-zinc-700 hover:bg-slate-200/80 rounded-md border border-slate-300 font-medium cursor-pointer transition-colors"
+              >
+                Keep Old (Skip)
+              </button>
+              <button
+                type="button"
+                onClick={handleDiscrepancyUpdate}
+                disabled={discrepancySaving}
+                className="bg-[#0B57D0] hover:bg-[#0842A0] active:scale-98 text-white text-xs font-semibold px-4 py-1.5 rounded-md disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-all shadow-xs"
+              >
+                {discrepancySaving ? "Updating Record..." : "Update with New Invoice →"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CONFIRM ORDER COMPLETE MODAL */}
       {isCompleteConfirmOpen && pendingCompleteOrder && (
         <div className="fixed inset-0 z-55 flex items-center justify-center bg-black/40 backdrop-blur-xs font-primary p-4">
@@ -10542,13 +11514,63 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                     className="h-8 px-2.5 rounded border border-slate-200 bg-white text-zinc-900 focus:outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] font-medium"
                   />
                 </div>
+
+                {/* Attach Invoice / Credit Note Document */}
+                <div className="flex flex-col gap-1.5 pt-1 border-t border-slate-100">
+                  <label className="font-bold text-zinc-700 flex items-center justify-between">
+                    <span>{pendingCompleteOrder.type === "Return" ? "Credit Note Document" : "Invoice Document"}</span>
+                    <span className="text-[10px] text-zinc-400 font-normal">(Optional PDF/Image)</span>
+                  </label>
+
+                  {completeInvoicePreview ? (
+                    <div className="relative border border-slate-200 rounded-lg overflow-hidden bg-slate-50 p-2 flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-semibold text-zinc-700 truncate max-w-[200px]">
+                          {completeInvoiceFile?.name || "Document Preview"}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCompleteInvoiceFile(null);
+                            setCompleteInvoicePreview("");
+                          }}
+                          className="text-red-500 hover:text-red-700 text-[10px] font-bold cursor-pointer"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                      <div className="relative w-full h-28 bg-white rounded border border-slate-200 overflow-hidden flex items-center justify-center">
+                        <img
+                          src={completeInvoicePreview}
+                          alt="Invoice Snapshot"
+                          className="w-full h-full object-contain"
+                        />
+                        <span className="absolute bottom-1 right-1 px-1.5 py-0.5 bg-black/60 text-white text-[9px] font-medium rounded">
+                          Top Snapshot
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={handleCompleteInvoiceFileSelect}
+                      className="text-xs file:mr-2 file:py-1 file:px-2.5 file:rounded file:border-0 file:text-[11px] file:font-semibold file:bg-blue-50 file:text-[#0B57D0] hover:file:bg-blue-100 cursor-pointer border border-slate-200 rounded p-1"
+                    />
+                  )}
+                </div>
               </div>
             </div>
             
             <div className="px-5 py-3.5 border-t border-slate-200 bg-slate-50 flex justify-between items-center">
               <CustomButton 
                 variant="secondary" 
-                onClick={() => setIsCompleteConfirmOpen(false)}
+                onClick={() => {
+                  setIsCompleteConfirmOpen(false);
+                  setCompleteInvoiceFile(null);
+                  setCompleteInvoicePreview("");
+                }}
+                disabled={completeInvoiceUploading}
               >
                 Cancel
               </CustomButton>
@@ -10557,12 +11579,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                 variant="dark" 
                 onClick={handleContinueComplete}
                 disabled={
-                  pendingCompleteOrder.type === "Return" 
+                  completeInvoiceUploading ||
+                  (pendingCompleteOrder.type === "Return" 
                     ? (!creditNoteInput.trim() || !invoiceAmountInput.trim()) 
-                    : (!invoiceNumberInput.trim() || !invoiceAmountInput.trim())
+                    : (!invoiceNumberInput.trim() || !invoiceAmountInput.trim()))
                 }
               >
-                Continue
+                {completeInvoiceUploading ? (
+                  <span className="flex items-center gap-1.5">
+                    <Loader2 size={13} className="animate-spin" />
+                    Uploading...
+                  </span>
+                ) : (
+                  "Continue"
+                )}
               </CustomButton>
             </div>
           </div>
@@ -11175,7 +12205,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       {/* LIGHTBOX MODAL */}
       {activeLightboxImage && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md transition-opacity duration-300 animate-fade-in"
+          className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md transition-opacity duration-300 animate-fade-in"
           onClick={() => setActiveLightboxImage(null)}
         >
           {/* Close Button */}

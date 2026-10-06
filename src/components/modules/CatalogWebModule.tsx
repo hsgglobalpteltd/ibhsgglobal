@@ -156,7 +156,7 @@ async function compressImageToWebp(file: File, maxWidth = 1920, targetMaxBytes =
 }
 
 export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
-  const [activeTab, setActiveTab] = React.useState<"layout" | "catalog" | "setting" | "cs">("layout");
+  const [activeTab, setActiveTab] = React.useState<"catalog" | "layout" | "setting" | "cs">("catalog");
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
 
@@ -1467,8 +1467,8 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
   };
 
   const MODULE_TABS: TabItem[] = [
-    { id: "layout", label: "Web Layout" },
     { id: "catalog", label: "Catalog Product" },
+    { id: "layout", label: "Web Layout" },
     { id: "setting", label: "Setting" },
     { id: "cs", label: "Customer Service" },
   ];
@@ -2022,28 +2022,77 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
             />
 
             {/* OFFICIAL EXPORT CATALOG PDF ENGINE & LAYOUT CONFIGURATION CARD */}
-            <div className="bg-[#f0f4f9]/80 border border-[#D3E3FD] rounded-xl p-5 shadow-xs space-y-4">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-[#D3E3FD]/60 pb-3.5">
-                <div className="flex items-start gap-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-[#0B57D0]/10 flex items-center justify-center text-[#0B57D0] shrink-0 mt-0.5">
-                    <FileText className="w-5 h-5" />
-                  </div>
+            <div className="bg-white border border-slate-200 rounded-lg p-4 shadow-xs">
+              <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5">
+                {/* Left Side: Header & All Inputs */}
+                <div className="flex-1 max-w-2xl space-y-3">
                   <div>
-                    <h4 className="text-sm font-bold text-zinc-900">
-                      Official Export Catalog PDF Engine &amp; Layout Settings
+                    <h4 className="text-xs font-bold text-zinc-900 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
+                      <span>Official Export Catalog PDF Settings</span>
                     </h4>
-                    <p className="text-xs text-zinc-500 mt-0.5 max-w-xl">
-                      Customize catalog headers, contact information, and footer labels. Compiles all active brands &amp; products into a PDF catalog, updates online showcase, and triggers local download.
+                    <p className="text-[11px] text-zinc-500 mt-0.5">
+                      Headers, contact details, and footer text rendered on the generated PDF catalog.
                     </p>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-600 mb-1">
+                          Catalog Header Title
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="OFFICIAL EXPORT PRODUCT CATALOG"
+                          value={layoutConfig.pdf_header_title ?? "OFFICIAL EXPORT PRODUCT CATALOG"}
+                          onChange={(e) =>
+                            setLayoutConfig({ ...layoutConfig, pdf_header_title: e.target.value })
+                          }
+                          className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-600 mb-1">
+                          Catalog Footer Text
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Official Export Catalog"
+                          value={layoutConfig.pdf_footer_text ?? "Official Export Catalog"}
+                          onChange={(e) =>
+                            setLayoutConfig({ ...layoutConfig, pdf_footer_text: e.target.value })
+                          }
+                          className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-600 mb-1">
+                        Catalog Subtext (Contact &amp; Terms)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Contact: sales@hsg-global.com | hsgglobal.sg • Global Foodservice & Retail"
+                        value={layoutConfig.pdf_subtext ?? "Contact: sales@hsg-global.com | hsgglobal.sg • Global Foodservice & Retail FMCG | FOB / CIF Terms"}
+                        onChange={(e) =>
+                          setLayoutConfig({ ...layoutConfig, pdf_subtext: e.target.value })
+                        }
+                        className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                {/* Right Side: Action Button */}
+                <div className="flex flex-col items-start lg:items-end gap-1.5 shrink-0 pt-1 lg:pt-0">
                   <button
                     onClick={handleDownloadAndGeneratePdf}
                     disabled={generatingPdf}
                     type="button"
-                    className="h-9 px-4.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                    className="h-9 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
                   >
                     {generatingPdf ? (
                       <>
@@ -2057,54 +2106,9 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       </>
                     )}
                   </button>
-                </div>
-              </div>
-
-              {/* PDF Layout Fields */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-                <div>
-                  <label className="block text-[11px] font-bold text-zinc-700 mb-1">
-                    Catalog Header Title
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="OFFICIAL EXPORT PRODUCT CATALOG"
-                    value={layoutConfig.pdf_header_title ?? "OFFICIAL EXPORT PRODUCT CATALOG"}
-                    onChange={(e) =>
-                      setLayoutConfig({ ...layoutConfig, pdf_header_title: e.target.value })
-                    }
-                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:border-[#0B57D0]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-zinc-700 mb-1">
-                    Catalog Subtext (Contact &amp; Terms)
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="Contact: sales@hsg-global.com | hsgglobal.sg • Global Foodservice & Retail"
-                    value={layoutConfig.pdf_subtext ?? "Contact: sales@hsg-global.com | hsgglobal.sg\nSingapore • Malaysia • Global Foodservice & Retail FMCG | FOB / CIF Terms"}
-                    onChange={(e) =>
-                      setLayoutConfig({ ...layoutConfig, pdf_subtext: e.target.value })
-                    }
-                    className="w-full p-2 rounded-lg border border-slate-200 text-[11px] text-zinc-900 bg-white resize-none focus:border-[#0B57D0]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-bold text-zinc-700 mb-1">
-                    Catalog Footer Text
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Official Export Catalog"
-                    value={layoutConfig.pdf_footer_text ?? "Official Export Catalog"}
-                    onChange={(e) =>
-                      setLayoutConfig({ ...layoutConfig, pdf_footer_text: e.target.value })
-                    }
-                    className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:border-[#0B57D0]"
-                  />
+                  <span className="text-[10px] text-zinc-400">
+                    Compiles all active brands &amp; products into PDF
+                  </span>
                 </div>
               </div>
             </div>
@@ -2278,9 +2282,6 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                             <h3 className="text-xs font-bold text-zinc-950">
                               {b.display_name}
                             </h3>
-                            <span className="font-mono text-[10px] bg-white text-zinc-600 font-semibold px-1.5 py-0.5 rounded border border-slate-200 shrink-0">
-                              {b.id}
-                            </span>
                             <span className="text-[11px] text-zinc-500 font-medium shrink-0">
                               ({activeListedCount}/{allBrandProds.length} in catalog • {activeOrderCount}/{allBrandProds.length} accepting orders)
                             </span>

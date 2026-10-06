@@ -72,6 +72,9 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
+import { auth, googleProvider, signInWithPopup } from "@/lib/firebase";
+import { onAuthStateChanged } from "firebase/auth";
+import { syncUserProfile } from "@/lib/api";
 import {
   fetchWfeBootstrap,
   saveWfeTeamspace,
@@ -477,17 +480,52 @@ export default function WorkspaceStandalonePage() {
   };
 
   // -------------------------------------------------------------
-  // INITIAL MOUNT & SESSION CHECK
+  // GOOGLE SIGN-IN HANDLER (FOR WORKSPACE ACCESS)
+  // -------------------------------------------------------------
+  const handleGoogleSignIn = async () => {
+    try {
+      setLoading(true);
+      const result = await signInWithPopup(auth, googleProvider);
+      if (result.user && result.user.email) {
+        const token = await result.user.getIdToken();
+        let sid = localStorage.getItem("session_id");
+        if (!sid) {
+          sid = "sess_" + Math.random().toString(36).substring(2, 15) + "_" + Date.now();
+          localStorage.setItem("session_id", sid);
+        }
+        let dbProf: any = null;
+        try {
+          dbProf = await syncUserProfile(token, result.user.email, result.user.displayName || result.user.email, sid);
+        } catch (_) {}
+        const profile = dbProf || {
+          email: result.user.email,
+          name: result.user.displayName || result.user.email,
+          role: "Operator"
+        };
+        localStorage.setItem("ib_user_profile", JSON.stringify(profile));
+        localStorage.setItem("ib_auth_token", token);
+        setCurrentUser(profile);
+        setIsGuest(false);
+        setAccessDenied(false);
+        setShowGateModal(false);
+        const urlParams = new URLSearchParams(window.location.search);
+        const targetProj = urlParams.get("project") || "wfe_root";
+        setTargetWorkspaceId(targetProj);
+        loadLiveDatabase(profile.email, targetProj);
+        showToast("Welcome back, " + (profile.name || profile.email), "success");
+      }
+    } catch (err: any) {
+      console.error("Google sign-in error in workspace:", err);
+      showToast(err.message || "Failed to sign in with Google", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // INITIAL MOUNT & ROBUST SESSION CHECK (FIREBASE + LOCALSTORAGE)
   // -------------------------------------------------------------
   useEffect(() => {
-    let loggedUser: any = null;
-    try {
-      const cachedProfile = localStorage.getItem("ib_user_profile");
-      if (cachedProfile) {
-        loggedUser = JSON.parse(cachedProfile);
-      }
-    } catch {}
-
     const urlParams = new URLSearchParams(window.location.search);
     const targetProj = urlParams.get("project");
     const initialPage = urlParams.get("page");
@@ -496,67 +534,131 @@ export default function WorkspaceStandalonePage() {
       setActivePageId(initialPage);
     }
 
-    if (loggedUser && loggedUser.email) {
-      setCurrentUser(loggedUser);
+    // Helper to extract cached logged-in profile from browser storage
+    const getCachedProfile = () => {
+      try {
+        const raw = localStorage.getItem("ib_user_profile") || sessionStorage.getItem("ib_user_profile");
+        if (raw) {
+          const parsed = typeof raw === "string" && raw.startsWith("{") ? JSON.parse(raw) : { email: raw };
+          const email = parsed.email || parsed.user_email;
+          if (email) {
+            return {
+              email,
+              name: parsed.name || parsed.display_name || email,
+              role: parsed.role || "Operator",
+              ...parsed
+            };
+          }
+        }
+      } catch {}
+      return null;
+    };
+
+    let cachedUser = getCachedProfile();
+    let sessionResolved = false;
+
+    if (cachedUser && cachedUser.email) {
+      setCurrentUser(cachedUser);
       setIsGuest(false);
       setAccessDenied(false);
       const activeProj = targetProj || "wfe_root";
       setTargetWorkspaceId(activeProj);
-      loadLiveDatabase(loggedUser.email, activeProj);
-    } else if (targetProj) {
-      // Guest with specific project parameter -> verify project exists first
-      setTargetWorkspaceId(targetProj);
-      setLoading(true);
+      loadLiveDatabase(cachedUser.email, activeProj);
+      sessionResolved = true;
+    }
 
-      fetchWfeBootstrap("", targetProj).then((res) => {
-        if (res && res.success) {
-          const projectExists = res.teamspaces && res.teamspaces.some((ts: any) => ts.id === targetProj);
-          if (!projectExists && targetProj !== "wfe_root") {
-            // Project does not exist or was deleted!
-            localStorage.removeItem(`wfe_guest_session_${targetProj}`);
+    // 2. Active Firebase Auth state listener to prevent losing session on direct URL navigation
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser && fbUser.email) {
+        const token = await fbUser.getIdToken().catch(() => "");
+        let sid = localStorage.getItem("session_id");
+        if (!sid) {
+          sid = "sess_" + Math.random().toString(36).substring(2, 15) + "_" + Date.now();
+          localStorage.setItem("session_id", sid);
+        }
+        let freshProf: any = null;
+        if (token) {
+          try {
+            freshProf = await syncUserProfile(token, fbUser.email, fbUser.displayName || fbUser.email, sid);
+          } catch (_) {}
+        }
+        const activeProfile = freshProf || {
+          email: fbUser.email,
+          name: fbUser.displayName || fbUser.email,
+          role: "Operator"
+        };
+        localStorage.setItem("ib_user_profile", JSON.stringify(activeProfile));
+        if (token) localStorage.setItem("ib_auth_token", token);
+
+        setCurrentUser(activeProfile);
+        setIsGuest(false);
+        setAccessDenied(false);
+        setShowGateModal(false);
+        const activeProj = targetProj || "wfe_root";
+        setTargetWorkspaceId(activeProj);
+        loadLiveDatabase(activeProfile.email, activeProj);
+        sessionResolved = true;
+      } else if (!sessionResolved) {
+        // No Firebase user and no cached user found yet
+        if (targetProj) {
+          // Guest with specific project parameter -> verify project exists first
+          setTargetWorkspaceId(targetProj);
+          setLoading(true);
+
+          fetchWfeBootstrap("", targetProj).then((res) => {
+            if (res && res.success) {
+              const projectExists = res.teamspaces && res.teamspaces.some((ts: any) => ts.id === targetProj);
+              if (!projectExists && targetProj !== "wfe_root") {
+                localStorage.removeItem("wfe_guest_session_" + targetProj);
+                setAccessDenied(true);
+                setShowGateModal(false);
+                setLoading(false);
+                return;
+              }
+
+              setTeamspaces(res.teamspaces || []);
+              setAccessDenied(false);
+
+              // Check LocalStorage for saved guest session
+              const storedGuest = localStorage.getItem("wfe_guest_session_" + targetProj);
+              if (storedGuest) {
+                try {
+                  const parsed = JSON.parse(storedGuest);
+                  if (parsed.targetId === targetProj && parsed.email) {
+                    setCurrentUser(parsed);
+                    setIsGuest(true);
+                    loadLiveDatabase(parsed.email, targetProj);
+                    return;
+                  }
+                } catch {}
+              }
+
+              // Valid project exists, no saved session -> show sign in modal
+              setIsGuest(true);
+              setShowGateModal(true);
+              setLoading(false);
+            } else {
+              setAccessDenied(true);
+              setShowGateModal(false);
+              setLoading(false);
+            }
+          }).catch(() => {
             setAccessDenied(true);
             setShowGateModal(false);
             setLoading(false);
-            return;
-          }
-
-          setTeamspaces(res.teamspaces || []);
-          setAccessDenied(false);
-
-          // Check LocalStorage for saved guest session
-          const storedGuest = localStorage.getItem(`wfe_guest_session_${targetProj}`);
-          if (storedGuest) {
-            try {
-              const parsed = JSON.parse(storedGuest);
-              if (parsed.targetId === targetProj && parsed.email) {
-                setCurrentUser(parsed);
-                setIsGuest(true);
-                loadLiveDatabase(parsed.email, targetProj);
-                return;
-              }
-            } catch {}
-          }
-
-          // Valid project exists, no saved session -> show sign in modal
-          setIsGuest(true);
-          setShowGateModal(true);
-          setLoading(false);
+          });
         } else {
+          // Direct visit to /workspace without login and without project link
           setAccessDenied(true);
           setShowGateModal(false);
           setLoading(false);
         }
-      }).catch(() => {
-        setAccessDenied(true);
-        setShowGateModal(false);
-        setLoading(false);
-      });
-    } else {
-      // Guest visiting /workspace directly without login and without project link -> Access Restricted
-      setAccessDenied(true);
-      setShowGateModal(false);
-      setLoading(false);
-    }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   // -------------------------------------------------------------
@@ -2577,18 +2679,39 @@ export default function WorkspaceStandalonePage() {
           <div className="space-y-2.5">
             <h1 className="text-lg font-bold text-zinc-950">Invalid or Missing Workspace Link</h1>
             <p className="text-xs text-zinc-600 leading-relaxed max-w-sm mx-auto">
-              Please check your URL link. To access this workspace, you need a valid project invitation link provided by your Project Manager.
+              Please check your URL link or sign in with your authorized iB account to access your workspace.
             </p>
             <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-left text-xs text-zinc-500 space-y-1">
               <span className="font-semibold text-zinc-700 block">Next Steps:</span>
               <p className="text-[11px] leading-relaxed">
-                • Request an updated project link from your Project Manager.<br />
-                • Open the link directly in your browser.
+                • If you have an iB account, sign in below to open your workspace.<br />
+                • If you are an external collaborator, use the project invitation link from your Project Manager.
               </p>
             </div>
           </div>
 
-          <div className="pt-1">
+          {/* Direct Sign-In & Dashboard Actions */}
+          <div className="space-y-2.5 pt-2">
+            <button
+              type="button"
+              onClick={handleGoogleSignIn}
+              className="w-full h-10 bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-bold rounded-lg transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Users className="w-4 h-4" />
+              Sign In with Google Account
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { window.location.href = "/"; }}
+              className="w-full h-10 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-semibold border border-slate-200 rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Home className="w-4 h-4 text-zinc-500" />
+              Return to Main Dashboard
+            </button>
+          </div>
+
+          <div className="pt-2 border-t border-slate-100">
             {!showCodeInput ? (
               <button
                 type="button"
@@ -2612,7 +2735,7 @@ export default function WorkspaceStandalonePage() {
                     }
                   }
                   if (code) {
-                    window.location.href = `/workspace?project=${encodeURIComponent(code)}`;
+                    window.location.href = "/workspace?project=" + encodeURIComponent(code);
                   }
                 }}
                 className="space-y-2 pt-2 border-t border-slate-100"

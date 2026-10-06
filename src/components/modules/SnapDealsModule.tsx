@@ -58,6 +58,92 @@ function roundUpToTwoDecimals(num: number): number {
   return Math.ceil((num || 0) * 100) / 100;
 }
 
+// Helper to get margin from buyer price only
+function getItemMarginFromBuyerPrice(item: any): number {
+  if (item.computedOurMarginBuyerCost !== undefined && item.computedOurMarginBuyerCost !== null && !isNaN(item.computedOurMarginBuyerCost)) {
+    return Number(item.computedOurMarginBuyerCost);
+  }
+  const cost = item.cost || 0;
+  const ifPct = item.feeIf || 0;
+  const dutyPct = item.feeDuty || 0;
+  const otherPct = item.feeOther || 0;
+  
+  const ifCost = roundUpToTwoDecimals(cost * (ifPct / 100));
+  const dutyCost = roundUpToTwoDecimals(cost * (dutyPct / 100));
+  const totalA = roundUpToTwoDecimals(cost + ifCost + dutyCost);
+  const otherCost = roundUpToTwoDecimals(totalA * (otherPct / 100));
+  const totalB = roundUpToTwoDecimals(totalA + otherCost);
+
+  let buyerCost = item.computedCostToBuyer;
+  if (buyerCost === undefined || buyerCost === null || isNaN(buyerCost)) {
+    if (item.pricingMode === "rsp_cap" && item.customRsp > 0) {
+      const buyerProfit = roundUpToTwoDecimals(item.customRsp * ((item.marginBuyer || 0) / 100));
+      buyerCost = roundUpToTwoDecimals(item.customRsp - buyerProfit);
+    } else {
+      buyerCost = roundUpToTwoDecimals(totalB / (1 - (item.marginHsg || 0) / 100));
+    }
+  }
+
+  if (buyerCost > 0) {
+    const grossProfit = roundUpToTwoDecimals(buyerCost - totalB);
+    return (grossProfit / buyerCost) * 100;
+  }
+  return item.marginHsg || 0;
+}
+
+// Helper to get gross profit
+function getItemGrossProfit(item: any): number {
+  if (item.computedHsgProfit !== undefined && item.computedHsgProfit !== null && !isNaN(item.computedHsgProfit)) {
+    return Number(item.computedHsgProfit);
+  }
+  const cost = item.cost || 0;
+  const ifPct = item.feeIf || 0;
+  const dutyPct = item.feeDuty || 0;
+  const otherPct = item.feeOther || 0;
+  
+  const ifCost = roundUpToTwoDecimals(cost * (ifPct / 100));
+  const dutyCost = roundUpToTwoDecimals(cost * (dutyPct / 100));
+  const totalA = roundUpToTwoDecimals(cost + ifCost + dutyCost);
+  const otherCost = roundUpToTwoDecimals(totalA * (otherPct / 100));
+  const totalB = roundUpToTwoDecimals(totalA + otherCost);
+
+  let buyerCost = item.computedCostToBuyer;
+  if (buyerCost === undefined || buyerCost === null || isNaN(buyerCost)) {
+    if (item.pricingMode === "rsp_cap" && item.customRsp > 0) {
+      const buyerProfit = roundUpToTwoDecimals(item.customRsp * ((item.marginBuyer || 0) / 100));
+      buyerCost = roundUpToTwoDecimals(item.customRsp - buyerProfit);
+    } else {
+      buyerCost = roundUpToTwoDecimals(totalB / (1 - (item.marginHsg || 0) / 100));
+    }
+  }
+
+  return roundUpToTwoDecimals((buyerCost || 0) - totalB);
+}
+
+// Helper to get market price
+function getItemMarketPrice(item: any): number {
+  if (item.computedRsp !== undefined && item.computedRsp !== null && !isNaN(item.computedRsp)) {
+    return Number(item.computedRsp);
+  }
+  if (item.customRsp) {
+    return Number(item.customRsp);
+  }
+  const cost = item.cost || 0;
+  const ifPct = item.feeIf || 0;
+  const dutyPct = item.feeDuty || 0;
+  const otherPct = item.feeOther || 0;
+  const ifCost = roundUpToTwoDecimals(cost * (ifPct / 100));
+  const dutyCost = roundUpToTwoDecimals(cost * (dutyPct / 100));
+  const totalA = roundUpToTwoDecimals(cost + ifCost + dutyCost);
+  const otherCost = roundUpToTwoDecimals(totalA * (otherPct / 100));
+  const totalB = roundUpToTwoDecimals(totalA + otherCost);
+  const buyerCost = item.computedCostToBuyer ?? roundUpToTwoDecimals(totalB / (1 - (item.marginHsg || 0) / 100));
+  if (item.marginBuyer && item.marginBuyer < 100) {
+    return roundUpToTwoDecimals(buyerCost / (1 - item.marginBuyer / 100));
+  }
+  return buyerCost;
+}
+
 const DEFAULT_TERMS = "Minimum order value is SGD 3,000 per order.\nDelivery will be made within a maximum of 2 weeks from the date the order is placed.\nAll prices stated are for goods only and exclude any additional charges unless otherwise specified.";
 
 export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
@@ -579,7 +665,8 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       computedHsgProfit: calculations.hsgProfit,
       computedBuyerProfit: calculations.buyerProfit,
       computedNetProfit: calculations.netProfit,
-      computedNetGst: calculations.netGST
+      computedNetGst: calculations.netGST,
+      computedOurMarginBuyerCost: calculations.ourMarginBuyerCost
     };
 
     if (editingItemId) {
@@ -838,15 +925,16 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     });
   };
 
-  const handleArchiveDeal = async (dealId: string) => {
+  const handleArchiveDeal = async (dealId: string, isProposal: boolean = false) => {
     showConfirm({
-      title: "Archive Deal",
-      description: "Are you sure you want to archive this deal? It will be removed from Accepted Deals and stored in the Archive.",
+      title: isProposal ? "Archive Proposal" : "Archive Deal",
+      description: "This proposal will be moved to Archive. To permanently delete it, you can delete it from the Archive tab.",
       confirmText: "Archive",
+      variant: "danger",
       onConfirm: () => {
         // Optimistic UI Update: Change status to Archived immediately in the UI
         setDeals(prev => prev.map(d => d.id === dealId ? { ...d, status: "Archived" } : d));
-        showToast("Deal archived successfully", "success");
+        showToast("Proposal moved to Archive successfully", "success");
 
         // Silently archive in database in background
         archiveSnapDeal(
@@ -990,16 +1078,14 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     columns.push({ header: "Description", width: 0, align: "left" }); // description is 100% grow width
 
     if (type === "proposal") {
-      columns.push({ header: "Our Cost", width: 20, align: "right" });
-      columns.push({ header: "Margin", width: 16, align: "right" });
-      columns.push({ header: "Net Profit", width: 20, align: "right" });
-      columns.push({ header: "Client Cost", width: 22, align: "right" });
+      columns.push({ header: "Our Cost", width: 19, align: "right" });
+      columns.push({ header: "Margin", width: 15, align: "right" });
+      columns.push({ header: "Profit", width: 19, align: "right" });
+      columns.push({ header: "Buyer Cost", width: 20, align: "right" });
+      columns.push({ header: "RSP", width: 20, align: "right" });
     } else {
       columns.push({ header: "Cost", width: 25, align: "right" });
-    }
-
-    if (showMarketPriceInPrint) {
-      columns.push({ header: "Market Price", width: 22, align: "right" });
+      columns.push({ header: "RSP", width: 25, align: "right" });
     }
 
     // Calculate Description column width dynamically to fill the page width
@@ -1095,10 +1181,10 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
           const ourCost = landed * (1 + (item.feeOther || 0)/100);
           cellText = formatCurrency(ourCost);
         }
-        else if (col.header === "Margin") cellText = `${(item.marginHsg || 0).toFixed(2)}%`;
-        else if (col.header === "Net Profit") cellText = formatCurrency(item.computedNetProfit || 0);
-        else if (col.header === "Client Cost" || col.header === "Cost") cellText = formatCurrency(item.computedCostToBuyer || 0);
-        else if (col.header === "Market Price") cellText = formatCurrency(item.computedRsp || 0);
+        else if (col.header === "Margin") cellText = `${getItemMarginFromBuyerPrice(item).toFixed(2)}%`;
+        else if (col.header === "Profit" || col.header === "Gross Profit") cellText = formatCurrency(getItemGrossProfit(item));
+        else if (col.header === "Buyer Cost" || col.header === "Client Cost" || col.header === "Cost") cellText = formatCurrency(item.computedCostToBuyer || 0);
+        else if (col.header === "RSP" || col.header === "Market Price") cellText = formatCurrency(getItemMarketPrice(item));
 
         if (col.header === "Description") {
           doc.text(descLines, currentX + 2, yOffset);
@@ -1146,13 +1232,11 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       yOffset += termsHeight + 4;
     }
 
-    // Draw Signatures for Contract (External)
+    // Draw Signatures for Contract (External) - Always anchored at the bottom of the page
     if (type === "contract") {
-      if (yOffset + 35 > 280) {
+      const sigY = 260; // Anchored at bottom of A4 (297mm height)
+      if (yOffset > sigY - 5) {
         doc.addPage();
-        yOffset = 20;
-      } else {
-        yOffset += 6;
       }
 
       doc.setFont("helvetica", "bold");
@@ -1160,25 +1244,25 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       doc.setTextColor(82, 82, 91); // Zinc-600
 
       // Left Column: HSG
-      doc.text("Authorized Signature", 14, yOffset);
-      doc.text("HSG Global Pte Ltd", 14, yOffset + 4.5);
-      doc.line(14, yOffset + 22, 74, yOffset + 22);
+      doc.text("Authorized Signature", 14, sigY);
+      doc.text("HSG Global Pte Ltd", 14, sigY + 4.5);
+      doc.line(14, sigY + 22, 74, sigY + 22);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(7.5);
       doc.setTextColor(113, 113, 122);
-      doc.text("Date & Authorized Signature", 14, yOffset + 25.5);
+      doc.text("Date & Authorized Signature", 14, sigY + 25.5);
 
       // Right Column: Client
       doc.setFont("helvetica", "bold");
       doc.setFontSize(8.5);
       doc.setTextColor(82, 82, 91);
-      doc.text("Accepted & Approved By", 120, yOffset);
-      doc.text(deal.dealing_with, 120, yOffset + 4.5);
-      doc.line(120, yOffset + 22, 180, yOffset + 22);
+      doc.text("Accepted & Approved By", 120, sigY);
+      doc.text(deal.dealing_with, 120, sigY + 4.5);
+      doc.line(120, sigY + 22, 180, sigY + 22);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(7.5);
       doc.setTextColor(113, 113, 122);
-      doc.text("Date & Authorized Signature", 120, yOffset + 25.5);
+      doc.text("Date & Authorized Signature", 120, sigY + 25.5);
     }
 
     const pdfBlob = doc.output("blob");
@@ -1263,18 +1347,9 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     }
   };
 
-  const handleOpenViewModal = async (deal: SnapDeal) => {
+  const handleOpenViewModal = (deal: SnapDeal) => {
     setSelectedViewDeal(deal);
     setShowViewModal(true);
-    setLoadingViewLogs(true);
-    try {
-      const logs = await fetchSnapDealLogs(deal.id);
-      setViewDealLogs(logs);
-    } catch (e) {
-      showToast("Failed to load audit logs", "error");
-    } finally {
-      setLoadingViewLogs(false);
-    }
   };
 
   // Format DataTable rows
@@ -1324,7 +1399,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 onClick={() => handleOpenTermsModal(deal)}
                 className="text-xs text-emerald-600 hover:text-emerald-800 hover:underline cursor-pointer select-none font-medium"
               >
-                View T&C
+                Edit T&C
               </button>
             ) : (
               <button
@@ -1337,28 +1412,13 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
           </div>
         ),
         actions: (
-          <div className="flex items-center gap-1.5 w-[140px] shrink-0 select-none">
+          <div className="flex items-center gap-1.5 w-[110px] shrink-0 select-none">
             <button
               onClick={() => handleOpenViewModal(deal)}
               className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
               title="View Deal"
             >
               <Eye size={13} />
-            </button>
-
-            <button
-              onClick={() => generateBlobPDF(deal, "proposal")}
-              className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
-              title="Print Proposal"
-            >
-              <Printer size={13} className="text-zinc-600" />
-            </button>
-            <button
-              onClick={() => generateBlobPDF(deal, "contract")}
-              className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
-              title="Print Contract"
-            >
-              <Printer size={13} className="text-emerald-600" />
             </button>
 
             {(deal.status === "Draft" || !deal.status) && (
@@ -1371,29 +1431,13 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                   <Edit size={13} />
                 </button>
 
-                <label className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer relative flex items-center justify-center shadow-xs" title="Upload Signed Contract">
-                  <Lock size={13} className="text-zinc-600" />
-                  <input
-                    type="file"
-                    accept="image/*,application/pdf"
-                    className="hidden"
-                    onChange={(e) => {
-                      if (e.target.files?.[0]) {
-                        handleUploadProof(deal.id, e.target.files[0]);
-                      }
-                    }}
-                  />
-                </label>
-
-                {canDelete && (
-                  <button
-                    onClick={() => handleDeleteDeal(deal.id)}
-                    className="p-1.5 rounded-md bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
-                    title="Delete Proposal"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                )}
+                <button
+                  onClick={() => handleArchiveDeal(deal.id, true)}
+                  className="p-1.5 rounded-md bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
+                  title="Archive Proposal"
+                >
+                  <Trash2 size={13} />
+                </button>
               </>
             )}
 
@@ -1445,7 +1489,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   };
 
   const columns: Column[] = [
-    { id: "actions", header: "Actions", accessor: "actions", width: "w-[150px] min-w-[150px]" },
+    { id: "actions", header: "Actions", accessor: "actions", width: "w-[110px] min-w-[110px]" },
     { id: "client_info", header: "Client Name", accessor: "client_info", width: "min-w-[200px] whitespace-nowrap" },
     { id: "notes", header: "Client Note", accessor: "notes", width: "w-[200px] max-w-[220px]" },
     { id: "items", header: "Deal Items", accessor: "items", width: "min-w-[260px]" },
@@ -1993,10 +2037,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 {/* Compact Items List Table */}
                 <div className="border border-zinc-200 rounded overflow-hidden flex flex-col flex-grow flex-1 min-h-[220px] bg-zinc-50/20">
                   <div className="w-full overflow-auto custom-scrollbar flex-grow">
-                    <table className={cn(
-                      "w-full text-xs text-left border-collapse",
-                      showMarketPriceInPrint ? "min-w-[660px]" : "min-w-[550px]"
-                    )}>
+                    <table className="w-full text-xs text-left border-collapse min-w-[620px]">
                       <thead>
                         <tr className="bg-zinc-100/80 text-[10px] font-bold text-zinc-500 uppercase tracking-wider border-b border-zinc-200 select-none whitespace-nowrap">
                           <th className="py-2 px-2 text-center w-14"></th>
@@ -2004,16 +2045,14 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                           <th className="py-2 px-3">Description</th>
                           <th className="py-2 px-3 text-right">$ Land Cost</th>
                           <th className="py-2 px-3 text-right">% Margin</th>
-                          <th className="py-2 px-3 text-right">$ Net Profit</th>
-                          {showMarketPriceInPrint && (
-                            <th className="py-2 px-3 text-right">$ Market Price</th>
-                          )}
+                          <th className="py-2 px-3 text-right">$ Profit</th>
+                          <th className="py-2 px-3 text-right">$ RSP</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-200 font-medium text-zinc-700">
                         {itemList.length === 0 ? (
                           <tr>
-                            <td colSpan={showMarketPriceInPrint ? 7 : 6} className="py-12 text-center text-zinc-400 font-bold select-none">
+                            <td colSpan={7} className="py-12 text-center text-zinc-400 font-bold select-none">
                               <FileSpreadsheet size={24} className="stroke-1 mx-auto mb-2 opacity-50" />
                               <span className="block text-[11px]">No items in deal yet.</span>
                               <span className="block text-[9.5px] font-medium leading-normal px-6 mt-1 text-zinc-400">
@@ -2052,16 +2091,14 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                                 {formatCurrency(item.cost + (item.cost * (item.feeIf / 100)) + (item.cost * (item.feeDuty / 100)))}
                               </td>
                               <td className="py-2 px-3 text-right font-mono font-semibold align-top">
-                                {item.marginHsg.toFixed(2)}%
+                                {getItemMarginFromBuyerPrice(item).toFixed(2)}%
                               </td>
                               <td className="py-2 px-3 text-right font-mono font-black text-emerald-655 align-top">
-                                {formatCurrency(item.computedNetProfit)}
+                                {formatCurrency(getItemGrossProfit(item))}
                               </td>
-                              {showMarketPriceInPrint && (
-                                <td className="py-2 px-3 text-right font-mono font-semibold align-top">
-                                  {formatCurrency(item.computedRsp || 0)}
-                                </td>
-                              )}
+                              <td className="py-2 px-3 text-right font-mono font-semibold align-top">
+                                {formatCurrency(getItemMarketPrice(item))}
+                              </td>
                             </tr>
                           ))
                         )}
@@ -2386,35 +2423,6 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                   ))}
                 </div>
               </div>
- 
-              {/* Section 3: Audit Trail Log */}
-              <div className="flex flex-col gap-3 bg-white border border-slate-200 rounded p-4 shadow-xs flex-grow min-h-[160px]">
-                <span className="block text-[8px] uppercase text-zinc-400 font-bold tracking-wider border-b border-zinc-100 pb-1">Audit Logs & History</span>
-                
-                {loadingLogs ? (
-                  <div className="flex items-center justify-center p-6 text-zinc-500 text-xs font-semibold gap-1.5">
-                    <Loader2 size={12} className="animate-spin" />
-                    <span>Loading timeline...</span>
-                  </div>
-                ) : selectedDealLogs.length === 0 ? (
-                  <div className="text-center p-6 text-zinc-400 text-[10px] italic">No logs found for this deal.</div>
-                ) : (
-                  <div className="flex flex-col gap-3 overflow-y-auto max-h-[180px] custom-scrollbar pr-0.5 relative pl-3.5 border-l border-zinc-200">
-                    {selectedDealLogs.map((log) => (
-                      <div key={log.id} className="relative text-xs">
-                        {/* Dot indicator */}
-                        <div className="absolute -left-[19.5px] top-1 w-2.5 h-2.5 rounded-full bg-zinc-400 border-2 border-white shadow-xs" />
-                        
-                        <div className="flex flex-col">
-                          <span className="font-bold text-zinc-800">{log.action}</span>
-                          <span className="text-[9px] text-zinc-500 mt-0.5">By: {log.actor_name} ({log.actor_email})</span>
-                          <span className="text-[8px] text-zinc-400 font-mono mt-0.5">{formatDateStringWithTime(log.timestamp)}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
 
             </div>
 
@@ -2538,7 +2546,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       {/* 2-COLUMN VIEW MODAL */}
       {showViewModal && selectedViewDeal && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center font-primary select-none p-6">
-          <div className="w-full max-w-5xl bg-white border border-slate-200 rounded shadow-2xl animate-modalSlideUp flex flex-col max-h-[85vh] overflow-hidden">
+          <div className="w-full max-w-5xl bg-white border border-slate-200 rounded shadow-2xl animate-modalSlideUp flex flex-col h-[85vh] overflow-hidden">
             {/* Modal Header */}
             <div className="flex justify-between items-center border-b border-slate-200 p-5 shrink-0">
               <div>
@@ -2555,22 +2563,35 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
 
             {/* Modal Body */}
             <div className="flex flex-1 overflow-hidden p-5 gap-6">
-              {/* Left Column (35%) */}
-              <div className="w-[35%] flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
+              {/* Left Column (280px) */}
+              <div className="w-[280px] shrink-0 flex flex-col gap-4 overflow-y-auto pr-2 custom-scrollbar">
                 {/* Client Details Card */}
                 <div className="bg-zinc-50/50 p-4 rounded border border-zinc-200 flex flex-col gap-2.5">
                   <span className="block text-[8px] uppercase text-zinc-400 font-bold tracking-wider border-b border-zinc-100 pb-1">Client Details</span>
                   
                   <div className="font-bold text-sm text-zinc-950">{selectedViewDeal.dealing_with}</div>
                   <div className="text-[10px] font-bold text-zinc-450">{formatDateString(selectedViewDeal.handshake_date)}</div>
+                  
                   {selectedViewDeal.notes && (
-                    <div className="text-xs font-semibold text-zinc-600 whitespace-pre-wrap leading-relaxed mt-1">
-                      {selectedViewDeal.notes}
+                    <div className="border-t border-zinc-100 pt-2 text-xs">
+                      <span className="block text-[8px] uppercase text-zinc-400 font-bold tracking-wider mb-1">Notes</span>
+                      <div className="font-semibold text-zinc-600 whitespace-pre-wrap leading-relaxed">
+                        {selectedViewDeal.notes}
+                      </div>
                     </div>
                   )}
 
-                  {selectedViewDeal.signed_proof_url && (
-                    <div className="mt-1">
+                  {selectedViewDeal.terms_conditions && (
+                    <div className="border-t border-zinc-100 pt-2 text-xs">
+                      <span className="block text-[8px] uppercase text-zinc-400 font-bold tracking-wider mb-1">Terms & Conditions</span>
+                      <div className="font-semibold text-zinc-600 whitespace-pre-wrap leading-relaxed text-[11px]">
+                        {selectedViewDeal.terms_conditions}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedViewDeal.signed_proof_url ? (
+                    <div className="mt-2 border-t border-zinc-100 pt-2">
                       <a
                         href={selectedViewDeal.signed_proof_url}
                         target="_blank"
@@ -2581,38 +2602,30 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                         <span>Download Signed Contract</span>
                       </a>
                     </div>
-                  )}
-                </div>
-
-                {/* Logs/Audit Trail Card */}
-                <div className="bg-zinc-50/50 p-4 rounded border border-zinc-200 flex-grow min-h-[180px] flex flex-col gap-3">
-                  <span className="block text-[8px] uppercase text-zinc-400 font-bold tracking-wider border-b border-zinc-100 pb-1">Audit Trail & Logs</span>
-                  {loadingViewLogs ? (
-                    <div className="flex items-center justify-center p-6 text-zinc-500 text-xs font-semibold gap-1.5 flex-grow">
-                      <Loader2 size={12} className="animate-spin" />
-                      <span>Loading timeline...</span>
+                  ) : (selectedViewDeal.status === "Draft" || !selectedViewDeal.status) ? (
+                    <div className="mt-2 border-t border-zinc-100 pt-2">
+                      <label className="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white font-bold transition-all text-[10px] uppercase flex items-center justify-center gap-1.5 w-full text-center shadow-xs cursor-pointer select-none">
+                        <Lock size={12} className="text-white" />
+                        <span>Upload Signed Contract</span>
+                        <input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          className="hidden"
+                          onChange={(e) => {
+                            if (e.target.files?.[0]) {
+                              handleUploadProof(selectedViewDeal.id, e.target.files[0]);
+                              setShowViewModal(false);
+                            }
+                          }}
+                        />
+                      </label>
                     </div>
-                  ) : viewDealLogs.length === 0 ? (
-                    <div className="text-center p-6 text-zinc-400 text-[10px] italic flex-grow">No log timeline found.</div>
-                  ) : (
-                    <div className="flex flex-col gap-3 overflow-y-auto max-h-[220px] custom-scrollbar pl-3 relative border-l border-zinc-200">
-                      {viewDealLogs.map((log) => (
-                        <div key={log.id} className="relative text-xs">
-                          <div className="absolute -left-[16.5px] top-1 w-2 h-2 rounded-full bg-zinc-400 border border-white shadow-xs" />
-                          <div className="flex flex-col">
-                            <span className="font-bold text-zinc-800">{log.action}</span>
-                            <span className="text-[9px] text-zinc-550 mt-0.5">By: {log.actor_name}</span>
-                            <span className="text-[8px] text-zinc-400 font-mono mt-0.5">{formatDateString(log.timestamp)}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               </div>
 
-              {/* Right Column (65%) */}
-              <div className="w-[65%] flex flex-col gap-3 overflow-hidden">
+              {/* Right Column (Expanded Products List) */}
+              <div className="flex-1 min-w-0 flex flex-col gap-3 overflow-hidden">
                 <span className="block text-[9px] uppercase text-zinc-500 font-bold tracking-wider pb-1">Products List</span>
                 <div className="border border-zinc-200 rounded overflow-hidden flex flex-col flex-1 bg-zinc-50/10">
                   <div className="w-full overflow-auto custom-scrollbar flex-grow">
@@ -2623,9 +2636,9 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                           <th className="py-2.5 px-3">Description</th>
                           <th className="py-2.5 px-3 text-right">$ Our Cost</th>
                           <th className="py-2.5 px-3 text-right">% Margin</th>
-                          <th className="py-2.5 px-3 text-right">$ Net Profit</th>
-                          <th className="py-2.5 px-3 text-right">$ Client Cost</th>
-                          {showMarketPriceInPrint && <th className="py-2.5 px-3 text-right">$ Market Price</th>}
+                          <th className="py-2.5 px-3 text-right">$ Profit</th>
+                          <th className="py-2.5 px-3 text-right">$ Buyer Cost</th>
+                          <th className="py-2.5 px-3 text-right">$ RSP</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-200 font-medium text-zinc-700">
@@ -2653,12 +2666,10 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                                 <td className="py-2 px-3 truncate max-w-[120px]" title={item.brand}>{item.brand}</td>
                                 <td className="py-2 px-3 whitespace-pre-wrap max-w-[200px]" title={item.product}>{item.product}</td>
                                 <td className="py-2 px-3 text-right font-mono font-semibold">{formatCurrency(ourCost)}</td>
-                                <td className="py-2 px-3 text-right font-mono font-semibold">{(item.marginHsg || 0).toFixed(2)}%</td>
-                                <td className="py-2 px-3 text-right font-mono font-black text-emerald-700">{formatCurrency(item.computedNetProfit || 0)}</td>
+                                <td className="py-2 px-3 text-right font-mono font-semibold">{getItemMarginFromBuyerPrice(item).toFixed(2)}%</td>
+                                <td className="py-2 px-3 text-right font-mono font-black text-emerald-700">{formatCurrency(getItemGrossProfit(item))}</td>
                                 <td className="py-2 px-3 text-right font-mono font-semibold">{formatCurrency(item.computedCostToBuyer || 0)}</td>
-                                {showMarketPriceInPrint && (
-                                  <td className="py-2 px-3 text-right font-mono font-semibold">{formatCurrency(item.computedRsp || 0)}</td>
-                                )}
+                                <td className="py-2 px-3 text-right font-mono font-semibold">{formatCurrency(getItemMarketPrice(item))}</td>
                               </tr>
                             );
                           });
@@ -2674,6 +2685,23 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
             <div className="border-t border-slate-200 p-4 bg-zinc-50 flex items-center justify-end shrink-0">
               {/* Buttons */}
               <div className="flex gap-2 text-xs font-bold">
+                {(selectedViewDeal.status === "Draft" || !selectedViewDeal.status) && (
+                  <label className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded transition-all cursor-pointer shadow-xs flex items-center gap-1.5 select-none" title="Upload Signed Contract">
+                    <Lock size={13} className="text-white" />
+                    <span>Upload Signed Contract</span>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      className="hidden"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) {
+                          handleUploadProof(selectedViewDeal.id, e.target.files[0]);
+                          setShowViewModal(false);
+                        }
+                      }}
+                    />
+                  </label>
+                )}
                 <button
                   onClick={() => generateBlobPDF(selectedViewDeal, "proposal")}
                   className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 hover:text-zinc-950 rounded transition-all cursor-pointer shadow-xs flex items-center gap-1.5"

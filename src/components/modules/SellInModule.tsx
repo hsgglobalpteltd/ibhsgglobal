@@ -246,6 +246,13 @@ const ITEM_TYPES = [
     badgeClass: "bg-slate-100 text-zinc-700 border-slate-200/90 hover:bg-slate-200/70"
   },
   {
+    value: "settlement",
+    label: "Settlement (Consignment / Payout)",
+    shortLabel: "Settlement",
+    description: "Lump-sum sales settlement or platform payout (e.g. TikTok, Retailer Consignment). Demand qty is 0.",
+    badgeClass: "bg-slate-100 text-zinc-700 border-slate-200/90 hover:bg-slate-200/70"
+  },
+  {
     value: "rebate",
     label: "Sale Rebate / Discount",
     shortLabel: "Sale Rebate",
@@ -514,6 +521,20 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [isEditingCostPrice, setIsEditingCostPrice] = React.useState<boolean>(false);
   const [savingCostSnapshot, setSavingCostSnapshot] = React.useState<boolean>(false);
 
+  // Settlement Breakdown Modal State
+  const [showSettlementModal, setShowSettlementModal] = React.useState<boolean>(false);
+  const [settlementTarget, setSettlementTarget] = React.useState<any | null>(null);
+  const [settlementItemsList, setSettlementItemsList] = React.useState<Array<{
+    sku: string;
+    description: string;
+    qty: number;
+    unit_cost: number;
+    total_cost: number;
+  }>>([]);
+  const [settlementFileName, setSettlementFileName] = React.useState<string>("");
+  const [savingSettlementItems, setSavingSettlementItems] = React.useState<boolean>(false);
+  const settlementFileInputRef = React.useRef<HTMLInputElement | null>(null);
+
   // View Mode: "summary" (Default when Published) vs "details" (Line-by-line items)
   const [sellinViewMode, setSellinViewMode] = React.useState<"summary" | "details">("details");
   const [summaryBuyerSearch, setSummaryBuyerSearch] = React.useState<string>("");
@@ -751,11 +772,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
     let totalCost = 0;
 
     records.forEach((r) => {
-      const isNonProduct = r.item_type && r.item_type !== "product";
-      const dQty = isNonProduct ? 0 : Number(r.demand_qty ?? r.quantity ?? 0);
-      const cQty = isNonProduct ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
+      const isSettlement = r.item_type === "settlement";
+      const isNonProduct = r.item_type && r.item_type !== "product" && !isSettlement;
+      const dQty = (isNonProduct || isSettlement) ? 0 : Number(r.demand_qty ?? r.quantity ?? 0);
+      const cQty = (isNonProduct || isSettlement) ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
       const netQty = dQty - cQty;
-      const cPrice = isNonProduct ? 0 : Number(r.cost_price || 0);
+      const cPrice = (isNonProduct || isSettlement) ? 0 : Number(r.cost_price || 0);
       totalCost += Math.max(0, netQty) * cPrice;
 
       grossDemand += Number(r.total_demand || 0);
@@ -763,10 +785,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
       cnAmount += Number(r.cn_amount || 0);
       cnQty += cQty;
 
-      if (isNonProduct) {
+      if (isSettlement) {
+        // Settlement counts towards sales demand revenue, 0 pcs, not a non-sales fee, valid
+      } else if (isNonProduct) {
         nonSalesCount++;
       } else {
-        if ((r.validation_status && r.validation_status !== "valid") || r.has_price_mismatch) {
+        const isDirectConsumer = 
+          String(r.channel || "").trim().toLowerCase() === "direct consumer" ||
+          String(r.buyer_name || "").toLowerCase().startsWith("cash sales");
+        const isUnresolvedBuyer = !isDirectConsumer && r.validation_status === "unregistered_buyer";
+        const isNoListing = !isDirectConsumer && r.validation_status === "no_listing";
+        const isUnmappedSku = r.validation_status === "unmapped_sku";
+        if (isUnresolvedBuyer || isNoListing || isUnmappedSku || r.has_price_mismatch) {
           unresolvedCount++;
         }
       }
@@ -826,15 +856,28 @@ export function SellInModule({ profile }: SellInModuleProps) {
   // Filtered Records for Sell-In Tab
   const filteredRecords = React.useMemo(() => {
     return records.filter((r) => {
-      const isNonProduct = r.item_type && r.item_type !== "product";
-      if (subFilterTab === "si" && (isNonProduct || Number(r.quantity || 0) <= 0)) return false;
-      if (subFilterTab === "cn" && (isNonProduct || Number(r.cn_amount || 0) <= 0)) return false;
-      if (subFilterTab === "non_sales" && !isNonProduct) return false;
-      if (subFilterTab === "unresolved") {
+      const isSettlement = r.item_type === "settlement";
+      const isNonProduct = r.item_type && r.item_type !== "product" && !isSettlement;
+      if (subFilterTab === "si") {
         if (isNonProduct) return false;
-        const isInvalid = r.validation_status && r.validation_status !== "valid";
+        if (isSettlement) {
+          if (Number(r.total_demand || 0) <= 0) return false;
+        } else {
+          if (Number(r.quantity || 0) <= 0) return false;
+        }
+      }
+      if (subFilterTab === "cn" && (isNonProduct || isSettlement || Number(r.cn_amount || 0) <= 0)) return false;
+      if (subFilterTab === "non_sales" && (!isNonProduct || isSettlement)) return false;
+      if (subFilterTab === "unresolved") {
+        if (isNonProduct || isSettlement) return false;
+        const isDirectConsumer = 
+          String(r.channel || "").trim().toLowerCase() === "direct consumer" ||
+          String(r.buyer_name || "").toLowerCase().startsWith("cash sales");
+        const isUnresolvedBuyer = !isDirectConsumer && r.validation_status === "unregistered_buyer";
+        const isNoListing = !isDirectConsumer && r.validation_status === "no_listing";
+        const isUnmappedSku = r.validation_status === "unmapped_sku";
         const isMismatch = Boolean(r.has_price_mismatch);
-        if (!isInvalid && !isMismatch) return false;
+        if (!isUnresolvedBuyer && !isNoListing && !isUnmappedSku && !isMismatch) return false;
       }
 
       if (channelFilter !== "all" && r.channel !== channelFilter) return false;
@@ -905,16 +948,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
     let totalCostAmount = 0;
 
     (records || []).forEach((r: any) => {
-      const isNonProduct = r.item_type && r.item_type !== "product";
-      const dQty = isNonProduct ? 0 : Number(r.demand_qty ?? r.quantity ?? 0);
-      const cQty = isNonProduct ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
+      const isSettlement = r.item_type === "settlement";
+      const isNonProduct = r.item_type && r.item_type !== "product" && !isSettlement;
+      const dQty = (isNonProduct || isSettlement) ? 0 : Number(r.demand_qty ?? r.quantity ?? 0);
+      const cQty = (isNonProduct || isSettlement) ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
       const netQty = dQty - cQty;
       const up = Number(r.unit_price || 0);
-      const dAmt = isNonProduct ? Number(r.total_demand || 0) : dQty * up;
+      const dAmt = (isNonProduct || isSettlement) ? Number(r.total_demand || 0) : dQty * up;
       const cAmt = Number(r.cn_amount || 0);
       const nAmt = dAmt - cAmt;
-      const cPrice = isNonProduct ? 0 : Number(r.cost_price || 0);
-      const rowCost = isNonProduct ? 0 : (Math.max(0, netQty) * cPrice);
+      const cPrice = (isNonProduct || isSettlement) ? 0 : Number(r.cost_price || 0);
+      const rowCost = (isNonProduct || isSettlement) ? 0 : (Math.max(0, netQty) * cPrice);
 
       if (isNonProduct) {
         totalNonSalesAmount += dAmt;
@@ -2920,19 +2964,183 @@ export function SellInModule({ profile }: SellInModuleProps) {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast(`Snapshot cost price ($${parsedCost.toFixed(2)}) saved for this month!`, "success");
+        showToast(`Cost price ($${parsedCost.toFixed(2)}) saved for this month!`, "success");
         setShowCostSnapshotModal(false);
         setCostSnapshotTarget(null);
         // Optimistically update record in memory
         setRecords(prev => prev.map(r => r.id === costSnapshotTarget.id ? { ...r, cost_price: parsedCost } : r));
         fetchBatchDetails(currentPeriod, false);
       } else {
-        showToast(data.error || "Failed to update snapshot cost price", "error");
+        showToast(data.error || "Failed to update cost price", "error");
       }
     } catch (e: any) {
       showToast(e.message || "Save cost price error", "error");
     } finally {
       setSavingCostSnapshot(false);
+    }
+  };
+
+  // Open Settlement Breakdown Modal
+  const handleOpenSettlementModal = (record: any) => {
+    setSettlementTarget(record);
+    const existingItems = Array.isArray(record.settlement_items) ? record.settlement_items : [];
+    setSettlementItemsList(existingItems);
+    setSettlementFileName(record.settlement_file_name || "");
+    setShowSettlementModal(true);
+  };
+
+  // Download Sample Excel Template for Settlement Breakdown
+  const handleDownloadSettlementTemplate = () => {
+    const wb = XLSX.utils.book_new();
+    const sampleData = [
+      { SKU: "BIVCL-325", Description: "BOOM+ ISOTONIC - LEMON FLAVOUR 325ML", Qty: 100 },
+      { SKU: "BIVCO-325", Description: "BOOM+ ISOTONIC - ORANGE FLAVOUR 325ML", Qty: 80 }
+    ];
+    const ws = XLSX.utils.json_to_sheet(sampleData, { header: ["SKU", "Description", "Qty"] });
+    ws["!cols"] = [{ wch: 18 }, { wch: 45 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Settlement_Breakdown");
+    XLSX.writeFile(wb, "Settlement_Breakdown_Template.xlsx");
+  };
+
+  // Download Existing Settlement Items or Template
+  const handleDownloadSettlementExcel = (record: any) => {
+    const items = Array.isArray(record.settlement_items) ? record.settlement_items : [];
+    if (items.length === 0) {
+      handleDownloadSettlementTemplate();
+      return;
+    }
+    const wb = XLSX.utils.book_new();
+    const rows = items.map((it: any) => ({
+      SKU: it.sku || "",
+      Description: it.description || "",
+      Qty: Number(it.qty || 0),
+      "Unit Cost ($)": Number(it.unit_cost || 0),
+      "Total Cost ($)": Number(it.total_cost || 0)
+    }));
+    const ws = XLSX.utils.json_to_sheet(rows, { header: ["SKU", "Description", "Qty", "Unit Cost ($)", "Total Cost ($)"] });
+    ws["!cols"] = [{ wch: 18 }, { wch: 45 }, { wch: 12 }, { wch: 15 }, { wch: 15 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Settlement_Items");
+    const safeName = String(record.product_name || record.buyer_name || "Settlement").replace(/[^a-zA-Z0-9_-]/g, "_");
+    XLSX.writeFile(wb, `${safeName}_Breakdown_${currentPeriod}.xlsx`);
+  };
+
+  // Parse Uploaded Excel File for Settlement Breakdown
+  const handleParseSettlementExcel = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: "array" });
+        const sheetName = wb.SheetNames[0];
+        if (!sheetName) throw new Error("Excel file has no sheets");
+        const ws = wb.Sheets[sheetName];
+        const rawJson: any[] = XLSX.utils.sheet_to_json(ws);
+
+        if (!rawJson || rawJson.length === 0) {
+          showToast("Uploaded Excel sheet is empty", "error");
+          return;
+        }
+
+        // Build master products map for cost price lookup
+        const prodMap = new Map<string, any>();
+        productsList.forEach((p) => {
+          if (p.sku) prodMap.set(String(p.sku).trim().toUpperCase(), p);
+        });
+
+        const parsedItems: Array<{
+          sku: string;
+          description: string;
+          qty: number;
+          unit_cost: number;
+          total_cost: number;
+        }> = [];
+
+        rawJson.forEach((row) => {
+          const skuKey = Object.keys(row).find((k) => /^(sku|item_?code|product_?code|code)$/i.test(k.trim())) || "SKU";
+          const descKey = Object.keys(row).find((k) => /^(desc|description|item_?name|product_?name|name)$/i.test(k.trim())) || "Description";
+          const qtyKey = Object.keys(row).find((k) => /^(qty|quantity|units?|pcs)$/i.test(k.trim())) || "Qty";
+
+          const rawSku = String(row[skuKey] || "").trim();
+          if (!rawSku) return;
+
+          const rawDesc = String(row[descKey] || "").trim();
+          const rawQty = Number(row[qtyKey] || 0);
+
+          const matchedProd = prodMap.get(rawSku.toUpperCase());
+          const unitCost = Number(matchedProd?.cost_price ?? matchedProd?.cost ?? 0);
+          const totalCost = Math.round(rawQty * unitCost * 100) / 100;
+
+          parsedItems.push({
+            sku: rawSku,
+            description: rawDesc || matchedProd?.product_name || rawSku,
+            qty: rawQty,
+            unit_cost: unitCost,
+            total_cost: totalCost
+          });
+        });
+
+        if (parsedItems.length === 0) {
+          showToast("No valid rows found. Please ensure headers are SKU, Description, Qty.", "error");
+          return;
+        }
+
+        setSettlementItemsList(parsedItems);
+        setSettlementFileName(file.name);
+        showToast(`Loaded ${parsedItems.length} items from ${file.name}`, "success");
+      } catch (err: any) {
+        showToast(`Failed to parse Excel: ${err.message}`, "error");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  // Save Settlement Breakdown Items to Backend
+  const handleSaveSettlementItems = async () => {
+    if (!settlementTarget) return;
+    if (settlementItemsList.length === 0) {
+      showToast("Please upload an Excel breakdown first", "error");
+      return;
+    }
+    setSavingSettlementItems(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/save-settlement-items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: settlementTarget.id,
+          period: currentPeriod,
+          items: settlementItemsList,
+          file_name: settlementFileName
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(data.message || "Settlement breakdown saved successfully!", "success");
+        const newTotalCost = settlementItemsList.reduce((acc, it) => acc + Number(it.total_cost || 0), 0);
+        setRecords((prev) =>
+          prev.map((r) =>
+            r.id === settlementTarget.id
+              ? {
+                  ...r,
+                  settlement_items: data.settlement_items || settlementItemsList,
+                  settlement_file_name: settlementFileName,
+                  total_cost: newTotalCost,
+                  gross_profit: Number(r.nett_amount || r.total_demand || 0) - newTotalCost,
+                  validation_status: "valid"
+                }
+              : r
+          )
+        );
+        setShowSettlementModal(false);
+        setSettlementTarget(null);
+        fetchBatchDetails(currentPeriod, false);
+      } else {
+        showToast(data.error || "Failed to save settlement breakdown", "error");
+      }
+    } catch (err: any) {
+      showToast("Error saving settlement items: " + err.message, "error");
+    } finally {
+      setSavingSettlementItems(false);
     }
   };
 
@@ -4352,8 +4560,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredRecords.map((r, idx) => {
-                    const isUnregistered = r.validation_status === "unregistered_buyer";
-                    const isNoListing = r.validation_status === "no_listing";
+                    const isDirectConsumer = 
+                      String(r.channel || "").trim().toLowerCase() === "direct consumer" ||
+                      String(r.buyer_name || "").toLowerCase().startsWith("cash sales");
+
+                    const isUnregistered = !isDirectConsumer && r.validation_status === "unregistered_buyer";
+                    const isNoListing = !isDirectConsumer && r.validation_status === "no_listing";
                     const isUnmappedSku = r.validation_status === "unmapped_sku";
                     const isValid = r.validation_status === "valid" || (!isUnregistered && !isNoListing && !isUnmappedSku);
 
@@ -4386,24 +4598,26 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                 <FileText size={13} />
                               </button>
                             )}
-                            {batchData?.status !== "published" && (
-                              <button
-                                type="button"
-                                onClick={() => handleOpenCostSnapshotModal(r)}
-                                className={`p-1 rounded transition-colors cursor-pointer ${
-                                  Number(r.cost_price || 0) > 0 
-                                    ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" 
-                                    : "text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50"
-                                }`}
-                                title={
-                                  Number(r.cost_price || 0) > 0 
-                                    ? `Snapshot Cost: $${Number(r.cost_price).toFixed(2)} (Click to edit for this month)` 
-                                    : "Set Snapshot Cost Price for this month"
-                                }
-                              >
-                                <DollarSign size={13} />
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleOpenCostSnapshotModal(r)}
+                              className={`p-1 rounded transition-colors cursor-pointer ${
+                                Number(r.cost_price || 0) > 0 
+                                  ? "text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" 
+                                  : "text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50"
+                              }`}
+                              title={
+                                batchData?.status === "published"
+                                  ? (Number(r.cost_price || 0) > 0 
+                                      ? `Cost Price: $${Number(r.cost_price).toFixed(2)} (Published)` 
+                                      : "Cost Price: $0.00 (Published)")
+                                  : (Number(r.cost_price || 0) > 0 
+                                      ? `Cost Price: $${Number(r.cost_price).toFixed(2)} (Click to edit)` 
+                                      : "Set Cost Price for this month")
+                              }
+                            >
+                              <DollarSign size={13} />
+                            </button>
                           </div>
                         </td>
 
@@ -4466,6 +4680,28 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               <Plus size={11} className="text-zinc-500" />
                               <span>Add to Listing</span>
                             </button>
+                          ) : r.item_type === "settlement" ? (
+                            (!r.settlement_items || r.settlement_items.length === 0) ? (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSettlementModal(r)}
+                                className="px-2 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10.5px] font-medium border border-amber-200/90 transition-colors cursor-pointer flex items-center justify-center gap-1 mx-auto"
+                                title="Click to upload settlement breakdown (SKU, Description, Qty)"
+                              >
+                                <AlertCircle size={11} className="text-amber-600" />
+                                <span>Pending Summary</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenSettlementModal(r)}
+                                className="inline-flex items-center gap-1 text-emerald-700 hover:text-emerald-800 text-[10.5px] font-medium cursor-pointer mx-auto"
+                                title="Click to preview settlement items"
+                              >
+                                <CheckCircle2 size={11} className="text-emerald-600" />
+                                <span>Valid</span>
+                              </button>
+                            )
                           ) : (
                             <span className="inline-flex items-center gap-1 text-zinc-500 text-[10.5px]">
                               <CheckCircle2 size={11} className="text-emerald-600" />
@@ -4492,6 +4728,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                 </span>
                                 {displayCode ? (
                                   <span className="text-[10px] text-zinc-500 font-mono font-medium truncate block" title={displayCode}>{displayCode}</span>
+                                ) : isDirectConsumer ? (
+                                  <span className="text-[10px] text-zinc-400 font-medium truncate block">Direct Consumer</span>
                                 ) : (
                                   <span className="text-[10px] text-amber-600 font-medium italic truncate block">Unregistered Buyer</span>
                                 )}
@@ -4560,21 +4798,61 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               {r.product_name || r.product_sku || "(No Description)"}
                             </span>
                             <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
-                              <span 
-                                className={`text-[10px] font-mono truncate shrink min-w-0 max-w-[130px] ${!r.product_sku ? "text-amber-600 font-semibold" : "text-zinc-500"}`}
-                                title={r.product_sku || "(Blank SKU)"}
-                              >
-                                {r.product_sku || "(Blank SKU)"}
-                              </span>
-                              {batchData?.status !== "published" && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenAssignProductModal(r)}
-                                  className="p-0.5 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer inline-flex items-center justify-center group shrink-0"
-                                  title="Click to assign master product SKU"
-                                >
-                                  <Edit2 size={10} className="group-hover:scale-110 transition-transform" />
-                                </button>
+                              {r.item_type === "settlement" ? (
+                                <div className="flex items-center gap-1.5 w-full">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenSettlementModal(r)}
+                                    className="text-[10px] font-mono text-zinc-600 hover:text-[#0B57D0] hover:underline font-medium truncate flex items-center gap-1 cursor-pointer"
+                                    title="Click to preview/manage settlement breakdown items"
+                                  >
+                                    <span>Settlement Line</span>
+                                    {Array.isArray(r.settlement_items) && r.settlement_items.length > 0 && (
+                                      <span className="text-[9.5px] px-1 py-0.2 bg-blue-50 text-[#0B57D0] rounded font-semibold shrink-0">
+                                        ({r.settlement_items.length})
+                                      </span>
+                                    )}
+                                  </button>
+                                  <div className="flex items-center gap-0.5 ml-auto shrink-0">
+                                    {batchData?.status !== "published" && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleOpenSettlementModal(r)}
+                                        className="p-1 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer"
+                                        title="Upload Excel breakdown (SKU, Description, Qty)"
+                                      >
+                                        <Upload size={11} />
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDownloadSettlementExcel(r)}
+                                      className="p-1 rounded text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer"
+                                      title={Array.isArray(r.settlement_items) && r.settlement_items.length > 0 ? "Download settlement breakdown Excel" : "Download sample template Excel"}
+                                    >
+                                      <Download size={11} />
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <span 
+                                    className={`text-[10px] font-mono truncate shrink min-w-0 max-w-[130px] ${!r.product_sku ? "text-amber-600 font-semibold" : "text-zinc-500"}`}
+                                    title={r.product_sku || "(Blank SKU)"}
+                                  >
+                                    {r.product_sku || "(Blank SKU)"}
+                                  </span>
+                                  {batchData?.status !== "published" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenAssignProductModal(r)}
+                                      className="p-0.5 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer inline-flex items-center justify-center group shrink-0"
+                                      title="Click to assign master product SKU"
+                                    >
+                                      <Edit2 size={10} className="group-hover:scale-110 transition-transform" />
+                                    </button>
+                                  )}
+                                </>
                               )}
                             </div>
                           </div>
@@ -4613,7 +4891,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                         {/* Demand Quantity - Light Green */}
                         <td className="py-2 px-3 text-right text-emerald-950 font-mono bg-emerald-50/50 border-x border-emerald-100/50 whitespace-nowrap">
-                          <span>{Number(r.demand_qty ?? r.quantity ?? 0).toLocaleString()}</span>
+                          <span>{r.item_type === "settlement" ? "—" : Number(r.demand_qty ?? r.quantity ?? 0).toLocaleString()}</span>
                         </td>
 
                         {/* Total Demand ($) - Light Green */}
@@ -7507,8 +7785,15 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   <DollarSign size={14} />
                 </div>
                 <div>
-                  <h2 className="text-sm font-semibold text-zinc-950">Snapshot Cost Price</h2>
-                  <p className="text-[11px] text-zinc-500">Edit internal cost price for this specific month only.</p>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-semibold text-zinc-950">Cost Price</h2>
+                    {batchData?.status === "published" && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Published
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-zinc-500">Internal cost price for {currentPeriod}.</p>
                 </div>
               </div>
               <button 
@@ -7545,11 +7830,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 </div>
               </div>
 
-              {/* Informative Rule Notice */}
-              <div className="p-2.5 rounded-lg bg-blue-50/70 border border-blue-200/80 text-[11px] text-blue-900 leading-relaxed">
-                ℹ️ <strong>Snapshot Rule:</strong> This cost price is snapshotted for <strong>{currentPeriod}</strong> only. Saving will recalculate gross profit and margin for this month without altering your product list catalog or past records.
-              </div>
-
               {/* Input Form */}
               <div className="grid grid-cols-2 gap-2.5">
                 <div className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex flex-col items-center text-center">
@@ -7560,14 +7840,22 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   <span className="text-[10px] text-zinc-400 mt-0.5">Billed Price</span>
                 </div>
 
-                {!isEditingCostPrice ? (
+                {batchData?.status === "published" ? (
+                  <div className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex flex-col items-center text-center">
+                    <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Cost Price ($)</span>
+                    <span className="text-base font-bold text-zinc-900 font-mono mt-1">
+                      ${(parseFloat(editingCostPrice) || 0).toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-zinc-400 mt-0.5">Land Cost</span>
+                  </div>
+                ) : !isEditingCostPrice ? (
                   <div
                     onClick={() => setIsEditingCostPrice(true)}
                     className="p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100/60 hover:border-slate-300 transition-colors flex flex-col items-center text-center relative cursor-pointer group"
-                    title="Click to edit Snapshot Cost"
+                    title="Click to edit Cost Price"
                   >
                     <div className="w-full flex items-center justify-center relative">
-                      <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Snapshot Cost ($)</span>
+                      <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Cost Price ($)</span>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -7588,7 +7876,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 ) : (
                   <div className="p-3 rounded-lg border border-[#0B57D0]/40 bg-white flex flex-col justify-center">
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider">Snapshot Cost ($)</label>
+                      <label className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider">Cost Price ($)</label>
                       <button
                         type="button"
                         onClick={() => setIsEditingCostPrice(false)}
@@ -7666,19 +7954,230 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   setShowCostSnapshotModal(false);
                   setCostSnapshotTarget(null);
                 }}
-                className="h-8 px-3 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+                className="h-8 px-4 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
               >
-                Cancel
+                {batchData?.status === "published" ? "Close" : "Cancel"}
               </button>
-              <button
-                type="button"
-                disabled={savingCostSnapshot}
-                onClick={handleSaveCostSnapshot}
-                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+              {batchData?.status !== "published" && (
+                <button
+                  type="button"
+                  disabled={savingCostSnapshot}
+                  onClick={handleSaveCostSnapshot}
+                  className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+                >
+                  {savingCostSnapshot ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                  <span>Save</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Settlement Breakdown Output Items */}
+      {showSettlementModal && settlementTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col max-h-[85vh]">
+            {/* Modal Header */}
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-[#0B57D0] shrink-0">
+                  <FileSpreadsheet size={16} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-semibold text-zinc-950">Settlement Breakdown Output</h2>
+                    {batchData?.status === "published" ? (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Published (Read-Only)
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200">
+                        {settlementItemsList.length > 0 ? `${settlementItemsList.length} SKUs` : "Upload Required"}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">
+                    {settlementTarget.product_name || "Settlement Line"} • {settlementTarget.buyer_name || "Platform"} ({formatPeriodLabel(currentPeriod)})
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowSettlementModal(false);
+                  setSettlementTarget(null);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer rounded-lg hover:bg-slate-100 transition-colors"
               >
-                {savingCostSnapshot ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                <span>Save</span>
+                <X size={16} />
               </button>
+            </div>
+
+            {/* Hidden File Input & Upload Bar */}
+            <input 
+              type="file" 
+              ref={settlementFileInputRef}
+              accept=".xlsx,.xls,.csv"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleParseSettlementExcel(f);
+                e.target.value = "";
+              }}
+              className="hidden" 
+            />
+
+            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2">
+                {batchData?.status !== "published" && (
+                  <button
+                    type="button"
+                    onClick={() => settlementFileInputRef.current?.click()}
+                    className="h-8 px-3 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-xs font-semibold text-zinc-800 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                  >
+                    <Upload size={13} className="text-[#0B57D0]" />
+                    <span>Upload Excel</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={handleDownloadSettlementTemplate}
+                  className="h-8 px-2.5 rounded-lg text-xs font-medium text-[#0B57D0] hover:bg-blue-50/80 transition-colors cursor-pointer flex items-center gap-1"
+                  title="Download Excel format template with columns: SKU, Description, Qty"
+                >
+                  <Download size={13} />
+                  <span>Download Sample Template</span>
+                </button>
+              </div>
+
+              {settlementFileName && (
+                <div className="flex items-center gap-1.5 text-xs text-zinc-600 bg-white px-2.5 py-1 rounded-md border border-slate-200">
+                  <FileSpreadsheet size={13} className="text-emerald-600" />
+                  <span className="font-mono font-medium max-w-[200px] truncate" title={settlementFileName}>
+                    {settlementFileName}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Body / Table Preview */}
+            <div className="flex-1 min-h-[220px] max-h-[380px] overflow-y-auto">
+              {settlementItemsList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-8 text-center text-zinc-500">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-zinc-400 mb-3">
+                    <FileSpreadsheet size={24} />
+                  </div>
+                  <h3 className="text-sm font-semibold text-zinc-800">No settlement summary uploaded</h3>
+                  <p className="text-xs text-zinc-500 mt-1 max-w-sm">
+                    Upload an Excel file with format <span className="font-mono font-bold text-zinc-700">SKU, Description, Qty</span> to track physical restock units and landed costs.
+                  </p>
+                  {batchData?.status !== "published" && (
+                    <button
+                      type="button"
+                      onClick={() => settlementFileInputRef.current?.click()}
+                      className="mt-4 h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                    >
+                      <Upload size={13} />
+                      <span>Upload Excel File</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 text-zinc-600 font-semibold z-10">
+                    <tr>
+                      <th className="py-2 px-3 text-center w-10">#</th>
+                      <th className="py-2 px-3 min-w-[120px]">SKU</th>
+                      <th className="py-2 px-3 min-w-[180px]">Description</th>
+                      <th className="py-2 px-3 text-right min-w-[80px]">Qty Out</th>
+                      <th className="py-2 px-3 text-right min-w-[100px]" title="Cost price based on Master Products catalog">Master Unit Cost</th>
+                      <th className="py-2 px-3 text-right min-w-[100px]">Total Cost</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-sans">
+                    {settlementItemsList.map((it, i) => (
+                      <tr key={i} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-2 px-3 text-center text-zinc-400 font-mono text-[11px]">{i + 1}</td>
+                        <td className="py-2 px-3 font-mono font-semibold text-zinc-900">{it.sku || "—"}</td>
+                        <td className="py-2 px-3 text-zinc-700 max-w-[220px] truncate" title={it.description}>
+                          {it.description || "—"}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-semibold text-zinc-900">
+                          {Number(it.qty || 0).toLocaleString()}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono text-zinc-600">
+                          ${Number(it.unit_cost || 0).toFixed(2)}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-bold text-zinc-900">
+                          ${Number(it.total_cost || 0).toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Calculations Summary Card */}
+            {settlementItemsList.length > 0 && (() => {
+              const totalQty = settlementItemsList.reduce((acc, it) => acc + Number(it.qty || 0), 0);
+              const totalCost = settlementItemsList.reduce((acc, it) => acc + Number(it.total_cost || 0), 0);
+              return (
+                <div className="px-4 py-2.5 bg-slate-50/90 border-t border-slate-200 grid grid-cols-3 gap-2 shrink-0 font-mono text-xs">
+                  <div className="p-2 rounded-lg bg-white border border-slate-200 flex flex-col">
+                    <span className="text-[10px] text-zinc-500 font-sans font-semibold uppercase">Total SKUs</span>
+                    <span className="text-sm font-bold text-zinc-900 mt-0.5">{settlementItemsList.length} items</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-white border border-slate-200 flex flex-col">
+                    <span className="text-[10px] text-zinc-500 font-sans font-semibold uppercase">Physical Qty Out</span>
+                    <span className="text-sm font-bold text-zinc-900 mt-0.5">{totalQty.toLocaleString()} pcs</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-white border border-slate-200 flex flex-col">
+                    <span className="text-[10px] text-zinc-500 font-sans font-semibold uppercase">Total Landed Cost</span>
+                    <span className="text-sm font-bold text-zinc-900 mt-0.5">${totalCost.toFixed(2)}</span>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Modal Footer */}
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2 shrink-0 rounded-b-xl">
+              <div>
+                {settlementItemsList.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadSettlementExcel(settlementTarget)}
+                    className="h-8 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-medium text-zinc-700 flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
+                  >
+                    <Download size={13} className="text-zinc-500" />
+                    <span>Download Excel</span>
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={savingSettlementItems}
+                  onClick={() => {
+                    setShowSettlementModal(false);
+                    setSettlementTarget(null);
+                  }}
+                  className="h-8 px-4 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
+                >
+                  {batchData?.status === "published" ? "Close" : "Cancel"}
+                </button>
+                {batchData?.status !== "published" && (
+                  <button
+                    type="button"
+                    disabled={savingSettlementItems || settlementItemsList.length === 0}
+                    onClick={handleSaveSettlementItems}
+                    className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer transition-colors"
+                  >
+                    {savingSettlementItems ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                    <span>Save Settlement Items</span>
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
