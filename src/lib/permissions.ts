@@ -45,12 +45,30 @@ export function getModulePermission(profile?: PermissionProfile | null, moduleTi
 
   // Legacy format support (array of module titles)
   if (Array.isArray(modAccess)) {
-    const has = modAccess.includes(moduleTitle);
+    const has =
+      modAccess.includes(moduleTitle) ||
+      (moduleTitle === "Online Order" && modAccess.includes("Online Orders")) ||
+      (moduleTitle === "Online Orders" && modAccess.includes("Online Order")) ||
+      (moduleTitle === "Tiktok Order" && (modAccess.includes("Tiktok Orders") || modAccess.includes("Tiktok Terminal") || modAccess.includes("Tiktok Sale Report"))) ||
+      (moduleTitle === "Tiktok Orders" && modAccess.includes("Tiktok Order"));
     return { view: has, edit: has, delete: has };
   }
 
   if (modAccess && typeof modAccess === "object") {
-    const perm = modAccess[moduleTitle];
+    let perm = modAccess[moduleTitle];
+    if (!perm && moduleTitle === "Online Order") {
+      perm = modAccess["Online Orders"];
+    } else if (!perm && moduleTitle === "Online Orders") {
+      perm = modAccess["Online Order"];
+    } else if (!perm && moduleTitle === "Tiktok Order") {
+      perm =
+        modAccess["Tiktok Orders"] ||
+        modAccess["Tiktok Terminal"] ||
+        modAccess["Tiktok Sale Report"] ||
+        modAccess["Tiktok Sales Report"];
+    } else if (!perm && moduleTitle === "Tiktok Orders") {
+      perm = modAccess["Tiktok Order"];
+    }
     if (perm && typeof perm === "object") {
       return {
         view: !!perm.view,

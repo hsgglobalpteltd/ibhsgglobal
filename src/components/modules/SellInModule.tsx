@@ -445,6 +445,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [selectedInvoiceBreakdownRow, setSelectedInvoiceBreakdownRow] = React.useState<any | null>(null);
   const [activeAssignBuyerInvoiceIndex, setActiveAssignBuyerInvoiceIndex] = React.useState<number | null>(null);
   const [togglingInvoiceIdx, setTogglingInvoiceIdx] = React.useState<number | null>(null);
+  const [togglingCnIdx, setTogglingCnIdx] = React.useState<number | null>(null);
   const [showMonthPickerModal, setShowMonthPickerModal] = React.useState<boolean>(false);
   const [monthPickerYear, setMonthPickerYear] = React.useState<number>(() => {
     const parts = (currentPeriod || "").split("-");
@@ -6722,6 +6723,74 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                 if (cns.length === 0) return null;
 
+                const handleToggleCnExclusion = async (cnIdx: number, cnItem: any) => {
+                  if (!selectedInvoiceBreakdownRow?.id || togglingCnIdx !== null) return;
+                  setTogglingCnIdx(cnIdx);
+                  try {
+                    const nextExcluded = !cnItem.is_excluded;
+                    const targetRecordId = cnItem.parent_record_id || selectedInvoiceBreakdownRow.id;
+                    const res = await fetch(`${API_BASE}/api/sellin/toggle-credit-note-exclusion`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        record_id: targetRecordId,
+                        cn_index: cnIdx,
+                        cn_no: cnItem.cn_no,
+                        is_excluded: nextExcluded
+                      })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                      // Update local modal state immediately without truncating consolidated credit notes
+                      const updatedCns = Array.isArray(selectedInvoiceBreakdownRow.credit_notes) ? [...selectedInvoiceBreakdownRow.credit_notes] : [];
+                      if (updatedCns[cnIdx]) {
+                        updatedCns[cnIdx] = { ...updatedCns[cnIdx], is_excluded: nextExcluded };
+                      }
+
+                      const cnQty = Number(cnItem.qty || 0);
+                      const cnAmt = Number(cnItem.amount || (cnQty * Number(cnItem.unit_price || 0)) || 0);
+                      const deltaQty = nextExcluded ? -cnQty : cnQty;
+                      const deltaAmt = nextExcluded ? -cnAmt : cnAmt;
+                      const nextRejectQty = Math.max(0, Number(selectedInvoiceBreakdownRow.reject_qty ?? selectedInvoiceBreakdownRow.cn_quantity ?? 0) + deltaQty);
+                      const nextCnAmount = Math.max(0, Number(selectedInvoiceBreakdownRow.cn_amount || 0) + deltaAmt);
+                      const nextNettAmount = Number(selectedInvoiceBreakdownRow.total_demand || 0) - nextCnAmount;
+
+                      setSelectedInvoiceBreakdownRow((prev: any) => ({
+                        ...prev,
+                        credit_notes: updatedCns,
+                        cn_quantity: nextRejectQty,
+                        reject_qty: nextRejectQty,
+                        cn_amount: nextCnAmount,
+                        nett_amount: nextNettAmount
+                      }));
+                      showToast(nextExcluded ? `Excluded credit note ${cnItem.cn_no} from reject` : `Restored credit note ${cnItem.cn_no} to reject`, "success");
+                      // Optimistically update main table records immediately
+                      setRecords((prevRecs) =>
+                        prevRecs.map((rec) =>
+                          rec.id === selectedInvoiceBreakdownRow.id
+                            ? {
+                                ...rec,
+                                credit_notes: updatedCns,
+                                cn_quantity: nextRejectQty,
+                                reject_qty: nextRejectQty,
+                                cn_amount: nextCnAmount,
+                                nett_amount: nextNettAmount
+                              }
+                            : rec
+                        )
+                      );
+                      // Refresh batch details in background silently
+                      fetchBatchDetails(currentPeriod, true);
+                    } else {
+                      showToast(data.error || "Failed to update credit note exclusion", "error");
+                    }
+                  } catch (err: any) {
+                    showToast(err.message || "Failed to toggle credit note exclusion", "error");
+                  } finally {
+                    setTogglingCnIdx(null);
+                  }
+                };
+
                 return (
                   <div className="mt-4 pt-3 border-t border-slate-200">
                     <div className="text-xs font-semibold text-zinc-900 mb-2 flex items-center gap-1.5">
@@ -6738,18 +6807,59 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           <th className="py-1.5 px-2 text-right">Reject Qty</th>
                           <th className="py-1.5 px-2 text-right">Unit Price</th>
                           <th className="py-1.5 px-2 text-right">CN Amount</th>
+                          <th className="py-1.5 px-2 text-center w-12">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-mono">
-                        {cns.map((cn: any, idx: number) => (
-                          <tr key={idx}>
-                            <td className="py-2 px-2 text-zinc-900 font-semibold">{cn.cn_no}</td>
-                            <td className="py-2 px-2 text-zinc-600">{cn.cn_date || "-"}</td>
-                            <td className="py-2 px-2 text-right text-zinc-800 font-semibold">{cn.qty}</td>
-                            <td className="py-2 px-2 text-right text-zinc-600">${Number(cn.unit_price || 0).toFixed(2)}</td>
-                            <td className="py-2 px-2 text-right text-zinc-900 font-semibold">-${Number(cn.amount || 0).toFixed(2)}</td>
-                          </tr>
-                        ))}
+                        {cns.map((cnItem: any, idx: number) => {
+                          const isExcluded = Boolean(cnItem.is_excluded);
+                          return (
+                            <tr key={idx} className={isExcluded ? "bg-slate-50/70 opacity-60 text-zinc-400" : ""}>
+                              <td className="py-2 px-2">
+                                <span className={cn("font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-900")}>
+                                  {cnItem.cn_no}
+                                </span>
+                                {isExcluded && (
+                                  <span className="ml-1.5 text-[9px] font-sans px-1 py-0.2 rounded bg-zinc-200 text-zinc-600 uppercase font-medium">
+                                    Excluded
+                                  </span>
+                                )}
+                              </td>
+                              <td className={cn("py-2 px-2", isExcluded ? "line-through text-zinc-400" : "text-zinc-600")}>
+                                {cnItem.cn_date || "-"}
+                              </td>
+                              <td className={cn("py-2 px-2 text-right font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-800")}>
+                                {cnItem.qty}
+                              </td>
+                              <td className={cn("py-2 px-2 text-right", isExcluded ? "line-through text-zinc-400" : "text-zinc-600")}>
+                                ${Number(cnItem.unit_price || 0).toFixed(2)}
+                              </td>
+                              <td className={cn("py-2 px-2 text-right font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-900")}>
+                                -${Number(cnItem.amount || 0).toFixed(2)}
+                              </td>
+                              <td className="py-2 px-2 text-center">
+                                {Array.isArray(selectedInvoiceBreakdownRow.credit_notes) && selectedInvoiceBreakdownRow.credit_notes.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    disabled={togglingCnIdx !== null}
+                                    onClick={() => handleToggleCnExclusion(idx, cnItem)}
+                                    className={cn(
+                                      "p-1 rounded cursor-pointer transition-colors inline-flex items-center justify-center",
+                                      isExcluded 
+                                        ? "text-zinc-400 hover:text-zinc-700 hover:bg-zinc-200/60" 
+                                        : "text-zinc-500 hover:text-[#0B57D0] hover:bg-blue-50"
+                                    )}
+                                    title={isExcluded ? "Include back in calculation" : "Exclude from calculation"}
+                                  >
+                                    {isExcluded ? <EyeOff size={13} className="text-zinc-500" /> : <Eye size={13} />}
+                                  </button>
+                                ) : (
+                                  <span className="text-zinc-300">-</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

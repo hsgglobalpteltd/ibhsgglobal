@@ -1,7 +1,8 @@
 import * as React from "react";
-import { LayoutDashboard, Users, Database, TrendingUp, Package, Briefcase, Shield, Globe } from "lucide-react";
+import { LayoutDashboard, Users, ShoppingCart, Database, TrendingUp, Package, Briefcase, Shield, Globe } from "lucide-react";
 import { DashboardPage } from "@/components/pages/dashboard";
 import { FrontlinePage } from "@/components/pages/frontline";
+import { OrdersPage } from "@/components/pages/orders";
 import { DatabasePage } from "@/components/pages/database";
 import { SalesChannelsPage } from "@/components/pages/sales-channels";
 import { StockPage } from "@/components/pages/stock";
@@ -39,22 +40,22 @@ export const menuConfig: MenuItem[] = [
     component: <DashboardPage />,
   },
   {
+    id: "Orders",
+    label: "Orders",
+    icon: <ShoppingCart size={18} />,
+    component: <OrdersPage />,
+  },
+  {
+    id: "Sales & Channels",
+    label: "Sales",
+    icon: <TrendingUp size={18} />,
+    component: <SalesChannelsPage />,
+  },
+  {
     id: "Frontline",
     label: "Frontline",
     icon: <Users size={18} />,
     component: <FrontlinePage />,
-  },
-  {
-    id: "Database",
-    label: "Database",
-    icon: <Database size={18} />,
-    component: <DatabasePage />,
-  },
-  {
-    id: "Sales & Channels",
-    label: "Sales & Channels",
-    icon: <TrendingUp size={18} />,
-    component: <SalesChannelsPage />,
   },
   {
     id: "Stock",
@@ -63,22 +64,22 @@ export const menuConfig: MenuItem[] = [
     component: <StockPage />,
   },
   {
-    id: "Office Tools",
-    label: "Office Tools",
-    icon: <Briefcase size={18} />,
-    component: <OfficeToolsPage />,
-  },
-  {
     id: "Website",
     label: "Website",
     icon: <Globe size={18} />,
     component: <WebsitePage />,
   },
   {
-    id: "Tiktok",
-    label: "Tiktok",
-    icon: <TiktokIcon size={18} />,
-    component: <TiktokPage />,
+    id: "Office Tools",
+    label: "Office Tools",
+    icon: <Briefcase size={18} />,
+    component: <OfficeToolsPage />,
+  },
+  {
+    id: "Database",
+    label: "Database",
+    icon: <Database size={18} />,
+    component: <DatabasePage />,
   },
   {
     id: "Administrator",

@@ -6,9 +6,7 @@ import { ActivationModule } from "../modules/ActivationModule";
 import { PromoterModule } from "../modules/PromoterModule";
 import { MerchandiserModule } from "../modules/MerchandiserModule";
 import { TaskModule } from "../modules/TaskModule";
-import { TrackOrderModule } from "../modules/TrackOrderModule";
 import { CalendarEventModule } from "../modules/CalendarEventModule";
-import { DirectOrderModule } from "../modules/DirectOrderModule";
 import { StoresVisibilityModule } from "../modules/StoresVisibilityModule";
 import { SponsorshipModule } from "../modules/SponsorshipModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
@@ -122,10 +120,6 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
         return <MerchandiserModule profile={profile} />;
       case "Task":
         return <TaskModule profile={profile} />;
-      case "Track Order":
-        return <TrackOrderModule profile={profile} />;
-      case "Direct Order":
-        return <DirectOrderModule profile={profile} />;
       case "Stores Visibility":
         return <StoresVisibilityModule profile={profile} />;
       case "Sponsorship":

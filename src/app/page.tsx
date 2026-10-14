@@ -7,9 +7,10 @@ import { menuConfig } from "@/config/menu-config";
 import { auth, googleProvider, signInWithPopup, signOut } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { syncUserProfile, fetchMyProfile, fetchLatestContract, loginWithPin, logoutUser, UserProfile } from "@/lib/api";
+import { DashboardPage } from "@/components/pages/dashboard";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "@/components/custom-button";
-import { ShieldAlert, KeyRound, Sparkles, LogOut } from "lucide-react";
+import { ShieldAlert, KeyRound, Sparkles, LogOut, Bot } from "lucide-react";
 import { WelcomeAboardScreen } from "@/components/welcome-aboard";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { MaintenanceModule } from "@/components/MaintenanceModule";
@@ -41,6 +42,7 @@ export default function Home() {
   const [profile, setProfile] = React.useState<UserProfile | null>(null);
   const [loading, setLoading] = React.useState<boolean>(true);
   const isLoggingOutRef = React.useRef<boolean>(false);
+  const sessionSupersededHandledRef = React.useRef<boolean>(false);
 
   // Restore cached session immediately upon client mount before network checks
   React.useEffect(() => {
@@ -105,6 +107,54 @@ export default function Home() {
       window.removeEventListener("dashboard-tab-change", handleTabChange);
     };
   }, []);
+
+  // iBuddy persistent shell state & unread tracker
+  const [ibuddyGenerating, setIbuddyGenerating] = React.useState<boolean>(false);
+  const [ibuddyUnreadCount, setIbuddyUnreadCount] = React.useState<number>(0);
+  const activeItemRef = React.useRef(activeItem);
+  const dashboardTabRef = React.useRef(dashboardTab);
+
+  React.useEffect(() => {
+    activeItemRef.current = activeItem;
+    dashboardTabRef.current = dashboardTab;
+    if (activeItem === "Dashboard" && dashboardTab === "today") {
+      setIbuddyUnreadCount(0);
+      window.dispatchEvent(new CustomEvent("ibuddy-activated"));
+    }
+  }, [activeItem, dashboardTab]);
+
+  React.useEffect(() => {
+    const handleGenerating = (e: Event) => {
+      const ce = e as CustomEvent<{ isGenerating: boolean }>;
+      if (ce.detail !== undefined && ce.detail !== null) {
+        setIbuddyGenerating(ce.detail.isGenerating);
+      }
+    };
+
+    const handleAiBubble = () => {
+      // If user is not currently viewing iBuddy today tab on Dashboard, increment unread count
+      if (activeItemRef.current !== "Dashboard" || dashboardTabRef.current !== "today") {
+        setIbuddyUnreadCount((prev) => prev + 1);
+      }
+    };
+
+    window.addEventListener("ibuddy-generating-change", handleGenerating);
+    window.addEventListener("ibuddy-ai-bubble-added", handleAiBubble);
+
+    return () => {
+      window.removeEventListener("ibuddy-generating-change", handleGenerating);
+      window.removeEventListener("ibuddy-ai-bubble-added", handleAiBubble);
+    };
+  }, []);
+
+  const handleJumpToIbuddy = () => {
+    setActiveItem("Dashboard");
+    setBreadcrumbPath(["Dashboard"]);
+    setDashboardTab("today");
+    setIbuddyUnreadCount(0);
+    window.dispatchEvent(new CustomEvent("dashboard-tab-change", { detail: "today" }));
+    window.dispatchEvent(new CustomEvent("ibuddy-activated"));
+  };
 
   React.useEffect(() => {
     const handleFullscreenChange = () => {
@@ -252,6 +302,7 @@ export default function Home() {
               sid
             );
             setProfile(dbProfile);
+            sessionSupersededHandledRef.current = false;
             safeLocalStorageSet("ib_user_profile", dbProfile);
             safeLocalStorageSet("ib_auth_token", token);
           } catch (err: any) {
@@ -284,6 +335,7 @@ export default function Home() {
                 setFirebaseUser({ email: freshProfile.email, displayName: freshProfile.name });
                 setIdToken(storedToken);
                 setProfile(freshProfile);
+                sessionSupersededHandledRef.current = false;
                 safeLocalStorageSet("ib_user_profile", freshProfile);
                 setLoading(false);
                 return;
@@ -291,7 +343,8 @@ export default function Home() {
             }
           } catch (err: any) {
             console.warn("Failed to restore PIN session:", err);
-            if (err.code === "session_superseded" || err.message?.includes("session")) {
+            // If session was superseded, ib-session-superseded event already handled the toast and cleanup
+            if (err.code !== "session_superseded" && err.message?.includes("session")) {
               showToast(err.message || "Your session is now active on another device.", "error");
             }
             safeLocalStorageRemove("ib_auth_token");
@@ -316,6 +369,7 @@ export default function Home() {
       const sid = localStorage.getItem("session_id");
       if (pendingLogin.pin) {
         const res = await loginWithPin(pendingLogin.pin, sid, true);
+        sessionSupersededHandledRef.current = false;
         setFirebaseUser({ email: res.user.email, displayName: res.user.name });
         setIdToken(res.token);
         setProfile(res.user);
@@ -327,6 +381,7 @@ export default function Home() {
           sid,
           true // force = true
         );
+        sessionSupersededHandledRef.current = false;
         setProfile(dbProfile);
       }
       // Reset PIN lockout on force login
@@ -362,6 +417,7 @@ export default function Home() {
         safeLocalStorageSet("session_id", sid);
       }
       const res = await loginWithPin(codeToSubmit, sid);
+      sessionSupersededHandledRef.current = false;
       setFirebaseUser({ email: res.user.email, displayName: res.user.name });
       setIdToken(res.token);
       setProfile(res.user);
@@ -503,8 +559,11 @@ export default function Home() {
 
   // Handle session superseded (forced logout when logged in on another device)
   const handleSessionSuperseded = React.useCallback(async (message?: string) => {
+    if (sessionSupersededHandledRef.current) return;
+    sessionSupersededHandledRef.current = true;
     isLoggingOutRef.current = true;
-    showToast(message || "You have been signed out because this account is now active on another device.", "error");
+
+    showToast(message || "Your session is now active on another device.", "error");
     if (typeof window !== "undefined") {
       safeLocalStorageRemove("ib_user_profile");
       safeLocalStorageRemove("ib_auth_token");
@@ -581,10 +640,10 @@ export default function Home() {
         }
       } catch (err: any) {
         if (err.code === "session_superseded") {
-          handleSessionSuperseded(err.message);
-        } else {
-          console.warn("Background auth check failed:", err);
+          // Handled centrally via "ib-session-superseded" event
+          return;
         }
+        console.warn("Background auth check failed:", err);
       }
     }, 4000); // 4-second poll
 
@@ -714,6 +773,7 @@ export default function Home() {
   };
 
   const handleLogout = async () => {
+    sessionSupersededHandledRef.current = false;
     isLoggingOutRef.current = true;
     const userEmail = firebaseUser?.email || profile?.email;
     const token = idToken;
@@ -776,7 +836,11 @@ export default function Home() {
       );
     }
 
-    const categoryPages = ["Frontline", "Database", "Sales & Channels", "Stock", "Office Tools", "Website", "Tiktok", "Administrator"];
+    const categoryPages = ["Orders", "Sales & Channels", "Frontline", "Stock", "Website", "Office Tools", "Database", "Administrator"];
+
+    if (activeItem === "Dashboard") {
+      return null;
+    }
 
     const activeRoute = menuConfig.find((route) => route.id === activeItem);
     if (activeRoute) {
@@ -1039,9 +1103,55 @@ export default function Home() {
               />
             )}
             <main className={`main-content flex flex-col flex-1 overflow-hidden min-w-0 ${activeItem === "Dashboard" ? "p-0 h-full w-full" : "p-[20px]"}`}>
-              {renderActivePage()}
+              <div className={`h-full w-full flex-col flex-1 overflow-hidden ${activeItem === "Dashboard" ? "flex" : "hidden"}`}>
+                <DashboardPage profile={profile} idToken={idToken} breadcrumbPath={breadcrumbPath} />
+              </div>
+              {activeItem !== "Dashboard" && (
+                <div className="h-full w-full flex-col flex-1 overflow-hidden flex">
+                  {renderActivePage()}
+                </div>
+              )}
             </main>
           </div>
+
+          {/* Floating iBuddy Logo Button (visible when not on Dashboard today tab) */}
+          {!(activeItem === "Dashboard" && dashboardTab === "today") && (
+            <button
+              type="button"
+              onClick={handleJumpToIbuddy}
+              title={
+                ibuddyGenerating
+                  ? "iBuddy is thinking..."
+                  : ibuddyUnreadCount > 0
+                  ? `iBuddy (${ibuddyUnreadCount} unread)`
+                  : "Open iBuddy"
+              }
+              className="fixed bottom-6 right-6 z-50 group flex items-center justify-center p-0 rounded-2xl shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer select-none focus:outline-none"
+            >
+              <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#0842A0] via-[#0B57D0] to-[#1A73E8] text-white flex items-center justify-center shadow-md border border-blue-300/30">
+                <Bot className={`w-5 h-5 text-white transition-transform duration-200 group-hover:scale-110 ${ibuddyGenerating ? "animate-pulse" : ""}`} />
+                
+                {/* Status Dot / Unread Badge */}
+                {ibuddyGenerating ? (
+                  <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-300 opacity-80" />
+                    <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-[#0B57D0] ring-2 ring-white items-center justify-center">
+                      <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                    </span>
+                  </span>
+                ) : ibuddyUnreadCount > 0 ? (
+                  <span className="absolute -top-1.5 -right-1.5 flex min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold ring-2 ring-white items-center justify-center shadow-xs animate-in zoom-in-75">
+                    {ibuddyUnreadCount}
+                  </span>
+                ) : (
+                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 ring-2 ring-white" />
+                  </span>
+                )}
+              </div>
+            </button>
+          )}
         </div>
       </>
     );

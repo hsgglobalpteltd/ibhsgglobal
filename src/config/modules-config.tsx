@@ -16,6 +16,58 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     modules: []
   },
   {
+    id: "Orders",
+    label: "Orders",
+    modules: [
+      {
+        title: "Track Order",
+        description: "Monitor and manage delivery orders, vehicle routing tracks, and real-time delivery logs.",
+      },
+      {
+        title: "Direct Order",
+        description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
+      },
+      {
+        title: "Online Order",
+        description: "Manage incoming consumer shop orders, verify PayNow SGQR payments, and push orders to packing.",
+      },
+      {
+        title: "Tiktok Order",
+        description: "Fulfillment portal for TikTok shop orders, sales reporting, and scanning terminal registry.",
+      }
+    ]
+  },
+  {
+    id: "Sales & Channels",
+    label: "Sales",
+    modules: [
+      {
+        title: "Sell-In",
+        description: "Pure sales demand engine for stock planning, marketing, and manpower. B2B Million statements & TikTok shop sync.",
+      },
+      {
+        title: "Sell-Out",
+        description: "Pure consumer sell-out demand engine. Import monthly retailer sales, match stores, and diagnose SKU mappings.",
+      },
+      {
+        title: "Sale Projection",
+        description: "Configure commercial campaigns, 5-stage milestone SKU orders, and multi-entity cost sharing.",
+      },
+      {
+        title: "Market Price",
+        description: "Manage listing sheets, retailer clusters, RSP shelf pricing tiers, and promotions."
+      },
+      {
+        title: "Snap Deals",
+        description: "Calculate deal costs, pricing, profits, and retailer business agreements.",
+      },
+      {
+        title: "Brand Launchpad",
+        description: "5-Step New Brand & Product validation pipeline: Brand Intake & Pricing Waterfall, Taste Scorecard, Marketing Support, Online Trial, and Retail Readiness.",
+      }
+    ]
+  },
+  {
     id: "Frontline",
     label: "Frontline",
     modules: [
@@ -40,76 +92,12 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
         description: "Assign, monitor, and update field tasks for Merchandisers, Call Center, Drivers, and other staff.",
       },
       {
-        title: "Track Order",
-        description: "Monitor and manage delivery orders, vehicle routing tracks, and real-time delivery logs.",
-      },
-      {
-        title: "Direct Order",
-        description: "Manage public retailer direct orders, print order PDFs, complete orders, and update details.",
-      },
-      {
         title: "Stores Visibility",
         description: "Monitor product retail presence, store visibility, latest visits, and shelf compliance audits.",
       },
       {
         title: "Sponsorship",
         description: "Manage brand sponsorships, output distribution tracking, and receiver limit registries.",
-      }
-    ]
-  },
-  {
-    id: "Database",
-    label: "Database",
-    modules: [
-      {
-        title: "Products Database",
-        description: "Manage brands, SKUs, pricing, variants, product details, and catalogs.",
-      },
-      {
-        title: "Stores Database",
-        description: "Manage retailers, store registrations, locations, and contact information.",
-      },
-      {
-        title: "Phonebook",
-        description: "Manage contact directories, affiliations, and phone communications registry."
-      },
-      {
-        title: "Employees",
-        description: "Manage employee profiles, credentials, contact information, and application access roles."
-      }
-    ]
-  },
-  {
-    id: "Sales & Channels",
-    label: "Sales & Channels",
-    modules: [
-      {
-        title: "Sell-In",
-        description: "Pure sales demand engine for stock planning, marketing, and manpower. B2B Million statements & TikTok shop sync.",
-      },
-      {
-        title: "Sell-Out",
-        description: "Pure consumer sell-out demand engine. Import monthly retailer sales, match stores, and diagnose SKU mappings.",
-      },
-      {
-        title: "Buyers & Channels",
-        description: "Master directory of B2B retail buyers, modern trade accounts, and sales channels registry.",
-      },
-      {
-        title: "Sale Projection",
-        description: "Configure commercial campaigns, 5-stage milestone SKU orders, and multi-entity cost sharing.",
-      },
-      {
-        title: "Market Price",
-        description: "Manage listing sheets, retailer clusters, RSP shelf pricing tiers, and promotions."
-      },
-      {
-        title: "Snap Deals",
-        description: "Calculate deal costs, pricing, profits, and retailer business agreements.",
-      },
-      {
-        title: "Brand Launchpad",
-        description: "5-Step New Brand & Product validation pipeline: Brand Intake & Pricing Waterfall, Taste Scorecard, Marketing Support, Online Trial, and Retail Readiness.",
       }
     ]
   },
@@ -136,6 +124,28 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Print Manager",
         description: "Generate and export custom print templates and warehouse documents as PDF.",
+      }
+    ]
+  },
+  {
+    id: "Website",
+    label: "Website",
+    modules: [
+      {
+        title: "Site",
+        description: "Create website folders and allocate them to approved portal users (supports multi-user binding).",
+      },
+      {
+        title: "Portal Users",
+        description: "Manage registered user portals. Approve, suspend, or remove portal workspace access.",
+      },
+      {
+        title: "Catalog Web",
+        description: "Manage export catalog website layout, headlines, products & brands showcase, AI customer service concierge, assets, and inquiry routing.",
+      },
+      {
+        title: "Shop Manager",
+        description: "Configure public storefront brands, custom mix carton rules, per-piece pricing, and store settings.",
       }
     ]
   },
@@ -170,38 +180,24 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
     ]
   },
   {
-    id: "Website",
-    label: "Website",
+    id: "Database",
+    label: "Database",
     modules: [
       {
-        title: "Site",
-        description: "Create website folders and allocate them to approved portal users (supports multi-user binding).",
+        title: "Products Database",
+        description: "Manage brands, SKUs, pricing, variants, product details, and catalogs.",
       },
       {
-        title: "Portal Users",
-        description: "Manage registered user portals. Approve, suspend, or remove portal workspace access.",
+        title: "Stores Database",
+        description: "Manage retailers, store registrations, locations, and contact information.",
       },
       {
-        title: "Catalog Web",
-        description: "Manage export catalog website layout, headlines, products & brands showcase, AI customer service concierge, assets, and inquiry routing.",
-      }
-    ]
-  },
-  {
-    id: "Tiktok",
-    label: "Tiktok",
-    modules: [
-      {
-        title: "Tiktok Orders",
-        description: "Monitor and manage TikTok shop orders, AWB generation, print queues, and status synchronizations.",
+        title: "Phonebook",
+        description: "Manage contact directories, affiliations, and phone communications registry."
       },
       {
-        title: "Tiktok Terminal",
-        description: "Manage Tiktok fulfillment terminals, IP verification configurations, and station permissions.",
-      },
-      {
-        title: "Tiktok Sale Report",
-        description: "Analyze TikTok shop sales, SKU performance, unit demand, and historical trends by Year, Month, and Week.",
+        title: "Employees",
+        description: "Manage employee profiles, credentials, contact information, and application access roles."
       }
     ]
   },

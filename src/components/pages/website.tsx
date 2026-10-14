@@ -5,6 +5,7 @@ import { FeatureCard } from "../feature-card";
 import { TenantModule } from "../modules/TenantModule";
 import { SiteModule } from "../modules/SiteModule";
 import { CatalogWebModule } from "../modules/CatalogWebModule";
+import { ShopManagerModule } from "../modules/ShopManagerModule";
 import { StoreMapConfigModule } from "../modules/StoreMapConfigModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canViewModule } from "@/lib/permissions";
@@ -69,6 +70,8 @@ export function WebsitePage({ profile, idToken, breadcrumbPath }: WebsitePagePro
         return <SiteModule idToken={idToken} profile={profile} />;
       case "Catalog Web":
         return <CatalogWebModule idToken={idToken} profile={profile} />;
+      case "Shop Manager":
+        return <ShopManagerModule profile={profile} />;
       default:
         return null;
     }
@@ -76,7 +79,7 @@ export function WebsitePage({ profile, idToken, breadcrumbPath }: WebsitePagePro
 
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden gap-[10px]">
-      {activeSubModule !== "Portal Users" && activeSubModule !== "Site" && activeSubModule !== "Catalog Web" && (
+      {!activeSubModule && (
         <div className="content-header flex flex-col gap-1 px-1 border-b border-zinc-300/40 pb-4">
           <h2 className="font-primary text-2xl font-bold text-zinc-955">
             {activeSubModule ? `Website / ${activeSubModule}` : "Website Portal Management"}

@@ -363,6 +363,24 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
     };
   }, [displayedBubbles.length, scrollToBottom]);
 
+  // Scroll to bottom whenever user navigates back to iBuddy
+  React.useEffect(() => {
+    const handleActivated = () => {
+      setTimeout(() => scrollToBottom("smooth"), 50);
+      setTimeout(() => scrollToBottom("auto"), 200);
+    };
+    window.addEventListener("ibuddy-activated", handleActivated);
+    return () => window.removeEventListener("ibuddy-activated", handleActivated);
+  }, [scrollToBottom]);
+
+  // Broadcast busy/thinking status to app shell for floating status pill
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const isBusy = isGenerating || !isTypingComplete;
+      window.dispatchEvent(new CustomEvent("ibuddy-generating-change", { detail: { isGenerating: isBusy } }));
+    }
+  }, [isGenerating, isTypingComplete]);
+
   // Persist current chat bubbles locally whenever they change (prevents clearing when switching menus)
   React.useEffect(() => {
     if (typeof window !== "undefined" && displayedBubbles.length > 0) {
@@ -549,6 +567,9 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
           ...prev,
           { text: targetText, isFirst: !isAppend && prev.length === 0 && bubbleIdx === 0, timestamp: nowStr, isAi }
         ]);
+        if (isAppend && typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("ibuddy-ai-bubble-added", { detail: { text: targetText } }));
+        }
         setTimeout(scrollToBottom, 20);
 
         if (bubbleIdx + 1 < items.length) {
@@ -568,6 +589,9 @@ export function DashboardAiSummary({ userName, profile }: DashboardAiSummaryProp
             ...prev,
             { text: targetText, isFirst: !isAppend && prev.length === 0 && bubbleIdx === 0, timestamp: nowStr, isAi }
           ]);
+          if (isAppend && typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("ibuddy-ai-bubble-added", { detail: { text: targetText } }));
+          }
           setTimeout(scrollToBottom, 20);
 
           if (bubbleIdx + 1 < items.length) {

@@ -134,7 +134,7 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
   const [selectedItemIds, setSelectedItemIds] = React.useState<Set<string>>(new Set());
 
   // View Mode: "sheet" | "retailer"
-  const [sidebarViewMode, setSidebarViewMode] = React.useState<"sheet" | "retailer">("retailer");
+  const [sidebarViewMode, setSidebarViewMode] = React.useState<"sheet" | "retailer">("sheet");
   const [selectedRetailerId, setSelectedRetailerId] = React.useState<string>("");
 
   // Collapsible Brand Rows State: Set of "tier:::brandName" keys
@@ -1752,18 +1752,6 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
               <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200">
                 <button
                   type="button"
-                  onClick={() => setSidebarViewMode("retailer")}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-                    sidebarViewMode === "retailer"
-                      ? "bg-white text-[#0B57D0] shadow-xs font-bold"
-                      : "text-zinc-600 hover:text-zinc-900"
-                  }`}
-                >
-                  <Store size={13} />
-                  <span>By Buyer</span>
-                </button>
-                <button
-                  type="button"
                   onClick={() => setSidebarViewMode("sheet")}
                   className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
                     sidebarViewMode === "sheet"
@@ -1773,6 +1761,18 @@ export function MarketPricingModule({ profile }: MarketPricingModuleProps) {
                 >
                   <FileText size={13} />
                   <span>By Sheet</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSidebarViewMode("retailer")}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 text-xs font-semibold rounded-md transition-all cursor-pointer ${
+                    sidebarViewMode === "retailer"
+                      ? "bg-white text-[#0B57D0] shadow-xs font-bold"
+                      : "text-zinc-600 hover:text-zinc-900"
+                  }`}
+                >
+                  <Store size={13} />
+                  <span>By Buyer</span>
                 </button>
               </div>
 

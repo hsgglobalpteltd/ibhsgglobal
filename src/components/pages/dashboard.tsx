@@ -87,91 +87,89 @@ export function DashboardPage({ profile }: DashboardPageProps) {
   return (
     <div className="content-body flex flex-col flex-1 h-full select-none font-primary overflow-hidden p-0">
       {/* Tab Content: Today (Combined Greeting Banner & What's Happening Today Console) */}
-      {(activeTab === "today" || !activeTab) && (
-        <div className="flex flex-row justify-center items-center w-full h-full min-h-0 overflow-hidden animate-in fade-in duration-300 p-3 md:p-4">
-          <div className="flex flex-row gap-5 lg:gap-6 xl:gap-7 w-full max-w-[1360px] h-full max-h-[880px] min-h-0 overflow-hidden items-stretch justify-center">
-            {/* Left Side: Greeting & Workspace Access */}
-            <div className="w-[240px] lg:w-[260px] xl:w-[280px] shrink-0 h-full min-h-0 flex flex-col justify-center gap-5 overflow-y-auto pr-1">
-              {/* Header Greeting */}
-              <div className="flex flex-col items-start gap-1 shrink-0">
-                <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#0B57D0] text-white text-[11px] font-semibold shadow-2xs select-none">
-                  <span>iB HSG Global</span>
+      <div className={`flex-row justify-center items-center w-full h-full min-h-0 overflow-hidden animate-in fade-in duration-300 p-3 md:p-4 ${activeTab === "today" || !activeTab ? "flex" : "hidden"}`}>
+        <div className="flex flex-row gap-5 lg:gap-6 xl:gap-7 w-full max-w-[1360px] h-full max-h-[880px] min-h-0 overflow-hidden items-stretch justify-center">
+          {/* Left Side: Greeting & Workspace Access */}
+          <div className="w-[240px] lg:w-[260px] xl:w-[280px] shrink-0 h-full min-h-0 flex flex-col justify-center gap-5 overflow-y-auto pr-1">
+            {/* Header Greeting */}
+            <div className="flex flex-col items-start gap-1 shrink-0">
+              <div className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#0B57D0] text-white text-[11px] font-semibold shadow-2xs select-none">
+                <span>iB HSG Global</span>
+              </div>
+
+              <h1 className="text-xl md:text-2xl font-bold tracking-tight text-zinc-950 mt-1">
+                {greeting}, <span className="text-[#0B57D0]">{userName}</span>
+              </h1>
+
+              <p className="text-xs text-zinc-500 font-normal leading-relaxed">
+                Bridging Strategy, Governance &amp; Operational Excellence
+              </p>
+            </div>
+
+            {/* 2 Navigation Action Buttons */}
+            <div className="flex flex-col gap-3 min-h-0">
+              {/* Workspace Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = "/workspace";
+                }}
+                className="w-full bg-white rounded-xl border border-slate-200/90 hover:border-[#0B57D0]/60 p-3.5 flex items-center justify-between gap-3 shadow-2xs hover:shadow-xs hover:bg-[#F8F9FD] transition-all duration-150 cursor-pointer group text-left select-none"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-[#F0F4F9] text-[#0B57D0] group-hover:bg-[#0B57D0] group-hover:text-white flex items-center justify-center shrink-0 transition-colors shadow-2xs">
+                    <LayoutGrid size={18} />
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <h2 className="text-xs font-bold text-zinc-900 group-hover:text-[#0B57D0] transition-colors leading-snug truncate">
+                      Workspace
+                    </h2>
+                    <span className="text-[10px] text-zinc-500 truncate mt-0.5">
+                      Teamspaces, Documents &amp; Kanban
+                    </span>
+                  </div>
                 </div>
 
-                <h1 className="text-xl md:text-2xl font-bold tracking-tight text-zinc-950 mt-1">
-                  {greeting}, <span className="text-[#0B57D0]">{userName}</span>
-                </h1>
+                <div className="w-6 h-6 rounded-lg bg-slate-50 group-hover:bg-blue-50 flex items-center justify-center text-zinc-400 group-hover:text-[#0B57D0] shrink-0 transition-colors">
+                  <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </button>
 
-                <p className="text-xs text-zinc-500 font-normal leading-relaxed">
-                  Bridging Strategy, Governance &amp; Operational Excellence
-                </p>
-              </div>
-
-              {/* 2 Navigation Action Buttons */}
-              <div className="flex flex-col gap-3 min-h-0">
-                {/* Workspace Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    window.location.href = "/workspace";
-                  }}
-                  className="w-full bg-white rounded-xl border border-slate-200/90 hover:border-[#0B57D0]/60 p-3.5 flex items-center justify-between gap-3 shadow-2xs hover:shadow-xs hover:bg-[#F8F9FD] transition-all duration-150 cursor-pointer group text-left select-none"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-9 h-9 rounded-xl bg-[#F0F4F9] text-[#0B57D0] group-hover:bg-[#0B57D0] group-hover:text-white flex items-center justify-center shrink-0 transition-colors shadow-2xs">
-                      <LayoutGrid size={18} />
-                    </div>
-                    <div className="flex flex-col min-w-0">
-                      <h2 className="text-xs font-bold text-zinc-900 group-hover:text-[#0B57D0] transition-colors leading-snug truncate">
-                        Workspace
-                      </h2>
-                      <span className="text-[10px] text-zinc-500 truncate mt-0.5">
-                        Teamspaces, Documents &amp; Kanban
-                      </span>
-                    </div>
+              {/* Analysis Button */}
+              <button
+                type="button"
+                onClick={() => {
+                  handleTabSwitch("analysis");
+                }}
+                className="w-full bg-white rounded-xl border border-slate-200/90 hover:border-[#0B57D0]/60 p-3.5 flex items-center justify-between gap-3 shadow-2xs hover:shadow-xs hover:bg-[#F8F9FD] transition-all duration-150 cursor-pointer group text-left select-none"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-xl bg-[#F0F4F9] text-[#0B57D0] group-hover:bg-[#0B57D0] group-hover:text-white flex items-center justify-center shrink-0 transition-colors shadow-2xs">
+                    <BarChart3 size={18} />
                   </div>
-
-                  <div className="w-6 h-6 rounded-lg bg-slate-50 group-hover:bg-blue-50 flex items-center justify-center text-zinc-400 group-hover:text-[#0B57D0] shrink-0 transition-colors">
-                    <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                  <div className="flex flex-col min-w-0">
+                    <h2 className="text-xs font-bold text-zinc-900 group-hover:text-[#0B57D0] transition-colors leading-snug truncate">
+                      Analysis
+                    </h2>
+                    <span className="text-[10px] text-zinc-500 truncate mt-0.5">
+                      Sales Performance &amp; Trends
+                    </span>
                   </div>
-                </button>
+                </div>
 
-                {/* Analysis Button */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    handleTabSwitch("analysis");
-                  }}
-                  className="w-full bg-white rounded-xl border border-slate-200/90 hover:border-[#0B57D0]/60 p-3.5 flex items-center justify-between gap-3 shadow-2xs hover:shadow-xs hover:bg-[#F8F9FD] transition-all duration-150 cursor-pointer group text-left select-none"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-9 h-9 rounded-xl bg-[#F0F4F9] text-[#0B57D0] group-hover:bg-[#0B57D0] group-hover:text-white flex items-center justify-center shrink-0 transition-colors shadow-2xs">
-                      <BarChart3 size={18} />
-                    </div>
-                    <div className="flex flex-col min-w-0">
-                      <h2 className="text-xs font-bold text-zinc-900 group-hover:text-[#0B57D0] transition-colors leading-snug truncate">
-                        Analysis
-                      </h2>
-                      <span className="text-[10px] text-zinc-500 truncate mt-0.5">
-                        Sales Performance &amp; Trends
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="w-6 h-6 rounded-lg bg-slate-50 group-hover:bg-blue-50 flex items-center justify-center text-zinc-400 group-hover:text-[#0B57D0] shrink-0 transition-colors">
-                    <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
-                  </div>
-                </button>
-              </div>
-            </div>
-
-            {/* Right Side: What's Happening Today Console & History */}
-            <div className="flex-1 min-w-0 h-full min-h-0 overflow-hidden flex flex-col justify-center">
-              <DashboardAiSummary userName={userName} profile={effectiveProfile} />
+                <div className="w-6 h-6 rounded-lg bg-slate-50 group-hover:bg-blue-50 flex items-center justify-center text-zinc-400 group-hover:text-[#0B57D0] shrink-0 transition-colors">
+                  <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </button>
             </div>
           </div>
+
+          {/* Right Side: What's Happening Today Console & History */}
+          <div className="flex-1 min-w-0 h-full min-h-0 overflow-hidden flex flex-col justify-center">
+            <DashboardAiSummary userName={userName} profile={effectiveProfile} />
+          </div>
         </div>
-      )}
+      </div>
 
       {/* Tab Content: Analysis */}
       {activeTab === "analysis" && (

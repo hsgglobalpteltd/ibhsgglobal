@@ -337,10 +337,10 @@ export function SidePanel({
       {/* Collapse Toggle Button */}
       <button
         onClick={handleToggleButtonClick}
-        className="absolute bottom-[10%] right-0 translate-x-1/2 flex h-7 w-7 items-center justify-center rounded-full border border-zinc-300 bg-[#EEEEEE] text-zinc-600 shadow-sm transition-all hover:bg-zinc-50 hover:text-zinc-950 focus:outline-none focus:ring-2 focus:ring-zinc-400/20 z-10 cursor-pointer"
+        className="absolute bottom-[10%] right-0 translate-x-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-[#0B57D0] hover:bg-[#0842A0] active:scale-95 text-white shadow-xs transition-all focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/30 z-10 cursor-pointer"
         title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
       >
-        {isCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
+        {isCollapsed ? <ChevronRight size={14} className="stroke-[2.5]" /> : <ChevronLeft size={14} className="stroke-[2.5]" />}
       </button>
 
       {/* User Profile & 6-Digit Manager PIN Modal */}
