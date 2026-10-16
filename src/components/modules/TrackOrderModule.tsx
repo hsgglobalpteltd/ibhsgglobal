@@ -218,6 +218,22 @@ function validatePoscode(code: any) {
   return /^\d{5,6}$/.test(clean);
 }
 
+// Detect if an order originated from Online Orders (shop_orders)
+export function isOnlineShopOrder(order?: DbOrder | null): boolean {
+  if (!order) return false;
+  if (order.type === "Online Order") return true;
+  if (order.do_number && /^HSG[A-Z0-9]+$/i.test(order.do_number) && (!order.ref_number || order.ref_number === "NA" || order.ref_number === "")) return true;
+  try {
+    if (order.logs) {
+      const logs = typeof order.logs === "string" ? JSON.parse(order.logs) : order.logs;
+      if (Array.isArray(logs) && logs.some((l: any) => l?.source === "online_order" || l?.action?.includes("Online Store"))) {
+        return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
 // Fetch exact coordinates from Singapore OneMap via Worker proxy (CORS-safe)
 async function fetchPostcodeCoordinates(
   poscode: string,
@@ -6294,36 +6310,42 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   };
 
   const executeRevokeOrder = async (order: DbOrder) => {
-    // --- INSTANT UPDATE (OPTIMISTIC UI) ---
-    let parsedItems: SKUItem[] = [];
-    try {
-      parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
-    } catch (_) {}
-
-    const restoredDraft: TrackOrderDraft = {
-      id: order.id,
-      doNumber: order.do_number,
-      refNumber: order.ref_number,
-      mark: order.mark,
-      type: (order.type as any) || "Normal",
-      deliverTo: order.deliver_to,
-      poscode: order.poscode,
-      items: parsedItems,
-      deadline: order.deadline ? Number(order.deadline) : undefined,
-      deliverMethod: order.deliver_method,
-      latitude: order.latitude ? Number(order.latitude) : undefined,
-      longitude: order.longitude ? Number(order.longitude) : undefined,
-      link_store: order.link_store,
-      photo_do_paper: order.photo_do_paper
-    };
-
+    const isOnline = isOnlineShopOrder(order);
     const previousDbOrders = [...dbOrders];
     const previousDrafts = [...drafts];
 
-    setDbOrders((prev) => prev.filter((o) => o.id !== order.id));
-    saveDraftsToStorage([...drafts, restoredDraft]);
+    if (isOnline) {
+      setDbOrders((prev) => prev.filter((o) => o.id !== order.id));
+      showToast(`Online order ${order.do_number} revoked and returned to Online Orders.`, "info");
+    } else {
+      // --- INSTANT UPDATE (OPTIMISTIC UI) ---
+      let parsedItems: SKUItem[] = [];
+      try {
+        parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
+      } catch (_) {}
 
-    showToast(`${order.type === "Return" ? "Return order" : "Order"} ${order.do_number} revoked and returned to Drafts.`, "info");
+      const restoredDraft: TrackOrderDraft = {
+        id: order.id,
+        doNumber: order.do_number,
+        refNumber: order.ref_number,
+        mark: order.mark,
+        type: (order.type as any) || "Normal",
+        deliverTo: order.deliver_to,
+        poscode: order.poscode,
+        items: parsedItems,
+        deadline: order.deadline ? Number(order.deadline) : undefined,
+        deliverMethod: order.deliver_method,
+        latitude: order.latitude ? Number(order.latitude) : undefined,
+        longitude: order.longitude ? Number(order.longitude) : undefined,
+        link_store: order.link_store,
+        photo_do_paper: order.photo_do_paper
+      };
+
+      setDbOrders((prev) => prev.filter((o) => o.id !== order.id));
+      saveDraftsToStorage([...drafts, restoredDraft]);
+
+      showToast(`${order.type === "Return" ? "Return order" : "Order"} ${order.do_number} revoked and returned to Drafts.`, "info");
+    }
 
     // --- SILENT BACKGROUND UPDATE ---
     const payload = {
@@ -6344,11 +6366,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
         fetchDatabaseOrders(true); // refresh cache quietly
         fetchJobHistory();
+        window.dispatchEvent(new CustomEvent("db-refresh"));
       })
       .catch((err) => {
         // Rollback
         setDbOrders(previousDbOrders);
-        saveDraftsToStorage(previousDrafts);
+        if (!isOnline) {
+          saveDraftsToStorage(previousDrafts);
+        }
         showToast("Revoke failed: " + err.message + ". Reverted changes.", "error");
       });
   };
@@ -10997,9 +11022,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       <ConfirmDialog
         open={isConfirmRevokeOpen}
         onOpenChange={setIsConfirmRevokeOpen}
-        title={pendingRevokeOrder?.type === "Return" ? "Revoke Return Order Confirmation" : "Revoke Order Confirmation"}
+        title={
+          isOnlineShopOrder(pendingRevokeOrder)
+            ? "Revoke Online Order Confirmation"
+            : pendingRevokeOrder?.type === "Return"
+            ? "Revoke Return Order Confirmation"
+            : "Revoke Order Confirmation"
+        }
         description={
-          pendingRevokeOrder?.type === "Return"
+          isOnlineShopOrder(pendingRevokeOrder)
+            ? `This online order (${pendingRevokeOrder?.do_number || "N/A"}) is currently "${pendingRevokeOrder?.status || ""}". Revoking it will remove it from Track Order and return it to Online Orders. Are you sure you want to revoke this order?`
+            : pendingRevokeOrder?.type === "Return"
             ? `This return order (${pendingRevokeOrder?.do_number || pendingRevokeOrder?.ref_number || "N/A"}) is currently "${pendingRevokeOrder?.status || "Pending"}". Revoking it will remove it from active database and return it back to Drafts. Are you sure you want to revoke this return order?`
             : `This order (${pendingRevokeOrder?.do_number || "N/A"}) is currently "${pendingRevokeOrder?.status || ""}" (in progress or completed by picker). Revoking it will delete the order and return it to Drafts. Are you sure you want to revoke this order?`
         }

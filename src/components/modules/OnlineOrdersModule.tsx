@@ -22,11 +22,20 @@ import {
   FileText,
   Upload,
   Image as ImageIcon,
-  Building2
+  Building2,
+  Send,
+  Calendar
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
+import { NavigationTabs, TabItem } from "../navigation-tabs";
 
 const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
+
+const ONLINE_ORDER_TABS: TabItem[] = [
+  { id: "pending", label: "Pending" },
+  { id: "complete", label: "Complete" },
+  { id: "void", label: "Void" }
+];
 
 interface OrderItem {
   carton_type: "standard" | "custom_mix";
@@ -66,6 +75,9 @@ interface ShopOrder {
   payment_proof_url?: string;
   payment_verified_at?: number;
   payment_verified_by?: string;
+  in_track_order?: boolean;
+  track_status?: string;
+  track_detail_status?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -126,17 +138,37 @@ const formatVerifierName = (verifier?: string | null, prof?: any): string => {
   return verifier;
 };
 
+// Helper to calculate Last 2 Weeks range (14 days ago to today)
+const getLast2WeeksRange = (): { start: string; end: string } => {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 14);
+  const formatYMD = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  return {
+    start: formatYMD(start),
+    end: formatYMD(end)
+  };
+};
+
 export function OnlineOrdersModule({ profile }: { profile?: any }) {
   const [orders, setOrders] = React.useState<ShopOrder[]>([]);
   const [loading, setLoading] = React.useState<boolean>(true);
   const [searchQuery, setSearchQuery] = React.useState<string>("");
-  const [statusFilter, setStatusFilter] = React.useState<string>("all");
+  const [statusFilter, setStatusFilter] = React.useState<"pending" | "complete" | "void">("pending");
+  const [startDate, setStartDate] = React.useState<string>(() => getLast2WeeksRange().start);
+  const [endDate, setEndDate] = React.useState<string>(() => getLast2WeeksRange().end);
   const [selectedOrder, setSelectedOrder] = React.useState<ShopOrder | null>(null);
   const [actionLoading, setActionLoading] = React.useState<boolean>(false);
   const [rejectReason, setRejectReason] = React.useState<string>("");
   const [showRejectInput, setShowRejectInput] = React.useState<boolean>(false);
   const [uploadingReceipt, setUploadingReceipt] = React.useState<boolean>(false);
   const [previewReceiptUrl, setPreviewReceiptUrl] = React.useState<string | null>(null);
+  const [sendingOrderId, setSendingOrderId] = React.useState<string | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const handleUploadReceipt = async (file: File) => {
@@ -313,6 +345,53 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
       showToast(e.message, "error");
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  // Send Order to Track Order (Direct skipping drafts)
+  const handleSendOrder = async (order: ShopOrder) => {
+    setSendingOrderId(order.id);
+    const operatorName = getOperatorName(profile);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/shop/admin/orders/send-to-track`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          order_id: order.id,
+          operator_name: operatorName
+        })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to send order to Track Order");
+      }
+
+      const data = await res.json();
+      showToast(
+        `Order #${order.order_ref} sent to Track Order with Mark [${data.mark || "assigned"}]`,
+        "success"
+      );
+
+      await fetchOrders();
+      if (selectedOrder && selectedOrder.id === order.id) {
+        setSelectedOrder((prev) =>
+          prev
+            ? {
+                ...prev,
+                fulfillment_status: "in_progress",
+                in_track_order: true,
+                track_status: "Ready to Pick",
+                track_detail_status: "Ready to Pick"
+              }
+            : null
+        );
+      }
+      window.dispatchEvent(new CustomEvent("db-refresh"));
+    } catch (err: any) {
+      showToast(err.message || "Failed to send order", "error");
+    } finally {
+      setSendingOrderId(null);
     }
   };
 
@@ -711,13 +790,14 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
         return "complete";
       }
       if (
+        ord.in_track_order ||
         ord.fulfillment_status === "in_progress" ||
         ord.fulfillment_status === "packing" ||
         ord.fulfillment_status === "out_for_delivery"
       ) {
         return "in_progress";
       }
-      if (ord.payment_status === "verified") {
+      if (ord.payment_status === "verified" || ord.fulfillment_status === "verified") {
         return "verified";
       }
       return "pending";
@@ -725,46 +805,72 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
     []
   );
 
-  // Filter orders
-  const filteredOrders = React.useMemo(() => {
-    return orders.filter((ord) => {
-      const q = searchQuery.toLowerCase().trim();
-      const matchesSearch =
-        !q ||
-        ord.order_ref.toLowerCase().includes(q) ||
-        ord.customer_name.toLowerCase().includes(q) ||
-        ord.customer_phone.toLowerCase().includes(q) ||
-        ord.postal_code.includes(q);
+  // Date filtered orders (default: last 2 weeks)
+  const dateFilteredOrders = React.useMemo(() => {
+    const startEpoch = startDate ? new Date(startDate + "T00:00:00").getTime() : null;
+    const endEpoch = endDate ? new Date(endDate + "T23:59:59.999").getTime() : null;
 
-      if (!matchesSearch) return false;
+    return orders.filter((ord) => {
+      const ordTime = Number(ord.created_at) || (ord.created_at ? new Date(ord.created_at).getTime() : 0);
+      if (ordTime > 0) {
+        if (startEpoch && ordTime < startEpoch) return false;
+        if (endEpoch && ordTime > endEpoch) return false;
+      }
+      return true;
+    });
+  }, [orders, startDate, endDate]);
+
+  // Counts for tabs (based on date-filtered orders)
+  const counts = React.useMemo(() => {
+    return {
+      pending: dateFilteredOrders.filter((o) => {
+        const s = getOrderStatus(o);
+        return s === "pending" || s === "verified" || s === "in_progress";
+      }).length,
+      complete: dateFilteredOrders.filter((o) => getOrderStatus(o) === "complete").length,
+      void: dateFilteredOrders.filter((o) => getOrderStatus(o) === "cancelled").length
+    };
+  }, [dateFilteredOrders, getOrderStatus]);
+
+  // Filter orders by search & status
+  const filteredOrders = React.useMemo(() => {
+    return dateFilteredOrders.filter((ord) => {
+      const q = searchQuery.toLowerCase().trim();
+      if (q) {
+        const matchesSearch =
+          ord.order_ref.toLowerCase().includes(q) ||
+          ord.customer_name.toLowerCase().includes(q) ||
+          ord.customer_phone.toLowerCase().includes(q) ||
+          ord.postal_code.includes(q);
+
+        if (!matchesSearch) return false;
+      }
 
       const orderStatus = getOrderStatus(ord);
-      if (statusFilter === "all") return true;
-      if (statusFilter === "pending") return orderStatus === "pending";
-      if (statusFilter === "verified") return orderStatus === "verified";
-      if (statusFilter === "in_progress") return orderStatus === "in_progress";
-      if (statusFilter === "complete") return orderStatus === "complete";
-      if (statusFilter === "rejected") return orderStatus === "cancelled";
+      if (statusFilter === "pending") {
+        return orderStatus === "pending" || orderStatus === "verified" || orderStatus === "in_progress";
+      }
+      if (statusFilter === "complete") {
+        return orderStatus === "complete";
+      }
+      if (statusFilter === "void") {
+        return orderStatus === "cancelled";
+      }
 
       return true;
     });
-  }, [orders, searchQuery, statusFilter, getOrderStatus]);
-
-  // Counts for pills
-  const counts = React.useMemo(() => {
-    return {
-      all: orders.length,
-      pending: orders.filter((o) => getOrderStatus(o) === "pending").length,
-      verified: orders.filter((o) => getOrderStatus(o) === "verified").length,
-      in_progress: orders.filter((o) => getOrderStatus(o) === "in_progress").length,
-      complete: orders.filter((o) => getOrderStatus(o) === "complete").length,
-      rejected: orders.filter((o) => getOrderStatus(o) === "cancelled").length
-    };
-  }, [orders, getOrderStatus]);
+  }, [dateFilteredOrders, searchQuery, statusFilter, getOrderStatus]);
 
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
-      {/* 1. TOP HEADER BAR */}
+      {/* 1. Sub-Navigation Tabs dispatched to TopBar */}
+      <NavigationTabs
+        tabs={ONLINE_ORDER_TABS}
+        activeTabId={statusFilter}
+        onTabSelect={(id) => setStatusFilter(id as "pending" | "complete" | "void")}
+      />
+
+      {/* 2. TOP HEADER BAR: TITLE, DATE FILTER & SEARCH */}
       <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-base font-bold text-zinc-950">Online Order</h1>
@@ -772,72 +878,49 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
             Manage incoming public shop orders, verify PayNow SGQR transfers, and coordinate warehouse packing.
           </p>
         </div>
-      </div>
 
-      {/* 2. FILTER & CONTROLS TOOLBAR */}
-      <div className="bg-[#F8F9FA] border-b border-slate-200 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 shrink-0">
-        {/* Search Input */}
-        <div className="relative w-72">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-          <input
-            type="text"
-            placeholder="Search Ref, Name, Phone, Postal..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-8 pr-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
-          />
-        </div>
+        {/* Filter & Search Controls */}
+        <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+          {/* Date Start & End Inputs (Default: Last 2 Weeks) */}
+          <div className="flex items-center gap-1.5 text-xs text-zinc-600">
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="h-8 px-2 bg-white border border-slate-300 rounded-lg text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0]"
+              title="Start Date"
+            />
+            <span className="text-zinc-400 font-medium text-xs">to</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="h-8 px-2 bg-white border border-slate-300 rounded-lg text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0]"
+              title="End Date"
+            />
+          </div>
 
-        {/* Filter Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto">
-          <button
-            onClick={() => setStatusFilter("all")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              statusFilter === "all" ? "bg-[#D3E3FD] text-[#041E49]" : "text-zinc-600 hover:bg-slate-200/60"
-            }`}
-          >
-            All ({counts.all})
-          </button>
-          <button
-            onClick={() => setStatusFilter("pending")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              statusFilter === "pending" ? "bg-[#D3E3FD] text-[#041E49]" : "text-zinc-600 hover:bg-slate-200/60"
-            }`}
-          >
-            Pending ({counts.pending})
-          </button>
-          <button
-            onClick={() => setStatusFilter("verified")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              statusFilter === "verified" ? "bg-[#D3E3FD] text-[#041E49]" : "text-zinc-600 hover:bg-slate-200/60"
-            }`}
-          >
-            Verified ({counts.verified})
-          </button>
-          <button
-            onClick={() => setStatusFilter("in_progress")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              statusFilter === "in_progress" ? "bg-[#D3E3FD] text-[#041E49]" : "text-zinc-600 hover:bg-slate-200/60"
-            }`}
-          >
-            In-Progress ({counts.in_progress})
-          </button>
-          <button
-            onClick={() => setStatusFilter("complete")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              statusFilter === "complete" ? "bg-[#D3E3FD] text-[#041E49]" : "text-zinc-600 hover:bg-slate-200/60"
-            }`}
-          >
-            Complete ({counts.complete})
-          </button>
-          <button
-            onClick={() => setStatusFilter("rejected")}
-            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              statusFilter === "rejected" ? "bg-rose-100 text-rose-800 font-semibold" : "text-zinc-600 hover:bg-slate-200/60"
-            }`}
-          >
-            Rejected ({counts.rejected})
-          </button>
+          {/* Search Box */}
+          <div className="relative w-52 sm:w-60">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder="Search Ref, Name, Phone..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-7 py-1.5 bg-white border border-slate-300 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0]"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                title="Clear search"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -849,12 +932,9 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
             <span className="text-xs">Loading shop orders...</span>
           </div>
         ) : filteredOrders.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-64 gap-2 text-zinc-500 text-center p-6">
-            <Package size={32} className="text-slate-300" />
-            <p className="text-sm font-semibold text-zinc-700">No Orders Found</p>
-            <p className="text-xs text-zinc-400">
-              {searchQuery ? "Try searching with a different keyword or reset filters." : "Incoming consumer orders will appear here automatically."}
-            </p>
+          <div className="flex flex-col items-center justify-center h-64 gap-2 text-zinc-400 text-center p-6">
+            <Package size={32} className="text-slate-300 stroke-[1.5]" />
+            <span className="text-xs text-zinc-400 font-medium">No record found</span>
           </div>
         ) : (
           <table className="w-full text-left border-collapse text-xs">
@@ -867,7 +947,7 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
                 <th className="px-3 py-2.5 text-center">Cartons</th>
                 <th className="px-3 py-2.5 text-right">Amount (SGD)</th>
                 <th className="px-3 py-2.5 text-center">Status</th>
-                <th className="px-4 py-2.5 text-center w-28">Action</th>
+                <th className="px-4 py-2.5 text-right font-semibold text-zinc-600 text-xs">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -1015,9 +1095,18 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
                         </span>
                       )}
                       {status === "in_progress" && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200">
-                          In-Progress
-                        </span>
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200">
+                            In-Progress
+                          </span>
+                          {ord.track_detail_status && (
+                            <span className="text-[10px] font-semibold text-zinc-500 tracking-tight whitespace-nowrap">
+                              {isPickup && ord.track_detail_status.toLowerCase() === "ready to deliver"
+                                ? "Ready to Collect"
+                                : ord.track_detail_status}
+                            </span>
+                          )}
+                        </div>
                       )}
                       {status === "complete" && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-zinc-800 border border-slate-200">
@@ -1026,21 +1115,36 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
                       )}
                       {status === "cancelled" && (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
-                          Rejected
+                          Void
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {status === "verified" && !ord.in_track_order && (
+                          <button
+                            onClick={() => handleSendOrder(ord)}
+                            disabled={sendingOrderId === ord.id}
+                            className="px-2.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-md text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 shadow-2xs"
+                            title="Send order directly to Track Order"
+                          >
+                            {sendingOrderId === ord.id ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Send size={12} />
+                            )}
+                            <span>Send Order</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => setSelectedOrder(ord)}
-                          className="px-2.5 py-1 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-md text-[11px] font-medium transition-colors cursor-pointer"
+                          className="px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-zinc-700 rounded-md text-xs font-medium transition-colors cursor-pointer shrink-0 shadow-2xs"
                         >
                           Review
                         </button>
                         <button
                           onClick={() => handlePrintSlip(ord)}
-                          className="p-1 border border-slate-200 hover:bg-slate-50 text-zinc-600 rounded-md transition-colors cursor-pointer"
+                          className="w-7 h-7 flex items-center justify-center border border-slate-200 hover:bg-slate-50 text-zinc-600 hover:text-zinc-950 rounded-md transition-colors cursor-pointer shrink-0 shadow-2xs"
                           title="Preview Receipt"
                         >
                           <Printer size={13} />
@@ -1059,14 +1163,14 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
       {/* DRAWER: ORDER REVIEW & VERIFICATION                       */}
       {/* ========================================================= */}
       {selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/40 backdrop-blur-xs font-primary">
           <div className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 border-l border-slate-200">
-            {/* Drawer Header */}
-            <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-slate-50">
+            {/* 1. Drawer Header */}
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-zinc-950">Order {selectedOrder.order_ref}</h2>
-                  <span className="text-[10px] bg-slate-200 text-slate-800 px-2 py-0.5 rounded font-mono">
+                  <h3 className="text-sm font-bold text-zinc-950">Order #{selectedOrder.order_ref}</h3>
+                  <span className="text-[11px] font-mono font-medium text-zinc-500 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
                     {selectedOrder.id}
                   </span>
                 </div>
@@ -1077,142 +1181,349 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
                   setSelectedOrder(null);
                   setShowRejectInput(false);
                 }}
-                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer"
+                className="p-1 rounded text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 transition-colors cursor-pointer"
               >
-                <X size={20} />
+                <X size={18} />
               </button>
             </div>
 
-            {/* Drawer Body */}
-            <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 text-xs">
-              {/* Payment Verification Card */}
-              <div
-                className={`p-4 rounded-xl border ${
-                  selectedOrder.payment_status === "verified"
-                    ? "bg-[#D3E3FD]/20 border-blue-200"
-                    : selectedOrder.payment_status === "rejected"
-                    ? "bg-rose-50/60 border-rose-200"
-                    : "bg-[#F8F9FA] border-slate-200"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-1.5 font-medium text-xs">
-                    {selectedOrder.payment_status === "verified" ? (
-                      <>
-                        <CheckCircle2 size={15} className="text-[#0B57D0]" />
-                        <span className="text-[#041E49] font-medium">Payment Verified</span>
-                      </>
-                    ) : selectedOrder.payment_status === "rejected" ? (
-                      <>
-                        <AlertCircle size={15} className="text-rose-600" />
-                        <span className="text-rose-900 font-medium">Payment Rejected</span>
-                      </>
-                    ) : (
-                      <>
-                        <Clock size={15} className="text-zinc-600" />
-                        <span className="text-zinc-800 font-medium">Awaiting Verification</span>
-                      </>
-                    )}
-                  </div>
-                  <span className="font-medium text-xs text-zinc-900 tabular-nums">
-                    SGD ${Number(selectedOrder.total_amount).toFixed(2)}
+            {/* 2. Status & Quick Actions Toolbar (Flat layout matching Direct Order) */}
+            <div className="px-5 py-3 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-zinc-600">Status:</span>
+                {getOrderStatus(selectedOrder) === "complete" && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Complete
                   </span>
+                )}
+                {getOrderStatus(selectedOrder) === "in_progress" && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200">
+                    In-Progress
+                  </span>
+                )}
+                {getOrderStatus(selectedOrder) === "verified" && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-[#D3E3FD]/60 text-[#041E49] border border-blue-200">
+                    Verified
+                  </span>
+                )}
+                {getOrderStatus(selectedOrder) === "pending" && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-zinc-700 border border-slate-200">
+                    Pending
+                  </span>
+                )}
+                {getOrderStatus(selectedOrder) === "cancelled" && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                    Void
+                  </span>
+                )}
+                {getOrderStatus(selectedOrder) === "in_progress" && selectedOrder.track_detail_status && (
+                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#0B57D0] bg-[#D3E3FD]/50 px-2 py-0.5 rounded border border-blue-200">
+                    <Truck size={12} />
+                    <span>
+                      {selectedOrder.delivery_address?.toLowerCase().includes("self-pickup") &&
+                      selectedOrder.track_detail_status.toLowerCase() === "ready to deliver"
+                        ? "Ready to Collect"
+                        : selectedOrder.track_detail_status}
+                    </span>
+                  </span>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center gap-2">
+                {getOrderStatus(selectedOrder) === "verified" && !selectedOrder.in_track_order && (
+                  <button
+                    onClick={() => handleSendOrder(selectedOrder)}
+                    disabled={sendingOrderId === selectedOrder.id}
+                    className="h-8 px-3 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
+                    title="Send order directly to Track Order"
+                  >
+                    {sendingOrderId === selectedOrder.id ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Send size={12} />
+                    )}
+                    <span>Send Order</span>
+                  </button>
+                )}
+
+                {selectedOrder.payment_status !== "verified" && selectedOrder.payment_status !== "rejected" && (
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!selectedOrder.payment_proof_url) {
+                          showToast("Please upload payment receipt before verifying payment.", "warning");
+                          fileInputRef.current?.click();
+                          return;
+                        }
+                        handleVerifyPayment(selectedOrder.id);
+                      }}
+                      disabled={actionLoading}
+                      className={`h-8 px-3 rounded-md font-medium text-xs flex items-center gap-1.5 transition-colors shadow-2xs ${
+                        selectedOrder.payment_proof_url
+                          ? "bg-[#0B57D0] hover:bg-[#0842A0] text-white cursor-pointer"
+                          : "bg-slate-100 text-zinc-400 border border-slate-200 cursor-not-allowed opacity-75"
+                      }`}
+                    >
+                      {actionLoading ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                      Verify Payment
+                    </button>
+                    <button
+                      onClick={() => setShowRejectInput(!showRejectInput)}
+                      className="h-8 px-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-zinc-700 rounded-md font-medium text-xs transition-colors cursor-pointer shadow-2xs"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                )}
+
+                <select
+                  value={getOrderStatus(selectedOrder)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const targetFulfillment = val === "complete" ? "completed" : val;
+                    handleUpdateFulfillment(selectedOrder.id, targetFulfillment);
+                  }}
+                  className="h-8 px-2.5 bg-white border border-slate-200 rounded-md text-xs font-medium text-zinc-700 cursor-pointer shadow-2xs outline-none focus:border-[#0B57D0]"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="verified">Verified</option>
+                  <option value="in_progress">In-Progress</option>
+                  <option value="complete">Complete</option>
+                  <option value="cancelled">Void</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Reject Form Dropdown */}
+            {showRejectInput && (
+              <div className="px-5 py-2.5 bg-rose-50 border-b border-rose-200 flex items-center gap-2 text-xs">
+                <input
+                  type="text"
+                  placeholder="Reason (e.g. Funds not received)"
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  className="flex-1 px-3 py-1 bg-white border border-slate-200 rounded-md text-xs outline-none focus:border-rose-500"
+                />
+                <button
+                  onClick={() => handleRejectPayment(selectedOrder.id)}
+                  className="h-7 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-md font-medium text-xs cursor-pointer shadow-2xs"
+                >
+                  Confirm Reject
+                </button>
+                <button
+                  onClick={() => setShowRejectInput(false)}
+                  className="h-7 px-2.5 bg-white border border-slate-200 text-zinc-600 rounded-md text-xs hover:bg-slate-50 cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {/* 3. Main Drawer Body (Flat structure with divide-y divide-slate-100) */}
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100 text-xs">
+              {/* Section 1: Customer & Delivery Details */}
+              <div className="p-5">
+                <h4 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500 mb-3">
+                  Customer & Delivery Information
+                </h4>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block">Customer Name</span>
+                    <span className="font-semibold text-zinc-900 text-xs">{selectedOrder.customer_name}</span>
+                  </div>
+                  <div>
+                    <span className="text-[11px] text-zinc-500 block">Phone / WhatsApp</span>
+                    <a
+                      href={`https://wa.me/${selectedOrder.customer_phone.replace(/[^0-9]/g, "")}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-[#0B57D0] hover:underline flex items-center gap-1 text-xs"
+                    >
+                      {selectedOrder.customer_phone} <ExternalLink size={11} />
+                    </a>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-[11px] text-zinc-500 block">Fulfillment Method</span>
+                    <span className="font-medium text-zinc-900 text-xs">
+                      {selectedOrder.delivery_address?.toLowerCase().includes("self-pickup")
+                        ? "Warehouse Self-Pickup (9 Eunos Ave 8A, Eunos Industrial Estate, Singapore 409461)"
+                        : `${selectedOrder.delivery_address || ""}${selectedOrder.unit_no ? ` #${selectedOrder.unit_no}` : ""} (S${selectedOrder.postal_code || ""})`}
+                    </span>
+                  </div>
+                  {cleanCustomerNote(selectedOrder.delivery_notes) && (
+                    <div className="col-span-2 text-zinc-600 bg-slate-50 p-2.5 rounded-md border border-slate-200 text-[11px]">
+                      <span className="font-semibold text-zinc-700">Note: </span>
+                      {cleanCustomerNote(selectedOrder.delivery_notes)}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Section 2: Items Ordered Table (Direct Order style) */}
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-2.5">
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                    Items Ordered ({selectedOrder.total_cartons} CTN)
+                  </h4>
+                </div>
+                <table className="min-w-full divide-y divide-slate-100 text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-zinc-500 font-semibold text-[11px]">
+                      <th className="pb-2 text-left">Item / SKU</th>
+                      <th className="pb-2 text-center w-20">Cartons</th>
+                      <th className="pb-2 text-right w-24">Price</th>
+                      <th className="pb-2 text-right w-24">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {selectedOrder.items.map((item, idx) => {
+                      const isMix =
+                        item.carton_type === "custom_mix" ||
+                        Boolean(item.loose_bottles && item.loose_bottles.length > 0);
+                      const lineTotal = Number(item.carton_price || 0) * Number(item.carton_qty || 1);
+                      return (
+                        <tr key={idx} className="hover:bg-slate-50/50">
+                          <td className="py-2.5 pr-2">
+                            <div className="font-medium text-zinc-900 text-xs">{item.name}</div>
+                            {item.sku && (
+                              <div className="text-[10px] font-mono text-zinc-400 mt-0.5">SKU: {item.sku}</div>
+                            )}
+                            {isMix && item.loose_bottles && (
+                              <div className="mt-1 text-[11px] text-zinc-500 pl-2 border-l border-slate-200 space-y-0.5">
+                                {item.loose_bottles.map((b, bIdx) => (
+                                  <div key={bIdx} className="flex items-center justify-between">
+                                    <span>• {b.flavor || b.sku}</span>
+                                    <span className="font-mono text-zinc-700 font-medium">{b.qty} pcs</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2.5 text-center font-mono font-medium text-zinc-700 whitespace-nowrap">
+                            {item.carton_qty} ctn
+                          </td>
+                          <td className="py-2.5 text-right font-mono text-zinc-600 whitespace-nowrap">
+                            ${Number(item.carton_price || 0).toFixed(2)}
+                          </td>
+                          <td className="py-2.5 text-right font-mono font-semibold text-zinc-900 whitespace-nowrap">
+                            ${lineTotal.toFixed(2)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                {/* Pricing Summary */}
+                {(() => {
+                  const subtotal = Number(selectedOrder.subtotal || 0);
+                  const deliveryFee = Number(selectedOrder.delivery_fee || 0);
+                  const discountAmount = Number(selectedOrder.discount_amount || 0);
+                  const totalAmount = Number(selectedOrder.total_amount || 0);
+                  const expectedTotalBeforeBcrs = subtotal + deliveryFee - discountAmount;
+                  const bcrsAmount = Math.max(0, Math.round((totalAmount - expectedTotalBeforeBcrs) * 100) / 100);
+
+                  return (
+                    <div className="mt-3 pt-3 border-t border-slate-200 flex flex-col gap-1 text-xs">
+                      <div className="flex justify-between text-zinc-600">
+                        <span>Subtotal:</span>
+                        <span className="font-mono">${subtotal.toFixed(2)}</span>
+                      </div>
+                      {deliveryFee > 0 && (
+                        <div className="flex justify-between text-zinc-600">
+                          <span>Delivery Fee:</span>
+                          <span className="font-mono">+${deliveryFee.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {bcrsAmount > 0 && (
+                        <div className="flex justify-between text-zinc-600">
+                          <span>BCRS Applied:</span>
+                          <span className="font-mono">+${bcrsAmount.toFixed(2)}</span>
+                        </div>
+                      )}
+                      {discountAmount > 0 && (
+                        <div className="flex justify-between text-emerald-700 font-medium">
+                          <span>Discount ({selectedOrder.applied_discount_rule || "Promo"}):</span>
+                          <span className="font-mono">-${discountAmount.toFixed(2)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-baseline pt-2 border-t border-slate-200 font-bold text-zinc-950 text-sm">
+                        <span>Total Payable:</span>
+                        <span className="font-mono text-base text-[#0B57D0]">${totalAmount.toFixed(2)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Section 3: Customer Payment Receipt */}
+              <div className="p-5">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                    Payment Receipt Proof
+                  </h4>
+                  {selectedOrder.payment_proof_url && (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={uploadingReceipt}
+                      className="text-xs text-[#0B57D0] hover:underline font-semibold cursor-pointer"
+                    >
+                      {uploadingReceipt ? "Uploading..." : "Replace Receipt"}
+                    </button>
+                  )}
                 </div>
 
-                <p className="text-[11px] text-zinc-600 mb-3 font-normal">
-                  Confirm receipt of{" "}
-                  <strong className="font-semibold text-zinc-900">${Number(selectedOrder.total_amount).toFixed(2)}</strong> against PayNow reference{" "}
-                  <code className="bg-white px-1.5 py-0.5 rounded font-mono text-zinc-900 border border-slate-200">{selectedOrder.order_ref}</code>.
-                </p>
-
-                {/* Payment Receipt Proof Section (Always visible whether pending or verified, or OCR) */}
-                <div className="mb-3 p-3 bg-white border border-slate-200 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[11px] font-semibold text-zinc-800 flex items-center gap-1.5">
-                      <FileText size={13} className="text-[#0B57D0]" />
-                      Customer Payment Receipt
-                    </span>
-                    {selectedOrder.payment_proof_url && (
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploadingReceipt}
-                        className="text-[10px] text-[#0B57D0] hover:underline font-semibold cursor-pointer"
-                      >
-                        {uploadingReceipt ? "Uploading..." : "Replace Receipt"}
-                      </button>
-                    )}
-                  </div>
-
-                  {selectedOrder.payment_proof_url ? (
-                    <div>
+                {selectedOrder.payment_proof_url ? (
+                  <div className="space-y-2">
+                    <div className="relative group bg-slate-50 rounded-md overflow-hidden border border-slate-200 flex items-center justify-center max-h-44">
                       {selectedOrder.payment_proof_url.toLowerCase().endsWith(".pdf") ? (
-                        <div className="flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
-                          <div className="flex items-center gap-2">
-                            <span className="w-7 h-7 rounded bg-rose-100 text-rose-700 font-bold text-[10px] flex items-center justify-center">
-                              PDF
-                            </span>
-                            <span className="text-xs text-zinc-800 font-medium">Payment Proof Document</span>
-                          </div>
+                        <div className="p-4 flex items-center justify-between w-full">
+                          <span className="text-xs font-medium text-zinc-800">PDF Document Attached</span>
                           <a
                             href={selectedOrder.payment_proof_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="px-2.5 py-1 text-[11px] font-semibold bg-white border border-slate-200 hover:bg-slate-50 text-zinc-800 rounded-md flex items-center gap-1"
+                            className="px-3 py-1 text-xs font-semibold bg-white border border-slate-200 hover:bg-slate-50 text-zinc-800 rounded-md flex items-center gap-1 shadow-2xs"
                           >
                             Open PDF <ExternalLink size={11} />
                           </a>
                         </div>
                       ) : (
-                        <div className="relative group bg-slate-100 rounded-lg overflow-hidden border border-slate-200 flex items-center justify-center max-h-48">
+                        <>
                           <img
                             src={selectedOrder.payment_proof_url}
-                            alt="Customer Payment Receipt"
+                            alt="Payment Receipt"
                             onClick={() => setPreviewReceiptUrl(selectedOrder.payment_proof_url || null)}
-                            className="max-h-48 w-full object-contain cursor-zoom-in group-hover:opacity-95 transition-opacity"
+                            className="max-h-44 w-full object-contain cursor-zoom-in"
                           />
                           <button
                             type="button"
                             onClick={() => setPreviewReceiptUrl(selectedOrder.payment_proof_url || null)}
-                            className="absolute bottom-2 right-2 px-2 py-0.5 bg-black/75 hover:bg-black text-white text-[10px] font-medium rounded backdrop-blur-xs flex items-center gap-1 cursor-pointer"
+                            className="absolute bottom-2 right-2 px-2.5 py-1 bg-black/75 hover:bg-black text-white text-[11px] font-medium rounded-md backdrop-blur-xs flex items-center gap-1 cursor-pointer"
                           >
-                            <ExternalLink size={10} /> Full View
+                            <ExternalLink size={11} /> Full View
                           </button>
-                        </div>
+                        </>
                       )}
                     </div>
-                  ) : (
-                    <div
-                      onClick={() => fileInputRef.current?.click()}
-                      className="border border-dashed border-slate-300 hover:border-[#0B57D0] rounded-lg p-3 text-center cursor-pointer transition-colors bg-slate-50/50"
-                    >
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        accept="image/*,application/pdf"
-                        className="hidden"
-                        onChange={(e) => {
-                          const f = e.target.files?.[0];
-                          if (f) handleUploadReceipt(f);
-                        }}
-                      />
-                      {uploadingReceipt ? (
-                        <div className="flex items-center justify-center gap-2 text-zinc-500 py-1">
-                          <Loader2 size={14} className="animate-spin text-[#0B57D0]" />
-                          <span className="text-[11px]">Uploading receipt to secure storage...</span>
-                        </div>
-                      ) : (
-                        <div className="py-1 flex flex-col items-center">
-                          <Upload size={16} className="text-zinc-400 mb-1" />
-                          <span className="text-xs font-medium text-zinc-700">Attach Payment Receipt</span>
-                          <span className="text-[10px] text-zinc-400 mt-0.5">Click to upload screenshot image or PDF</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Hidden file input when receipt already exists (for replace) */}
-                  {selectedOrder.payment_proof_url && (
+                    {selectedOrder.payment_verified_at && (
+                      <p className="text-[11px] text-zinc-500">
+                        Verified by{" "}
+                        <strong className="text-zinc-800">
+                          {formatVerifierName(selectedOrder.payment_verified_by, profile)}
+                        </strong>{" "}
+                        on {formatDateTime(selectedOrder.payment_verified_at)}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    className="border border-dashed border-slate-300 hover:border-[#0B57D0] rounded-md p-3 text-center cursor-pointer transition-colors bg-slate-50/50"
+                  >
                     <input
                       type="file"
                       ref={fileInputRef}
@@ -1223,205 +1534,64 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
                         if (f) handleUploadReceipt(f);
                       }}
                     />
-                  )}
-                </div>
-
-                {selectedOrder.payment_status === "verified" ? (
-                  <div className="text-[11px] text-zinc-600 bg-white p-2.5 rounded-lg border border-slate-200">
-                    Verified by <span className="font-medium text-zinc-900">{formatVerifierName(selectedOrder.payment_verified_by, profile)}</span> on{" "}
-                    {formatDateTime(selectedOrder.payment_verified_at)}
-                  </div>
-                ) : selectedOrder.payment_status === "rejected" ? (
-                  <div className="flex flex-col gap-2">
-                    <div className="text-[11px] text-rose-800 bg-rose-50 p-2.5 rounded-lg border border-rose-200 flex items-start gap-2">
-                      <AlertCircle size={14} className="text-rose-600 shrink-0 mt-0.5" />
-                      <div>
-                        <span className="font-semibold block">Order Rejected</span>
-                        <span className="text-rose-700">
-                          {selectedOrder.payment_verified_by?.includes("Rejected:")
-                            ? selectedOrder.payment_verified_by
-                            : selectedOrder.delivery_notes?.startsWith("[REJECTED:")
-                            ? selectedOrder.delivery_notes.replace(/^\[REJECTED:\s*|\]$/g, "")
-                            : "Payment rejected by admin"}
-                        </span>
+                    {uploadingReceipt ? (
+                      <div className="flex items-center justify-center gap-2 text-zinc-500 py-1">
+                        <Loader2 size={14} className="animate-spin text-[#0B57D0]" />
+                        <span className="text-xs">Uploading receipt...</span>
                       </div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        const hasReceipt = Boolean(selectedOrder.payment_proof_url && selectedOrder.payment_proof_url.trim());
-                        if (!hasReceipt) {
-                          showToast("Please upload the customer payment receipt before verifying payment.", "warning");
-                          fileInputRef.current?.click();
-                          return;
-                        }
-                        handleVerifyPayment(selectedOrder.id);
-                      }}
-                      disabled={actionLoading}
-                      className={`w-full h-8 rounded-lg font-medium text-xs flex items-center justify-center gap-1.5 transition-colors ${
-                        selectedOrder.payment_proof_url
-                          ? "bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 cursor-pointer"
-                          : "bg-slate-100 text-zinc-400 border border-slate-200 cursor-not-allowed opacity-75"
-                      }`}
-                      title={!selectedOrder.payment_proof_url ? "Please upload customer payment receipt first" : "Re-open & Verify Payment"}
-                    >
-                      {actionLoading ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
-                      Re-open & Verify Payment
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-2">
-                    {!selectedOrder.payment_proof_url && (
-                      <div className="flex items-center gap-1.5 p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-[11px]">
-                        <AlertCircle size={13} className="shrink-0 text-amber-600" />
-                        <span>Please attach the customer payment receipt above to enable verification.</span>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const hasReceipt = Boolean(selectedOrder.payment_proof_url && selectedOrder.payment_proof_url.trim());
-                          if (!hasReceipt) {
-                            showToast("Please upload the customer payment receipt before verifying payment.", "warning");
-                            fileInputRef.current?.click();
-                            return;
-                          }
-                          handleVerifyPayment(selectedOrder.id);
-                        }}
-                        disabled={actionLoading}
-                        title={!selectedOrder.payment_proof_url ? "Please upload customer payment receipt first" : "Verify Payment"}
-                        className={`flex-1 h-9 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                          selectedOrder.payment_proof_url
-                            ? "bg-[#0B57D0] hover:bg-[#0842A0] active:scale-98 text-white cursor-pointer shadow-xs"
-                            : "bg-slate-100 text-zinc-400 border border-slate-200 cursor-not-allowed opacity-75"
-                        }`}
-                      >
-                        {actionLoading ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                        Verify Payment
-                      </button>
-                      <button
-                        onClick={() => setShowRejectInput(!showRejectInput)}
-                        className="h-9 px-3 bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 rounded-lg font-medium text-xs transition-colors cursor-pointer"
-                      >
-                        Reject
-                      </button>
-                    </div>
-
-                    {showRejectInput && (
-                      <div className="flex items-center gap-2 mt-1">
-                        <input
-                          type="text"
-                          placeholder="Reason (e.g. Funds not received)"
-                          value={rejectReason}
-                          onChange={(e) => setRejectReason(e.target.value)}
-                          className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs"
-                        />
-                        <button
-                          onClick={() => handleRejectPayment(selectedOrder.id)}
-                          className="h-8 px-3 bg-rose-600 text-white rounded-lg font-medium text-xs"
-                        >
-                          Confirm
-                        </button>
+                    ) : (
+                      <div className="py-1 flex flex-col items-center">
+                        <Upload size={16} className="text-zinc-400 mb-1" />
+                        <span className="text-xs font-medium text-zinc-700">Attach Payment Receipt</span>
+                        <span className="text-[10px] text-zinc-400 mt-0.5">Click to upload screenshot image or PDF</span>
                       </div>
                     )}
                   </div>
                 )}
-              </div>
 
-              {/* Order Status Control */}
-              <div className="bg-[#F8F9FA] border border-slate-200 rounded-xl p-3.5 flex items-center justify-between">
-                <div>
-                  <span className="font-medium text-zinc-800 text-xs block">Order Status:</span>
-                  <span className="text-[11px] text-zinc-500">Update order lifecycle stage</span>
-                </div>
-                <select
-                  value={getOrderStatus(selectedOrder)}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    const targetFulfillment = val === "complete" ? "completed" : val;
-                    handleUpdateFulfillment(selectedOrder.id, targetFulfillment);
-                  }}
-                  className="px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-medium text-zinc-800 cursor-pointer"
+                {selectedOrder.payment_proof_url && (
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    accept="image/*,application/pdf"
+                    className="hidden"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) handleUploadReceipt(f);
+                    }}
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* 4. Drawer Footer (Direct Order style) */}
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <a
+                href={`https://wa.me/${selectedOrder.customer_phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
+                  `Hi ${selectedOrder.customer_name}, regarding your order #${selectedOrder.order_ref} on HSG Global Store...`
+                )}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="h-8 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-medium text-xs flex items-center gap-1.5 transition-colors shadow-2xs"
+              >
+                <Phone size={13} />
+                <span>WhatsApp</span>
+              </a>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handlePrintSlip(selectedOrder)}
+                  className="h-8 px-3 border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 rounded-md font-medium text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-2xs"
                 >
-                  <option value="pending">Pending</option>
-                  <option value="verified">Verified</option>
-                  <option value="in_progress">In-Progress</option>
-                  <option value="complete">Complete</option>
-                  <option value="cancelled">Rejected</option>
-                </select>
-              </div>
-
-              {/* Customer & Address Details */}
-              <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs">
-                <h3 className="font-medium text-zinc-900 text-xs mb-2 border-b border-slate-100 pb-1.5">
-                  Customer & Delivery Location
-                </h3>
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div>
-                    <span className="text-zinc-500 text-[11px] block">Customer Name</span>
-                    <span className="font-medium text-zinc-900">{selectedOrder.customer_name}</span>
-                  </div>
-                  <div>
-                    <span className="text-zinc-500 text-[11px] block">Phone / WhatsApp</span>
-                    <a
-                      href={`https://wa.me/${selectedOrder.customer_phone.replace(/[^0-9]/g, "")}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="font-medium text-[#0B57D0] hover:underline flex items-center gap-1"
-                    >
-                      {selectedOrder.customer_phone} <ExternalLink size={11} />
-                    </a>
-                  </div>
-                  {selectedOrder.delivery_address?.toLowerCase().includes("self-pickup") ? (
-                    <div className="col-span-2 space-y-1">
-                      <span className="text-zinc-500 text-[11px] block">Fulfillment Method</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-[#0B57D0] border border-blue-200">
-                          Warehouse Self-Pickup
-                        </span>
-                      </div>
-                      <div className="text-xs text-zinc-700 space-y-0.5 pt-1">
-                        <div className="font-semibold text-zinc-900">HSG Global Warehouse (Eunos)</div>
-                        <div className="text-zinc-600">9 Eunos Ave 8A, EUNOS INDUSTRIAL ESTATE, Singapore 409461</div>
-                        <div className="text-[11px] text-zinc-500 font-medium">Collection Hours: Mon - Fri: 10:00 AM - 6:00 PM</div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="col-span-2">
-                      <span className="text-zinc-500 text-[11px] block">Delivery Address</span>
-                      <span className="font-medium text-zinc-900">
-                        {selectedOrder.delivery_address} {selectedOrder.unit_no ? `, ${selectedOrder.unit_no}` : ""}
-                      </span>
-                      <div className="text-[11px] text-zinc-400 font-mono">Postal Code: {selectedOrder.postal_code}</div>
-                    </div>
-                  )}
-                  {cleanCustomerNote(selectedOrder.delivery_notes) && (
-                    <div className="col-span-2 bg-slate-50 border border-slate-200 rounded p-2 text-zinc-700 text-[11px]">
-                      <span className="font-medium text-zinc-900">Customer Note:</span> {cleanCustomerNote(selectedOrder.delivery_notes)}
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                  <a
-                    href={`https://wa.me/${selectedOrder.customer_phone.replace(/[^0-9]/g, "")}?text=${encodeURIComponent(
-                      `Hi ${selectedOrder.customer_name}, regarding your order #${selectedOrder.order_ref} on HSG Global Store...`
-                    )}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 h-8 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-semibold flex items-center justify-center gap-1.5 transition-colors"
-                  >
-                    <Phone size={13} />
-                    Message Customer on WhatsApp
-                  </a>
-                  <button
-                    onClick={() => handlePrintSlip(selectedOrder)}
-                    className="h-8 px-3 border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 rounded-lg font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
-                    title="Preview Official Receipt"
-                  >
-                    <Printer size={13} /> Preview Receipt
-                  </button>
-                </div>
+                  <Printer size={13} />
+                  <span>Print Receipt</span>
+                </button>
+                <button
+                  onClick={() => setSelectedOrder(null)}
+                  className="h-8 px-3.5 border border-slate-200 bg-white hover:bg-slate-100 text-zinc-700 font-medium text-xs rounded-md transition-colors cursor-pointer shadow-2xs"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>

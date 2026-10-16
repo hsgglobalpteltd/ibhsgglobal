@@ -7,8 +7,10 @@ import {
   Check, 
   RefreshCw,
   Package,
-  X
+  X,
+  Search
 } from "lucide-react";
+import { NavigationTabs, TabItem } from "../navigation-tabs";
 
 interface DirectOrderModuleProps {
   profile?: any;
@@ -16,11 +18,50 @@ interface DirectOrderModuleProps {
 
 const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
+const DIRECT_ORDER_TABS: TabItem[] = [
+  { id: "orders", label: "Buyer Orders" },
+  { id: "quotes", label: "Customer Quotations" }
+];
+
+const formatDateForInput = (d: Date) => {
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+const getTwoWeeksAgo = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 14);
+  return d;
+};
+
+const parseRecordTimestamp = (val: any): number => {
+  if (!val) return 0;
+  const num = Number(val);
+  if (!isNaN(num) && num > 0) {
+    return num < 10000000000 ? num * 1000 : num;
+  }
+  const parsed = new Date(val).getTime();
+  return isNaN(parsed) ? 0 : parsed;
+};
+
 export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
   const [activeOrderTab, setActiveOrderTab] = React.useState<"orders" | "quotes">("orders");
   const [orders, setOrders] = React.useState<any[]>([]);
   const [quotes, setQuotes] = React.useState<any[]>([]);
   const [fetching, setFetching] = React.useState(false);
+
+  // Search and Date Filter states (default: last 2 weeks)
+  const [searchQuery, setSearchQuery] = React.useState<string>("");
+  const [startDate, setStartDate] = React.useState<string>(() => formatDateForInput(getTwoWeeksAgo()));
+  const [endDate, setEndDate] = React.useState<string>(() => formatDateForInput(new Date()));
+
+  const handleResetFilters = () => {
+    setSearchQuery("");
+    setStartDate(formatDateForInput(getTwoWeeksAgo()));
+    setEndDate(formatDateForInput(new Date()));
+  };
 
   // Items popup modal state
   const [viewingItemsRow, setViewingItemsRow] = React.useState<any | null>(null);
@@ -55,7 +96,7 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
             parsedItemsList = [];
           }
 
-          const retailerDisplayName = o.retailer_name || o.store_name || o.retailer_id || "-";
+          const retailerDisplayName = o.buyer_name || o.buyer || o.retailer_name || o.store_name || o.retailer_id || o.buyer_code || "-";
 
           return {
             ...o,
@@ -178,7 +219,7 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
   const orderColumns = [
     { id: "id", header: "Order ID" },
     { id: "created_at_label", header: "Date" },
-    { id: "retailer_display", header: "Retailer / Store" },
+    { id: "retailer_display", header: "Buyer" },
     { id: "address", header: "Delivery Address" },
     { id: "items", header: "Items" },
     { id: "status", header: "Status" },
@@ -236,41 +277,144 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
     );
   };
 
+  // Filter orders by search query and date range
+  const filteredOrders = React.useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    const startEpoch = startDate ? new Date(`${startDate}T00:00:00`).getTime() : null;
+    const endEpoch = endDate ? new Date(`${endDate}T23:59:59.999`).getTime() : null;
+
+    return orders.filter((o) => {
+      // 1. Date Range
+      const recordTime = parseRecordTimestamp(o.created_at);
+      if (recordTime > 0) {
+        if (startEpoch && recordTime < startEpoch) return false;
+        if (endEpoch && recordTime > endEpoch) return false;
+      }
+
+      // 2. Search Query
+      if (q) {
+        const idMatch = (o.id || "").toLowerCase().includes(q);
+        const retailerMatch = (o.retailer_display || "").toLowerCase().includes(q);
+        const storeMatch = (o.store_name || "").toLowerCase().includes(q);
+        const addressMatch = (o.address || "").toLowerCase().includes(q);
+        const postcodeMatch = (o.postcode || "").toString().toLowerCase().includes(q);
+        const invoiceMatch = (o.invoice_number || "").toLowerCase().includes(q);
+        const statusMatch = (o.status || "").toLowerCase().includes(q);
+        const itemsMatch = Array.isArray(o.parsed_items) && o.parsed_items.some((it: any) => 
+          (it.sku || "").toLowerCase().includes(q) || 
+          (it.name || "").toLowerCase().includes(q) ||
+          (it.barcode || "").toLowerCase().includes(q)
+        );
+
+        if (!idMatch && !retailerMatch && !storeMatch && !addressMatch && !postcodeMatch && !invoiceMatch && !statusMatch && !itemsMatch) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [orders, searchQuery, startDate, endDate]);
+
+  // Filter quotes by search query and date range
+  const filteredQuotes = React.useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    const startEpoch = startDate ? new Date(`${startDate}T00:00:00`).getTime() : null;
+    const endEpoch = endDate ? new Date(`${endDate}T23:59:59.999`).getTime() : null;
+
+    return quotes.filter((quote) => {
+      // 1. Date Range
+      const recordTime = parseRecordTimestamp(quote.created_at);
+      if (recordTime > 0) {
+        if (startEpoch && recordTime < startEpoch) return false;
+        if (endEpoch && recordTime > endEpoch) return false;
+      }
+
+      // 2. Search Query
+      if (q) {
+        const idMatch = (quote.id || "").toLowerCase().includes(q);
+        const nameMatch = (quote.customer_name || "").toLowerCase().includes(q);
+        const phoneMatch = (quote.customer_phone || "").toLowerCase().includes(q);
+        const emailMatch = (quote.customer_email || "").toLowerCase().includes(q);
+        const addressMatch = (quote.address || "").toLowerCase().includes(q);
+        const postcodeMatch = (quote.postcode || "").toString().toLowerCase().includes(q);
+        const invoiceMatch = (quote.invoice_number || "").toLowerCase().includes(q);
+        const statusMatch = (quote.status || "").toLowerCase().includes(q);
+        const itemsMatch = Array.isArray(quote.parsed_items) && quote.parsed_items.some((it: any) => 
+          (it.sku || "").toLowerCase().includes(q) || 
+          (it.name || "").toLowerCase().includes(q) ||
+          (it.barcode || "").toLowerCase().includes(q)
+        );
+
+        if (!idMatch && !nameMatch && !phoneMatch && !emailMatch && !addressMatch && !postcodeMatch && !invoiceMatch && !statusMatch && !itemsMatch) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [quotes, searchQuery, startDate, endDate]);
+
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary">
-      {/* 1. Top Header Bar with Segmented View Tabs */}
+      {/* 1. Sub-Navigation Tabs dispatched to TopBar */}
+      <NavigationTabs
+        tabs={DIRECT_ORDER_TABS}
+        activeTabId={activeOrderTab}
+        onTabSelect={(id) => setActiveOrderTab(id as "orders" | "quotes")}
+      />
+
+      {/* 2. Top Header Bar with Search & Date Range Filters */}
       <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div>
           <h1 className="text-base font-bold text-zinc-950">Direct Orders & Quotes</h1>
-          <p className="text-xs text-zinc-500 mt-0.5">Manage direct retail store orders and customer quotations.</p>
+          <p className="text-xs text-zinc-500 mt-0.5">Manage direct buyer orders and customer quotations.</p>
         </div>
         
-        {/* Navigation Tabs (No QTY inside) */}
-        <div className="flex items-center p-0.5 bg-slate-100 border border-slate-200 rounded-lg">
-          <button
-            onClick={() => setActiveOrderTab("orders")}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-              activeOrderTab === "orders" 
-                ? "bg-white text-[#0B57D0] shadow-xs" 
-                : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50"
-            }`}
-          >
-            Retailer Orders
-          </button>
-          <button
-            onClick={() => setActiveOrderTab("quotes")}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all cursor-pointer ${
-              activeOrderTab === "quotes" 
-                ? "bg-white text-[#0B57D0] shadow-xs" 
-                : "text-zinc-600 hover:text-zinc-950 hover:bg-slate-200/50"
-            }`}
-          >
-            Customer Quotations
-          </button>
+        {/* Filter & Search Controls */}
+        <div className="flex items-center flex-wrap gap-2.5">
+          {/* Date Start & End Inputs (Default: Last 2 Weeks) */}
+          <div className="flex items-center gap-1.5 text-xs text-zinc-600">
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="h-8 px-2 bg-white border border-slate-300 rounded-lg text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0]"
+              title="Start Date"
+            />
+            <span className="text-zinc-400 font-medium text-xs">to</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="h-8 px-2 bg-white border border-slate-300 rounded-lg text-xs text-zinc-800 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0]"
+              title="End Date"
+            />
+          </div>
+
+          {/* Search Box */}
+          <div className="relative w-52 sm:w-60">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+            <input
+              type="text"
+              placeholder={activeOrderTab === "orders" ? "Search ID, buyer, address..." : "Search ID, customer, phone, address..."}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-8 pr-7 py-1.5 text-xs bg-white border border-slate-300 rounded-lg text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:border-[#0B57D0]"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* 2. Main Content Viewport */}
+      {/* 3. Main Content Viewport */}
       <div className="flex-1 min-h-0 overflow-auto">
         {activeOrderTab === "orders" ? (
           <div className="h-full flex flex-col overflow-hidden">
@@ -298,14 +442,17 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
                         </div>
                       </td>
                     </tr>
-                  ) : orders.length === 0 ? (
+                  ) : filteredOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={orderColumns.length + 1} className="px-3 py-8 text-center text-zinc-400">
-                        No direct retail orders found.
+                      <td colSpan={orderColumns.length + 1} className="px-4 py-16 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2 text-zinc-400">
+                          <Package className="w-8 h-8 text-slate-300 stroke-[1.5]" />
+                          <span className="text-xs text-zinc-400 font-medium">No record found</span>
+                        </div>
                       </td>
                     </tr>
                   ) : (
-                    orders.map((o) => (
+                    filteredOrders.map((o) => (
                       <tr key={o.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="px-3.5 py-2.5 whitespace-nowrap font-medium text-zinc-900">{o.id}</td>
                         <td className="px-3.5 py-2.5 whitespace-nowrap text-zinc-500">{o.created_at_label}</td>
@@ -380,14 +527,17 @@ export function DirectOrderModule({ profile }: DirectOrderModuleProps) {
                         </div>
                       </td>
                     </tr>
-                  ) : quotes.length === 0 ? (
+                  ) : filteredQuotes.length === 0 ? (
                     <tr>
-                      <td colSpan={quoteColumns.length + 1} className="px-3 py-8 text-center text-zinc-400">
-                        No customer quotations found.
+                      <td colSpan={quoteColumns.length + 1} className="px-4 py-16 text-center">
+                        <div className="flex flex-col items-center justify-center gap-2 text-zinc-400">
+                          <Package className="w-8 h-8 text-slate-300 stroke-[1.5]" />
+                          <span className="text-xs text-zinc-400 font-medium">No record found</span>
+                        </div>
                       </td>
                     </tr>
                   ) : (
-                    quotes.map((q) => (
+                    filteredQuotes.map((q) => (
                       <tr key={q.id} className="hover:bg-slate-50/80 transition-colors">
                         <td className="px-3.5 py-2.5 whitespace-nowrap font-medium text-zinc-900">{q.id}</td>
                         <td className="px-3.5 py-2.5 whitespace-nowrap text-zinc-500">{q.created_at_label}</td>
