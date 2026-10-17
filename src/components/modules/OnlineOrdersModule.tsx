@@ -240,6 +240,23 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
     return () => window.removeEventListener("db-refresh", handleGlobalRefresh);
   }, [fetchOrders]);
 
+  // Listen for Escape key to close review drawer or receipt lightbox
+  React.useEffect(() => {
+    if (!selectedOrder && !previewReceiptUrl) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (previewReceiptUrl) {
+          setPreviewReceiptUrl(null);
+        } else if (selectedOrder) {
+          setSelectedOrder(null);
+          setShowRejectInput(false);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedOrder, previewReceiptUrl]);
+
   // Format timestamp dd/mm/yyyy hh:mm
   const formatDateTime = (epochMs?: number) => {
     if (!epochMs) return "-";
@@ -1163,8 +1180,17 @@ export function OnlineOrdersModule({ profile }: { profile?: any }) {
       {/* DRAWER: ORDER REVIEW & VERIFICATION                       */}
       {/* ========================================================= */}
       {selectedOrder && (
-        <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/40 backdrop-blur-xs font-primary">
-          <div className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 border-l border-slate-200">
+        <div
+          onClick={() => {
+            setSelectedOrder(null);
+            setShowRejectInput(false);
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-end bg-black/40 backdrop-blur-xs font-primary"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white w-full max-w-xl h-full shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-right duration-200 border-l border-slate-200"
+          >
             {/* 1. Drawer Header */}
             <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
               <div>

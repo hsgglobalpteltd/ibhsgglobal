@@ -8,6 +8,7 @@ import { auth, googleProvider, signInWithPopup, signOut } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { syncUserProfile, fetchMyProfile, fetchLatestContract, loginWithPin, logoutUser, UserProfile } from "@/lib/api";
 import { DashboardPage } from "@/components/pages/dashboard";
+import { IbuddyFloatingButton } from "@/components/ibuddy-floating-button";
 import { showToast } from "@/lib/toast";
 import { CustomButton } from "@/components/custom-button";
 import { ShieldAlert, KeyRound, Sparkles, LogOut, Bot } from "lucide-react";
@@ -1114,43 +1115,13 @@ export default function Home() {
             </main>
           </div>
 
-          {/* Floating iBuddy Logo Button (visible when not on Dashboard today tab) */}
+          {/* Floating iBuddy Logo Button (draggable & magnetic to edges/corners) */}
           {!(activeItem === "Dashboard" && dashboardTab === "today") && (
-            <button
-              type="button"
-              onClick={handleJumpToIbuddy}
-              title={
-                ibuddyGenerating
-                  ? "iBuddy is thinking..."
-                  : ibuddyUnreadCount > 0
-                  ? `iBuddy (${ibuddyUnreadCount} unread)`
-                  : "Open iBuddy"
-              }
-              className="fixed bottom-6 right-6 z-50 group flex items-center justify-center p-0 rounded-2xl shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition-all duration-200 cursor-pointer select-none focus:outline-none"
-            >
-              <div className="relative w-11 h-11 rounded-2xl bg-gradient-to-tr from-[#0842A0] via-[#0B57D0] to-[#1A73E8] text-white flex items-center justify-center shadow-md border border-blue-300/30">
-                <Bot className={`w-5 h-5 text-white transition-transform duration-200 group-hover:scale-110 ${ibuddyGenerating ? "animate-pulse" : ""}`} />
-                
-                {/* Status Dot / Unread Badge */}
-                {ibuddyGenerating ? (
-                  <span className="absolute -top-1 -right-1 flex h-3.5 w-3.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-300 opacity-80" />
-                    <span className="relative inline-flex rounded-full h-3.5 w-3.5 bg-[#0B57D0] ring-2 ring-white items-center justify-center">
-                      <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-                    </span>
-                  </span>
-                ) : ibuddyUnreadCount > 0 ? (
-                  <span className="absolute -top-1.5 -right-1.5 flex min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold ring-2 ring-white items-center justify-center shadow-xs animate-in zoom-in-75">
-                    {ibuddyUnreadCount}
-                  </span>
-                ) : (
-                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 ring-2 ring-white" />
-                  </span>
-                )}
-              </div>
-            </button>
+            <IbuddyFloatingButton
+              ibuddyGenerating={ibuddyGenerating}
+              ibuddyUnreadCount={ibuddyUnreadCount}
+              onJumpToIbuddy={handleJumpToIbuddy}
+            />
           )}
         </div>
       </>
