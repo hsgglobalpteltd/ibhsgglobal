@@ -31,7 +31,8 @@ import {
   Mail,
   Check,
   ChevronUp,
-  ChevronDown
+  ChevronDown,
+  Upload
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { NavigationTabs, TabItem } from "../navigation-tabs";
@@ -119,6 +120,7 @@ interface ShopSettings {
   paynow_merchant_name: string;
   order_ref_prefix: string;
   min_order_cartons: number;
+  max_order_cartons?: number;
   max_order_amount?: number;
   delivery_fee: number;
   free_delivery_threshold: number;
@@ -133,9 +135,21 @@ interface ShopSettings {
   allow_self_pickup?: boolean;
   show_hero_section?: boolean;
   paynow_inbound_email?: string;
-  paynow_sender_whitelist?: string[] | string;
+  paynow_sender_whitelist?: string[];
   paynow_auto_approve?: boolean;
   paynow_email_logs?: any[];
+  cart_upsell_enabled?: boolean;
+  cart_upsell_title?: string;
+  cart_upsell_subtitle?: string;
+  cart_upsell_items?: CartUpsellItem[];
+}
+
+export interface CartUpsellItem {
+  sku: string;
+  display_name: string;
+  image: string;
+  price_per_piece: number;
+  max_qty: number;
 }
 
 interface HeroSlide {
@@ -189,6 +203,7 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
     paynow_merchant_name: "HSG GLOBAL PTE LTD",
     order_ref_prefix: "HSG-",
     min_order_cartons: 2,
+    max_order_cartons: 50,
     max_order_amount: 1000,
     delivery_fee: 5.0,
     free_delivery_threshold: 50.0,
@@ -204,7 +219,11 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
     paynow_inbound_email: "paynow-alerts@hsgglobal.sg",
     paynow_sender_whitelist: ["alerts@dbs.com", "posb.alerts@posb.com.sg", "ibanking@uobgroup.com", "alerts@ocbc.com", "paynow"],
     paynow_auto_approve: true,
-    paynow_email_logs: []
+    paynow_email_logs: [],
+    cart_upsell_enabled: false,
+    cart_upsell_title: "Try Something New",
+    cart_upsell_subtitle: "Add single pieces to your delivery",
+    cart_upsell_items: []
   });
 
   // PayNow Email Parser Sandbox State
@@ -553,23 +572,152 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
     });
   }, [priceRules]);
 
+  // Active Shop Brand IDs
+  const activeShopBrandIds = React.useMemo(() => {
+    return new Set(shopBrands.filter((b) => b.is_active !== false).map((b) => b.brand_id));
+  }, [shopBrands]);
+
+  // Products belonging strictly to the active shop list (excluding hidden ones)
+  const shopListProducts = React.useMemo(() => {
+    return masterProducts
+      .filter((mp) => activeShopBrandIds.has(mp.brands_id) && mp.status !== "inactive")
+      .map((mp) => {
+        const sp = shopProducts.find((p) => p.sku === mp.sku);
+        return {
+          sku: mp.sku,
+          brand_id: mp.brands_id,
+          display_name: sp?.custom_display_name || mp.display_name || mp.sku,
+          image: sp?.custom_image || mp.image || "",
+          price_per_piece: Number(sp?.price_per_piece ?? 2.0),
+          status: sp?.status || "in_stock"
+        };
+      })
+      .filter((p) => p.status !== "hidden")
+      .sort((a, b) => a.display_name.localeCompare(b.display_name));
+  }, [masterProducts, activeShopBrandIds, shopProducts]);
+
   // Store Settings Save
   const handleSaveSettings = async () => {
     setSaving(true);
     try {
+      // Sync each upsell item with the latest live shop price and product display info
+      const syncedUpsellItems = (settings.cart_upsell_items || []).map((item) => {
+        const sp = shopProducts.find((p) => p.sku === item.sku);
+        const mp = masterProducts.find((p) => p.sku === item.sku);
+        return {
+          ...item,
+          display_name: sp?.custom_display_name || mp?.display_name || item.display_name || item.sku,
+          image: sp?.custom_image || mp?.image || item.image || "",
+          price_per_piece: sp?.price_per_piece !== undefined ? Number(sp.price_per_piece) : Number(item.price_per_piece || 2.0),
+          max_qty: 6
+        };
+      });
+
+      const updatedSettings = {
+        ...settings,
+        cart_upsell_items: syncedUpsellItems,
+        hero_slides: slides
+      };
+
       const res = await fetch(`${WORKER_URL}/api/shop/admin/settings/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...settings, hero_slides: slides })
+        body: JSON.stringify(updatedSettings)
       });
-      if (!res.ok) throw new Error("Failed to save store settings");
-      setSettings((prev) => ({ ...prev, hero_slides: slides }));
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to save store settings");
+      }
+      setSettings(updatedSettings);
       showToast("Shop settings and hero slider saved successfully", "success");
     } catch (e: any) {
       showToast(e.message, "error");
     } finally {
       setSaving(false);
     }
+  };
+
+  // Cart Upsell Management (Try Something New, Max 6 SKUs)
+  // Strictly restricted to active shop products; price follows shop list
+  const handleAddUpsellItem = () => {
+    const current = settings.cart_upsell_items || [];
+    if (current.length >= 6) {
+      showToast("Maximum 6 items allowed for Try Something New", "info");
+      return;
+    }
+    if (shopListProducts.length === 0) {
+      showToast("No active products available in the shop list", "info");
+      return;
+    }
+    const usedSkus = new Set(current.map((it) => it.sku));
+    const available = shopListProducts.find((p) => !usedSkus.has(p.sku)) || shopListProducts[0];
+    if (!available) return;
+
+    const newItem: CartUpsellItem = {
+      sku: available.sku,
+      display_name: available.display_name,
+      image: available.image,
+      price_per_piece: available.price_per_piece,
+      max_qty: 6
+    };
+
+    setSettings((prev) => ({
+      ...prev,
+      cart_upsell_items: [...(prev.cart_upsell_items || []), newItem]
+    }));
+    showToast("Upsell item added. Click 'Save Store Settings' to publish.", "info");
+  };
+
+  const handleDeleteUpsellItem = (idx: number) => {
+    setSettings((prev) => ({
+      ...prev,
+      cart_upsell_items: (prev.cart_upsell_items || []).filter((_, i) => i !== idx)
+    }));
+    showToast("Upsell item removed. Click 'Save Store Settings' to publish.", "info");
+  };
+
+  const handleMoveUpsellItem = (idx: number, direction: "up" | "down") => {
+    const current = [...(settings.cart_upsell_items || [])];
+    const targetIdx = direction === "up" ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= current.length) return;
+    const temp = current[idx];
+    current[idx] = current[targetIdx];
+    current[targetIdx] = temp;
+    setSettings((prev) => ({
+      ...prev,
+      cart_upsell_items: current
+    }));
+  };
+
+  const handleSelectUpsellSku = (idx: number, sku: string) => {
+    const current = [...(settings.cart_upsell_items || [])];
+    const match = shopListProducts.find((p) => p.sku === sku);
+    if (!match) return;
+
+    current[idx] = {
+      ...current[idx],
+      sku: match.sku,
+      display_name: match.display_name,
+      image: match.image,
+      price_per_piece: match.price_per_piece,
+      max_qty: 6
+    };
+    setSettings((prev) => ({
+      ...prev,
+      cart_upsell_items: current
+    }));
+  };
+
+  const handleUpdateUpsellField = (idx: number, field: keyof CartUpsellItem, val: any) => {
+    const current = [...(settings.cart_upsell_items || [])];
+    current[idx] = {
+      ...current[idx],
+      [field]: val
+    };
+    setSettings((prev) => ({
+      ...prev,
+      cart_upsell_items: current
+    }));
   };
 
   // Hero Slider Management (Min 1, Max 5)
@@ -631,6 +779,133 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
     );
   };
 
+  const [uploadingSlideIdx, setUploadingSlideIdx] = React.useState<number | null>(null);
+
+  /**
+   * Compresses and converts an image to WebP format targeting a maximum file size (default: 200 KB).
+   * Performs proportional downscaling and progressive quality stepping.
+   */
+  const compressImageToWebP = async (
+    file: File,
+    maxSizeBytes: number = 200 * 1024
+  ): Promise<{ blob: Blob; size: number }> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Failed to read image file"));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error("Failed to load image for compression"));
+        img.onload = async () => {
+          try {
+            let width = img.naturalWidth || img.width;
+            let height = img.naturalHeight || img.height;
+
+            // Target max 1920px width/1080px height for crisp hero banner display without extreme bloat
+            const MAX_WIDTH = 1920;
+            const MAX_HEIGHT = 1080;
+            if (width > MAX_WIDTH || height > MAX_HEIGHT) {
+              const ratio = Math.min(MAX_WIDTH / width, MAX_HEIGHT / height);
+              width = Math.round(width * ratio);
+              height = Math.round(height * ratio);
+            }
+
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              reject(new Error("Canvas context not available"));
+              return;
+            }
+
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
+            ctx.drawImage(img, 0, 0, width, height);
+
+            const getBlob = (q: number): Promise<Blob | null> => {
+              return new Promise((res) => {
+                canvas.toBlob((b) => res(b), "image/webp", q);
+              });
+            };
+
+            // Step 1: Step through qualities from 0.85 down to 0.25
+            let bestBlob: Blob | null = null;
+            let quality = 0.85;
+
+            while (quality >= 0.25) {
+              const blob = await getBlob(quality);
+              if (blob) {
+                bestBlob = blob;
+                if (blob.size <= maxSizeBytes) {
+                  break;
+                }
+              }
+              quality -= 0.08;
+            }
+
+            // Step 2: If still > 200KB even at quality 0.25, progressively downscale dimensions
+            if (bestBlob && bestBlob.size > maxSizeBytes) {
+              let scale = 0.85;
+              while (scale >= 0.35 && bestBlob && bestBlob.size > maxSizeBytes) {
+                const sw = Math.round(width * scale);
+                const sh = Math.round(height * scale);
+                canvas.width = sw;
+                canvas.height = sh;
+                ctx.imageSmoothingEnabled = true;
+                ctx.imageSmoothingQuality = "high";
+                ctx.drawImage(img, 0, 0, sw, sh);
+
+                const blob = await getBlob(0.70);
+                if (blob) {
+                  bestBlob = blob;
+                  if (blob.size <= maxSizeBytes) break;
+                }
+                scale -= 0.15;
+              }
+            }
+
+            if (!bestBlob) {
+              reject(new Error("Failed to convert image to WebP"));
+              return;
+            }
+
+            resolve({ blob: bestBlob, size: bestBlob.size });
+          } catch (err) {
+            reject(err);
+          }
+        };
+        img.src = reader.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleSlideImageUpload = async (idx: number, file: File) => {
+    if (!file) return;
+    setUploadingSlideIdx(idx);
+    try {
+      showToast("Converting image to WebP (max 200 KB)...", "info");
+      const { blob, size } = await compressImageToWebP(file, 200 * 1024);
+      const filename = `shop/hero_${Date.now()}_${idx}.webp`;
+      const res = await fetch(`${WORKER_URL}/api/upload?filename=${encodeURIComponent(filename)}`, {
+        method: "POST",
+        headers: { "Content-Type": "image/webp" },
+        body: blob
+      });
+      const data = (await res.json()) as any;
+      if (!res.ok || !data.success || !data.url) {
+        throw new Error(data.error || "Failed to upload image");
+      }
+      handleUpdateSlide(idx, "bg_image", data.url);
+      const kb = Math.round(size / 1024);
+      showToast(`Image converted to WebP (${kb} KB) and uploaded successfully`, "success");
+    } catch (err: any) {
+      showToast(err.message || "Failed to upload image", "error");
+    } finally {
+      setUploadingSlideIdx(null);
+    }
+  };
+
   const handleSaveSlides = async () => {
     setSaving(true);
     try {
@@ -639,7 +914,10 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...settings, hero_slides: slides })
       });
-      if (!res.ok) throw new Error("Failed to save hero slider settings");
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to save hero slider settings");
+      }
       setSettings((prev) => ({ ...prev, hero_slides: slides }));
       showToast(`Hero slider updated! (${slides.length} slide${slides.length > 1 ? "s" : ""} published)`, "success");
     } catch (e: any) {
@@ -866,7 +1144,7 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
                             <div>
                               <h3 className="text-sm font-bold text-zinc-900">{brand.brand_name}</h3>
                               <span className="text-xs text-zinc-500">
-                                {prodsForBrand.length} products available • Carton pack: {brand.mix_carton_size} pcs
+                                {prodsForBrand.length} products available
                               </span>
                             </div>
                           </div>
@@ -887,7 +1165,7 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
                                 onChange={() => handleToggleBrandMix(brand)}
                                 className="rounded text-[#0B57D0] focus:ring-0 cursor-pointer disabled:cursor-default"
                               />
-                              <span>Allow Custom Mix ({brand.mix_carton_size} pcs)</span>
+                              <span>Allow Custom Mix</span>
                             </label>
 
                             {isEditMode && (
@@ -1342,18 +1620,18 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
                         />
                       </div>
                       <div>
-                        <label className="text-xs text-zinc-600 block mb-1">Max Purchase Limit ($)</label>
+                        <label className="text-xs text-zinc-600 block mb-1">Max Purchase Limit (Cartons)</label>
                         <input
                           type="number"
-                          step="50"
-                          min="100"
+                          step="1"
+                          min="1"
                           disabled={!isEditMode}
-                          value={settings.max_order_amount ?? 1000}
-                          onChange={(e) => setSettings({ ...settings, max_order_amount: parseFloat(e.target.value) || 1000 })}
+                          value={settings.max_order_cartons ?? 50}
+                          onChange={(e) => setSettings({ ...settings, max_order_cartons: parseInt(e.target.value) || 50 })}
                           className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded text-xs text-zinc-800 disabled:bg-slate-50 disabled:text-zinc-500 disabled:cursor-not-allowed"
                         />
                         <span className="text-[10px] text-zinc-400 mt-0.5 block">
-                          Orders over this amount require contacting sales for bulk special pricing.
+                          Orders over this carton count require contacting sales for bulk special pricing.
                         </span>
                       </div>
                     </div>
@@ -1790,15 +2068,86 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
                               />
                             </div>
                             <div className="sm:col-span-2">
-                              <label className="text-[11px] text-zinc-500 block mb-0.5">Background Image URL</label>
-                              <input
-                                type="text"
-                                disabled={!isEditMode}
-                                value={slide.bg_image || ""}
-                                onChange={(e) => handleUpdateSlide(idx, "bg_image", e.target.value)}
-                                placeholder="https://..."
-                                className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs font-mono text-zinc-800 disabled:bg-slate-50 disabled:text-zinc-500"
-                              />
+                              <label className="text-[11px] text-zinc-600 font-semibold block mb-1">Background Image</label>
+                              <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2.5">
+                                {slide.bg_image ? (
+                                  <div className="relative group w-24 h-14 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0 shadow-2xs">
+                                    <img
+                                      src={slide.bg_image}
+                                      alt="Slide background"
+                                      className="w-full h-full object-cover"
+                                    />
+                                    {isEditMode && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleUpdateSlide(idx, "bg_image", "")}
+                                        className="absolute top-1 right-1 p-0.5 rounded-full bg-black/60 text-white hover:bg-rose-600 transition-colors cursor-pointer"
+                                        title="Remove image"
+                                      >
+                                        <X size={12} />
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : null}
+
+                                <div className="flex-1 w-full space-y-1.5">
+                                  <div className="flex items-center gap-2">
+                                    <label
+                                      className={`h-7 px-2.5 rounded-md border text-xs font-semibold inline-flex items-center gap-1.5 transition-colors cursor-pointer ${
+                                        !isEditMode || uploadingSlideIdx === idx
+                                          ? "bg-slate-100 text-zinc-400 border-slate-200 cursor-not-allowed pointer-events-none"
+                                          : "bg-white hover:bg-slate-50 text-zinc-700 border-slate-300 shadow-2xs"
+                                      }`}
+                                    >
+                                      {uploadingSlideIdx === idx ? (
+                                        <>
+                                          <Loader2 size={12} className="animate-spin text-[#0B57D0]" />
+                                          <span>Uploading...</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Upload size={12} className="text-[#0B57D0]" />
+                                          <span>{slide.bg_image ? "Change Image" : "Upload Image"}</span>
+                                        </>
+                                      )}
+                                      <input
+                                        type="file"
+                                        accept="image/*"
+                                        disabled={!isEditMode || uploadingSlideIdx === idx}
+                                        onChange={(e) => {
+                                          const file = e.target.files?.[0];
+                                          if (file) handleSlideImageUpload(idx, file);
+                                          e.target.value = "";
+                                        }}
+                                        className="hidden"
+                                      />
+                                    </label>
+                                    {slide.bg_image && (
+                                      <a
+                                        href={slide.bg_image}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="text-[11px] text-[#0B57D0] hover:underline inline-flex items-center gap-1"
+                                      >
+                                        <span>View</span>
+                                        <ExternalLink size={10} />
+                                      </a>
+                                    )}
+                                    <span className="text-[10px] text-zinc-500 font-medium ml-auto">
+                                      Auto-WebP (Max 200 KB)
+                                    </span>
+                                  </div>
+
+                                  <input
+                                    type="text"
+                                    disabled={!isEditMode}
+                                    value={slide.bg_image || ""}
+                                    onChange={(e) => handleUpdateSlide(idx, "bg_image", e.target.value)}
+                                    placeholder="Or paste direct image URL (https://...)"
+                                    className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs font-mono text-zinc-800 disabled:bg-slate-50 disabled:text-zinc-500"
+                                  />
+                                </div>
+                              </div>
                             </div>
                             <div>
                               <label className="text-[11px] text-zinc-500 block mb-0.5">Button Label</label>
@@ -1832,6 +2181,134 @@ export function ShopManagerModule({ profile }: { profile?: any }) {
                         </div>
                       ))}
                     </div>
+                  </div>
+
+                  {/* Cart Upsell Shelf: Try Something New (Max 6 SKUs) */}
+                  <div className="border-t border-slate-200 pt-5 mt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                      <div>
+                        <h3 className="text-sm font-bold text-zinc-900">Try Something New (Cart Upsell)</h3>
+                        <p className="text-xs text-zinc-500 mt-0.5">
+                          Featured single-piece items shown in customer cart. Customers must fulfill minimum cartons to checkout.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label className="flex items-center gap-1.5 text-xs text-zinc-600 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            disabled={!isEditMode}
+                            checked={Boolean(settings.cart_upsell_enabled)}
+                            onChange={(e) => setSettings({ ...settings, cart_upsell_enabled: e.target.checked })}
+                            className="rounded text-[#0B57D0]"
+                          />
+                          <span>Show in Cart</span>
+                        </label>
+                        <span className="text-[11px] font-medium text-zinc-500 bg-slate-100 px-2 py-0.5 rounded">
+                          {(settings.cart_upsell_items || []).length} / 6
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleAddUpsellItem}
+                          disabled={!isEditMode || (settings.cart_upsell_items || []).length >= 6}
+                          className="h-7 px-2.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          + Add Item
+                        </button>
+                      </div>
+                    </div>
+
+                    {(!settings.cart_upsell_items || settings.cart_upsell_items.length === 0) ? (
+                      <div className="p-4 bg-slate-50 border border-dashed border-slate-200 rounded-lg text-center text-xs text-zinc-500 mt-2">
+                        No upsell items configured yet. Click <strong>+ Add Item</strong> above to select up to 6 single-piece products for customers to try in their cart.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mt-3">
+                        {settings.cart_upsell_items.map((item, uIdx) => {
+                          const shopProd = shopListProducts.find((p) => p.sku === item.sku);
+                          const livePrice = Number(shopProd?.price_per_piece ?? item.price_per_piece ?? 0);
+                          const displayImg = shopProd?.image || masterProducts.find((p) => p.sku === item.sku)?.image || item.image;
+                          const displayName = shopProd?.display_name || masterProducts.find((p) => p.sku === item.sku)?.display_name || item.display_name;
+
+                          return (
+                            <div key={item.sku || uIdx} className="p-3 bg-white border border-slate-200 rounded-lg shadow-2xs space-y-2.5 relative">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                                  Slot #{uIdx + 1}
+                                </span>
+                                <div className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    disabled={!isEditMode || uIdx === 0}
+                                    onClick={() => handleMoveUpsellItem(uIdx, "up")}
+                                    className="p-1 text-zinc-400 hover:text-zinc-700 disabled:opacity-20 cursor-pointer rounded hover:bg-slate-50 transition-colors"
+                                    title="Move Left/Up"
+                                  >
+                                    <ChevronUp size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!isEditMode || uIdx === (settings.cart_upsell_items?.length || 0) - 1}
+                                    onClick={() => handleMoveUpsellItem(uIdx, "down")}
+                                    className="p-1 text-zinc-400 hover:text-zinc-700 disabled:opacity-20 cursor-pointer rounded hover:bg-slate-50 transition-colors"
+                                    title="Move Right/Down"
+                                  >
+                                    <ChevronDown size={14} />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={!isEditMode}
+                                    onClick={() => handleDeleteUpsellItem(uIdx)}
+                                    className="p-1 text-rose-500 hover:text-rose-700 disabled:opacity-20 cursor-pointer ml-1 rounded hover:bg-rose-50 transition-colors"
+                                    title="Remove from upsell"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2.5">
+                                <div className="w-12 h-12 rounded-lg bg-slate-100 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                                  {displayImg ? (
+                                    <img src={displayImg} alt={displayName} className="w-full h-full object-cover" />
+                                  ) : (
+                                    <Package size={18} className="text-zinc-400" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <select
+                                    disabled={!isEditMode}
+                                    value={item.sku}
+                                    onChange={(e) => handleSelectUpsellSku(uIdx, e.target.value)}
+                                    className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs text-zinc-800 disabled:bg-slate-50 disabled:text-zinc-500 truncate focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                                  >
+                                    <option value="">-- Choose Product --</option>
+                                    {shopListProducts.map((sp) => (
+                                      <option key={sp.sku} value={sp.sku}>
+                                        {sp.display_name} (${Number(sp.price_per_piece).toFixed(2)})
+                                      </option>
+                                    ))}
+                                    {item.sku && !shopListProducts.some((p) => p.sku === item.sku) && (
+                                      <option value={item.sku}>
+                                        {item.display_name || item.sku} (Inactive / Not in shop)
+                                      </option>
+                                    )}
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Live Price: Follows Shop List, Read-Only */}
+                              <div className="flex items-center gap-1.5 pt-2 border-t border-slate-100 text-xs">
+                                <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">Shop Price:</span>
+                                <span className="font-bold text-zinc-900 font-mono text-sm">
+                                  ${livePrice.toFixed(2)}
+                                  <span className="text-[11px] font-normal text-zinc-500 font-sans ml-1">/ pc</span>
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
