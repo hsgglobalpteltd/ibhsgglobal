@@ -183,6 +183,9 @@ export function TopBar({ breadcrumbPath, onBack, onNavigateBreadcrumb }: TopBarP
         </div>
       )}
 
+      {/* Center: Module Controls Slot (e.g. TikTok Global Shop Selector) */}
+      <div id="topbar-center-slot" className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center z-20 pointer-events-auto" />
+
       {/* Right: Buttons inside TopBar (Refresh, Fullscreen & Tabs) */}
       <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-1.5 z-20">
         {/* Sub-Navigation Tabs Switcher inside TopBar */}

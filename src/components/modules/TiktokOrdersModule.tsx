@@ -102,7 +102,15 @@ const computeOrderSyncStats = (prevOrders: Order[], newOrders: Order[]) => {
   return { newCount, details };
 };
 
-export function TiktokOrdersModule({ profile }: { profile?: any }) {
+export function TiktokOrdersModule({ 
+  profile,
+  selectedShopId: controlledShopId,
+  onSelectShopId
+}: { 
+  profile?: any;
+  selectedShopId?: string;
+  onSelectShopId?: (id: string) => void;
+}) {
   const [shops, setShops] = React.useState<Shop[]>([]);
   const [orders, setOrders] = React.useState<Order[]>([]);
   const [terminalName, setTerminalName] = React.useState("PC Office");
@@ -144,12 +152,13 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
   const [error, setError] = React.useState<string | null>(null);
 
   // Filter & Sort State
-  const [selectedShopId, setSelectedShopId] = React.useState<string>("all");
+  const [internalShopId, setInternalShopId] = React.useState<string>("all");
+  const selectedShopId = controlledShopId !== undefined ? controlledShopId : internalShopId;
+  const setSelectedShopId = onSelectShopId || setInternalShopId;
   const [selectedTab, setSelectedTab] = React.useState<string>("all");
   const [searchQuery, setSearchQuery] = React.useState("");
   const [isSearchExpanded, setIsSearchExpanded] = React.useState(false);
   const [sortBy, setSortBy] = React.useState<"newest" | "oldest">("newest");
-  const [isRefreshHovered, setIsRefreshHovered] = React.useState(false);
   const [selectedOrderItems, setSelectedOrderItems] = React.useState<Order | null>(null);
   const [awbLoadingOrderId, setAwbLoadingOrderId] = React.useState<string | null>(null);
 
@@ -176,8 +185,12 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
   const [rowsPerPage, setRowsPerPage] = React.useState<number | "custom">(50);
   const [customRowsInput, setCustomRowsInput] = React.useState("50");
 
-  // Month & Date filters state
-  const [selectedMonth, setSelectedMonth] = React.useState<string>("all");
+  // Month & Date filters state (default to current month)
+  const [selectedMonth, setSelectedMonth] = React.useState<string>(() => {
+    const d = new Date();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return `${d.getFullYear()}-${mm}`;
+  });
   const [startDate, setStartDate] = React.useState<string>("");
   const [endDate, setEndDate] = React.useState<string>("");
   const [isFiltersExpanded, setIsFiltersExpanded] = React.useState(false);
@@ -977,28 +990,59 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
         return actual === "IN_TRANSIT" || actual === "SHIPPED" || actual === "PICK_UP";
       case "delivered":
         return actual === "DELIVERED" || actual === "COMPLETED";
+      case "cancelled":
+        return actual === "CANCELLED";
       default:
         return true;
     }
   };
 
-  // Pre-filter by Shop ID
-  const shopFilteredOrders = orders.filter(
-    (o) => selectedShopId === "all" || o.shop_id === selectedShopId
-  );
+  // Pre-filter by Shop ID and Date / Month filters
+  const dateFilteredOrders = React.useMemo(() => {
+    return orders.filter((o) => {
+      if (selectedShopId !== "all" && o.shop_id !== selectedShopId) return false;
 
-  // Compute counts based on the current shop filter
-  const counts = {
-    all: shopFilteredOrders.length,
-    pending_pack: shopFilteredOrders.filter((o) => matchesTab(o, "pending_pack")).length,
-    pending_collection: shopFilteredOrders.filter((o) => matchesTab(o, "pending_collection")).length,
-    in_transit: shopFilteredOrders.filter((o) => matchesTab(o, "in_transit")).length,
-    delivered: shopFilteredOrders.filter((o) => matchesTab(o, "delivered")).length
-  };
+      // Month Filter
+      if (selectedMonth !== "all") {
+        if (!o.create_time) return false;
+        const date = new Date(o.create_time * 1000);
+        const yyyy = date.getFullYear();
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        if (`${yyyy}-${mm}` !== selectedMonth) return false;
+      }
+
+      // Date Range Filter
+      if (startDate) {
+        const startSec = new Date(startDate + "T00:00:00").getTime() / 1000;
+        if (!o.create_time || o.create_time < startSec) return false;
+      }
+      if (endDate) {
+        const endSec = new Date(endDate + "T23:59:59").getTime() / 1000;
+        if (!o.create_time || o.create_time > endSec) return false;
+      }
+
+      return true;
+    });
+  }, [orders, selectedShopId, selectedMonth, startDate, endDate]);
+
+  // Compute counts based on the active filtered scope (matching Shop and Month/Date filter)
+  const counts = React.useMemo(() => {
+    return {
+      all: dateFilteredOrders.length,
+      pending_pack: dateFilteredOrders.filter((o) => matchesTab(o, "pending_pack")).length,
+      pending_collection: dateFilteredOrders.filter((o) => matchesTab(o, "pending_collection")).length,
+      in_transit: dateFilteredOrders.filter((o) => matchesTab(o, "in_transit")).length,
+      delivered: dateFilteredOrders.filter((o) => matchesTab(o, "delivered")).length,
+      cancelled: dateFilteredOrders.filter((o) => matchesTab(o, "cancelled")).length
+    };
+  }, [dateFilteredOrders]);
 
   // Get list of unique months present in orders for the dropdown
   const availableMonths = React.useMemo(() => {
     const months = new Set<string>();
+    const now = new Date();
+    const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    months.add(currentYm);
     orders.forEach(o => {
       if (o.create_time) {
         const date = new Date(o.create_time * 1000);
@@ -1018,7 +1062,7 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
 
   // Filter and Search
   const seenIds = new Set<string>();
-  const processedOrders = shopFilteredOrders
+  const processedOrders = dateFilteredOrders
     .filter((o) => matchesTab(o, selectedTab))
     .filter((o) => {
       if (seenIds.has(o.id)) return false;
@@ -1030,24 +1074,6 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
         const matchId = (o.id || "").toLowerCase().includes(q);
         const matchTracking = (o.tracking_number || "").toLowerCase().includes(q);
         if (!(matchId || matchTracking)) return false;
-      }
-
-      // Month Filter
-      if (selectedMonth !== "all") {
-        const date = new Date(o.create_time * 1000);
-        const yyyy = date.getFullYear();
-        const mm = String(date.getMonth() + 1).padStart(2, '0');
-        if (`${yyyy}-${mm}` !== selectedMonth) return false;
-      }
-
-      // Date Range Filter
-      if (startDate) {
-        const startSec = new Date(startDate + "T00:00:00").getTime() / 1000;
-        if (o.create_time < startSec) return false;
-      }
-      if (endDate) {
-        const endSec = new Date(endDate + "T23:59:59").getTime() / 1000;
-        if (o.create_time > endSec) return false;
       }
 
       return true;
@@ -1168,34 +1194,6 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
 
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden select-none font-primary min-w-0">
-      
-      {/* Shops Tab Navigation */}
-      <div className="flex items-center gap-1 border-b border-[#E0E2E6] pb-1 mb-3 overflow-x-auto whitespace-nowrap shrink-0">
-        <button
-          onClick={() => setSelectedShopId("all")}
-          className={`px-4 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition-all duration-200 cursor-pointer outline-none ${
-            selectedShopId === "all"
-              ? "border-[#0B57D0] text-[#0B57D0] bg-[#EAF1FB]"
-              : "border-transparent text-[#5F6368] hover:text-[#1F1F1F] hover:bg-[#F8F9FA]"
-          }`}
-        >
-          All Shops
-        </button>
-        {shops.map((shop) => (
-          <button
-            key={shop.id}
-            onClick={() => setSelectedShopId(shop.id)}
-            className={`px-4 py-2 text-xs font-semibold rounded-t-lg border-b-2 transition-all duration-200 cursor-pointer outline-none ${
-              selectedShopId === shop.id
-                ? "border-[#0B57D0] text-[#0B57D0] bg-[#EAF1FB]"
-                : "border-transparent text-[#5F6368] hover:text-[#1F1F1F] hover:bg-[#F8F9FA]"
-            }`}
-          >
-            {shop.name}
-          </button>
-        ))}
-      </div>
-
       {/* Dashboard Content Card */}
       <div className="flex-1 flex flex-col bg-white border border-[#E0E2E6] rounded-2xl shadow-xs overflow-hidden min-h-0">
         
@@ -1209,7 +1207,8 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
               { key: "pending_pack", label: "Pending Pack" },
               { key: "pending_collection", label: "Pending Collection" },
               { key: "in_transit", label: "In Transit" },
-              { key: "delivered", label: "Delivered" }
+              { key: "delivered", label: "Delivered" },
+              { key: "cancelled", label: "Cancelled" }
             ].map((tab) => {
               const count = counts[tab.key as keyof typeof counts];
               const isActive = selectedTab === tab.key;
@@ -1367,56 +1366,6 @@ export function TiktokOrdersModule({ profile }: { profile?: any }) {
                 )}
               </button>
             )}
-
-            {/* Refresh Button */}
-            <button
-              onClick={handleRefreshClick}
-              disabled={isLoading || isSyncing}
-              onMouseEnter={() => setIsRefreshHovered(true)}
-              onMouseLeave={() => setIsRefreshHovered(false)}
-              className="flex items-center justify-center rounded-full overflow-hidden text-white bg-[#0B57D0] hover:bg-[#0842A0] cursor-pointer outline-none border-none shadow-xs"
-              style={{
-                height: "32px",
-                padding: isRefreshHovered || isSyncing ? "8px 16px" : "8px",
-                width: isSyncing ? "120px" : (isRefreshHovered ? "135px" : "32px"),
-                fontSize: "12px",
-                fontWeight: "600",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: (isRefreshHovered || isSyncing) ? "6px" : "0px",
-                minWidth: isSyncing ? "120px" : (isRefreshHovered ? "135px" : "32px"),
-                whiteSpace: "nowrap",
-                transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)"
-              }}
-              title="Refresh Orders"
-            >
-              {isSyncing ? (
-                <>
-                  <svg className="w-3.5 h-3.5 animate-spin flex-shrink-0" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-                  </svg>
-                  <span className="whitespace-nowrap opacity-100">Refreshing...</span>
-                </>
-              ) : (
-                <>
-                  <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                  </svg>
-                  <span 
-                    className="whitespace-nowrap transition-all duration-300 ease-in-out"
-                    style={{
-                      opacity: isRefreshHovered ? 1 : 0,
-                      maxWidth: isRefreshHovered ? "100px" : "0px",
-                      overflow: "hidden"
-                    }}
-                  >
-                    Refresh Orders
-                  </span>
-                </>
-              )}
-            </button>
           </div>
 
         </div>

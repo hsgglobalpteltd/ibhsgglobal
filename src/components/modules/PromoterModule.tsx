@@ -3834,16 +3834,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     
     const start = new Date(scheduleStartDate);
     const end = new Date(scheduleEndDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) return [];
     start.setHours(0, 0, 0, 0);
     end.setHours(0, 0, 0, 0);
 
     const temp = new Date(start);
-    let count = 0;
-    // Limit to 62 days maximum range to protect browser DOM rendering performance
-    while (temp <= end && count < 62) {
+    while (temp <= end) {
       dates.push(new Date(temp));
       temp.setDate(temp.getDate() + 1);
-      count++;
     }
     return dates;
   }, [scheduleStartDate, scheduleEndDate]);

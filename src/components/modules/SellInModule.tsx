@@ -548,6 +548,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [savingSettlementItems, setSavingSettlementItems] = React.useState<boolean>(false);
   const settlementFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
+  // TikTok Settlement Sync State
+  const [tiktokShops, setTiktokShops] = React.useState<Array<{ id: string; name: string }>>([]);
+  const [selectedTiktokShopId, setSelectedTiktokShopId] = React.useState<string>("all");
+  const [loadingTiktokSync, setLoadingTiktokSync] = React.useState<boolean>(false);
+  const [tiktokSyncStatus, setTiktokSyncStatus] = React.useState<{
+    checked: boolean;
+    compiled: boolean;
+    can_sync: boolean;
+    unassigned_skus: Array<{ seller_sku: string; product_name: string; count: number }>;
+    message?: string;
+  } | null>(null);
+
   // View Mode: "summary" (Default when Published) vs "details" (Line-by-line items)
   const [sellinViewMode, setSellinViewMode] = React.useState<"summary" | "details">("details");
   const [summaryBuyerSearch, setSummaryBuyerSearch] = React.useState<string>("");
@@ -844,6 +856,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const availableBrands = React.useMemo(() => {
     const set = new Set<string>();
     records.forEach((r) => {
+      if (r.item_type && r.item_type !== "product") return;
       const b = (r.brand || "").trim();
       const isUnbranded = !b || 
         b.toLowerCase() === "unassigned" || 
@@ -2838,6 +2851,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
               return {
                 ...r,
                 item_type: selectedItemType,
+                brand: isNonProduct ? "" : r.brand,
                 product_sku: isNonProduct ? "" : r.product_sku,
                 quantity: isNonProduct ? 0 : r.quantity,
                 demand_qty: isNonProduct ? 0 : r.demand_qty,
@@ -3032,7 +3046,101 @@ export function SellInModule({ profile }: SellInModuleProps) {
     const existingItems = Array.isArray(record.settlement_items) ? record.settlement_items : [];
     setSettlementItemsList(existingItems);
     setSettlementFileName(record.settlement_file_name || "");
+    setTiktokSyncStatus(null);
+
+    // If buyer / channel is TikTok, fetch registered TikTok shops and resolve Shop ID directly
+    const bCode = String(record.buyer_code || "").toLowerCase();
+    const bName = String(record.buyer_name || "").toLowerCase();
+    const ch = String(record.channel || "").toLowerCase();
+    const isTikTok = bCode.includes("tiktok") || bName.includes("tiktok") || ch.includes("tiktok");
+    if (isTikTok) {
+      fetch(`${API_BASE}/api/tiktok/shops`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && data.success && Array.isArray(data.shops) && data.shops.length > 0) {
+            setTiktokShops(data.shops);
+
+            // Read Shop ID directly from record or bound settlement data
+            const boundShopId = String(
+              record.settlement_shop_id ||
+              record.shop_id ||
+              record.tiktok_shop_id ||
+              record.raw_data?.shop_id ||
+              record.raw_data?.tiktok_shop_id ||
+              ""
+            ).trim();
+
+            if (boundShopId && data.shops.some((s: any) => String(s.id).trim() === boundShopId)) {
+              setSelectedTiktokShopId(boundShopId);
+            } else if (data.shops.length === 1) {
+              setSelectedTiktokShopId(data.shops[0].id);
+            } else {
+              setSelectedTiktokShopId("");
+            }
+          }
+        })
+        .catch(() => {});
+    }
+
     setShowSettlementModal(true);
+  };
+
+  // Sync TikTok Settlement Breakdown from Compiled Sales Data
+  const handleSyncTiktokSettlement = async () => {
+    if (!settlementTarget) return;
+    setLoadingTiktokSync(true);
+    try {
+      const selectedShopObj = tiktokShops.find((s) => s.id === selectedTiktokShopId);
+      const res = await fetch(`${API_BASE}/api/sellin/tiktok-settlement-sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          period: currentPeriod,
+          shop_id: selectedTiktokShopId,
+          shop_name: selectedShopObj?.name || ""
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || (!data.success && !data.compiled)) {
+        setTiktokSyncStatus({
+          checked: true,
+          compiled: false,
+          can_sync: false,
+          unassigned_skus: [],
+          message: data.error || "TikTok Sales Report for this period has not been compiled yet."
+        });
+        showToast(data.error || "Compilation required in TikTok Sales Report", "warning");
+        return;
+      }
+
+      if (!data.can_sync) {
+        setTiktokSyncStatus({
+          checked: true,
+          compiled: true,
+          can_sync: false,
+          unassigned_skus: data.unassigned_skus || [],
+          message: data.message || `Found ${data.unassigned_skus?.length || 0} unassigned TikTok SKUs.`
+        });
+        showToast(data.message || "Cannot sync: Unassigned SKUs must be mapped first", "warning");
+        return;
+      }
+
+      // 100% assigned and ready!
+      setTiktokSyncStatus({
+        checked: true,
+        compiled: true,
+        can_sync: true,
+        unassigned_skus: [],
+        message: data.message
+      });
+      setSettlementItemsList(data.items || []);
+      setSettlementFileName(data.file_name || `TikTok_Compile_${currentPeriod}.sync`);
+      showToast(`Loaded ${data.items?.length || 0} product items from compiled TikTok sales!`, "success");
+    } catch (err: any) {
+      showToast("Failed to sync TikTok settlement: " + err.message, "error");
+    } finally {
+      setLoadingTiktokSync(false);
+    }
   };
 
   // Download Sample Excel Template for Settlement Breakdown
@@ -3156,7 +3264,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
           id: settlementTarget.id,
           period: currentPeriod,
           items: settlementItemsList,
-          file_name: settlementFileName
+          file_name: settlementFileName,
+          shop_id: selectedTiktokShopId || null
         })
       });
       const data = await res.json();
@@ -3170,6 +3279,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   ...r,
                   settlement_items: data.settlement_items || settlementItemsList,
                   settlement_file_name: settlementFileName,
+                  settlement_shop_id: selectedTiktokShopId || r.settlement_shop_id,
+                  shop_id: selectedTiktokShopId || r.shop_id,
                   total_cost: newTotalCost,
                   gross_profit: Number(r.nett_amount || r.total_demand || 0) - newTotalCost,
                   validation_status: "valid"
@@ -3212,7 +3323,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       "Channel": r.channel || "Not Set",
       "Product SKU": r.product_sku,
       "Product Name": r.product_name,
-      "Brand": r.brand || "Unassigned",
+      "Brand": (r.item_type && r.item_type !== "product") ? "" : (r.brand || "Unassigned"),
       "Demand Qty (pcs)": Number(r.quantity || 0),
       "Unit Price ($/pcs)": Number(r.unit_price || 0),
       "Total Demand ($)": Number(r.total_demand || 0),
@@ -4936,13 +5047,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         <td className="py-2 px-3 text-zinc-600">
                           {(() => {
                             if (r.item_type && r.item_type !== "product") {
-                              if (r.brand && r.brand !== "Unassigned Brand" && r.brand !== "Unassigned") return r.brand;
-                              if (r.item_type === "bcrs") return "BCRS";
-                              if (r.item_type === "rebate") return "Sale Rebate";
-                              if (r.item_type === "fee") return "Fee";
-                              if (r.item_type === "service") return "Service";
-                              if (r.item_type === "settlement") return "Settlement";
-                              return "Non-Product";
+                              return <span className="text-zinc-300">-</span>;
                             }
                             return r.brand || "Unassigned";
                           })()}
@@ -6568,17 +6673,20 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
                   {(() => {
-                    const invs = Array.isArray(selectedInvoiceBreakdownRow.invoices) && selectedInvoiceBreakdownRow.invoices.length > 0
-                      ? selectedInvoiceBreakdownRow.invoices
-                      : (Number(selectedInvoiceBreakdownRow.total_demand || 0) > 0 || Number(selectedInvoiceBreakdownRow.demand_qty ?? selectedInvoiceBreakdownRow.quantity ?? 0) > 0)
-                        ? [{
-                            invoice_no: selectedInvoiceBreakdownRow.invoice_file_name || selectedInvoiceBreakdownRow.source_file_name || "Invoice",
-                            invoice_date: "-",
-                            qty: Number(selectedInvoiceBreakdownRow.demand_qty ?? selectedInvoiceBreakdownRow.quantity ?? 0),
-                            unit_price: Number(selectedInvoiceBreakdownRow.unit_price || 0),
-                            amount: Number(selectedInvoiceBreakdownRow.total_demand || 0)
-                          }]
-                        : [];
+                    const isCreditNote = selectedInvoiceBreakdownRow.source_type === "pdf_credit_note";
+                    const invs = isCreditNote
+                      ? []
+                      : (Array.isArray(selectedInvoiceBreakdownRow.invoices) && selectedInvoiceBreakdownRow.invoices.length > 0
+                        ? selectedInvoiceBreakdownRow.invoices
+                        : (Number(selectedInvoiceBreakdownRow.total_demand || 0) > 0 || Number(selectedInvoiceBreakdownRow.demand_qty ?? selectedInvoiceBreakdownRow.quantity ?? 0) > 0)
+                          ? [{
+                              invoice_no: selectedInvoiceBreakdownRow.invoice_file_name || selectedInvoiceBreakdownRow.source_file_name || "Invoice",
+                              invoice_date: "-",
+                              qty: Number(selectedInvoiceBreakdownRow.demand_qty ?? selectedInvoiceBreakdownRow.quantity ?? 0),
+                              unit_price: Number(selectedInvoiceBreakdownRow.unit_price || 0),
+                              amount: Number(selectedInvoiceBreakdownRow.total_demand || 0)
+                            }]
+                          : []);
 
                     if (invs.length === 0) {
                       return (
@@ -8380,114 +8488,239 @@ export function SellInModule({ profile }: SellInModuleProps) {
       )}
 
       {/* Modal: Settlement Breakdown Output Items */}
-      {showSettlementModal && settlementTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col max-h-[85vh]">
-            {/* Modal Header */}
-            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-[#0B57D0] shrink-0">
-                  <FileSpreadsheet size={16} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold text-zinc-950">Settlement Breakdown Output</h2>
-                    {batchData?.status === "published" ? (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        Published (Read-Only)
-                      </span>
-                    ) : (
-                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200">
-                        {settlementItemsList.length > 0 ? `${settlementItemsList.length} SKUs` : "Upload Required"}
-                      </span>
-                    )}
+      {showSettlementModal && settlementTarget && (() => {
+        const bCode = String(settlementTarget.buyer_code || "").toLowerCase();
+        const bName = String(settlementTarget.buyer_name || "").toLowerCase();
+        const ch = String(settlementTarget.channel || "").toLowerCase();
+        const isTikTokSettlement = bCode.includes("tiktok") || bName.includes("tiktok") || ch.includes("tiktok");
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+            <div className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col max-h-[85vh]">
+              {/* Modal Header */}
+              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-[#0B57D0] shrink-0">
+                    <FileSpreadsheet size={16} />
                   </div>
-                  <p className="text-[11px] text-zinc-500 mt-0.5">
-                    {settlementTarget.product_name || "Settlement Line"} • {settlementTarget.buyer_name || "Platform"} ({formatPeriodLabel(currentPeriod)})
-                  </p>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-semibold text-zinc-950">Settlement Breakdown Output</h2>
+                      {batchData?.status === "published" ? (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          Published (Read-Only)
+                        </span>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200">
+                          {settlementItemsList.length > 0 ? `${settlementItemsList.length} SKUs` : "Data Required"}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">
+                      {settlementTarget.product_name || "Settlement Line"} • {settlementTarget.buyer_name || "Platform"} ({formatPeriodLabel(currentPeriod)})
+                    </p>
+                  </div>
                 </div>
-              </div>
-              <button 
-                type="button" 
-                onClick={() => {
-                  setShowSettlementModal(false);
-                  setSettlementTarget(null);
-                }} 
-                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer rounded-lg hover:bg-slate-100 transition-colors"
-              >
-                <X size={16} />
-              </button>
-            </div>
-
-            {/* Hidden File Input & Upload Bar */}
-            <input 
-              type="file" 
-              ref={settlementFileInputRef}
-              accept=".xlsx,.xls,.csv"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) handleParseSettlementExcel(f);
-                e.target.value = "";
-              }}
-              className="hidden" 
-            />
-
-            <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-2">
-                {batchData?.status !== "published" && (
-                  <button
-                    type="button"
-                    onClick={() => settlementFileInputRef.current?.click()}
-                    className="h-8 px-3 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-xs font-semibold text-zinc-800 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
-                  >
-                    <Upload size={13} className="text-[#0B57D0]" />
-                    <span>Upload Excel</span>
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={handleDownloadSettlementTemplate}
-                  className="h-8 px-2.5 rounded-lg text-xs font-medium text-[#0B57D0] hover:bg-blue-50/80 transition-colors cursor-pointer flex items-center gap-1"
-                  title="Download Excel format template with columns: SKU, Description, Qty"
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setShowSettlementModal(false);
+                    setSettlementTarget(null);
+                  }} 
+                  className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer rounded-lg hover:bg-slate-100 transition-colors"
                 >
-                  <Download size={13} />
-                  <span>Download Sample Template</span>
+                  <X size={16} />
                 </button>
               </div>
 
-              {settlementFileName && (
-                <div className="flex items-center gap-1.5 text-xs text-zinc-600 bg-white px-2.5 py-1 rounded-md border border-slate-200">
-                  <FileSpreadsheet size={13} className="text-emerald-600" />
-                  <span className="font-mono font-medium max-w-[200px] truncate" title={settlementFileName}>
-                    {settlementFileName}
-                  </span>
+              {/* Hidden File Input & Upload Bar */}
+              <input 
+                type="file" 
+                ref={settlementFileInputRef}
+                accept=".xlsx,.xls,.csv"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleParseSettlementExcel(f);
+                  e.target.value = "";
+                }}
+                className="hidden" 
+              />
+
+              {/* TikTok Sync Action Bar - Conditional: Only when Buyer/Channel is TikTok */}
+              {isTikTokSettlement && batchData?.status !== "published" && (
+                <div className="px-4 py-2.5 bg-blue-50/70 border-b border-blue-200/80 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-zinc-800 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
+                      TikTok Shop:
+                    </span>
+                    <select
+                      value={selectedTiktokShopId}
+                      onChange={(e) => {
+                        setSelectedTiktokShopId(e.target.value);
+                        setTiktokSyncStatus(null);
+                      }}
+                      className="h-8 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                    >
+                      <option value="">-- Select TikTok Shop --</option>
+                      {tiktokShops.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.id})
+                        </option>
+                      ))}
+                    </select>
+
+                    <button
+                      type="button"
+                      disabled={!selectedTiktokShopId || loadingTiktokSync || (tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync)}
+                      onClick={handleSyncTiktokSettlement}
+                      className={cn(
+                        "h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer",
+                        !selectedTiktokShopId || (tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync)
+                          ? "bg-slate-200 text-zinc-400 cursor-not-allowed border border-slate-300"
+                          : "bg-[#0B57D0] hover:bg-[#0842A0] text-white"
+                      )}
+                      title={
+                        !selectedTiktokShopId
+                          ? "Please select a TikTok Shop first"
+                          : tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync
+                          ? "Sync disabled: unassigned SKUs must be mapped in TikTok Products first"
+                          : "Load and aggregate physical items from compiled TikTok sales"
+                      }
+                    >
+                      <RefreshCw size={12} className={cn(loadingTiktokSync && "animate-spin")} />
+                      <span>{loadingTiktokSync ? "Loading..." : "Sync from TikTok Orders"}</span>
+                    </button>
+                  </div>
+
+                  {tiktokSyncStatus?.checked && tiktokSyncStatus.can_sync && (
+                    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1">
+                      <CheckCircle2 size={12} />
+                      100% SKUs Assigned
+                    </span>
+                  )}
                 </div>
               )}
-            </div>
 
-            {/* Modal Body / Table Preview */}
-            <div className="flex-1 min-h-[220px] max-h-[380px] overflow-y-auto">
-              {settlementItemsList.length === 0 ? (
-                <div className="flex flex-col items-center justify-center p-8 text-center text-zinc-500">
-                  <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-zinc-400 mb-3">
-                    <FileSpreadsheet size={24} />
+              {/* Warning Banner: Unassigned SKUs or Compilation Required */}
+              {isTikTokSettlement && tiktokSyncStatus?.checked && !tiktokSyncStatus.can_sync && (
+                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 text-xs text-amber-900 shrink-0">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="font-semibold text-amber-950">
+                        {!tiktokSyncStatus.compiled
+                          ? "TikTok Sales Report Not Compiled"
+                          : `Sync Disabled: ${tiktokSyncStatus.unassigned_skus.length} Unassigned TikTok SKU(s) Found`}
+                      </p>
+                      <p className="text-[11px] text-amber-800 mt-0.5">
+                        {tiktokSyncStatus.message}
+                      </p>
+                      {tiktokSyncStatus.unassigned_skus && tiktokSyncStatus.unassigned_skus.length > 0 && (
+                        <div className="mt-2 max-h-24 overflow-y-auto bg-white/90 rounded border border-amber-200/80 p-1.5 divide-y divide-amber-100">
+                          {tiktokSyncStatus.unassigned_skus.map((u, i) => (
+                            <div key={i} className="py-0.5 flex items-center justify-between text-[11px] font-mono">
+                              <span className="font-semibold text-amber-950 truncate max-w-[200px]" title={u.seller_sku}>
+                                {u.seller_sku}
+                              </span>
+                              <span className="text-zinc-500 font-sans truncate max-w-[240px]" title={u.product_name}>
+                                {u.product_name}
+                              </span>
+                              <span className="text-amber-800 font-semibold px-1 bg-amber-100 rounded text-[10px]">
+                                {u.count} orders
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <h3 className="text-sm font-semibold text-zinc-800">No settlement summary uploaded</h3>
-                  <p className="text-xs text-zinc-500 mt-1 max-w-sm">
-                    Upload an Excel file with format <span className="font-mono font-bold text-zinc-700">SKU, Description, Qty</span> to track physical restock units and landed costs.
-                  </p>
+                </div>
+              )}
+
+              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
+                <div className="flex items-center gap-2">
                   {batchData?.status !== "published" && (
                     <button
                       type="button"
                       onClick={() => settlementFileInputRef.current?.click()}
-                      className="mt-4 h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                      className="h-8 px-3 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-xs font-semibold text-zinc-800 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
                     >
-                      <Upload size={13} />
-                      <span>Upload Excel File</span>
+                      <Upload size={13} className="text-[#0B57D0]" />
+                      <span>Upload Excel</span>
                     </button>
                   )}
+                  <button
+                    type="button"
+                    onClick={handleDownloadSettlementTemplate}
+                    className="h-8 px-2.5 rounded-lg text-xs font-medium text-[#0B57D0] hover:bg-blue-50/80 transition-colors cursor-pointer flex items-center gap-1"
+                    title="Download Excel format template with columns: SKU, Description, Qty"
+                  >
+                    <Download size={13} />
+                    <span>Download Sample Template</span>
+                  </button>
                 </div>
-              ) : (
+
+                {settlementFileName && (
+                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 bg-white px-2.5 py-1 rounded-md border border-slate-200">
+                    <FileSpreadsheet size={13} className="text-emerald-600" />
+                    <span className="font-mono font-medium max-w-[200px] truncate" title={settlementFileName}>
+                      {settlementFileName}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Body / Table Preview */}
+              <div className="flex-1 min-h-[220px] max-h-[380px] overflow-y-auto">
+                {settlementItemsList.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center p-8 text-center text-zinc-500">
+                    <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-zinc-400 mb-3">
+                      <FileSpreadsheet size={24} />
+                    </div>
+                    <h3 className="text-sm font-semibold text-zinc-800">
+                      {isTikTokSettlement ? "No settlement items loaded" : "No settlement summary uploaded"}
+                    </h3>
+                    <p className="text-xs text-zinc-500 mt-1 max-w-sm">
+                      {isTikTokSettlement
+                        ? "Select your TikTok Shop and click 'Sync from TikTok Orders' to load physical quantities and landed costs from compiled sales."
+                        : "Upload an Excel file with format SKU, Description, Qty to track physical restock units and landed costs."}
+                    </p>
+                    {batchData?.status !== "published" && (
+                      <div className="mt-4 flex items-center gap-2">
+                        {isTikTokSettlement && (
+                          <button
+                            type="button"
+                            disabled={loadingTiktokSync || (tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync)}
+                            onClick={handleSyncTiktokSettlement}
+                            className={cn(
+                              "h-8 px-4 rounded-lg text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer",
+                              tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync
+                                ? "bg-slate-200 text-zinc-400 cursor-not-allowed border border-slate-300"
+                                : "bg-[#0B57D0] hover:bg-[#0842A0]"
+                            )}
+                          >
+                            <RefreshCw size={13} className={cn(loadingTiktokSync && "animate-spin")} />
+                            <span>Sync from TikTok Orders</span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => settlementFileInputRef.current?.click()}
+                          className={cn(
+                            "h-8 px-4 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer",
+                            isTikTokSettlement
+                              ? "bg-white hover:bg-slate-100 border border-slate-300 text-zinc-700"
+                              : "bg-[#0B57D0] hover:bg-[#0842A0] text-white"
+                          )}
+                        >
+                          <Upload size={13} />
+                          <span>Upload Excel File</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 text-zinc-600 font-semibold z-10">
                     <tr>
@@ -8586,7 +8819,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
             </div>
           </div>
         </div>
-      )}
+      );
+    })()}
 
       {/* Confirmation Dialog */}
       <ConfirmDialog
