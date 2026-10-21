@@ -38,12 +38,13 @@ export interface CatalogProduct {
 export interface BrandInfo {
   id: string;
   display_name: string;
+  full_brand_name?: string;
   description?: string;
   [key: string]: any;
 }
 
 // Preload and convert an image URL to a clean compressed data URL (capped at 300px for high-speed PDF rendering)
-async function loadImageAsDataUrl(url: string, isLogo = false): Promise<string | null> {
+async function loadImageAsDataUrl(url: string, isLogo = false, isWatermark = false): Promise<string | null> {
   if (!url) return null;
   return new Promise((resolve) => {
     const timer = setTimeout(() => resolve(null), 3500); // 3.5s fail-safe timeout
@@ -53,7 +54,7 @@ async function loadImageAsDataUrl(url: string, isLogo = false): Promise<string |
       clearTimeout(timer);
       try {
         const canvas = document.createElement("canvas");
-        const maxDim = isLogo ? 320 : 260; // Lightweight max thumbnail size
+        const maxDim = isWatermark ? 450 : (isLogo ? 320 : 260); // Lightweight max thumbnail size
         let w = img.naturalWidth || maxDim;
         let h = img.naturalHeight || maxDim;
 
@@ -71,6 +72,27 @@ async function loadImageAsDataUrl(url: string, isLogo = false): Promise<string |
         canvas.height = h;
         const ctx = canvas.getContext("2d");
         if (ctx) {
+          if (isWatermark) {
+            ctx.clearRect(0, 0, w, h);
+            ctx.drawImage(img, 0, 0, w, h);
+            const imgData = ctx.getImageData(0, 0, w, h);
+            const data = imgData.data;
+            for (let i = 0; i < data.length; i += 4) {
+              const a = data[i + 3];
+              if (a > 0) {
+                // Recolor all visible pixels to official HSG Theme Sage Green #3A4B38 (58, 75, 56)
+                data[i] = 58;
+                data[i + 1] = 75;
+                data[i + 2] = 56;
+                // Soft translucent watermark alpha (~7.5% opacity)
+                data[i + 3] = Math.round((a / 255) * 19);
+              }
+            }
+            ctx.putImageData(imgData, 0, 0);
+            resolve(canvas.toDataURL("image/png"));
+            return;
+          }
+
           if (!isLogo) {
             ctx.fillStyle = "#ffffff";
             ctx.fillRect(0, 0, w, h);
@@ -159,8 +181,8 @@ export async function generateExportCatalogPdf(
     const rankA = Number(brandA?.rank || 999);
     const rankB = Number(brandB?.rank || 999);
     if (rankA !== rankB) return rankA - rankB;
-    const nameA = (brandA?.display_name || a).toLowerCase();
-    const nameB = (brandB?.display_name || b).toLowerCase();
+    const nameA = (brandA?.full_brand_name || brandA?.display_name || a).toLowerCase();
+    const nameB = (brandB?.full_brand_name || brandB?.display_name || b).toLowerCase();
     return nameA.localeCompare(nameB);
   });
 
@@ -183,27 +205,43 @@ export async function generateExportCatalogPdf(
   // 2. Preload 1:1 image Data URLs for all products & Company Logo
   const productImagesMap: { [sku: string]: string | null } = {};
   let companyLogoBase64: string | null = null;
+  let watermarkBase64: string | null = null;
 
-  await Promise.all([
-    loadImageAsDataUrl("/assets/logo/Logo.png", true).then((res) => {
-      companyLogoBase64 = res;
-    }),
-    ...products.map(async (prod) => {
+  // Prioritize new official HSG Logo
+  const compLogo =
+    await loadImageAsDataUrl("/assets/logo/HSG Logo.jpeg", true) ||
+    await loadImageAsDataUrl("/assets/logo/HSG Logo.jpg", true) ||
+    await loadImageAsDataUrl("/HSG Logo.jpeg", true) ||
+    await loadImageAsDataUrl("/hsg-logo.jpeg", true) ||
+    await loadImageAsDataUrl("/assets/logo/Logo.png", true) ||
+    await loadImageAsDataUrl("/logo.png", true);
+  if (compLogo) companyLogoBase64 = compLogo;
+
+  // Preload Translucent Colored Watermark Emblem
+  const wmRes =
+    await loadImageAsDataUrl("/assets/logo/Logo-Watermark-Opt.png", true) ||
+    await loadImageAsDataUrl("/assets/logo/Logo-Watermark-Theme.png", true) ||
+    await loadImageAsDataUrl("/assets/logo/White-Logo.webp", true, true) ||
+    await loadImageAsDataUrl("/assets/logo/White-Logo.png", true, true);
+  if (wmRes) watermarkBase64 = wmRes;
+
+  await Promise.all(
+    products.map(async (prod) => {
       const meta = prod.product_meta || {};
       const imgUrl = prod.image || (meta.Images && meta.Images[0]) || "";
       if (imgUrl) {
         productImagesMap[prod.sku] = await loadImageAsDataUrl(imgUrl);
       }
     })
-  ]);
+  );
 
   // 3. FRONT COVER / CLEAN WHITE PRINT HEADER
   // Header container
   doc.setFillColor(255, 255, 255);
   doc.rect(0, 0, pageWidth, 42, "F");
 
-  // Top Accent Gold Line
-  doc.setFillColor(180, 140, 45); // Deep Gold #b48c2d
+  // Top Accent Theme Line (#3A4B38)
+  doc.setFillColor(58, 75, 56);
   doc.rect(0, 0, pageWidth, 3, "F");
 
   // Company Logo (Rendered on top left with transparent alpha)
@@ -223,19 +261,20 @@ export async function generateExportCatalogPdf(
   doc.setTextColor(15, 23, 42); // Slate 900
   doc.text("HSG GLOBAL PTE LTD", textStartX, 15);
 
-  // Subtitle / Expo Badge
+  // Subtitle / Catalog Badge
+  const currentYear = new Date().getFullYear();
   const headerTitle =
     customOptions?.headerTitle ||
-    "OFFICIAL EXPORT PRODUCT CATALOG";
+    `MASTER PRODUCT CATALOG ${currentYear}`;
   doc.setFontSize(8.5);
   doc.setFont("helvetica", "bold");
-  doc.setTextColor(180, 140, 45); // Deep Gold
+  doc.setTextColor(58, 75, 56); // Theme Sage Green #3A4B38
   doc.text(headerTitle, textStartX, 21);
 
-  // Contact Info & Export Terms
+  // Contact Info & Terms
   const subtext =
     customOptions?.subtext ||
-    "Contact: sales@hsg-global.com | hsgglobal.sg\nSingapore • Malaysia • Global Foodservice & Retail FMCG | FOB / CIF Terms";
+    "Contact: sales@hsg-global.com | https://hsgglobal.sg\nSingapore • Malaysia • Global FMCG Distribution & Brand Gateway | Distribution & Supply Terms";
   doc.setFontSize(7.5);
   doc.setFont("helvetica", "normal");
   doc.setTextColor(71, 85, 105); // Slate 600
@@ -248,19 +287,47 @@ export async function generateExportCatalogPdf(
   doc.setLineWidth(0.5);
   doc.line(14, 40, pageWidth - 14, 40);
 
+  // Helper: Draw Translucent Brand Watermark Emblem in Page Center
+  const drawnWatermarkPages = new Set<number>();
+  const drawPageWatermark = (pageNum?: number) => {
+    if (!watermarkBase64) return;
+    const targetPage = pageNum || (doc.internal.pages.length - 1);
+    if (drawnWatermarkPages.has(targetPage)) return;
+    drawnWatermarkPages.add(targetPage);
+    try {
+      const origPage = (doc.internal as any).getCurrentPageInfo ? (doc.internal as any).getCurrentPageInfo().pageNumber : 1;
+      doc.setPage(targetPage);
+      const wmW = 110;
+      const wmH = 110;
+      const wmX = (pageWidth - wmW) / 2; // Centered horizontally (50mm on A4)
+      const wmY = 125; // Centered in the middle-lower region of A4
+      doc.addImage(watermarkBase64, "PNG", wmX, wmY, wmW, wmH);
+      doc.setPage(origPage);
+    } catch {}
+  };
+
+  // Draw watermark on initial page
+  drawPageWatermark(1);
+
   // 4. RENDER INDIVIDUAL BRAND BLOCKS & SEPARATE TABLES
   let currentY = 52; // Generous breathing space below header
 
   sortedBrandIds.forEach((bId) => {
     const brandProducts = brandGroups[bId];
     const brandObj = brandMap.get(bId);
-    const brandTitle = (brandObj?.display_name || bId).toUpperCase();
-    const brandDesc = brandObj?.description || "Authentic Southeast Asian heritage brand, export ready with global compliance.";
+    const brandTitle = (brandObj?.full_brand_name || brandObj?.display_name || bId).toUpperCase();
+    const brandDesc = brandObj?.description || "Authentic Southeast Asian heritage culinary brand, commercially packaged for retail supermarkets and foodservice distribution.";
+
+    const descLines = doc.splitTextToSize(brandDesc, pageWidth - 28);
+    const descHeight = (descLines.length * 3.6);
+    const brandHeaderHeight = 4.5 + descHeight + 6;
+    const minTableFirstRowHeight = 38; // Table header (8mm) + minimum 1st product row (~30mm)
 
     // Check if we need a new page for the upcoming brand title + initial table rows
-    if (currentY > pageHeight - 55) {
+    // Ensures the brand header NEVER appears alone at the bottom of a page without product rows
+    if (currentY + brandHeaderHeight + minTableFirstRowHeight > pageHeight - 15) {
       doc.addPage();
-      currentY = 20;
+      currentY = 22;
     }
 
     // --- BRAND SECTION HEADER (OUTSIDE TABLE) ---
@@ -274,13 +341,10 @@ export async function generateExportCatalogPdf(
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     doc.setTextColor(100, 116, 139); // Slate 500
-    const descLines = doc.splitTextToSize(brandDesc, pageWidth - 28);
     doc.text(descLines, 14, currentY + 4.5);
 
-    const descHeight = (descLines.length * 3.6);
-
-    // Decorative slim gold underline
-    doc.setFillColor(180, 140, 45); // Deep Gold
+    // Decorative slim theme underline
+    doc.setFillColor(58, 75, 56);
     doc.rect(14, currentY + 4.5 + descHeight + 1, 28, 0.8, "F");
 
     currentY += 4.5 + descHeight + 5;
@@ -402,6 +466,9 @@ export async function generateExportCatalogPdf(
         2: { cellWidth: 65 }  // Packaging Details 2-Column Grid (Generous width to prevent wrapping)
       },
       margin: { left: 14, right: 14, bottom: 20 },
+      willDrawPage: (data: any) => {
+        drawPageWatermark(data.pageNumber);
+      },
       didDrawCell: (data: any) => {
         if (data.section !== "body") return;
         const pData = productDataMap[data.row.index];
@@ -463,10 +530,10 @@ export async function generateExportCatalogPdf(
 
           curY += 3.2;
 
-          // 4. Category Tag (Deep Gold)
+          // 4. Category Tag
           doc.setFont("helvetica", "bold");
           doc.setFontSize(6.5);
-          doc.setTextColor(180, 140, 45); // Deep Gold
+          doc.setTextColor(58, 75, 56);
           doc.text(`Category: ${pData.category}`, cellX + 2.5, curY);
         }
 
@@ -479,15 +546,15 @@ export async function generateExportCatalogPdf(
           let row3Y = row2Y + 4;
           let row4Y = row3Y + 4;
 
-          // Row 1: Ea/Ctn & Ctn/Plt
+          // Row 1: Pcs/Ctn & Ctn/Pallet
           doc.setFont("helvetica", "normal");
           doc.setFontSize(6.5);
           doc.setTextColor(51, 65, 85); // Slate 700
-          doc.text(`Ea/Ctn: ${pData.eaCtn}`, col1X, row1Y);
-          doc.text(`Ctn/Plt: ${pData.ctnPerPlt}`, col2X, row1Y);
+          doc.text(`Pcs/Ctn: ${pData.eaCtn}`, col1X, row1Y);
+          doc.text(`Ctn/Pallet: ${pData.ctnPerPlt}`, col2X, row1Y);
 
           // Row 2: Weight & Ctn Dim (Safely within 32mm width, never touching right border)
-          doc.text(`Weight: ${pData.weight}`, col1X, row2Y);
+          doc.text(`Ctn Weight: ${pData.weight}`, col1X, row2Y);
           doc.text(`Ctn Dim: ${pData.dimStr}`, col2X, row2Y);
 
           // Row 3: Store & Shelf
@@ -525,22 +592,25 @@ export async function generateExportCatalogPdf(
   const totalPages = doc.internal.pages.length - 1;
   const footerLabel =
     customOptions?.footerText ||
-    "Official Export Catalog";
+    `Master Product Catalog ${new Date().getFullYear()}`;
 
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
+    if (!drawnWatermarkPages.has(i)) {
+      drawPageWatermark(i);
+    }
     const str = `Page ${i} of ${totalPages} | HSG Global Pte Ltd • ${footerLabel} • Inquiries: sales@hsg-global.com`;
     doc.setFontSize(7);
     doc.setTextColor(100, 116, 139);
     doc.text(str, pageWidth / 2, pageHeight - 8, { align: "center" });
 
-    // Subtle gold footer hairline (14mm margin matching table and header)
-    doc.setFillColor(180, 140, 45);
+    // Subtle theme footer hairline (14mm margin matching table and header)
+    doc.setFillColor(58, 75, 56);
     doc.rect(14, pageHeight - 12, pageWidth - 28, 0.3, "F");
   }
 
   // Save the PDF directly to client
-  const filename = `HSG_Global_Official_Export_Catalog.pdf`;
+  const filename = `HSG_Global_Master_Product_Catalog.pdf`;
   doc.save(filename);
 
   // Background async upload to Cloudflare R2 cache if catalogHash provided

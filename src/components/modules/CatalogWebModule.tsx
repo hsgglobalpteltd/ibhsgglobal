@@ -49,6 +49,7 @@ import {
 import { NavigationTabs, TabItem } from "../navigation-tabs";
 import { showToast } from "@/lib/toast";
 import { generateExportCatalogPdf } from "@/utils/catalogPdf";
+import { generateExportCatalogPdfV2 } from "@/utils/catalogPdfV2";
 
 interface CsContextItem {
   id: string;
@@ -204,9 +205,9 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
     ],
     booking_start_date: "2026-08-27",
     booking_end_date: "2026-08-29",
-    footer_showcase_text: "HSG Global Official Export & Trade Showcase",
+    footer_showcase_text: "HSG Global Official Product & Trade Showcase",
     email_subject_tag: "HSG Global Trade",
-    email_greeting: "Thank you for your interest in HSG Global Pte Ltd! We are pleased to share our official export catalog and product portfolio with you."
+    email_greeting: "Thank you for your interest in HSG Global Pte Ltd! We are pleased to share our official product catalog and portfolio with you."
   });
 
   // Settings Tab States (Email, WhatsApp, Order & Prospect Automations)
@@ -261,6 +262,8 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
     carton_h_mm: "",
     list_in_catalog: true
   });
+  const [isCustomBrand, setIsCustomBrand] = React.useState(false);
+  const [customBrandName, setCustomBrandName] = React.useState("");
 
   // Promote to Master Product State
   const [promoteSkuInput, setPromoteSkuInput] = React.useState("");
@@ -271,6 +274,12 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
   const [uploadingProductPhoto, setUploadingProductPhoto] = React.useState(false);
   const addProductPhotoInputRef = React.useRef<HTMLInputElement | null>(null);
   const editProductPhotoInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  // Brand Cover & Logo Upload States & Refs
+  const [uploadingBrandCover, setUploadingBrandCover] = React.useState(false);
+  const [uploadingBrandLogo, setUploadingBrandLogo] = React.useState(false);
+  const brandCoverInputRef = React.useRef<HTMLInputElement | null>(null);
+  const brandLogoInputRef = React.useRef<HTMLInputElement | null>(null);
 
   // All merged brands (including brands used in temp products not yet registered in brands_db)
   const allMergedBrands = React.useMemo(() => {
@@ -779,24 +788,38 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
   // 3.6 Create New Catalog-Only Product
   const handleAddCatalogProduct = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProductForm.brands_id || !newProductForm.display_name.trim()) {
+    const selectedBrand = isCustomBrand ? customBrandName.trim() : newProductForm.brands_id.trim();
+    if (!selectedBrand || !newProductForm.display_name.trim()) {
       showToast("Brand and Product Name are required", "warning");
       return;
     }
     setAddingProduct(true);
     try {
+      const payload = {
+        ...newProductForm,
+        brands_id: selectedBrand
+      };
+
       const res = await fetch(`${WORKER_URL}/api/exhibitor/add-catalog-product`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newProductForm)
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || "Failed to add catalog product");
 
       const created = data.product;
       setProducts((prev) => [...prev, created]);
+      if (data.new_brand) {
+        setBrands((prev) => {
+          if (prev.some((b) => b.id === data.new_brand.id)) return prev;
+          return [...prev, data.new_brand];
+        });
+      }
       showToast(`Catalog product "${created.display_name}" created successfully!`, "success");
       setIsAddProductModalOpen(false);
+      setIsCustomBrand(false);
+      setCustomBrandName("");
       setNewProductForm({
         brands_id: "",
         display_name: "",
@@ -911,22 +934,99 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
     if (!editingBrand) return;
     setSavingBrand(true);
 
+    // Brand ID must be permanent, immutable, and NEVER overwritten by display name!
+    const brandId = editingBrand._original_id || editingBrand.id;
+    const newName = (editingBrand.display_name || "").trim();
+
+    const payload = {
+      ...editingBrand,
+      id: brandId,
+      old_id: brandId,
+      display_name: newName
+    };
+
     try {
       const res = await fetch(`${WORKER_URL}/api/exhibitor/update-brand`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editingBrand)
+        body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error("Failed to update brand details");
-      showToast(`Brand ${editingBrand.id} updated`, "success");
-      setBrands((prev) =>
-        prev.map((b) => (b.id === editingBrand.id ? { ...b, ...editingBrand } : b))
-      );
+      showToast(`Brand updated successfully`, "success");
+
+      // Update brands array in React state without altering the brand id
+      setBrands((prev) => {
+        const index = prev.findIndex((b) => b.id === brandId);
+        if (index >= 0) {
+          const updated = [...prev];
+          updated[index] = { ...updated[index], ...payload };
+          return updated;
+        } else {
+          return [...prev, payload];
+        }
+      });
+
       setEditingBrand(null);
     } catch (err: any) {
       showToast(err.message || "Failed to update brand", "error");
     } finally {
       setSavingBrand(false);
+    }
+  };
+
+  // Upload Brand Cover Image
+  const handleUploadBrandCover = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingBrand) return;
+    setUploadingBrandCover(true);
+    try {
+      const { base64Data, filename } = await compressImageToWebp(file, 1600, 600 * 1024);
+      const res = await fetch(`${WORKER_URL}/api/exhibitor/upload-logo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: "covers",
+          filename: `cover_${Date.now()}_${filename}`,
+          base64Data
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || "Failed to upload cover");
+      setEditingBrand((prev: any) => ({ ...prev, cover_img: data.url }));
+      showToast("Brand cover uploaded successfully", "success");
+    } catch (err: any) {
+      showToast(err.message || "Failed to upload cover", "error");
+    } finally {
+      setUploadingBrandCover(false);
+      if (brandCoverInputRef.current) brandCoverInputRef.current.value = "";
+    }
+  };
+
+  // Upload Brand Logo
+  const handleUploadBrandLogo = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingBrand) return;
+    setUploadingBrandLogo(true);
+    try {
+      const { base64Data, filename } = await compressImageToWebp(file, 800, 300 * 1024);
+      const res = await fetch(`${WORKER_URL}/api/exhibitor/upload-logo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category: "brands",
+          filename: `logo_${Date.now()}_${filename}`,
+          base64Data
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || "Failed to upload logo");
+      setEditingBrand((prev: any) => ({ ...prev, logo_image: data.url }));
+      showToast("Brand logo uploaded successfully", "success");
+    } catch (err: any) {
+      showToast(err.message || "Failed to upload logo", "error");
+    } finally {
+      setUploadingBrandLogo(false);
+      if (brandLogoInputRef.current) brandLogoInputRef.current.value = "";
     }
   };
 
@@ -1048,6 +1148,43 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
       showToast(err.message || "Failed to generate PDF catalog", "error");
     } finally {
       setGeneratingPdf(false);
+    }
+  };
+
+  const [generatingPdfV2, setGeneratingPdfV2] = React.useState(false);
+
+  const handleDownloadPdfV2 = async () => {
+    setGeneratingPdfV2(true);
+    try {
+      showToast("Compiling Master Catalog V2 (Lookbook Edition)...", "success");
+
+      const cRes = await fetch(`${WORKER_URL}/api/exhibitor/catalog-products`);
+      if (!cRes.ok) throw new Error("Failed to fetch active catalog dataset");
+      const cData = await cRes.json();
+
+      const activeProds = cData.products || [];
+      const activeBrands = cData.brands || [];
+      const catalogHash = cData.catalog_hash || `manual_${Date.now()}`;
+
+      await generateExportCatalogPdfV2(
+        activeProds,
+        activeBrands,
+        "HSG Global Internal Admin",
+        "HSG Global Pte. Ltd.",
+        catalogHash,
+        {
+          headerTitle: layoutConfig.pdf_header_title,
+          subtext: layoutConfig.pdf_subtext,
+          footerText: layoutConfig.pdf_footer_text
+        }
+      );
+
+      showToast("PDF Catalog V2 generated & downloaded successfully!", "success");
+    } catch (err: any) {
+      console.error("PDF V2 generation failed:", err);
+      showToast(err.message || "Failed to generate PDF V2", "error");
+    } finally {
+      setGeneratingPdfV2(false);
     }
   };
 
@@ -1750,7 +1887,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       </label>
                       <input
                         type="text"
-                        placeholder="Official Export Showcase"
+                        placeholder="Official Product Showcase"
                         value={layoutConfig.footer_showcase_text || ""}
                         onChange={(e) =>
                           setLayoutConfig({ ...layoutConfig, footer_showcase_text: e.target.value })
@@ -1789,8 +1926,8 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                       </label>
                       <textarea
                         rows={2}
-                        placeholder="Thank you for your interest in HSG Global Pte Ltd! We are pleased to share our official export catalog and product portfolio with you."
-                        value={layoutConfig.email_greeting ?? "Thank you for your interest in HSG Global Pte Ltd! We are pleased to share our official export catalog and product portfolio with you."}
+                        placeholder="Thank you for your interest in HSG Global Pte Ltd! We are pleased to share our official product catalog and portfolio with you."
+                        value={layoutConfig.email_greeting ?? "Thank you for your interest in HSG Global Pte Ltd! We are pleased to share our official product catalog and portfolio with you."}
                         onChange={(e) =>
                           setLayoutConfig({ ...layoutConfig, email_greeting: e.target.value })
                         }
@@ -2029,7 +2166,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                   <div>
                     <h4 className="text-xs font-bold text-zinc-900 flex items-center gap-1.5">
                       <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
-                      <span>Official Export Catalog PDF Settings</span>
+                      <span>Master Product Catalog PDF Settings</span>
                     </h4>
                     <p className="text-[11px] text-zinc-500 mt-0.5">
                       Headers, contact details, and footer text rendered on the generated PDF catalog.
@@ -2044,8 +2181,8 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                         </label>
                         <input
                           type="text"
-                          placeholder="OFFICIAL EXPORT PRODUCT CATALOG"
-                          value={layoutConfig.pdf_header_title ?? "OFFICIAL EXPORT PRODUCT CATALOG"}
+                          placeholder="HSG GLOBAL MASTER PRODUCT CATALOG"
+                          value={layoutConfig.pdf_header_title ?? "HSG GLOBAL MASTER PRODUCT CATALOG"}
                           onChange={(e) =>
                             setLayoutConfig({ ...layoutConfig, pdf_header_title: e.target.value })
                           }
@@ -2059,8 +2196,8 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                         </label>
                         <input
                           type="text"
-                          placeholder="Official Export Catalog"
-                          value={layoutConfig.pdf_footer_text ?? "Official Export Catalog"}
+                          placeholder="HSG Global Master Product Catalog"
+                          value={layoutConfig.pdf_footer_text ?? "HSG Global Master Product Catalog"}
                           onChange={(e) =>
                             setLayoutConfig({ ...layoutConfig, pdf_footer_text: e.target.value })
                           }
@@ -2086,28 +2223,51 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                   </div>
                 </div>
 
-                {/* Right Side: Action Button */}
+                {/* Right Side: Action Buttons */}
                 <div className="flex flex-col items-start lg:items-end gap-1.5 shrink-0 pt-1 lg:pt-0">
-                  <button
-                    onClick={handleDownloadAndGeneratePdf}
-                    disabled={generatingPdf}
-                    type="button"
-                    className="h-9 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs flex items-center gap-2 transition-all shadow-xs cursor-pointer disabled:opacity-50"
-                  >
-                    {generatingPdf ? (
-                      <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        <span>Generating PDF...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Download className="w-4 h-4" />
-                        <span>Download Official Catalog PDF</span>
-                      </>
-                    )}
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={handleDownloadAndGeneratePdf}
+                      disabled={generatingPdf}
+                      type="button"
+                      className="h-9 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-zinc-800 font-semibold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                      title="Download standard tabular PDF"
+                    >
+                      {generatingPdf ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                          <span>Generating v1...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Download className="w-3.5 h-3.5 text-zinc-600" />
+                          <span>Download PDF (v1)</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={handleDownloadPdfV2}
+                      disabled={generatingPdfV2}
+                      type="button"
+                      className="h-9 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+                      title="Preview V2 Lookbook with brand covers & logistics specs"
+                    >
+                      {generatingPdfV2 ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                          <span>Generating V2...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                          <span>Preview PDF v2 (Lookbook)</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                   <span className="text-[10px] text-zinc-400">
-                    Compiles all active brands &amp; products into PDF
+                    V2 features centered brand covers &amp; master carton specs
                   </span>
                 </div>
               </div>
@@ -2170,7 +2330,11 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
 
                   {/* ADD CATALOG PRODUCT BUTTON */}
                   <button
-                    onClick={() => setIsAddProductModalOpen(true)}
+                    onClick={() => {
+                      setIsCustomBrand(false);
+                      setCustomBrandName("");
+                      setIsAddProductModalOpen(true);
+                    }}
                     type="button"
                     className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] active:scale-98 text-white font-semibold text-xs flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
                   >
@@ -2280,7 +2444,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                           {/* Brand Identity */}
                           <div className="min-w-0 flex items-center gap-2 flex-wrap">
                             <h3 className="text-xs font-bold text-zinc-950">
-                              {b.display_name}
+                              {b.full_brand_name || b.display_name}
                             </h3>
                             <span className="text-[11px] text-zinc-500 font-medium shrink-0">
                               ({activeListedCount}/{allBrandProds.length} in catalog • {activeOrderCount}/{allBrandProds.length} accepting orders)
@@ -2296,7 +2460,7 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                         <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
                           <button
                             type="button"
-                            onClick={() => setEditingBrand(b)}
+                            onClick={() => setEditingBrand({ ...b, _original_id: b.id })}
                             className="h-6.5 px-2 rounded-md bg-white hover:bg-slate-50 border border-slate-200 text-zinc-700 text-[11px] font-medium transition-all cursor-pointer inline-flex items-center gap-1 shadow-2xs"
                           >
                             <Edit2 className="w-2.5 h-2.5 text-zinc-500" />
@@ -3724,7 +3888,6 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
             <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div>
                 <h3 className="font-bold text-sm text-zinc-900">Edit Brand Information</h3>
-                <span className="font-mono text-xs text-[#0B57D0] font-semibold">{editingBrand.id}</span>
               </div>
               <button
                 onClick={() => setEditingBrand(null)}
@@ -3749,6 +3912,19 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
               </div>
 
               <div>
+                <label className="block text-xs font-semibold text-zinc-700 mb-1">Full Brand Name (Official Catalog Title)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Bibik Express Authentic Asian Pastes"
+                  value={editingBrand.full_brand_name || ""}
+                  onChange={(e) =>
+                    setEditingBrand({ ...editingBrand, full_brand_name: e.target.value })
+                  }
+                  className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                />
+              </div>
+
+              <div>
                 <label className="block text-xs font-semibold text-zinc-700 mb-1">Catalog Description</label>
                 <textarea
                   rows={3}
@@ -3758,6 +3934,110 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                   }
                   className="w-full p-2.5 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white resize-none focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
                 />
+              </div>
+
+              {/* Brand Cover Banner */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-zinc-700">Brand Cover Banner</label>
+                  <button
+                    type="button"
+                    disabled={uploadingBrandCover}
+                    onClick={() => brandCoverInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#0B57D0] hover:text-[#0842A0] cursor-pointer"
+                  >
+                    {uploadingBrandCover ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                    <span>{uploadingBrandCover ? "Uploading..." : "Upload Cover Image"}</span>
+                  </button>
+                  <input
+                    ref={brandCoverInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleUploadBrandCover}
+                  />
+                </div>
+
+                {editingBrand.cover_img ? (
+                  <div className="relative w-full h-28 rounded-lg overflow-hidden border border-slate-200 bg-slate-900 group mb-2">
+                    <img
+                      src={editingBrand.cover_img}
+                      alt="Brand Cover"
+                      className="w-full h-full object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setEditingBrand({ ...editingBrand, cover_img: "" })}
+                      className="absolute top-2 right-2 w-6 h-6 rounded-full bg-red-600/90 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow-sm"
+                      title="Remove Cover Image"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="w-full h-20 rounded-lg border border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-zinc-400 mb-2">
+                    <ImageIcon className="w-5 h-5 mb-1 text-slate-300" />
+                    <span className="text-[10px]">No cover banner uploaded yet</span>
+                  </div>
+                )}
+
+                <input
+                  type="text"
+                  placeholder="Or paste Cover Image URL (https://...)"
+                  value={editingBrand.cover_img || ""}
+                  onChange={(e) => setEditingBrand({ ...editingBrand, cover_img: e.target.value })}
+                  className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-[11px] text-zinc-800 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                />
+              </div>
+
+              {/* Brand Logo */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-zinc-700">Brand Logo / Crest</label>
+                  <button
+                    type="button"
+                    disabled={uploadingBrandLogo}
+                    onClick={() => brandLogoInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#0B57D0] hover:text-[#0842A0] cursor-pointer"
+                  >
+                    {uploadingBrandLogo ? <Loader2 className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                    <span>{uploadingBrandLogo ? "Uploading..." : "Upload Logo"}</span>
+                  </button>
+                  <input
+                    ref={brandLogoInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleUploadBrandLogo}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {editingBrand.logo_image ? (
+                    <div className="relative w-14 h-10 rounded-lg border border-slate-200 bg-slate-100 p-1 flex items-center justify-center shrink-0 group">
+                      <img
+                        src={editingBrand.logo_image}
+                        alt="Logo"
+                        className="max-w-full max-h-full object-contain"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setEditingBrand({ ...editingBrand, logo_image: "" })}
+                        className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer shadow-sm"
+                        title="Remove Logo"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ) : null}
+                  <input
+                    type="text"
+                    placeholder="Or paste Logo Image URL (https://...)"
+                    value={editingBrand.logo_image || ""}
+                    onChange={(e) => setEditingBrand({ ...editingBrand, logo_image: e.target.value })}
+                    className="flex-1 h-8 px-2.5 rounded-lg border border-slate-200 text-[11px] text-zinc-800 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                  />
+                </div>
               </div>
 
               <div>
@@ -4206,24 +4486,55 @@ export function CatalogWebModule({ idToken, profile }: CatalogWebModuleProps) {
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-xs font-semibold text-zinc-700">Brand Name *</label>
-                    <span className="text-[10px] text-zinc-400">Type new brand or select existing</span>
+                    <span className="text-[10px] text-zinc-400">Select brand or add new</span>
                   </div>
-                  <input
-                    type="text"
-                    required
-                    list="existing-brands-list"
-                    placeholder="e.g. Resepi Ibunda"
-                    value={newProductForm.brands_id}
-                    onChange={(e) => setNewProductForm({ ...newProductForm, brands_id: e.target.value })}
-                    className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
-                  />
-                  <datalist id="existing-brands-list">
-                    {allMergedBrands.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.display_name || b.name || b.id}
-                      </option>
-                    ))}
-                  </datalist>
+                  {isCustomBrand ? (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        required
+                        autoFocus
+                        placeholder="Type new brand name..."
+                        value={customBrandName}
+                        onChange={(e) => setCustomBrandName(e.target.value)}
+                        className="flex-1 h-9 px-3 rounded-lg border border-blue-400 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCustomBrand(false);
+                          setCustomBrandName("");
+                          setNewProductForm((prev) => ({ ...prev, brands_id: "" }));
+                        }}
+                        className="h-9 px-2.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 text-xs text-zinc-600 font-semibold cursor-pointer shrink-0"
+                        title="Back to dropdown"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      required
+                      value={newProductForm.brands_id}
+                      onChange={(e) => {
+                        if (e.target.value === "__new__") {
+                          setIsCustomBrand(true);
+                          setCustomBrandName("");
+                        } else {
+                          setNewProductForm({ ...newProductForm, brands_id: e.target.value });
+                        }
+                      }}
+                      className="w-full h-9 px-3 rounded-lg border border-slate-200 text-xs text-zinc-900 bg-white focus:outline-hidden focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] cursor-pointer"
+                    >
+                      <option value="">-- Select Brand --</option>
+                      {allMergedBrands.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.display_name || b.name || b.id}
+                        </option>
+                      ))}
+                      <option value="__new__">+ Add New Brand...</option>
+                    </select>
+                  )}
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-zinc-700 mb-1">Category / Tag</label>

@@ -185,14 +185,29 @@ export function TiktokOrdersModule({
   const [rowsPerPage, setRowsPerPage] = React.useState<number | "custom">(50);
   const [customRowsInput, setCustomRowsInput] = React.useState("50");
 
-  // Month & Date filters state (default to current month)
-  const [selectedMonth, setSelectedMonth] = React.useState<string>(() => {
-    const d = new Date();
+  // Helper for 2-week date range
+  const formatYmd = (d: Date) => {
+    const yyyy = d.getFullYear();
     const mm = String(d.getMonth() + 1).padStart(2, '0');
-    return `${d.getFullYear()}-${mm}`;
-  });
-  const [startDate, setStartDate] = React.useState<string>("");
-  const [endDate, setEndDate] = React.useState<string>("");
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
+
+  const getDefaultDateRange = () => {
+    const now = new Date();
+    const twoWeeksAgo = new Date(now.getTime() - 14 * 24 * 3600 * 1000);
+    return {
+      start: formatYmd(twoWeeksAgo),
+      end: formatYmd(now)
+    };
+  };
+
+  const defaultRange = React.useMemo(() => getDefaultDateRange(), []);
+
+  // Month & Date filters state (default to 2-week range)
+  const [selectedMonth, setSelectedMonth] = React.useState<string>("all");
+  const [startDate, setStartDate] = React.useState<string>(defaultRange.start);
+  const [endDate, setEndDate] = React.useState<string>(defaultRange.end);
   const [isFiltersExpanded, setIsFiltersExpanded] = React.useState(false);
 
   // Issues popup state
@@ -221,8 +236,17 @@ export function TiktokOrdersModule({
       if (!silent) {
         setError(null);
       }
-      const activeOnlyParam = silent ? "&active_only=true" : "";
-      const res = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=${sync}${activeOnlyParam}&_t=${Date.now()}`, {
+
+      const queryParams = new URLSearchParams();
+      if (sync) queryParams.set("sync", "true");
+      if (silent) queryParams.set("active_only", "true");
+      if (startDate) queryParams.set("start_date", startDate);
+      if (endDate) queryParams.set("end_date", endDate);
+      if (selectedMonth && selectedMonth !== "all") queryParams.set("month", selectedMonth);
+      if (selectedShopId && selectedShopId !== "all") queryParams.set("shop_id", selectedShopId);
+      queryParams.set("_t", String(Date.now()));
+
+      const res = await fetch(`${WORKER_URL}/api/tiktok/orders?${queryParams.toString()}`, {
         cache: "no-store"
       });
       if (!res.ok) {
@@ -274,11 +298,15 @@ export function TiktokOrdersModule({
         setIsSyncing(false);
       }
     }
-  }, []);
+  }, [startDate, endDate, selectedMonth, selectedShopId]);
 
+  // Fetch when filters change
   React.useEffect(() => {
     fetchOrders(false);
+  }, [fetchOrders]);
 
+  // Polling in background every 30s
+  React.useEffect(() => {
     const interval = setInterval(() => {
       if (document.visibilityState === 'visible') {
         fetchOrders(false, true);
@@ -321,8 +349,15 @@ export function TiktokOrdersModule({
       setIsSyncing(true);
       setError(null);
 
+      const refreshParams = new URLSearchParams();
+      if (startDate) refreshParams.set("start_date", startDate);
+      if (endDate) refreshParams.set("end_date", endDate);
+      if (selectedMonth && selectedMonth !== "all") refreshParams.set("month", selectedMonth);
+      if (selectedShopId && selectedShopId !== "all") refreshParams.set("shop_id", selectedShopId);
+      refreshParams.set("_t", String(Date.now()));
+
       // 1. Fetch from cache first
-      const resCache = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=false&_t=${Date.now()}`, {
+      const resCache = await fetch(`${WORKER_URL}/api/tiktok/orders?sync=false&${refreshParams.toString()}`, {
         cache: "no-store"
       });
       if (resCache.ok) {
@@ -1011,14 +1046,17 @@ export function TiktokOrdersModule({
         if (`${yyyy}-${mm}` !== selectedMonth) return false;
       }
 
-      // Date Range Filter
+      // Date Range Filter (Always keeps unfulfilled pending pack/collection orders visible)
+      const actual = (o.actual_status || "").toUpperCase();
+      const isPending = actual === "AWAITING_COLLECTION" || actual === "AWAITING_SHIPMENT";
+
       if (startDate) {
         const startSec = new Date(startDate + "T00:00:00").getTime() / 1000;
-        if (!o.create_time || o.create_time < startSec) return false;
+        if (!isPending && (!o.create_time || o.create_time < startSec)) return false;
       }
       if (endDate) {
         const endSec = new Date(endDate + "T23:59:59").getTime() / 1000;
-        if (!o.create_time || o.create_time > endSec) return false;
+        if (!isPending && (!o.create_time || o.create_time > endSec)) return false;
       }
 
       return true;
@@ -1037,22 +1075,18 @@ export function TiktokOrdersModule({
     };
   }, [dateFilteredOrders]);
 
-  // Get list of unique months present in orders for the dropdown
+  // Generate list of 24 recent months for the dropdown
   const availableMonths = React.useMemo(() => {
-    const months = new Set<string>();
+    const months: string[] = [];
     const now = new Date();
-    const currentYm = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    months.add(currentYm);
-    orders.forEach(o => {
-      if (o.create_time) {
-        const date = new Date(o.create_time * 1000);
-        const yyyy = date.getFullYear();
-        const mm = String(date.getMonth() + 1).padStart(2, '0');
-        months.add(`${yyyy}-${mm}`);
-      }
-    });
-    return Array.from(months).sort((a, b) => b.localeCompare(a));
-  }, [orders]);
+    for (let i = 0; i < 24; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      months.push(`${yyyy}-${mm}`);
+    }
+    return months;
+  }, []);
 
   const formatMonthName = (yearMonth: string) => {
     const [yyyy, mm] = yearMonth.split('-');
@@ -1391,7 +1425,14 @@ export function TiktokOrdersModule({
               <span className="text-[10px] font-bold text-[#5F6368] uppercase tracking-wider">Month:</span>
               <select
                 value={selectedMonth}
-                onChange={(e) => setSelectedMonth(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedMonth(val);
+                  if (val !== "all") {
+                    setStartDate("");
+                    setEndDate("");
+                  }
+                }}
                 className="border border-[#E0E2E6] rounded-full px-3 py-1 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
               >
                 <option value="all">All Months</option>
@@ -1410,7 +1451,10 @@ export function TiktokOrdersModule({
                 type="date"
                 value={startDate}
                 max={new Date().toISOString().split("T")[0]}
-                onChange={(e) => setStartDate(e.target.value)}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setSelectedMonth("all");
+                }}
                 className="border border-[#E0E2E6] rounded-full px-2.5 py-0.5 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
               />
               <span className="text-xs text-[#5F6368] font-medium">-</span>
@@ -1418,7 +1462,10 @@ export function TiktokOrdersModule({
                 type="date"
                 value={endDate}
                 max={new Date().toISOString().split("T")[0]}
-                onChange={(e) => setEndDate(e.target.value)}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setSelectedMonth("all");
+                }}
                 className="border border-[#E0E2E6] rounded-full px-2.5 py-0.5 text-xs text-[#1F1F1F] bg-white focus:outline-none cursor-pointer"
               />
               {(startDate || endDate) && (
@@ -1426,6 +1473,7 @@ export function TiktokOrdersModule({
                   onClick={() => {
                     setStartDate("");
                     setEndDate("");
+                    setSelectedMonth("all");
                   }}
                   className="text-xs text-[#0B57D0] hover:text-[#0842A0] font-semibold cursor-pointer border-none bg-transparent outline-none"
                 >
