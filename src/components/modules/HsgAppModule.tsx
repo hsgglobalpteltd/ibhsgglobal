@@ -56,6 +56,7 @@ import {
   HsgEventRsvpRecord,
   HsgMerchRecord,
 } from "./HsgAppTabsView";
+import { compressImageFile } from "@/lib/imageCompressor";
 
 const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
@@ -354,6 +355,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
   const [movementReport, setMovementReport] = React.useState<StoreMovementItem[]>([]);
   const [contests, setContests] = React.useState<HsgContestRecord[]>([]);
   const [contestSubmissions, setContestSubmissions] = React.useState<HsgContestSubmission[]>([]);
+  const [contestWinners, setContestWinners] = React.useState<any[]>([]);
   const [withdrawals, setWithdrawals] = React.useState<HsgWithdrawalRecord[]>([]);
   const [users, setUsers] = React.useState<HsgUserRecord[]>([]);
   const [transactions, setTransactions] = React.useState<HsgTransactionRecord[]>([]);
@@ -485,16 +487,17 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
     else setUploadingProduct(true);
 
     try {
-      const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+      const toUpload = await compressImageFile(file, { maxDimension: 1400, quality: 0.82 });
+      const cleanName = (toUpload.name || file.name).replace(/[^a-zA-Z0-9.-]/g, "_");
       const fileName = `hsg_cashback/${Date.now()}_${cleanName}`;
       const res = await fetch(
         `${WORKER_URL}/api/upload?filename=${encodeURIComponent(fileName)}`,
         {
           method: "POST",
           headers: {
-            "Content-Type": file.type || "application/octet-stream",
+            "Content-Type": toUpload.type || "image/jpeg",
           },
-          body: file,
+          body: toUpload,
         }
       );
 
@@ -588,6 +591,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
         const ctJson = await ctRes.json();
         if (ctJson.contests) setContests(ctJson.contests);
         if (ctJson.submissions) setContestSubmissions(ctJson.submissions);
+        if (ctJson.winners) setContestWinners(ctJson.winners);
       }
 
       // 6. Fetch Withdrawals
@@ -1816,9 +1820,9 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
             <div className="flex items-center gap-1 p-0.5 rounded-lg bg-slate-100 text-xs">
               {(
                 [
-                  { id: "catalog", label: "Catalog Product", count: merchCatalog.length || 0 },
-                  { id: "orders", label: "Orders", count: merchOrders.filter((o) => o.status === "pending").length },
-                ] as { id: string; label: string; count?: number }[]
+                  { id: "catalog", label: "Catalog Product" },
+                  { id: "orders", label: "Orders" },
+                ] as { id: string; label: string }[]
               ).map((st) => (
                 <button
                   key={st.id}
@@ -1831,11 +1835,6 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                   }`}
                 >
                   <span>{st.label}</span>
-                  {Boolean(st.count && st.count > 0) && (
-                    <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-blue-100 text-[#0B57D0] font-medium">
-                      {st.count}
-                    </span>
-                  )}
                 </button>
               ))}
             </div>
@@ -1846,7 +1845,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
               {(
                 [
                   { id: "events", label: "Events & RSVPs" },
-                  { id: "contests", label: "Quizzes & Contests" },
+                  { id: "contests", label: "Contest & Winners" },
                   { id: "news", label: "Feed & News" },
                 ] as const
               ).map((st) => (
@@ -1949,6 +1948,9 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
           <HsgContestTab
             contests={contests}
             submissions={contestSubmissions}
+            winners={contestWinners}
+            events={events}
+            merchCatalog={merchCatalog}
             loading={loading}
             onRefresh={() => loadLiveData(true)}
             openCreateTrigger={contestCreateTrigger}

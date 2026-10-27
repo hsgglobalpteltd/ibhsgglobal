@@ -364,7 +364,7 @@ export function HsgOverviewTab({
           ["Product Purchases", `${totalUnits} Units Verified`, `$${totalRetailSpend.toFixed(2)} Store Spend`],
           ["Cashback Rewarded", `$${totalCashbackCredited.toFixed(2)} Credited`, `${verifiedClaims.length} Receipts Processed`],
           ["Physical Event Turnout", `${totalAttendees} Attendees Checked In`, `${turnoutRate}% Turnout Rate (${totalRsvps} RSVPs)`],
-          ["Quizzes & Contests", `${totalEntries} Submissions`, `${activeContestsCount} Active Campaigns`],
+          ["Contest & Winners", `${totalEntries} Submissions`, `${activeContestsCount} Active Campaigns`],
           ["Community Members", `${totalMembers} Registered`, `${activeStreakMembers} Weekly Active`],
         ],
         theme: "striped",
@@ -600,7 +600,7 @@ export function HsgOverviewTab({
           <div className="p-3.5 rounded-lg bg-white border border-slate-200 flex flex-col justify-between">
             <div className="flex items-center justify-between text-slate-500">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-600">
-                Quizzes & Contests
+                Contest & Winners
               </span>
               <Award className="w-4 h-4 text-[#0B57D0]" />
             </div>

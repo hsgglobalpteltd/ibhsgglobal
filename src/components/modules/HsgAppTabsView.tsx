@@ -45,8 +45,11 @@ import {
   Battery,
   Share2,
   Heart,
+  Lock,
+  Trophy,
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
+import { compressImageFile } from "@/lib/imageCompressor";
 
 const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
@@ -66,14 +69,75 @@ export interface ContestQuestionItem {
   required?: boolean;
 }
 
+export interface HsgContestPrize {
+  id: string;
+  title: string;
+  description?: string;
+  photo_url?: string;
+  reward_type: "point" | "cashback" | "product" | "both" | "combo";
+  reward_cash?: number;
+  reward_points?: number;
+  product_id?: string;
+  product_name?: string;
+  product_image?: string;
+  max_pax: number;
+}
+
+export interface HsgContestWinner {
+  id: string;
+  contest_id: string;
+  prize_id: string;
+  prize_title: string;
+  prize_description?: string;
+  prize_photo_url?: string;
+  reward_type: "point" | "cashback" | "product" | "both" | "combo";
+  reward_cash?: number;
+  reward_points?: number;
+  product_id?: string;
+  product_name?: string;
+  product_image?: string;
+  delivery_address?: string;
+  claim_channel?: string;
+  awaiting_address?: boolean;
+  user_id: string;
+  user_phone: string;
+  user_nickname: string;
+  submission_id?: string;
+  status: "pending_claim" | "claimed";
+  claimed: boolean;
+  claimed_at?: number;
+  created_at: number;
+}
+
 export interface HsgContestRecord {
   id: string;
   title: string;
+  internal_title?: string;
+  frontpage_title?: string;
+  frontpage_description?: string;
+  frontpage_poster_url?: string;
   start_timestamp: number;
   end_timestamp: number;
   is_published: boolean;
   is_archived: boolean;
   poster_images: string[];
+  inside_posters?: string[];
+  inside_description?: string;
+  inside_instruction?: string;
+  reward_points?: number;
+  max_per_user?: number;
+  max_total?: number;
+  required_event_id?: string | null;
+  requirement_note?: string;
+  extra_questions?: Array<{
+    id: string;
+    question: string;
+    type?: "text" | "radio";
+    options?: string[];
+    required?: boolean;
+  }>;
+  prizes?: HsgContestPrize[];
+  winners_announced?: boolean;
   frontpage_config: {
     title?: string;
     description?: string;
@@ -92,10 +156,17 @@ export interface HsgContestRecord {
 export interface HsgContestSubmission {
   id: string;
   contest_id: string;
+  user_id?: string;
   user_phone: string;
   user_nickname: string;
-  status: "submitted" | "winner" | "rejected";
+  status: "submitted" | "approved" | "winner" | "rejected";
+  receipt_photo_url?: string;
+  amount_paid?: number;
+  items_count?: number;
+  points_awarded?: number;
+  extra_answers?: Record<string, any>;
   answer_json: Record<string, any>;
+  reject_reason?: string;
   winner_data: {
     is_winner?: boolean;
     prize_note?: string;
@@ -234,16 +305,17 @@ export interface HsgMerchRecord {
   updated_at: number;
 }
 
-// Helper to upload image to storage
+// Helper to upload image to storage with automatic client-side compression
 async function uploadAssetFile(file: File, folder = "hsgplus"): Promise<string> {
-  const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+  const toUpload = await compressImageFile(file, { maxDimension: 1400, quality: 0.82 });
+  const cleanName = (toUpload.name || file.name).replace(/[^a-zA-Z0-9.-]/g, "_");
   const fileName = `${folder}/${Date.now()}_${cleanName}`;
   const res = await fetch(
     `${WORKER_URL}/api/upload?filename=${encodeURIComponent(fileName)}`,
     {
       method: "POST",
-      headers: { "Content-Type": file.type || "application/octet-stream" },
-      body: file,
+      headers: { "Content-Type": toUpload.type || "image/jpeg" },
+      body: toUpload,
     }
   );
   if (!res.ok) throw new Error("Upload failed");
@@ -293,52 +365,85 @@ function formatDateShort(ts: number | string | any): string {
 export function HsgContestTab({
   contests,
   submissions,
+  winners = [],
+  events = [],
+  merchCatalog = [],
   loading,
   onRefresh,
   openCreateTrigger,
 }: {
   contests: HsgContestRecord[];
   submissions: HsgContestSubmission[];
+  winners?: HsgContestWinner[];
+  events?: any[];
+  merchCatalog?: any[];
   loading: boolean;
   onRefresh: () => void;
   openCreateTrigger?: number;
 }) {
+  // 0ms Optimistic Local State
+  const [localContests, setLocalContests] = React.useState<HsgContestRecord[]>(contests || []);
+  const [localSubmissions, setLocalSubmissions] = React.useState<HsgContestSubmission[]>(submissions || []);
+  const [localWinners, setLocalWinners] = React.useState<HsgContestWinner[]>(winners || []);
+
+  React.useEffect(() => { setLocalContests(contests || []); }, [contests]);
+  React.useEffect(() => { setLocalSubmissions(submissions || []); }, [submissions]);
+  React.useEffect(() => { setLocalWinners(winners || []); }, [winners]);
+
+  // Navigation & Sub-tab: "submissions" vs "winners"
+  const [activeSubTab, setActiveSubTab] = React.useState<"submissions" | "winners">("submissions");
   const [leftTab, setLeftTab] = React.useState<"active" | "archive">("active");
   const [selectedContestId, setSelectedContestId] = React.useState<string>("ALL");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
+  const [statusFilter, setStatusFilter] = React.useState<"ALL" | "pending" | "approved" | "rejected">("ALL");
 
-  // Create / Edit Contest Modal
+  // Inspect Submission Modal
+  const [inspectSub, setInspectSub] = React.useState<HsgContestSubmission | null>(null);
+  const [rejectReason, setRejectReason] = React.useState<string>("");
+  const [processingSubId, setProcessingSubId] = React.useState<string | null>(null);
+  const [zoomReceipt, setZoomReceipt] = React.useState<boolean>(false);
+
+  // Contest Create / Edit Modal
   const [showModal, setShowModal] = React.useState<boolean>(false);
   const [editingId, setEditingId] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState<boolean>(false);
 
-  const [title, setTitle] = React.useState<string>("");
+  // Form Fields
+  const [internalTitle, setInternalTitle] = React.useState<string>("");
   const [fpTitle, setFpTitle] = React.useState<string>("");
   const [fpDesc, setFpDesc] = React.useState<string>("");
   const [fpPhoto, setFpPhoto] = React.useState<string>("");
-  const [posters, setPosters] = React.useState<string[]>([]);
+  const [insidePosters, setInsidePosters] = React.useState<string[]>([]);
+  const [insideDesc, setInsideDesc] = React.useState<string>("");
+  const [insideInstruction, setInsideInstruction] = React.useState<string>("");
   const [startDt, setStartDt] = React.useState<string>("");
   const [endDt, setEndDt] = React.useState<string>("");
+  const [rewardPoints, setRewardPoints] = React.useState<number>(10);
   const [maxPerUser, setMaxPerUser] = React.useState<number>(1);
-  const [totalCap, setTotalCap] = React.useState<number>(0);
-  const [pointsPerSubmission, setPointsPerSubmission] =
-    React.useState<number>(10);
+  const [maxTotal, setMaxTotal] = React.useState<number>(0);
+  const [reqEventId, setReqEventId] = React.useState<string>("");
+  const [reqNote, setReqNote] = React.useState<string>("");
   const [isPublished, setIsPublished] = React.useState<boolean>(true);
-  const [questions, setQuestions] = React.useState<ContestQuestionItem[]>([]);
+  const [extraQuestions, setExtraQuestions] = React.useState<Array<{ id: string; question: string }>>([]);
+  const [prizes, setPrizes] = React.useState<HsgContestPrize[]>([]);
 
-  const [uploadingCover, setUploadingCover] = React.useState<boolean>(false);
-  const [uploadingPoster, setUploadingPoster] = React.useState<boolean>(false);
+  const [uploadingFpPhoto, setUploadingFpPhoto] = React.useState<boolean>(false);
+  const [uploadingPosters, setUploadingPosters] = React.useState<boolean>(false);
+  const [uploadingPrizeIdx, setUploadingPrizeIdx] = React.useState<number | null>(null);
 
-  // Submission Inspect / Winner Modal
-  const [inspectSub, setInspectSub] = React.useState<HsgContestSubmission | null>(
-    null
-  );
-  const [prizeNote, setPrizeNote] = React.useState<string>("1st Prize Winner");
-  const [updatingSub, setUpdatingSub] = React.useState<boolean>(false);
+  // Assign Winner Modal
+  const [showAssignModal, setShowAssignModal] = React.useState<boolean>(false);
+  const [assignContestId, setAssignContestId] = React.useState<string>("");
+  const [assignPrizeId, setAssignPrizeId] = React.useState<string>("");
+  const [assignUserKey, setAssignUserKey] = React.useState<string>("");
+  const [assignUserSearch, setAssignUserSearch] = React.useState<string>("");
+  const [assigningWinner, setAssigningWinner] = React.useState<boolean>(false);
 
-  // Delete confirmation
-  const [contestToDelete, setContestToDelete] =
-    React.useState<HsgContestRecord | null>(null);
+  // Delete & Toggles
+  const [contestToDelete, setContestToDelete] = React.useState<HsgContestRecord | null>(null);
+  const [deletingWinnerId, setDeletingWinnerId] = React.useState<string | null>(null);
+  const [togglingAnnounce, setTogglingAnnounce] = React.useState<boolean>(false);
+  const [togglingArchive, setTogglingArchive] = React.useState<boolean>(false);
 
   React.useEffect(() => {
     if (openCreateTrigger && openCreateTrigger > 0) {
@@ -349,263 +454,720 @@ export function HsgContestTab({
   const handleOpenModal = (prefill?: HsgContestRecord) => {
     if (prefill) {
       setEditingId(prefill.id);
-      setTitle(prefill.title || "");
-      setFpTitle(prefill.frontpage_config?.title || prefill.title || "");
-      setFpDesc(prefill.frontpage_config?.description || "");
-      setFpPhoto(prefill.frontpage_config?.cover_photo_url || "");
-      setPosters(Array.isArray(prefill.poster_images) ? prefill.poster_images : []);
-      setStartDt(toDatetimeLocal(prefill.start_timestamp));
-      setEndDt(toDatetimeLocal(prefill.end_timestamp));
-      setMaxPerUser(Number(prefill.submission_limits?.max_per_user ?? 1));
-      setTotalCap(Number(prefill.submission_limits?.total_cap ?? 0));
-      setPointsPerSubmission(
-        Number(prefill.submission_limits?.points_per_submission ?? 0)
-      );
-      setIsPublished(Boolean(prefill.is_published));
-      setQuestions(
-        Array.isArray(prefill.submission_questions)
-          ? prefill.submission_questions
+      setInternalTitle(prefill.internal_title || prefill.title || "");
+      setFpTitle(prefill.frontpage_title || prefill.frontpage_config?.title || prefill.title || "");
+      setFpDesc(prefill.frontpage_description || prefill.frontpage_config?.description || "");
+      setFpPhoto(prefill.frontpage_poster_url || prefill.frontpage_config?.cover_photo_url || "");
+      setInsidePosters(
+        Array.isArray(prefill.inside_posters) && prefill.inside_posters.length > 0
+          ? prefill.inside_posters
+          : Array.isArray(prefill.poster_images)
+          ? prefill.poster_images
           : []
       );
+      setInsideDesc(prefill.inside_description || "");
+      setInsideInstruction(prefill.inside_instruction || "");
+      setStartDt(toDatetimeLocal(prefill.start_timestamp));
+      setEndDt(toDatetimeLocal(prefill.end_timestamp));
+      setRewardPoints(
+        Number(prefill.reward_points ?? prefill.submission_limits?.points_per_submission ?? 10)
+      );
+      setMaxPerUser(Number(prefill.max_per_user ?? prefill.submission_limits?.max_per_user ?? 1));
+      setMaxTotal(Number(prefill.max_total ?? prefill.submission_limits?.total_cap ?? 0));
+      setReqEventId(prefill.required_event_id || "");
+      setReqNote(prefill.requirement_note || "");
+      setIsPublished(Boolean(prefill.is_published));
+      setExtraQuestions(
+        Array.isArray(prefill.extra_questions)
+          ? prefill.extra_questions.map((q) => ({ id: q.id, question: q.question }))
+          : []
+      );
+      setPrizes(Array.isArray(prefill.prizes) ? prefill.prizes : []);
     } else {
       const now = Date.now();
       setEditingId(null);
-      setTitle("");
+      setInternalTitle("");
       setFpTitle("");
       setFpDesc("");
       setFpPhoto("");
-      setPosters([]);
+      setInsidePosters([]);
+      setInsideDesc("");
+      setInsideInstruction("");
       setStartDt(toDatetimeLocal(now));
-      setEndDt(toDatetimeLocal(now + 4 * 3600000)); // Default 4-hour flash window
+      setEndDt(toDatetimeLocal(now + 7 * 86400000));
+      setRewardPoints(10);
       setMaxPerUser(1);
-      setTotalCap(0);
-      setPointsPerSubmission(10);
+      setMaxTotal(0);
+      setReqEventId("");
+      setReqNote("");
       setIsPublished(true);
-      setQuestions([
-        {
-          id: "q_photo",
-          label: "Upload your contest photo proof",
-          type: "photo_upload",
-          required: true,
-        },
-        {
-          id: "q_ig",
-          label: "Your Instagram / TikTok Handle",
-          type: "text",
-          required: true,
-        },
-      ]);
+      setExtraQuestions([]);
+      setPrizes([]);
     }
     setShowModal(true);
   };
 
-  const handleUploadFrontPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadFpPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setUploadingCover(true);
+    setUploadingFpPhoto(true);
     try {
-      const url = await uploadAssetFile(file, "hsgplus_contest");
+      const url = await uploadAssetFile(file, "hsgplus_contest_fp");
       setFpPhoto(url);
-      showToast("Frontpage photo uploaded", "success");
+      showToast("Frontpage poster uploaded", "success");
     } catch (err: any) {
       showToast(err.message || "Upload failed", "error");
     } finally {
-      setUploadingCover(false);
+      setUploadingFpPhoto(false);
     }
   };
 
-  const handleUploadPosterFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUploadInsidePosters = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
-    if (posters.length + files.length > 8) {
-      showToast("Maximum 8 poster images allowed per contest", "error");
+    if (insidePosters.length + files.length > 8) {
+      showToast("Maximum 8 inside posters allowed", "error");
       return;
     }
-    setUploadingPoster(true);
+    setUploadingPosters(true);
     try {
       const uploadedUrls: string[] = [];
       for (const f of files) {
         const u = await uploadAssetFile(f, "hsgplus_contest_posters");
         uploadedUrls.push(u);
       }
-      setPosters((prev) => [...prev, ...uploadedUrls].slice(0, 8));
-      showToast(`Uploaded ${uploadedUrls.length} poster image(s)`, "success");
+      setInsidePosters((prev) => [...prev, ...uploadedUrls].slice(0, 8));
+      showToast(`Uploaded ${uploadedUrls.length} poster(s)`, "success");
     } catch (err: any) {
       showToast(err.message || "Upload failed", "error");
     } finally {
-      setUploadingPoster(false);
+      setUploadingPosters(false);
     }
   };
 
-  const handleMovePoster = (idx: number, dir: -1 | 1) => {
-    const nextIdx = idx + dir;
-    if (nextIdx < 0 || nextIdx >= posters.length) return;
-    setPosters((prev) => {
-      const copy = [...prev];
-      const temp = copy[idx];
-      copy[idx] = copy[nextIdx];
-      copy[nextIdx] = temp;
-      return copy;
-    });
+  const handleUploadPrizePhoto = async (idx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingPrizeIdx(idx);
+    try {
+      const url = await uploadAssetFile(file, "hsgplus_contest_prizes");
+      setPrizes((prev) =>
+        prev.map((p, i) => (i === idx ? { ...p, photo_url: url } : p))
+      );
+      showToast("Prize photo uploaded", "success");
+    } catch (err: any) {
+      showToast(err.message || "Upload failed", "error");
+    } finally {
+      setUploadingPrizeIdx(null);
+    }
   };
 
   const handleSaveContest = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) {
-      showToast("Please enter a Contest Title", "error");
+    if (!internalTitle.trim()) {
+      showToast("Please enter an internal Contest Title", "error");
       return;
     }
     setSaving(true);
     try {
       const startMs = startDt ? new Date(startDt).getTime() : Date.now();
-      const endMs = endDt ? new Date(endDt).getTime() : startMs + 4 * 3600000;
+      const endMs = endDt ? new Date(endDt).getTime() : startMs + 7 * 86400000;
 
-      const res = await fetch(`${WORKER_URL}/api/hsg-app/contests`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: editingId || undefined,
-          title: title.trim(),
-          start_timestamp: startMs,
-          end_timestamp: endMs,
-          is_published: isPublished,
-          is_archived: false,
-          poster_images: posters.slice(0, 8),
-          frontpage_config: {
-            title: fpTitle.trim() || title.trim(),
-            description: fpDesc.trim(),
-            cover_photo_url: fpPhoto || posters[0] || "",
-          },
-          submission_limits: {
-            max_per_user: Number(maxPerUser || 1),
-            total_cap: Number(totalCap || 0),
-            points_per_submission: Number(pointsPerSubmission || 0),
-          },
-          submission_questions: questions,
-        }),
-      });
-      if (!res.ok) throw new Error("Failed to save contest");
+      const payload = {
+        id: editingId || undefined,
+        title: internalTitle.trim(),
+        internal_title: internalTitle.trim(),
+        frontpage_title: fpTitle.trim() || internalTitle.trim(),
+        frontpage_description: fpDesc.trim(),
+        frontpage_poster_url: fpPhoto || insidePosters[0] || "",
+        start_timestamp: startMs,
+        end_timestamp: endMs,
+        is_published: isPublished,
+        is_archived: false,
+        poster_images: insidePosters.slice(0, 8),
+        inside_posters: insidePosters.slice(0, 8),
+        inside_description: insideDesc.trim(),
+        inside_instruction: insideInstruction.trim(),
+        reward_points: Number(rewardPoints || 0),
+        max_per_user: Number(maxPerUser || 1),
+        max_total: Number(maxTotal || 0),
+        required_event_id: reqEventId || null,
+        requirement_note: reqNote.trim(),
+        extra_questions: extraQuestions.slice(0, 5).map((q, idx) => ({
+          id: q.id || `q_${idx + 1}`,
+          question: q.question.trim(),
+        })),
+        prizes: prizes.slice(0, 10).map((p, idx) => ({
+          id: p.id || `prz_${idx + 1}`,
+          title: p.title || `Prize #${idx + 1}`,
+          description: p.description || "",
+          photo_url: p.photo_url || "",
+          reward_type: p.reward_type || "point",
+          reward_cash: Number(p.reward_cash || 0),
+          reward_points: Number(p.reward_points || 0),
+          product_id: p.product_id || null,
+          product_name: p.product_name || null,
+          product_image: p.product_image || null,
+          max_pax: Number(p.max_pax || 1),
+        })),
+        frontpage_config: {
+          title: fpTitle.trim() || internalTitle.trim(),
+          description: fpDesc.trim(),
+          cover_photo_url: fpPhoto || insidePosters[0] || "",
+        },
+        submission_limits: {
+          max_per_user: Number(maxPerUser || 1),
+          total_cap: Number(maxTotal || 0),
+          points_per_submission: Number(rewardPoints || 0),
+        },
+        submission_questions: extraQuestions.map((q, idx) => ({
+          id: q.id || `q_${idx + 1}`,
+          label: q.question,
+          type: "text",
+          required: false,
+        })),
+      };
+
+      // 0ms Optimistic Update
+      const targetId = editingId || `CONT-${Date.now().toString().slice(-6)}`;
+      const optimisticPayload: any = {
+        ...payload,
+        id: targetId,
+        created_at: Date.now(),
+      };
+      const prevContestsSnapshot = [...localContests];
+      if (editingId) {
+        setLocalContests((prev) =>
+          prev.map((item) => (item.id === editingId ? { ...item, ...optimisticPayload } : item))
+        );
+      } else {
+        setLocalContests((prev) => [optimisticPayload, ...prev]);
+        setSelectedContestId(targetId);
+      }
       showToast("Contest saved successfully", "success");
       setShowModal(false);
-      onRefresh();
-    } catch (err: any) {
-      showToast(err.message || "Failed to save contest", "error");
-    } finally {
-      setSaving(false);
-    }
-  };
 
-  const handlePatchContest = async (
-    c: HsgContestRecord,
-    patch: Partial<HsgContestRecord>
-  ) => {
-    try {
-      const res = await fetch(
-        `${WORKER_URL}/api/hsg-app/contests/${encodeURIComponent(c.id)}`,
-        {
-          method: "PATCH",
+      // Silent background sync
+      try {
+        const res = await fetch(`${WORKER_URL}/api/hsg-app/contests`, {
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(patch),
-        }
-      );
-      if (!res.ok) throw new Error("Update failed");
-      showToast("Contest updated", "success");
-      onRefresh();
+          body: JSON.stringify(optimisticPayload),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.message || "Failed to save contest");
+        onRefresh();
+      } catch (err: any) {
+        setLocalContests(prevContestsSnapshot);
+        showToast(err.message || "Failed to save contest to server", "error");
+      } finally {
+        setSaving(false);
+      }
     } catch (err: any) {
-      showToast(err.message || "Failed to update contest", "error");
+      showToast(err.message || "Failed to prepare contest", "error");
+      setSaving(false);
     }
   };
 
   const handleDeleteContest = async () => {
     if (!contestToDelete) return;
+    const prevContestsSnapshot = [...localContests];
+    setLocalContests((prev) => prev.filter((item) => item.id !== contestToDelete.id));
+    if (selectedContestId === contestToDelete.id) setSelectedContestId("ALL");
+    setContestToDelete(null);
+    showToast("Contest deleted", "success");
+
     try {
       const res = await fetch(
         `${WORKER_URL}/api/hsg-app/contests/${encodeURIComponent(contestToDelete.id)}`,
         { method: "DELETE" }
       );
       if (!res.ok) throw new Error("Delete failed");
-      showToast("Contest deleted", "success");
-      setContestToDelete(null);
-      if (selectedContestId === contestToDelete.id) setSelectedContestId("ALL");
       onRefresh();
     } catch (err: any) {
-      showToast(err.message || "Delete failed", "error");
+      setLocalContests(prevContestsSnapshot);
+      showToast(err.message || "Delete failed on server", "error");
     }
   };
 
-  const handleUpdateSubmissionStatus = async (
-    status: "winner" | "rejected" | "submitted"
-  ) => {
-    if (!inspectSub) return;
-    setUpdatingSub(true);
+  // Toggle Archive
+  const handleToggleArchive = async (c: HsgContestRecord) => {
+    const nextArchived = !c.is_archived;
+    setLocalContests((prev) =>
+      prev.map((item) => (item.id === c.id ? { ...item, is_archived: nextArchived } : item))
+    );
+    showToast(
+      nextArchived
+        ? "Contest archived (hidden from mobile frontpage)"
+        : "Contest unarchived",
+      "success"
+    );
+
     try {
       const res = await fetch(
-        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(
-          inspectSub.id
-        )}`,
+        `${WORKER_URL}/api/hsg-app/contests/${encodeURIComponent(c.id)}/archive`,
         {
-          method: "PATCH",
+          method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            status,
-            winner_data:
-              status === "winner"
-                ? {
-                    is_winner: true,
-                    prize_note: prizeNote,
-                    awarded_at: Date.now(),
-                  }
-                : { is_winner: false },
-          }),
+          body: JSON.stringify({ is_archived: nextArchived }),
         }
       );
-      if (!res.ok) throw new Error("Failed to update submission");
-      showToast(
-        status === "winner" ? "Marked as Contest Winner!" : "Submission updated",
-        "success"
-      );
-      setInspectSub(null);
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Archive toggle failed");
       onRefresh();
     } catch (err: any) {
-      showToast(err.message || "Update failed", "error");
-    } finally {
-      setUpdatingSub(false);
+      setLocalContests((prev) =>
+        prev.map((item) => (item.id === c.id ? { ...item, is_archived: !nextArchived } : item))
+      );
+      showToast(err.message || "Error toggling archive", "error");
     }
   };
 
-  const visibleContests = contests.filter((c) =>
+  // Toggle Announce
+  const handleToggleAnnounce = async (c: HsgContestRecord) => {
+    const nextAnnounced = !c.winners_announced;
+    setLocalContests((prev) =>
+      prev.map((item) => (item.id === c.id ? { ...item, winners_announced: nextAnnounced } : item))
+    );
+    showToast(
+      nextAnnounced
+        ? "Contest winners announced live on mobile app!"
+        : "Announcement turned off",
+      "success"
+    );
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/${encodeURIComponent(c.id)}/announce`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ winners_announced: nextAnnounced }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Announcement toggle failed");
+      onRefresh();
+    } catch (err: any) {
+      setLocalContests((prev) =>
+        prev.map((item) => (item.id === c.id ? { ...item, winners_announced: !nextAnnounced } : item))
+      );
+      showToast(err.message || "Error toggling announcement", "error");
+    }
+  };
+
+  // Approve Entry
+  const handleApproveSubmission = async (sub: HsgContestSubmission) => {
+    const prevSubStatus = sub.status;
+    setLocalSubmissions((prev) =>
+      prev.map((s) => (s.id === sub.id ? { ...s, status: "approved" } : s))
+    );
+    setInspectSub(null);
+    showToast("Entry approved and points credited", "success");
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Approval failed");
+      onRefresh();
+    } catch (err: any) {
+      setLocalSubmissions((prev) =>
+        prev.map((s) => (s.id === sub.id ? { ...s, status: prevSubStatus } : s))
+      );
+      showToast(err.message || "Failed to approve entry", "error");
+    }
+  };
+
+  // Reject Entry
+  const handleRejectSubmission = async (sub: HsgContestSubmission) => {
+    if (!rejectReason.trim()) {
+      showToast("Please provide a rejection reason", "error");
+      return;
+    }
+    const rReason = rejectReason.trim();
+    const prevSubStatus = sub.status;
+    setLocalSubmissions((prev) =>
+      prev.map((s) => (s.id === sub.id ? { ...s, status: "rejected", reject_reason: rReason } : s))
+    );
+    setInspectSub(null);
+    setRejectReason("");
+    showToast("Entry rejected and points revoked", "success");
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/reject`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: rReason }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Rejection failed");
+      onRefresh();
+    } catch (err: any) {
+      setLocalSubmissions((prev) =>
+        prev.map((s) => (s.id === sub.id ? { ...s, status: prevSubStatus } : s))
+      );
+      showToast(err.message || "Failed to reject entry", "error");
+    } finally {
+      setProcessingSubId(null);
+    }
+  };
+
+  // Group contest submissions by User (1 user appears once, even if 100 submissions)
+  const contestSubmitterUsers = React.useMemo(() => {
+    if (!assignContestId) return [];
+    const subs = localSubmissions.filter((s) => s.contest_id === assignContestId);
+    const userMap = new Map<
+      string,
+      {
+        key: string;
+        user_id: string;
+        user_phone: string;
+        user_nickname: string;
+        total_submissions: number;
+        total_spend: number;
+        total_qty: number;
+        latest_submission_id: string;
+      }
+    >();
+
+    subs.forEach((s) => {
+      // Primary grouping key is strictly user_id
+      const key = (s.user_id || s.user_phone || s.id).trim();
+      if (!key) return;
+      const existing = userMap.get(key);
+      const amount = Number(s.amount_paid || 0);
+      const qty = Number(s.items_count || 1);
+
+      if (!existing) {
+        userMap.set(key, {
+          key,
+          user_id: s.user_id || "",
+          user_phone: s.user_phone || "",
+          user_nickname: s.user_nickname || "Member",
+          total_submissions: 1,
+          total_spend: amount,
+          total_qty: qty,
+          latest_submission_id: s.id,
+        });
+      } else {
+        existing.total_submissions += 1;
+        existing.total_spend += amount;
+        existing.total_qty += qty;
+        if (!existing.user_id && s.user_id) existing.user_id = s.user_id;
+      }
+    });
+
+    return Array.from(userMap.values());
+  }, [assignContestId, localSubmissions]);
+
+  // Real-time search by user nickname, last digit phone, or user ID
+  const filteredSubmitterUsers = React.useMemo(() => {
+    if (!assignUserSearch.trim()) return contestSubmitterUsers;
+    const q = assignUserSearch.toLowerCase().trim();
+    return contestSubmitterUsers.filter((u) => {
+      const nameMatch = (u.user_nickname || "").toLowerCase().includes(q);
+      const idMatch = (u.user_id || "").toLowerCase().includes(q);
+      const cleanPhone = (u.user_phone || "").replace(/\D/g, "");
+      const phoneMatch = cleanPhone.includes(q) || cleanPhone.slice(-4).includes(q);
+      return nameMatch || idMatch || phoneMatch;
+    });
+  }, [contestSubmitterUsers, assignUserSearch]);
+
+  // Assign Winner Submit
+  const handleAssignWinner = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assignContestId) {
+      showToast("Please select a contest", "error");
+      return;
+    }
+    if (!assignPrizeId) {
+      showToast("Please select a prize", "error");
+      return;
+    }
+    if (!assignUserKey) {
+      showToast("Please select a winner user", "error");
+      return;
+    }
+
+    const selectedUser = contestSubmitterUsers.find((u) => u.key === assignUserKey);
+    if (!selectedUser) {
+      showToast("Selected user not found", "error");
+      return;
+    }
+
+    const optimisticWinner: HsgContestWinner = {
+      id: `WIN-${Date.now().toString().slice(-6)}`,
+      contest_id: assignContestId,
+      prize_id: assignPrizeId,
+      user_id: selectedUser.user_id,
+      user_phone: selectedUser.user_phone,
+      user_nickname: selectedUser.user_nickname,
+      created_at: Date.now(),
+      claimed: false,
+    } as any;
+    const prevWinnersSnapshot = [...localWinners];
+    setLocalWinners((prev) => [optimisticWinner, ...prev]);
+    showToast("Winner assigned successfully!", "success");
+    setShowAssignModal(false);
+    setAssignUserKey("");
+    setAssignUserSearch("");
+
+    try {
+      const res = await fetch(`${WORKER_URL}/api/hsg-app/contests/winners`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contest_id: assignContestId,
+          prize_id: assignPrizeId,
+          submission_id: selectedUser.latest_submission_id || null,
+          user_id: selectedUser.user_id,
+          user_phone: selectedUser.user_phone,
+          user_nickname: selectedUser.user_nickname,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Failed to assign winner");
+      onRefresh();
+    } catch (err: any) {
+      setLocalWinners(prevWinnersSnapshot);
+      showToast(err.message || "Failed to assign winner on server", "error");
+    } finally {
+      setAssigningWinner(false);
+    }
+  };
+
+  // Delete Winner
+  const handleDeleteWinner = async (winner: HsgContestWinner) => {
+    if (winner.claimed) {
+      showToast(
+        "Prize already claimed by user. Locked and cannot be modified or deleted.",
+        "error"
+      );
+      return;
+    }
+    const prevWinnersSnapshot = [...localWinners];
+    setLocalWinners((prev) => prev.filter((w) => w.id !== winner.id));
+    showToast("Winner assignment removed", "success");
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/winners/${encodeURIComponent(winner.id)}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Failed to delete winner");
+      onRefresh();
+    } catch (err: any) {
+      setLocalWinners(prevWinnersSnapshot);
+      showToast(err.message || "Failed to delete winner on server", "error");
+    } finally {
+      setDeletingWinnerId(null);
+    }
+  };
+
+  // CSV Report Generator (Exact 5 columns as specified by user)
+  const handleDownloadContestReport = () => {
+    if (!selectedContestId || selectedContestId === "ALL") {
+      showToast("Please select a specific contest to download the report", "error");
+      return;
+    }
+    const targetContest = contests.find((c) => c.id === selectedContestId);
+    if (!targetContest) {
+      showToast("Selected contest not found", "error");
+      return;
+    }
+    const contestName =
+      targetContest.internal_title ||
+      targetContest.title ||
+      targetContest.frontpage_title ||
+      selectedContestId;
+
+    const approvedSubs = submissions.filter(
+      (s) => s.contest_id === selectedContestId && s.status === "approved"
+    );
+
+    if (approvedSubs.length === 0) {
+      showToast("No approved submissions found for this contest", "error");
+      return;
+    }
+
+    const userGroups = new Map<
+      string,
+      {
+        userDisplay: string;
+        subs: HsgContestSubmission[];
+      }
+    >();
+
+    approvedSubs.forEach((sub) => {
+      const uid = sub.user_id || sub.user_phone || "unknown";
+      if (!userGroups.has(uid)) {
+        const nick = sub.user_nickname || "User";
+        const phoneDigits = String(sub.user_phone || "").replace(/\D/g, "");
+        const last4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : phoneDigits || "0000";
+        const displayUserId = sub.user_id
+          ? sub.user_id.startsWith("USR-")
+            ? sub.user_id
+            : `USR-${sub.user_id.slice(-4)}`
+          : "USR-0000";
+        const userColumn = `${nick} ${last4} | ${displayUserId}`;
+        userGroups.set(uid, {
+          userDisplay: userColumn,
+          subs: [],
+        });
+      }
+      userGroups.get(uid)!.subs.push(sub);
+    });
+
+    const headers = [
+      "User",
+      "Total Submission",
+      "Total Qty Purchase",
+      "Total Amount Spend",
+      "Submissions & Answers",
+    ];
+
+    const rows: string[][] = [];
+
+    userGroups.forEach(({ userDisplay, subs }) => {
+      subs.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+
+      const totalSub = subs.length;
+      let totalQty = 0;
+      let totalSpend = 0;
+      const submissionLines: string[] = [];
+
+      subs.forEach((s) => {
+        totalQty += Number(s.items_count || 1);
+        totalSpend += Number(s.amount_paid || 0);
+
+        const d = new Date(s.created_at || Date.now());
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const yyyy = d.getFullYear();
+        const dateStr = `${dd}/${mm}/${yyyy}`;
+
+        const rawAnswers = s.extra_answers || s.answer_json || {};
+        const ansList: string[] = [];
+        Object.entries(rawAnswers).forEach(([k, v], idx) => {
+          if (v !== undefined && v !== null && v !== "") {
+            const vStr = typeof v === "object" ? JSON.stringify(v) : String(v).replace(/[\r\n]+/g, " ");
+            ansList.push(`A${idx + 1}: ${vStr}`);
+          }
+        });
+        const ansJoined = ansList.length > 0 ? ` ${ansList.join(", ")}` : "";
+        submissionLines.push(`${dateStr}${ansJoined}`);
+      });
+
+      rows.push([
+        userDisplay,
+        String(totalSub),
+        String(totalQty),
+        `$${totalSpend.toFixed(2)}`,
+        submissionLines.join("\n"),
+      ]);
+    });
+
+    const csvContent =
+      "\uFEFF" +
+      [
+        headers.join(","),
+        ...rows.map((row) =>
+          row
+            .map((field) => {
+              const str = String(field);
+              if (str.includes(",") || str.includes('"') || str.includes("\n")) {
+                return `"${str.replace(/"/g, '""')}"`;
+              }
+              return str;
+            })
+            .join(",")
+        ),
+      ].join("\r\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `Contest_Report_${contestName.replace(/[^a-zA-Z0-9_-]/g, "_")}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    showToast("Contest report exported successfully", "success");
+  };
+
+  // Filtered lists
+  const visibleContests = localContests.filter((c) =>
     leftTab === "active" ? !c.is_archived : c.is_archived
   );
 
-  const filteredSubs = submissions.filter((s) => {
-    if (selectedContestId !== "ALL" && s.contest_id !== selectedContestId)
-      return false;
+  const activeContestObj =
+    selectedContestId !== "ALL"
+      ? localContests.find((c) => c.id === selectedContestId) || null
+      : null;
+
+  const filteredSubs = localSubmissions.filter((s) => {
+    if (selectedContestId !== "ALL" && s.contest_id !== selectedContestId) return false;
+    if (statusFilter !== "ALL") {
+      if (statusFilter === "pending" && s.status !== "submitted") return false;
+      if (statusFilter === "approved" && s.status !== "approved") return false;
+      if (statusFilter === "rejected" && s.status !== "rejected") return false;
+    }
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const nickMatch = (s.user_nickname || "").toLowerCase().includes(q);
+      const phoneMatch = (s.user_phone || "").includes(q);
+      const ansMatch = JSON.stringify(s.extra_answers || s.answer_json || {})
+        .toLowerCase()
+        .includes(q);
+      return nickMatch || phoneMatch || ansMatch;
+    }
+    return true;
+  });
+
+  const filteredWinners = localWinners.filter((w) => {
+    if (selectedContestId !== "ALL" && w.contest_id !== selectedContestId) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       return (
-        (s.user_nickname || "").toLowerCase().includes(q) ||
-        (s.user_phone || "").includes(q) ||
-        JSON.stringify(s.answer_json || {})
-          .toLowerCase()
-          .includes(q)
+        (w.user_nickname || "").toLowerCase().includes(q) ||
+        (w.user_phone || "").includes(q) ||
+        (w.prize_title || "").toLowerCase().includes(q) ||
+        (w.delivery_address || "").toLowerCase().includes(q)
       );
     }
     return true;
   });
 
+  // Calculate Prize Quotas for Assign Modal
+  const assignContest = localContests.find((c) => c.id === assignContestId);
+  const contestPrizes = assignContest?.prizes || [];
+
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden">
-      {/* LEFT 32%: CONTEST CAMPAIGNS */}
-      <section className="w-[32%] min-w-[320px] max-w-[420px] h-full border-r border-slate-200 flex flex-col bg-slate-50/40 overflow-hidden">
-        <div className="p-3 border-b border-slate-200 bg-white flex items-center justify-between gap-2 shrink-0">
-          <div className="grid grid-cols-2 gap-1 p-1 rounded-lg bg-slate-100 flex-1">
+      {/* LEFT 30%: CONTESTS LIST */}
+      <section className="w-[30%] min-w-[300px] max-w-[380px] h-full border-r border-slate-200 flex flex-col bg-[#F8F9FA]/60 overflow-hidden">
+        {/* Top Active vs Archive + New */}
+        <div className="p-3 border-b border-slate-200 bg-[#F8F9FA] flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-0.5 text-[11px] bg-slate-200/70 p-0.5 rounded-lg border border-slate-200 flex-1">
             <button
               type="button"
               onClick={() => setLeftTab("active")}
-              className={`h-7 rounded-md text-xs font-bold transition ${
+              className={`h-7 flex-1 rounded text-xs font-semibold transition ${
                 leftTab === "active"
-                  ? "bg-white text-zinc-950 shadow-xs"
-                  : "text-zinc-500 hover:text-zinc-900"
+                  ? "bg-white text-zinc-950 font-bold shadow-2xs"
+                  : "text-zinc-500 hover:text-zinc-800"
               }`}
             >
               Active Contests
@@ -613,178 +1175,134 @@ export function HsgContestTab({
             <button
               type="button"
               onClick={() => setLeftTab("archive")}
-              className={`h-7 rounded-md text-xs font-bold transition ${
+              className={`h-7 flex-1 rounded text-xs font-semibold transition ${
                 leftTab === "archive"
-                  ? "bg-white text-zinc-950 shadow-xs"
-                  : "text-zinc-500 hover:text-zinc-900"
+                  ? "bg-white text-zinc-950 font-bold shadow-2xs"
+                  : "text-zinc-500 hover:text-zinc-800"
               }`}
             >
-              Archive
+              Archived
             </button>
           </div>
           <button
             type="button"
             onClick={() => handleOpenModal()}
-            className="h-8 px-3 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1 shrink-0 shadow-xs"
+            className="h-7 px-3 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1 shrink-0 shadow-2xs transition active:scale-98"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>New</span>
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2.5">
+        {/* Contests scroll list */}
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 space-y-2">
           {loading ? (
             <div className="p-8 text-center text-xs text-zinc-400 flex flex-col items-center gap-2">
-              <Loader2 className="w-5 h-5 animate-spin text-[#0B57D0]" />
+              <Loader2 className="w-4 h-4 animate-spin text-[#0B57D0]" />
               <span>Loading contests...</span>
             </div>
           ) : visibleContests.length === 0 ? (
             <div className="p-8 text-center bg-white rounded-lg border border-slate-200 text-xs text-zinc-500">
               No {leftTab} contests found. Click{" "}
-              <span className="font-bold text-[#0B57D0]">+ New</span> to create a
-              vertical poster contest.
+              <span className="font-semibold text-[#0B57D0]">+ New</span> to create a contest.
             </div>
           ) : (
             visibleContests.map((c) => {
               const isSelected = selectedContestId === c.id;
-              const isLive = Boolean(c.is_published && !c.is_archived);
               const subCount = submissions.filter((s) => s.contest_id === c.id).length;
-              const cap = c.submission_limits?.total_cap || 0;
+              const winnerCount = winners.filter((w) => w.contest_id === c.id).length;
+              const cap = c.max_total || c.submission_limits?.total_cap || 0;
+              const hasAnnounced = Boolean(c.winners_announced);
+              const linkedEvent = events.find((ev: any) => ev.id === c.required_event_id);
 
               return (
                 <div
                   key={c.id}
-                  onClick={() =>
-                    setSelectedContestId((prev) => (prev === c.id ? "ALL" : c.id))
-                  }
-                  className={`p-3 rounded-lg border transition cursor-pointer bg-white flex flex-col justify-between gap-2.5 ${
+                  onClick={() => setSelectedContestId(c.id)}
+                  className={`p-3 rounded-lg border transition cursor-pointer flex flex-col justify-between gap-2.5 ${
                     isSelected
-                      ? "border-[#0B57D0] ring-2 ring-[#0B57D0]/20 bg-blue-50/15 shadow-xs"
-                      : "border-slate-200 hover:border-slate-300 shadow-xs"
+                      ? "bg-blue-50/40 border-[#0B57D0] ring-1 ring-[#0B57D0]/30 shadow-xs"
+                      : "bg-white border-slate-200 hover:border-slate-300 shadow-2xs"
                   }`}
                 >
                   <div className="min-w-0">
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-xs font-bold text-zinc-950 truncate">
-                        {c.title}
+                      <h3 className="text-xs font-semibold text-zinc-900 truncate">
+                        {c.internal_title || c.title}
                       </h3>
-                      <span
-                        className={`text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
-                          isLive
-                            ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                            : "bg-slate-100 text-zinc-500"
-                        }`}
-                      >
-                        {isLive ? "Published" : "Draft"}
-                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {hasAnnounced && (
+                          <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-[#0B57D0] border border-blue-200 flex items-center gap-0.5">
+                            <Trophy className="w-2.5 h-2.5" /> Announced
+                          </span>
+                        )}
+                        <span
+                          className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${
+                            c.is_published && !c.is_archived
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              : "bg-slate-100 text-zinc-500 border-slate-200"
+                          }`}
+                        >
+                          {c.is_published ? "Published" : "Draft"}
+                        </span>
+                      </div>
                     </div>
                     <p className="text-[11px] text-zinc-500 truncate mt-0.5">
-                      {c.frontpage_config?.title || "No frontpage title"} •{" "}
-                      {(c.poster_images || []).length}/8 Posters •{" "}
-                      {cap > 0 ? `${subCount}/${cap} Entries` : `${subCount} Entries`}
-                      {Number(c.submission_limits?.points_per_submission || 0) >
-                        0 && (
-                        <span className="font-bold text-[#0B57D0]">
-                          {" "}
-                          • +{c.submission_limits?.points_per_submission} pts/entry
-                        </span>
-                      )}
+                      {c.frontpage_title || c.frontpage_config?.title || "No display title"}
                     </p>
-                  </div>
 
-                  <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100/80">
-                    <div className="text-[10px] text-zinc-400 flex items-center gap-1 min-w-0 truncate">
-                      <Clock className="w-3 h-3 text-zinc-400 shrink-0" />
-                      <span className="truncate">
-                        {formatDateTime(c.start_timestamp)} –{" "}
-                        {formatDateTime(c.end_timestamp)}
+                    {linkedEvent && (
+                      <div className="flex items-center gap-1 text-[10px] text-zinc-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200 w-fit mt-1">
+                        <MapPin className="w-3 h-3 text-slate-400" />
+                        <span className="truncate">Req: {linkedEvent.title}</span>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-2 text-[11px] text-zinc-500 mt-1.5 font-medium">
+                      <span>
+                        {subCount} Entries{cap > 0 ? ` / ${cap} Cap` : ""}
+                      </span>
+                      <span>•</span>
+                      <span>{winnerCount} Winner(s)</span>
+                      <span>•</span>
+                      <span className="text-[#0B57D0]">
+                        +{c.reward_points || c.submission_limits?.points_per_submission || 0} pts
                       </span>
                     </div>
+                  </div>
 
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[10px]">
+                    <div className="text-zinc-400">
+                      End: {formatDateTime(c.end_timestamp)}
+                    </div>
                     <div
-                      className="flex items-center gap-1.5 shrink-0"
+                      className="flex items-center gap-1"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      {leftTab === "active" ? (
-                        <>
-                          <button
-                            type="button"
-                            role="switch"
-                            aria-checked={isLive}
-                            onClick={() =>
-                              handlePatchContest(c, { is_published: !isLive })
-                            }
-                            title={isLive ? "Click to unpublish" : "Click to publish"}
-                            className={`w-8 h-5 rounded-full transition-colors relative flex items-center p-[2px] cursor-pointer shrink-0 ${
-                              isLive
-                                ? "bg-emerald-500 hover:bg-emerald-600"
-                                : "bg-slate-300 hover:bg-slate-400"
-                            }`}
-                          >
-                            <span
-                              className={`w-4 h-4 rounded-full bg-white shadow-xs transform transition-transform ${
-                                isLive ? "translate-x-3" : "translate-x-0"
-                              }`}
-                            />
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => handleOpenModal(c)}
-                            title="Edit Contest"
-                            className="w-5 h-5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 flex items-center justify-center"
-                          >
-                            <Pencil className="w-2.5 h-2.5" />
-                          </button>
-
-                          <button
-                            type="button"
-                            disabled={isLive}
-                            onClick={() =>
-                              handlePatchContest(c, {
-                                is_archived: true,
-                                is_published: false,
-                              })
-                            }
-                            title={
-                              isLive
-                                ? "Unpublish before archiving"
-                                : "Move to Archive"
-                            }
-                            className={`w-5 h-5 rounded flex items-center justify-center ${
-                              isLive
-                                ? "border border-slate-200 bg-slate-100 text-zinc-300 opacity-50 cursor-not-allowed"
-                                : "border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600"
-                            }`}
-                          >
-                            <Archive className="w-2.5 h-2.5" />
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handlePatchContest(c, {
-                                is_archived: false,
-                                is_published: false,
-                              })
-                            }
-                            title="Restore Contest"
-                            className="w-5 h-5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 flex items-center justify-center"
-                          >
-                            <RotateCcw className="w-2.5 h-2.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setContestToDelete(c)}
-                            title="Delete Contest"
-                            className="w-5 h-5 rounded border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 flex items-center justify-center"
-                          >
-                            <Trash2 className="w-2.5 h-2.5" />
-                          </button>
-                        </>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleOpenModal(c)}
+                        className="px-1.5 py-0.5 rounded text-zinc-500 hover:text-zinc-800 hover:bg-slate-100 font-medium"
+                        title="Edit Contest"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleToggleArchive(c)}
+                        className="px-1.5 py-0.5 rounded text-zinc-500 hover:text-zinc-800 hover:bg-slate-100 font-medium"
+                        title={c.is_archived ? "Unarchive" : "Archive"}
+                      >
+                        {c.is_archived ? "Restore" : "Archive"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setContestToDelete(c)}
+                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                        title="Delete Contest"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -794,146 +1312,828 @@ export function HsgContestTab({
         </div>
       </section>
 
-      {/* RIGHT 68%: CONTEST SUBMISSIONS TABLE */}
+      {/* RIGHT 70%: SUB-TABS (SUBMISSIONS vs WINNERS) */}
       <section className="flex-1 h-full flex flex-col bg-white overflow-hidden">
+        {/* Header Toolbar */}
         <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-zinc-900">
-              Contest Submissions
-            </span>
-            {selectedContestId !== "ALL" && (
-              <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[#0B57D0]/10 text-[#0B57D0] flex items-center gap-1.5">
-                <span>
-                  {contests.find((c) => c.id === selectedContestId)?.title ||
-                    selectedContestId}
+          <div className="flex items-center gap-2.5 flex-wrap">
+            {/* Sub-tab Pill Switcher */}
+            <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-200/70 border border-slate-200 text-xs">
+              <button
+                type="button"
+                onClick={() => setActiveSubTab("submissions")}
+                className={`h-7 px-3 rounded-md text-[11px] transition flex items-center gap-1.5 ${
+                  activeSubTab === "submissions"
+                    ? "bg-white text-zinc-950 font-bold shadow-2xs"
+                    : "text-zinc-500 hover:text-zinc-800 font-medium"
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5 text-zinc-500" />
+                <span>Submissions</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-zinc-600 font-semibold border border-slate-200">
+                  {filteredSubs.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSubTab("winners")}
+                className={`h-7 px-3 rounded-md text-[11px] transition flex items-center gap-1.5 ${
+                  activeSubTab === "winners"
+                    ? "bg-white text-zinc-950 font-bold shadow-2xs"
+                    : "text-zinc-500 hover:text-zinc-800 font-medium"
+                }`}
+              >
+                <Trophy className="w-3.5 h-3.5 text-zinc-500" />
+                <span>Prizes & Winners</span>
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-zinc-600 font-semibold border border-slate-200">
+                  {filteredWinners.length}
+                </span>
+              </button>
+            </div>
+
+            {/* Selected Contest Tag (Replaces the crossed-out dropdown) */}
+            {selectedContestId !== "ALL" && activeContestObj ? (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50/60 border border-blue-200 text-xs text-[#0B57D0]">
+                <span className="text-[11px] text-zinc-500 font-medium">Contest:</span>
+                <span className="text-xs font-semibold text-zinc-900 max-w-[200px] truncate" title={activeContestObj.internal_title || activeContestObj.title}>
+                  {activeContestObj.internal_title || activeContestObj.title}
                 </span>
                 <button
                   type="button"
                   onClick={() => setSelectedContestId("ALL")}
-                  className="w-3.5 h-3.5 rounded-full bg-[#0B57D0]/20 hover:bg-[#0842A0] hover:text-white flex items-center justify-center text-[10px]"
+                  className="w-4 h-4 rounded hover:bg-blue-100 flex items-center justify-center text-zinc-400 hover:text-zinc-700 ml-0.5 transition"
+                  title="View all contests"
                 >
-                  ×
+                  <X className="w-3 h-3" />
                 </button>
-              </span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-100 border border-slate-200 text-[11px] text-zinc-500 font-medium">
+                <span>All Contests</span>
+              </div>
+            )}
+
+            {/* Status Pills (for submissions) */}
+            {activeSubTab === "submissions" && (
+              <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-200/70 border border-slate-200 text-xs">
+                {(["ALL", "pending", "approved", "rejected"] as const).map((st) => (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setStatusFilter(st)}
+                    className={`h-6 px-2 rounded capitalize text-[11px] transition ${
+                      statusFilter === st
+                        ? "bg-white text-zinc-950 font-bold shadow-2xs"
+                        : "text-zinc-500 hover:text-zinc-800 font-medium"
+                    }`}
+                  >
+                    {st === "ALL" ? "All" : st}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Search Input */}
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                placeholder={
+                  activeSubTab === "submissions"
+                    ? "Search nickname, phone, answers..."
+                    : "Search winners..."
+                }
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="h-7 pl-7 pr-3 w-44 rounded-md bg-white border border-slate-200 text-xs text-slate-800 placeholder:text-slate-400 outline-none focus:border-[#0B57D0]"
+              />
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex items-center gap-2">
+            {activeSubTab === "submissions" ? (
+              <button
+                type="button"
+                onClick={handleDownloadContestReport}
+                className="h-7 px-3 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition active:scale-98"
+                title="Download Contest Report CSV"
+              >
+                <Download className="w-3.5 h-3.5 text-zinc-500" />
+                <span>Download Report</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                {activeContestObj && (
+                  <button
+                    type="button"
+                    onClick={() => handleToggleAnnounce(activeContestObj)}
+                    disabled={togglingAnnounce}
+                    className={`h-7 px-3 rounded-md text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition active:scale-98 ${
+                      activeContestObj.winners_announced
+                        ? "border border-blue-200 bg-blue-50 text-[#0B57D0] hover:bg-blue-100"
+                        : "border border-slate-200 bg-white text-zinc-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <Trophy className="w-3.5 h-3.5 text-zinc-500" />
+                    <span>
+                      {activeContestObj.winners_announced
+                        ? "Winners Live (Tap to Off)"
+                        : "Announce Winners"}
+                    </span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAssignContestId(
+                      selectedContestId !== "ALL" ? selectedContestId : contests[0]?.id || ""
+                    );
+                    setAssignPrizeId("");
+                    setAssignUserKey("");
+                    setAssignUserSearch("");
+                    setShowAssignModal(true);
+                  }}
+                  className="h-7 px-3 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition active:scale-98"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Assign Winner</span>
+                </button>
+              </div>
             )}
           </div>
+        </div>
 
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-            <input
-              type="text"
-              placeholder="Search participant, phone, answer..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="h-8 pl-8 pr-3 w-60 rounded-lg bg-white border border-slate-200 text-xs outline-none focus:border-[#0B57D0]"
-            />
+        {/* SUBMISSIONS TABLE VIEW */}
+        {activeSubTab === "submissions" && (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            {filteredSubs.length === 0 ? (
+              <div className="p-12 text-center text-xs text-zinc-400 flex flex-col items-center gap-2">
+                <FileText className="w-8 h-8 text-slate-300" />
+                <span>No contest submissions found</span>
+              </div>
+            ) : (
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="sticky top-0 bg-[#F8F9FA] border-b border-slate-200 text-zinc-500 text-[11px] font-semibold select-none z-10">
+                  <tr>
+                    <th className="py-2.5 px-3">Date</th>
+                    <th className="py-2.5 px-3">User</th>
+                    <th className="py-2.5 px-3">Contest</th>
+                    <th className="py-2.5 px-3">Receipt</th>
+                    <th className="py-2.5 px-3">Amount & Qty</th>
+                    <th className="py-2.5 px-3">Answers</th>
+                    <th className="py-2.5 px-3">Status</th>
+                    <th className="py-2.5 px-3 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredSubs.map((sub) => {
+                    const c = contests.find((x) => x.id === sub.contest_id);
+                    const isApproved = sub.status === "approved";
+                    const isRejected = sub.status === "rejected";
+
+                    return (
+                      <tr key={sub.id} className="hover:bg-slate-50/70 transition">
+                        <td className="py-2.5 px-3 whitespace-nowrap text-zinc-500">
+                          {formatDateShort(sub.created_at)}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <div className="font-semibold text-zinc-900">
+                            {sub.user_nickname || "Member"}
+                          </div>
+                          <div className="font-mono text-[11px] text-zinc-400">
+                            +{maskPhoneLast4(sub.user_phone)}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 text-zinc-700 font-medium max-w-[160px] truncate">
+                          {c?.internal_title || c?.title || sub.contest_id}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          {sub.receipt_photo_url ? (
+                            <img
+                              src={sub.receipt_photo_url}
+                              alt="Receipt"
+                              onClick={() => setInspectSub(sub)}
+                              className="w-9 h-9 rounded object-cover border border-slate-200 cursor-pointer hover:opacity-80 transition bg-slate-100"
+                            />
+                          ) : (
+                            <span className="text-[11px] text-zinc-400">-</span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <div className="font-semibold text-zinc-900">
+                            ${Number(sub.amount_paid || 0).toFixed(2)}
+                          </div>
+                          <div className="text-[11px] text-zinc-400 font-normal">
+                            {sub.items_count || 1} item(s)
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 max-w-[200px]">
+                          <div className="truncate text-[11px] text-zinc-600">
+                            {Object.entries(sub.extra_answers || sub.answer_json || {})
+                              .map(([k, v]) => `${k}: ${v}`)
+                              .join(" • ") || "None"}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          {isApproved ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              Approved (+{sub.points_awarded || c?.reward_points || 10} pts)
+                            </span>
+                          ) : isRejected ? (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
+                              Rejected
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                              Pending Review
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInspectSub(sub);
+                              setRejectReason(sub.reject_reason || "");
+                            }}
+                            className="h-6 px-2.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-[11px] font-medium transition shadow-2xs"
+                          >
+                            Inspect
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {/* PRIZES & WINNERS SUB-TAB VIEW */}
+        {activeSubTab === "winners" && (
+          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-5">
+            {/* Registered Prizes Carousel / Grid for selected contest */}
+            {activeContestObj && (
+              <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xs font-bold text-zinc-900">
+                      Registered Contest Prizes ({activeContestObj.prizes?.length || 0}/10)
+                    </h3>
+                    <p className="text-[11px] text-zinc-500">
+                      Prizes configured for {activeContestObj.internal_title || activeContestObj.title}
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold text-zinc-600">
+                    {winners.filter((w) => w.contest_id === activeContestObj.id).length} Winners Assigned
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                  {(activeContestObj.prizes || []).map((prz, idx) => {
+                    const assignedCount = winners.filter(
+                      (w) => w.contest_id === activeContestObj.id && w.prize_id === prz.id
+                    ).length;
+                    const isFull = assignedCount >= (prz.max_pax || 1);
+
+                    const rewardsSummary: string[] = [];
+                    if (prz.reward_cash && prz.reward_cash > 0) rewardsSummary.push(`+$${Number(prz.reward_cash).toFixed(2)} Cash`);
+                    if (prz.reward_points && prz.reward_points > 0) rewardsSummary.push(`+${prz.reward_points} pts`);
+                    if (prz.product_name) rewardsSummary.push(`Product: ${prz.product_name}`);
+
+                    return (
+                      <div
+                        key={prz.id || idx}
+                        className="p-3 rounded-lg bg-white border border-slate-200 flex flex-col justify-between gap-2 shadow-2xs"
+                      >
+                        <div className="flex items-start gap-2.5">
+                          {prz.photo_url || prz.product_image ? (
+                            <img
+                              src={prz.photo_url || prz.product_image}
+                              alt={prz.title}
+                              className="w-12 h-12 rounded-lg object-cover bg-slate-100 border border-slate-200 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-12 h-12 rounded-lg bg-slate-100 text-slate-500 border border-slate-200 flex items-center justify-center shrink-0">
+                              <Trophy className="w-5 h-5 text-slate-400" />
+                            </div>
+                          )}
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-zinc-900 truncate">
+                              {prz.title}
+                            </div>
+                            <div className="text-[11px] font-medium text-[#0B57D0] truncate">
+                              {rewardsSummary.join(" + ") || "Prize Item"}
+                            </div>
+                            <div className="text-[10px] text-zinc-400 truncate">
+                              {prz.description || prz.product_name || "No description"}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[10px]">
+                          <span
+                            className={`font-medium ${
+                              isFull ? "text-rose-600" : "text-zinc-600"
+                            }`}
+                          >
+                            {assignedCount}/{prz.max_pax || 1} Pax
+                            {isFull && " (Full)"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Assigned Winners Table */}
+            <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between bg-[#F8F9FA]">
+                <h3 className="text-xs font-semibold text-zinc-900">
+                  Assigned Winners ({filteredWinners.length})
+                </h3>
+                <span className="text-[11px] text-zinc-500">
+                  Winners claim via WhatsApp bot $\to$ balances credited automatically & delivery address saved
+                </span>
+              </div>
+
+              {filteredWinners.length === 0 ? (
+                <div className="p-10 text-center text-xs text-zinc-400">
+                  No winners assigned yet. Click{" "}
+                  <span className="font-semibold text-[#0B57D0]">+ Assign Winner</span> above.
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-[#F8F9FA] border-b border-slate-200 text-zinc-500 text-[11px] font-semibold">
+                    <tr>
+                      <th className="py-2.5 px-3">Winner User</th>
+                      <th className="py-2.5 px-3">Prize</th>
+                      <th className="py-2.5 px-3">Reward</th>
+                      <th className="py-2.5 px-3">Delivery Address</th>
+                      <th className="py-2.5 px-3">Claim Status</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredWinners.map((win) => {
+                      const isClaimed = Boolean(win.claimed);
+                      const rewardsSummary: string[] = [];
+                      if (win.reward_cash && win.reward_cash > 0) rewardsSummary.push(`+$${Number(win.reward_cash).toFixed(2)}`);
+                      if (win.reward_points && win.reward_points > 0) rewardsSummary.push(`+${win.reward_points} pts`);
+                      if (win.product_name) rewardsSummary.push(win.product_name);
+
+                      return (
+                        <tr key={win.id} className="hover:bg-slate-50/70 transition">
+                          <td className="py-2.5 px-3">
+                            <div className="font-bold text-zinc-900">
+                              {win.user_nickname}
+                            </div>
+                            <div className="font-mono text-[11px] text-zinc-400">
+                              +{maskPhoneLast4(win.user_phone)} • {win.user_id || "-"}
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="flex items-center gap-2">
+                              {win.prize_photo_url || win.product_image ? (
+                                <img
+                                  src={win.prize_photo_url || win.product_image}
+                                  alt={win.prize_title}
+                                  className="w-7 h-7 rounded object-cover border border-slate-200 bg-slate-100"
+                                />
+                              ) : null}
+                              <span className="font-semibold text-zinc-900">
+                                {win.prize_title}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-[#0B57D0]">
+                            {rewardsSummary.join(" + ") || "-"}
+                          </td>
+                          <td className="py-2.5 px-3 max-w-[220px]">
+                            {win.delivery_address ? (
+                              <div className="text-[11px] text-zinc-800 font-medium whitespace-pre-line truncate" title={win.delivery_address}>
+                                📍 {win.delivery_address}
+                              </div>
+                            ) : (win.product_name || win.product_id) ? (
+                              <span className="text-[10px] text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                ⏳ Awaiting via WhatsApp
+                              </span>
+                            ) : (
+                              <span className="text-zinc-400 text-[11px]">-</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 whitespace-nowrap">
+                            {isClaimed ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>Claimed ({formatDateShort(win.claimed_at)})</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                Pending User Claim
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-right whitespace-nowrap">
+                            {isClaimed ? (
+                              <span
+                                className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-400 opacity-60 cursor-not-allowed select-none"
+                                title="Claimed prizes are locked and cannot be edited or removed"
+                              >
+                                <Lock className="w-3 h-3" />
+                                <span>Locked</span>
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={deletingWinnerId === win.id}
+                                onClick={() => handleDeleteWinner(win)}
+                                className="h-7 px-2.5 rounded-md text-red-600 hover:bg-red-50 text-[11px] font-semibold transition"
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* INSPECT SUBMISSION MODAL */}
+      {inspectSub && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950">
+                  Inspect Submission ({inspectSub.id})
+                </h3>
+                <p className="text-[11px] text-zinc-500">
+                  {inspectSub.user_nickname} (+{maskPhoneLast4(inspectSub.user_phone)})
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setInspectSub(null)}
+                className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-zinc-600 hover:bg-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 text-xs">
+              {/* Receipt Image */}
+              {inspectSub.receipt_photo_url ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-600">
+                    <span>Receipt Photo</span>
+                    <button
+                      type="button"
+                      onClick={() => setZoomReceipt((z) => !z)}
+                      className="text-[#0B57D0] hover:underline"
+                    >
+                      {zoomReceipt ? "Normal View" : "Full View"}
+                    </button>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center p-1">
+                    <img
+                      src={inspectSub.receipt_photo_url}
+                      alt="Receipt"
+                      className={`rounded object-contain ${
+                        zoomReceipt ? "max-h-[500px] w-full" : "max-h-56 w-auto"
+                      }`}
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Purchase Details */}
+              <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <div>
+                  <div className="text-[10px] font-bold uppercase text-zinc-400">
+                    Amount Paid ($)
+                  </div>
+                  <div className="text-sm font-extrabold text-zinc-900">
+                    ${Number(inspectSub.amount_paid || 0).toFixed(2)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold uppercase text-zinc-400">
+                    Qty Purchased
+                  </div>
+                  <div className="text-sm font-extrabold text-zinc-900">
+                    {inspectSub.items_count || 1} item(s)
+                  </div>
+                </div>
+              </div>
+
+              {/* Extra Answers */}
+              <div className="space-y-2 p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <div className="text-[10px] font-bold uppercase text-zinc-400">
+                  Contest Answers
+                </div>
+                {Object.keys(inspectSub.extra_answers || inspectSub.answer_json || {}).length === 0 ? (
+                  <div className="text-zinc-400 italic">No extra questions answered</div>
+                ) : (
+                  Object.entries(inspectSub.extra_answers || inspectSub.answer_json || {}).map(
+                    ([k, v]) => (
+                      <div key={k} className="text-xs">
+                        <span className="font-semibold text-zinc-700">{k}: </span>
+                        <span className="font-bold text-zinc-950">
+                          {typeof v === "object" ? JSON.stringify(v) : String(v)}
+                        </span>
+                      </div>
+                    )
+                  )
+                )}
+              </div>
+
+              {/* Current Status */}
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-semibold text-zinc-600">Current Status:</span>
+                <span className="font-bold uppercase text-zinc-900">
+                  {inspectSub.status}
+                </span>
+              </div>
+
+              {/* Reject Reason input */}
+              <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                <label className="block text-[11px] font-semibold text-zinc-700">
+                  Rejection Reason (if rejecting):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Ineligible receipt or blurry photo"
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  className="w-full h-8 px-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs outline-none focus:border-rose-500"
+                />
+              </div>
+            </div>
+
+            {/* Actions Footer */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
+              <button
+                type="button"
+                disabled={Boolean(processingSubId)}
+                onClick={() => handleRejectSubmission(inspectSub)}
+                className="h-8 px-4 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs transition disabled:opacity-50"
+              >
+                Reject & Claw Back Points
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(processingSubId)}
+                onClick={() => handleApproveSubmission(inspectSub)}
+                className="h-8 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition disabled:opacity-50"
+              >
+                Approve & Credit Points
+              </button>
+            </div>
           </div>
         </div>
+      )}
 
-        <div className="flex-1 min-h-0 overflow-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead className="sticky top-0 bg-[#F8F9FA] border-b border-slate-200 text-zinc-600 font-semibold">
-              <tr>
-                <th className="py-2.5 px-4">Participant</th>
-                <th className="py-2.5 px-4">Contest</th>
-                <th className="py-2.5 px-4">Submitted Answers</th>
-                <th className="py-2.5 px-4">Submitted At</th>
-                <th className="py-2.5 px-4">Status</th>
-                <th className="py-2.5 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {filteredSubs.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-12 text-center text-zinc-400">
-                    No contest submissions found.
-                  </td>
-                </tr>
-              ) : (
-                filteredSubs.map((sub) => {
-                  const contestObj = contests.find((c) => c.id === sub.contest_id);
-                  return (
-                    <tr key={sub.id} className="hover:bg-slate-50/80">
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-zinc-900">
-                          {sub.user_nickname}
-                        </div>
-                        <div className="text-[11px] font-mono text-zinc-500">
-                          +{maskPhoneLast4(sub.user_phone)}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 font-semibold text-zinc-800">
-                        {contestObj?.title || sub.contest_id}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="space-y-0.5 max-w-[260px]">
-                          {Object.entries(sub.answer_json || {})
-                            .slice(0, 2)
-                            .map(([k, v]) => (
-                              <div key={k} className="text-[11px] truncate">
-                                <span className="text-zinc-500 font-mono">{k}:</span>{" "}
-                                <span className="font-semibold text-zinc-900">
-                                  {Array.isArray(v) ? v.join(", ") : String(v)}
-                                </span>
-                              </div>
-                            ))}
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 text-zinc-500">
-                        {formatDateTime(sub.created_at)}
-                      </td>
-                      <td className="py-3 px-4">
-                        {sub.status === "winner" ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-100 text-zinc-800 font-medium text-[11px] border border-slate-300">
-                            <Award className="w-3 h-3" />{" "}
-                            {sub.winner_data?.prize_note || "Winner"}
-                          </span>
-                        ) : sub.status === "rejected" ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-slate-50 text-zinc-500 font-medium text-[11px] border border-slate-200">
-                            <XCircle className="w-3 h-3" /> Rejected
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-blue-50 text-[#0B57D0] font-bold text-[11px] border border-blue-200">
-                            Submitted
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-right">
+      {/* ASSIGN WINNER MODAL */}
+      {showAssignModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <form
+            onSubmit={handleAssignWinner}
+            className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden"
+          >
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-950">Assign Contest Winner</h3>
+                <p className="text-[11px] text-zinc-500">
+                  Select a contest, prize, and choose the winning user
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAssignModal(false)}
+                className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-zinc-600 hover:bg-slate-200"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs">
+              {/* 1. Contest Selector */}
+              <div>
+                <label className="block font-semibold text-zinc-700 mb-1">
+                  Contest:
+                </label>
+                <select
+                  value={assignContestId}
+                  onChange={(e) => {
+                    setAssignContestId(e.target.value);
+                    setAssignPrizeId("");
+                    setAssignUserKey("");
+                    setAssignUserSearch("");
+                  }}
+                  className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 font-semibold outline-none"
+                >
+                  <option value="">-- Choose Contest --</option>
+                  {contests.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.internal_title || c.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 2. Prize Selector */}
+              <div>
+                <label className="block font-semibold text-zinc-700 mb-1">
+                  Prize ({contestPrizes.length} available):
+                </label>
+                <select
+                  value={assignPrizeId}
+                  onChange={(e) => setAssignPrizeId(e.target.value)}
+                  disabled={!assignContestId || contestPrizes.length === 0}
+                  className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 font-semibold outline-none disabled:opacity-50"
+                >
+                  <option value="">-- Choose Prize --</option>
+                  {contestPrizes.map((p) => {
+                    const assigned = winners.filter(
+                      (w) => w.contest_id === assignContestId && w.prize_id === p.id
+                    ).length;
+                    const max = p.max_pax || 1;
+                    const isFull = assigned >= max;
+
+                    return (
+                      <option
+                        key={p.id}
+                        value={p.id}
+                        disabled={isFull}
+                        className={isFull ? "text-slate-400" : ""}
+                      >
+                        {p.title} ({assigned}/{max} pax{isFull ? " - FULL" : ""})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {/* 3. Choose Winner User */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block font-semibold text-zinc-700">
+                    Choose Winner (User):
+                  </label>
+                  <span className="text-[11px] text-zinc-400 font-medium">
+                    {contestSubmitterUsers.length} user{contestSubmitterUsers.length === 1 ? "" : "s"} submitted
+                  </span>
+                </div>
+
+                {/* Real-time search box by name, phone (last 4), or user ID */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={assignUserSearch}
+                    onChange={(e) => setAssignUserSearch(e.target.value)}
+                    placeholder="Search by name, phone (last 4), or user ID..."
+                    disabled={!assignContestId || contestSubmitterUsers.length === 0}
+                    className="w-full h-8 pl-8 pr-7 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium outline-none focus:bg-white focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]/20 disabled:opacity-50"
+                  />
+                  {assignUserSearch && (
+                    <button
+                      type="button"
+                      onClick={() => setAssignUserSearch("")}
+                      className="w-5 h-5 absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 flex items-center justify-center text-xs"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Users List Box */}
+                <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
+                  {!assignContestId ? (
+                    <div className="p-3 text-center text-zinc-400 text-xs italic">
+                      Please select a contest above first
+                    </div>
+                  ) : contestSubmitterUsers.length === 0 ? (
+                    <div className="p-3 text-center text-zinc-400 text-xs italic">
+                      No submitters found for this contest
+                    </div>
+                  ) : filteredSubmitterUsers.length === 0 ? (
+                    <div className="p-3 text-center text-zinc-400 text-xs italic">
+                      No users match &ldquo;{assignUserSearch}&rdquo;
+                    </div>
+                  ) : (
+                    filteredSubmitterUsers.map((u) => {
+                      const isSelected = assignUserKey === u.key;
+                      const phoneDigits = (u.user_phone || "").replace(/\D/g, "");
+                      const last4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : phoneDigits;
+                      const idSuffix = u.user_id ? ` | ${u.user_id}` : "";
+
+                      return (
                         <button
+                          key={u.key}
                           type="button"
-                          onClick={() => {
-                            setInspectSub(sub);
-                            setPrizeNote(
-                              sub.winner_data?.prize_note || "1st Prize Winner"
-                            );
-                          }}
-                          className="h-7 px-2.5 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-800 inline-flex items-center gap-1"
+                          onClick={() => setAssignUserKey(u.key)}
+                          className={`w-full p-2.5 text-left flex items-center justify-between gap-2 transition ${
+                            isSelected
+                              ? "bg-blue-50/80 text-[#0B57D0]"
+                              : "hover:bg-slate-50 text-zinc-800"
+                          }`}
                         >
-                          <Eye className="w-3 h-3 text-zinc-500" />
-                          <span>Inspect</span>
+                          <div className="min-w-0">
+                            <div className="font-bold text-xs truncate">
+                              {u.user_nickname} {last4}{idSuffix}
+                            </div>
+                            <div className="text-[10px] text-zinc-500 font-medium">
+                              {u.total_submissions} submission{u.total_submissions === 1 ? "" : "s"} • ${u.total_spend.toFixed(2)} total spend ({u.total_qty} items)
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 flex items-center gap-1.5">
+                            {isSelected ? (
+                              <span className="w-5 h-5 rounded-full bg-[#0B57D0] text-white flex items-center justify-center text-xs font-bold shadow-xs">
+                                ✓
+                              </span>
+                            ) : (
+                              <span className="w-5 h-5 rounded-full border border-slate-300 bg-white" />
+                            )}
+                          </div>
                         </button>
-                      </td>
-                    </tr>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Selected user badge preview */}
+                {assignUserKey && (() => {
+                  const sel = contestSubmitterUsers.find((u) => u.key === assignUserKey);
+                  if (!sel) return null;
+                  const pDigits = (sel.user_phone || "").replace(/\D/g, "");
+                  const l4 = pDigits.length >= 4 ? pDigits.slice(-4) : pDigits;
+                  return (
+                    <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-950 flex items-center justify-between text-[11px] font-semibold">
+                      <span>Winner Selected: <strong>{sel.user_nickname} {l4} {sel.user_id ? `| ${sel.user_id}` : ""}</strong></span>
+                      <button
+                        type="button"
+                        onClick={() => setAssignUserKey("")}
+                        className="text-emerald-700 hover:text-emerald-900 underline text-[10px]"
+                      >
+                        Change
+                      </button>
+                    </div>
                   );
-                })
-              )}
-            </tbody>
-          </table>
+                })()}
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setShowAssignModal(false)}
+                className="h-8 px-4 rounded-lg border border-slate-200 bg-white font-semibold text-zinc-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={assigningWinner || !assignPrizeId || !assignUserKey}
+                className="h-8 px-5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
+              >
+                {assigningWinner && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Confirm Assignment</span>
+              </button>
+            </div>
+          </form>
         </div>
-      </section>
+      )}
 
       {/* CREATE / EDIT CONTEST MODAL */}
       {showModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6">
-          <div className="w-full max-w-4xl max-h-[90vh] bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
-            <div className="px-6 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0">
-              <h2 className="text-base font-bold text-zinc-950">
-                {editingId ? "Edit Campaign Contest" : "Create Campaign Contest"}
-              </h2>
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-3xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="text-base font-bold text-zinc-950">
+                  {editingId ? "Edit Contest Campaign" : "Create New Contest"}
+                </h3>
+                <p className="text-xs text-zinc-500">
+                  Configure contest details, event check-in requirement, prizes registry, and questions
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowModal(false)}
-                className="w-8 h-8 rounded-lg bg-slate-100 hover:bg-slate-200 text-zinc-600 flex items-center justify-center transition"
+                className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-zinc-600 hover:bg-slate-200"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -941,391 +2141,694 @@ export function HsgContestTab({
 
             <form
               onSubmit={handleSaveContest}
-              className="flex-1 min-h-0 overflow-y-auto p-6 text-xs"
+              className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6 text-xs"
             >
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* LEFT COLUMN: GENERAL INFO & SCHEDULE */}
-                <div className="space-y-4">
-                  <div className="text-xs font-bold text-zinc-900 border-b border-slate-100 pb-1.5">
-                    Contest Details
-                  </div>
+              {/* SECTION 1: TITLES & DESCRIPTIONS */}
+              <div className="space-y-4">
+                <div className="text-xs font-bold text-zinc-900 border-b border-slate-100 pb-1.5">
+                  1. Contest Titles & Description
+                </div>
 
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block font-semibold text-zinc-700 mb-1">
-                      Internal Contest Title
+                      Contest Title (Internal only - for Project 1)
                     </label>
                     <input
                       type="text"
-                      value={title}
-                      onChange={(e) => setTitle(e.target.value)}
-                      placeholder="e.g. Marina Bay 4-Hour Flash Contest"
+                      value={internalTitle}
+                      onChange={(e) => setInternalTitle(e.target.value)}
+                      placeholder="e.g. CNY 2026 Giant Supermarket Drop"
                       className="w-full h-9 px-3 rounded-lg bg-slate-50 border border-slate-200 outline-none font-semibold focus:border-[#0B57D0]"
                     />
                   </div>
 
                   <div>
                     <label className="block font-semibold text-zinc-700 mb-1">
-                      Frontpage Display Title
+                      Frontpage Title (Displayed in mobile app)
                     </label>
                     <input
                       type="text"
                       value={fpTitle}
                       onChange={(e) => setFpTitle(e.target.value)}
-                      placeholder="e.g. 4-Hour Flash Drop: Win $100 Cash!"
+                      placeholder="e.g. Win $500 Cash in our CNY Draw!"
                       className="w-full h-9 px-3 rounded-lg bg-slate-50 border border-slate-200 outline-none font-semibold focus:border-[#0B57D0]"
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">
+                    Frontpage Description
+                  </label>
+                  <input
+                    type="text"
+                    value={fpDesc}
+                    onChange={(e) => setFpDesc(e.target.value)}
+                    placeholder="e.g. Purchase min 2 bottles and upload receipt to win!"
+                    className="w-full h-9 px-3 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-semibold text-zinc-700 mb-1">
+                      Inside Contest Description
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={insideDesc}
+                      onChange={(e) => setInsideDesc(e.target.value)}
+                      placeholder="Detailed contest story or background..."
+                      className="w-full p-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#0B57D0]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-zinc-700 mb-1">
+                      Inside Instruction
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={insideInstruction}
+                      onChange={(e) => setInsideInstruction(e.target.value)}
+                      placeholder="Step 1: Check in at event. Step 2: Buy item. Step 3: Snap receipt..."
+                      className="w-full p-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#0B57D0]"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 2: CONTEST REQUIREMENTS & CONDITIONS */}
+              <div className="space-y-4">
+                <div className="text-xs font-bold text-zinc-900 border-b border-slate-100 pb-1.5 flex items-center justify-between">
+                  <span>2. Contest Requirements &amp; Conditions</span>
+                  <span className="text-[10px] text-zinc-400 font-normal">Optional</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block font-semibold text-zinc-700 mb-1">
+                      Required Event (User must join this event)
+                    </label>
+                    <select
+                      value={reqEventId}
+                      onChange={(e) => setReqEventId(e.target.value)}
+                      className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-semibold text-zinc-800 focus:border-[#0B57D0]"
+                    >
+                      <option value="">-- No Event Requirement (Open to All) --</option>
+                      {(events || []).map((ev: any) => (
+                        <option key={ev.id} value={ev.id}>
+                          {ev.title} ({formatDateShort(ev.event_date || ev.date || ev.created_at)})
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-zinc-400 mt-1">
+                      User must join this event to participate in the contest.
+                    </p>
+                  </div>
 
                   <div>
                     <label className="block font-semibold text-zinc-700 mb-1">
-                      Frontpage Description
+                      Contest Requirement Note / Condition
                     </label>
                     <input
                       type="text"
-                      value={fpDesc}
-                      onChange={(e) => setFpDesc(e.target.value)}
-                      placeholder="e.g. Scroll down the poster & submit your photo!"
+                      value={reqNote}
+                      onChange={(e) => setReqNote(e.target.value)}
+                      placeholder="e.g. Purchase any items with $50 worth and upload photo receipt here."
                       className="w-full h-9 px-3 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#0B57D0]"
                     />
+                    <p className="text-[10px] text-zinc-400 mt-1">
+                      Displayed on the contest submission card as the mandatory condition (e.g. minimum purchase amount, receipt requirements).
+                    </p>
                   </div>
+                </div>
+              </div>
 
-                  {/* Frontpage Cover Photo */}
+              {/* SECTION 3: SCHEDULE & SUBMISSION REWARDS */}
+              <div className="space-y-4">
+                <div className="text-xs font-bold text-zinc-900 border-b border-slate-100 pb-1.5">
+                  3. Schedule & Rewards
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block font-semibold text-zinc-700 mb-1">
-                      Frontpage Cover Photo
+                      Start Date & Time
                     </label>
-                    {fpPhoto ? (
-                      <div className="flex items-center gap-3 p-2 rounded-lg border border-slate-200 bg-slate-50">
-                        <img
-                          src={fpPhoto}
-                          alt="Frontpage Cover"
-                          className="w-14 h-14 rounded-md object-cover bg-white border border-slate-200 shrink-0"
-                        />
-                        <div className="flex-1 min-w-0 font-mono text-[11px] text-zinc-500 truncate">
-                          {fpPhoto}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setFpPhoto("")}
-                          className="px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 rounded-md shrink-0"
-                        >
-                          Remove
-                        </button>
+                    <input
+                      type="datetime-local"
+                      value={startDt}
+                      onChange={(e) => setStartDt(e.target.value)}
+                      className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-medium"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-zinc-700 mb-1">
+                      End Date & Time
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={endDt}
+                      onChange={(e) => setEndDt(e.target.value)}
+                      className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-medium"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className="block font-semibold text-zinc-700 mb-1">
+                      Submission Reward (Point Only)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={rewardPoints}
+                      onChange={(e) => setRewardPoints(Number(e.target.value))}
+                      className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-bold text-[#0B57D0]"
+                    />
+                    <p className="text-[10px] text-zinc-400 mt-0.5">
+                      Points credited upon admin entry approval
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-zinc-700 mb-1">
+                      Max Per User
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={maxPerUser}
+                      onChange={(e) => setMaxPerUser(Number(e.target.value))}
+                      className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-bold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block font-semibold text-zinc-700 mb-1">
+                      Total Contest Cap
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      value={maxTotal}
+                      onChange={(e) => setMaxTotal(Number(e.target.value))}
+                      placeholder="0 = unlimited"
+                      className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-bold"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 4: POSTERS (FRONTPAGE & INSIDE VERTICAL POSTERS) */}
+              <div className="space-y-4">
+                <div className="text-xs font-bold text-zinc-900 border-b border-slate-100 pb-1.5">
+                  4. Posters (Frontpage 4:5 / 1:1 & Inside Posters Max 8)
+                </div>
+
+                {/* Frontpage Poster */}
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">
+                    Frontpage Poster (4:5 or 1:1)
+                  </label>
+                  {fpPhoto ? (
+                    <div className="flex items-center gap-3 p-2 rounded-lg border border-slate-200 bg-slate-50">
+                      <img
+                        src={fpPhoto}
+                        alt="Frontpage"
+                        className="w-14 h-14 rounded-md object-cover bg-white border border-slate-200 shrink-0"
+                      />
+                      <div className="flex-1 min-w-0 font-mono text-[11px] text-zinc-500 truncate">
+                        {fpPhoto}
                       </div>
-                    ) : (
-                      <label className="flex items-center justify-center border-2 border-dashed border-slate-300 hover:border-[#0B57D0] rounded-lg p-3.5 cursor-pointer bg-slate-50/70 transition">
-                        {uploadingCover ? (
-                          <Loader2 className="w-4 h-4 animate-spin text-[#0B57D0]" />
+                      <button
+                        type="button"
+                        onClick={() => setFpPhoto("")}
+                        className="px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50 rounded-md"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="flex items-center justify-center border-2 border-dashed border-slate-300 hover:border-[#0B57D0] rounded-lg p-3 cursor-pointer bg-slate-50 transition">
+                      {uploadingFpPhoto ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-[#0B57D0]" />
+                      ) : (
+                        <span className="text-xs font-semibold text-[#0B57D0] flex items-center gap-1.5">
+                          <Upload className="w-3.5 h-3.5" /> Upload Frontpage Poster
+                        </span>
+                      )}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={handleUploadFpPhoto}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+                </div>
+
+                {/* Inside Posters */}
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="font-semibold text-zinc-700">
+                      Inside Contest Posters ({insidePosters.length}/8)
+                    </label>
+                    {insidePosters.length < 8 && (
+                      <label className="h-7 px-2.5 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer transition">
+                        {uploadingPosters ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
                         ) : (
-                          <span className="text-xs font-semibold text-[#0B57D0] flex items-center gap-1.5">
-                            <Upload className="w-3.5 h-3.5" /> Upload Cover Photo
-                          </span>
+                          <Upload className="w-3 h-3" />
                         )}
+                        <span>Upload Inside Poster</span>
                         <input
                           type="file"
                           accept="image/*"
-                          onChange={handleUploadFrontPhoto}
+                          multiple
+                          onChange={handleUploadInsidePosters}
                           className="hidden"
                         />
                       </label>
                     )}
                   </div>
 
-                  <div className="text-xs font-bold text-zinc-900 border-b border-slate-100 pb-1.5 pt-2">
-                    Schedule & Settings
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block font-semibold text-zinc-700 mb-1">
-                        Start Date & Time
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={startDt}
-                        onChange={(e) => setStartDt(e.target.value)}
-                        className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-medium"
-                      />
+                  {insidePosters.length === 0 ? (
+                    <div className="p-3 rounded-lg border border-dashed border-slate-300 text-center text-zinc-400 text-xs">
+                      No inside posters uploaded yet.
                     </div>
-                    <div>
-                      <label className="block font-semibold text-zinc-700 mb-1">
-                        End Date & Time
-                      </label>
-                      <input
-                        type="datetime-local"
-                        value={endDt}
-                        onChange={(e) => setEndDt(e.target.value)}
-                        className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-medium"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-3 gap-2.5">
-                    <div>
-                      <label className="block font-semibold text-zinc-700 mb-1">
-                        Points (pts)
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        step="1"
-                        value={pointsPerSubmission}
-                        onChange={(e) =>
-                          setPointsPerSubmission(Number(e.target.value))
-                        }
-                        placeholder="0"
-                        className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-bold text-[#0B57D0]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-semibold text-zinc-700 mb-1">
-                        Max / User
-                      </label>
-                      <input
-                        type="number"
-                        min={1}
-                        value={maxPerUser}
-                        onChange={(e) => setMaxPerUser(Number(e.target.value))}
-                        className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-bold"
-                      />
-                    </div>
-                    <div>
-                      <label className="block font-semibold text-zinc-700 mb-1">
-                        Total Cap
-                      </label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={totalCap}
-                        onChange={(e) => setTotalCap(Number(e.target.value))}
-                        placeholder="0 = unlim"
-                        className="w-full h-9 px-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none font-bold"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Minimal Toggle Switch for Published Status */}
-                  <div className="pt-2 flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-200">
-                    <div>
-                      <div className="font-semibold text-zinc-800">Publish Status</div>
-                      <div className="text-[11px] text-zinc-400">
-                        {isPublished ? "Visible in community app" : "Hidden in draft state"}
-                      </div>
-                    </div>
-                    <label className="flex items-center gap-2 cursor-pointer select-none">
-                      <div
-                        onClick={() => setIsPublished((p) => !p)}
-                        className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
-                          isPublished ? "bg-[#0B57D0]" : "bg-slate-300"
-                        }`}
-                      >
+                  ) : (
+                    <div className="grid grid-cols-4 gap-2">
+                      {insidePosters.map((url, idx) => (
                         <div
-                          className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
-                            isPublished ? "translate-x-5" : "translate-x-0"
-                          }`}
-                        />
-                      </div>
-                    </label>
-                  </div>
-                </div>
-
-                {/* RIGHT COLUMN: POSTERS & QUESTIONS */}
-                <div className="space-y-4">
-                  {/* Posters */}
-                  <div>
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 mb-2">
-                      <div className="text-xs font-bold text-zinc-900">
-                        Vertical Posters ({posters.length}/8)
-                      </div>
-                      {posters.length < 8 && (
-                        <label className="h-7 px-2.5 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-semibold inline-flex items-center gap-1 cursor-pointer transition">
-                          {uploadingPoster ? (
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <Upload className="w-3 h-3" />
-                          )}
-                          <span>Upload Image</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            multiple
-                            disabled={uploadingPoster}
-                            onChange={handleUploadPosterFiles}
-                            className="hidden"
-                          />
-                        </label>
-                      )}
-                    </div>
-
-                    {posters.length === 0 ? (
-                      <div className="p-4 rounded-lg border border-dashed border-slate-300 text-center text-zinc-400 text-xs">
-                        No poster images uploaded yet.
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-4 gap-2">
-                        {posters.map((url, idx) => (
-                          <div
-                            key={idx}
-                            className="rounded-lg border border-slate-200 bg-slate-50 overflow-hidden flex flex-col"
-                          >
-                            <div className="relative aspect-[4/5] bg-white overflow-hidden">
-                              <img
-                                src={url}
-                                alt={`Poster ${idx + 1}`}
-                                className="w-full h-full object-cover"
-                              />
-                              <span className="absolute top-1 left-1 px-1 py-0.5 rounded bg-zinc-900/80 text-white text-[9px] font-bold">
-                                #{idx + 1}
-                              </span>
-                            </div>
-                            <div className="p-1 bg-white border-t border-slate-200 flex items-center justify-between">
-                              <div className="flex items-center gap-0.5">
-                                <button
-                                  type="button"
-                                  disabled={idx === 0}
-                                  onClick={() => handleMovePoster(idx, -1)}
-                                  className="w-5 h-5 rounded hover:bg-slate-100 flex items-center justify-center disabled:opacity-30"
-                                >
-                                  <ArrowUp className="w-2.5 h-2.5" />
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={idx === posters.length - 1}
-                                  onClick={() => handleMovePoster(idx, 1)}
-                                  className="w-5 h-5 rounded hover:bg-slate-100 flex items-center justify-center disabled:opacity-30"
-                                >
-                                  <ArrowDown className="w-2.5 h-2.5" />
-                                </button>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setPosters((prev) => prev.filter((_, i) => i !== idx))
-                                }
-                                className="w-5 h-5 rounded text-red-600 hover:bg-red-50 flex items-center justify-center"
-                              >
-                                <Trash2 className="w-2.5 h-2.5" />
-                              </button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Questions */}
-                  <div>
-                    <div className="flex items-center justify-between border-b border-slate-100 pb-1.5 mb-2">
-                      <div className="text-xs font-bold text-zinc-900">
-                        Submission Questions ({questions.length})
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setQuestions((prev) => [
-                            ...prev,
-                            {
-                              id: `q_${Date.now().toString().slice(-4)}`,
-                              label: "New Question",
-                              type: "text",
-                              required: true,
-                            },
-                          ])
-                        }
-                        className="h-7 px-2.5 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-semibold flex items-center gap-1 transition"
-                      >
-                        <Plus className="w-3 h-3" />
-                        <span>Add Question</span>
-                      </button>
-                    </div>
-
-                    <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                      {questions.map((q, idx) => (
-                        <div
-                          key={q.id || idx}
-                          className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 space-y-1.5"
+                          key={idx}
+                          className="rounded-lg border border-slate-200 bg-slate-50 overflow-hidden relative group aspect-[4/5]"
                         >
-                          <div className="grid grid-cols-12 gap-1.5 items-center">
-                            <div className="col-span-7">
-                              <input
-                                type="text"
-                                value={q.label}
-                                onChange={(e) =>
-                                  setQuestions((prev) =>
-                                    prev.map((item, i) =>
-                                      i === idx ? { ...item, label: e.target.value } : item
-                                    )
-                                  )
-                                }
-                                placeholder="Question label..."
-                                className="w-full h-7 px-2 rounded-md bg-white border border-slate-200 text-xs font-semibold outline-none"
-                              />
-                            </div>
-                            <div className="col-span-4">
-                              <select
-                                value={q.type}
-                                onChange={(e) =>
-                                  setQuestions((prev) =>
-                                    prev.map((item, i) =>
-                                      i === idx
-                                        ? {
-                                            ...item,
-                                            type: e.target
-                                              .value as ContestQuestionItem["type"],
-                                          }
-                                        : item
-                                    )
-                                  )
-                                }
-                                className="w-full h-7 px-1.5 rounded-md bg-white border border-slate-200 text-xs font-semibold outline-none"
-                              >
-                                <option value="text">Text Input</option>
-                                <option value="photo_upload">Photo Upload</option>
-                                <option value="radio_select">Radio Select</option>
-                                <option value="multi_select">Multi Select</option>
-                                <option value="range_number">Range (1–10)</option>
-                              </select>
-                            </div>
-                            <div className="col-span-1 flex justify-end">
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setQuestions((prev) => prev.filter((_, i) => i !== idx))
-                                }
-                                className="w-6 h-6 rounded text-red-500 hover:bg-red-50 flex items-center justify-center"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {(q.type === "radio_select" || q.type === "multi_select") && (
-                            <input
-                              type="text"
-                              value={(q.options || []).join(", ")}
-                              onChange={(e) => {
-                                const opts = e.target.value
-                                  .split(",")
-                                  .map((s) => s.trim())
-                                  .filter(Boolean);
-                                setQuestions((prev) =>
-                                  prev.map((item, i) =>
-                                    i === idx ? { ...item, options: opts } : item
-                                  )
-                                );
-                              }}
-                              placeholder="Comma-separated options (Option A, Option B)"
-                              className="w-full h-7 px-2 rounded-md bg-white border border-slate-200 text-xs outline-none"
-                            />
-                          )}
+                          <img
+                            src={url}
+                            alt={`Poster #${idx + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setInsidePosters((prev) => prev.filter((_, i) => i !== idx))
+                            }
+                            className="absolute top-1 right-1 w-6 h-6 rounded bg-black/60 hover:bg-black/80 text-white flex items-center justify-center"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
                         </div>
                       ))}
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
-              <div className="pt-4 mt-6 border-t border-slate-200 flex items-center justify-end gap-2">
+              {/* SECTION 5: EXTRA QUESTIONS (MAX 5, NO DEFAULT) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                  <div className="text-xs font-bold text-zinc-900">
+                    5. Extra Questions ({extraQuestions.length}/5)
+                  </div>
+                  {extraQuestions.length < 5 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExtraQuestions((prev) => [
+                          ...prev,
+                          { id: `q_${Date.now().toString().slice(-4)}`, question: "" },
+                        ])
+                      }
+                      className="h-7 px-2.5 rounded-md bg-slate-100 hover:bg-slate-200 text-zinc-800 text-[11px] font-semibold flex items-center gap-1"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Add Extra Question</span>
+                    </button>
+                  )}
+                </div>
+
+                {extraQuestions.length === 0 ? (
+                  <div className="p-3 rounded-lg border border-dashed border-slate-200 text-center text-zinc-400 text-xs">
+                    No extra questions. (Receipt upload, Amount Paid, and Qty Purchased are included automatically).
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {extraQuestions.map((q, idx) => (
+                      <div
+                        key={q.id || idx}
+                        className="p-2.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center gap-2"
+                      >
+                        <span className="font-bold text-zinc-600 text-[11px] w-6 shrink-0">
+                          #{idx + 1}
+                        </span>
+                        <input
+                          type="text"
+                          value={q.question}
+                          onChange={(e) =>
+                            setExtraQuestions((prev) =>
+                              prev.map((item, i) =>
+                                i === idx ? { ...item, question: e.target.value } : item
+                              )
+                            )
+                          }
+                          placeholder="e.g. Which supermarket branch did you purchase from?"
+                          className="flex-1 h-8 px-2.5 rounded bg-white border border-slate-200 text-xs font-medium outline-none focus:border-[#0B57D0]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExtraQuestions((prev) => prev.filter((_, i) => i !== idx))
+                          }
+                          className="w-7 h-7 rounded text-red-500 hover:bg-red-50 flex items-center justify-center shrink-0"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION 6: PRIZE REGISTRY (MAX 10 PRIZES - MODULAR CASH / POINT / PRODUCT FROM HSG+ SHOP) */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-1.5">
+                  <div>
+                    <div className="text-xs font-bold text-zinc-900">
+                      6. Prize Registry ({prizes.length}/10)
+                    </div>
+                    <p className="text-[10px] text-zinc-400">
+                      Each prize can reward Cash, Points, or a Product from the HSG+ Shop Catalog (or combinations)
+                    </p>
+                  </div>
+                  {prizes.length < 10 && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPrizes((prev) => [
+                          ...prev,
+                          {
+                            id: `prz_${Date.now().toString().slice(-4)}`,
+                            title: `Prize #${prev.length + 1}`,
+                            description: "",
+                            photo_url: "",
+                            reward_type: "cashback",
+                            reward_cash: 50,
+                            reward_points: 0,
+                            product_id: "",
+                            product_name: "",
+                            product_image: "",
+                            max_pax: 1,
+                          },
+                        ])
+                      }
+                      className="h-7 px-2.5 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-semibold flex items-center gap-1 transition"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Prize</span>
+                    </button>
+                  )}
+                </div>
+
+                {prizes.length === 0 ? (
+                  <div className="p-4 rounded-lg border border-dashed border-slate-300 text-center text-zinc-400 text-xs">
+                    No prizes added yet. Click{" "}
+                    <span className="font-bold text-[#0B57D0]">+ Add Prize</span> to register up to 10 prizes.
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {prizes.map((prz, idx) => {
+                      const hasCash = Boolean(prz.reward_cash && prz.reward_cash > 0);
+                      const hasPoints = Boolean(prz.reward_points && prz.reward_points > 0);
+                      const hasProduct = Boolean(prz.product_id || prz.product_name);
+
+                      return (
+                        <div
+                          key={prz.id || idx}
+                          className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-3"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-zinc-900">
+                              Prize #{idx + 1}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setPrizes((prev) => prev.filter((_, i) => i !== idx))
+                              }
+                              className="text-red-500 hover:text-red-700 flex items-center gap-1 text-[11px]"
+                            >
+                              <Trash2 className="w-3 h-3" /> Remove
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-12 gap-3 items-start">
+                            {/* 1:1 Photo */}
+                            <div className="col-span-3">
+                              <label className="block text-[10px] font-semibold text-zinc-600 mb-1">
+                                1:1 Photo
+                              </label>
+                              {prz.photo_url || prz.product_image ? (
+                                <div className="relative aspect-square w-full rounded-lg overflow-hidden border border-slate-200 bg-white">
+                                  <img
+                                    src={prz.photo_url || prz.product_image}
+                                    alt={prz.title}
+                                    className="w-full h-full object-cover"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setPrizes((prev) =>
+                                        prev.map((p, i) =>
+                                          i === idx ? { ...p, photo_url: "", product_image: "" } : p
+                                        )
+                                      )
+                                    }
+                                    className="absolute top-1 right-1 p-1 bg-black/60 rounded text-white"
+                                  >
+                                    <X className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              ) : (
+                                <label className="aspect-square w-full rounded-lg border-2 border-dashed border-slate-300 hover:border-[#0B57D0] bg-white flex flex-col items-center justify-center cursor-pointer p-2 text-center transition">
+                                  {uploadingPrizeIdx === idx ? (
+                                    <Loader2 className="w-4 h-4 animate-spin text-[#0B57D0]" />
+                                  ) : (
+                                    <>
+                                      <Upload className="w-3.5 h-3.5 text-zinc-400 mb-0.5" />
+                                      <span className="text-[10px] text-zinc-500 font-semibold">
+                                        Upload 1:1
+                                      </span>
+                                    </>
+                                  )}
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={(e) => handleUploadPrizePhoto(idx, e)}
+                                    className="hidden"
+                                  />
+                                </label>
+                              )}
+                            </div>
+
+                            {/* Fields */}
+                            <div className="col-span-9 space-y-2.5">
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-zinc-600 mb-0.5">
+                                    Prize Title
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={prz.title}
+                                    onChange={(e) =>
+                                      setPrizes((prev) =>
+                                        prev.map((p, i) =>
+                                          i === idx ? { ...p, title: e.target.value } : p
+                                        )
+                                      )
+                                    }
+                                    placeholder="e.g. 1st Prize - Mystery Gift Box"
+                                    className="w-full h-7 px-2 rounded bg-white border border-slate-200 text-xs font-semibold outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] font-semibold text-zinc-600 mb-0.5">
+                                    Max Pax (Default 1)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    value={prz.max_pax || 1}
+                                    onChange={(e) =>
+                                      setPrizes((prev) =>
+                                        prev.map((p, i) =>
+                                          i === idx
+                                            ? { ...p, max_pax: Number(e.target.value) }
+                                            : p
+                                        )
+                                      )
+                                    }
+                                    className="w-full h-7 px-2 rounded bg-white border border-slate-200 text-xs font-bold outline-none"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Reward Components Toggles */}
+                              <div className="p-2.5 rounded-lg bg-white border border-slate-200 space-y-2">
+                                <label className="block text-[10px] font-bold uppercase text-zinc-500">
+                                  Prize Rewards (Select Any Combination)
+                                </label>
+                                <div className="grid grid-cols-3 gap-2">
+                                  {/* Cash Toggle & Amount */}
+                                  <div>
+                                    <label className="block text-[10px] font-semibold text-zinc-600 mb-0.5">
+                                      Cash ($)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="0.01"
+                                      value={prz.reward_cash || 0}
+                                      onChange={(e) =>
+                                        setPrizes((prev) =>
+                                          prev.map((p, i) =>
+                                            i === idx
+                                              ? { ...p, reward_cash: Number(e.target.value) }
+                                              : p
+                                          )
+                                        )
+                                      }
+                                      placeholder="0.00"
+                                      className="w-full h-7 px-2 rounded bg-slate-50 border border-slate-200 text-xs font-bold text-emerald-700 outline-none"
+                                    />
+                                  </div>
+
+                                  {/* Points Toggle & Amount */}
+                                  <div>
+                                    <label className="block text-[10px] font-semibold text-zinc-600 mb-0.5">
+                                      Points (pts)
+                                    </label>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="1"
+                                      value={prz.reward_points || 0}
+                                      onChange={(e) =>
+                                        setPrizes((prev) =>
+                                          prev.map((p, i) =>
+                                            i === idx
+                                              ? { ...p, reward_points: Number(e.target.value) }
+                                              : p
+                                          )
+                                        )
+                                      }
+                                      placeholder="0"
+                                      className="w-full h-7 px-2 rounded bg-slate-50 border border-slate-200 text-xs font-bold text-[#0B57D0] outline-none"
+                                    />
+                                  </div>
+
+                                  {/* Product Selector from HSG+ Shop Merch Catalog */}
+                                  <div>
+                                    <label className="block text-[10px] font-semibold text-zinc-600 mb-0.5">
+                                      Product (HSG+ Shop)
+                                    </label>
+                                    <select
+                                      value={prz.product_id || ""}
+                                      onChange={(e) => {
+                                        const pId = e.target.value;
+                                        const found = merchCatalog.find((m: any) => m.id === pId);
+                                        setPrizes((prev) =>
+                                          prev.map((p, i) => {
+                                            if (i !== idx) return p;
+                                            if (!found) {
+                                              return {
+                                                ...p,
+                                                product_id: "",
+                                                product_name: "",
+                                                product_image: "",
+                                              };
+                                            }
+                                            return {
+                                              ...p,
+                                              product_id: found.id,
+                                              product_name: found.name,
+                                              product_image: found.image_url || "",
+                                              photo_url: p.photo_url || found.image_url || "",
+                                              title: p.title.startsWith("Prize #") ? found.name : p.title,
+                                            };
+                                          })
+                                        );
+                                      }}
+                                      className="w-full h-7 px-1.5 rounded bg-slate-50 border border-slate-200 text-[11px] font-semibold outline-none truncate"
+                                    >
+                                      <option value="">-- No Product --</option>
+                                      {merchCatalog.map((m: any) => (
+                                        <option key={m.id} value={m.id}>
+                                          {m.name} (${m.price_cash || 0})
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div>
+                                <label className="block text-[10px] font-semibold text-zinc-600 mb-0.5">
+                                  Description
+                                </label>
+                                <input
+                                  type="text"
+                                  value={prz.description || ""}
+                                  onChange={(e) =>
+                                    setPrizes((prev) =>
+                                      prev.map((p, i) =>
+                                        i === idx ? { ...p, description: e.target.value } : p
+                                      )
+                                    )
+                                  }
+                                  placeholder="Short prize description..."
+                                  className="w-full h-7 px-2 rounded bg-white border border-slate-200 text-xs outline-none"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Publish Toggle */}
+              <div className="pt-2 flex items-center justify-between p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <div>
+                  <div className="font-semibold text-zinc-800">Publish Status</div>
+                  <div className="text-[11px] text-zinc-400">
+                    {isPublished
+                      ? "Visible in mobile community app"
+                      : "Hidden in draft state"}
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer select-none">
+                  <div
+                    onClick={() => setIsPublished((p) => !p)}
+                    className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                      isPublished ? "bg-[#0B57D0]" : "bg-slate-300"
+                    }`}
+                  >
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                        isPublished ? "translate-x-5" : "translate-x-0"
+                      }`}
+                    />
+                  </div>
+                </label>
+              </div>
+
+              {/* Submit Buttons */}
+              <div className="pt-4 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
@@ -1336,7 +2839,7 @@ export function HsgContestTab({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="h-8 px-5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold flex items-center gap-1.5 transition"
+                  className="h-8 px-5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold flex items-center gap-1.5 transition disabled:opacity-50"
                 >
                   {saving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                   <span>Save Contest</span>
@@ -1347,89 +2850,7 @@ export function HsgContestTab({
         </div>
       )}
 
-      {/* INSPECT SUBMISSION & AWARD WINNER MODAL */}
-      {inspectSub && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6">
-          <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950">
-                  Contest Entry ({inspectSub.id})
-                </h3>
-                <p className="text-[11px] text-zinc-500">
-                  {inspectSub.user_nickname} (+{maskPhoneLast4(inspectSub.user_phone)})
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setInspectSub(null)}
-                className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-zinc-600"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-4 text-xs">
-              <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
-                <div className="text-[10px] font-bold uppercase text-zinc-400">
-                  Submitted Contest Answers:
-                </div>
-                {Object.entries(inspectSub.answer_json || {}).map(([k, v]) => (
-                  <div key={k} className="space-y-1">
-                    <div className="text-[11px] font-mono text-zinc-500">{k}:</div>
-                    {typeof v === "string" &&
-                    (v.startsWith("http://") || v.startsWith("https://")) ? (
-                      <img
-                        src={v}
-                        alt={k}
-                        className="w-full h-40 object-contain rounded-md bg-white border border-slate-200"
-                      />
-                    ) : (
-                      <div className="font-bold text-zinc-900">
-                        {Array.isArray(v) ? v.join(", ") : String(v)}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-2 pt-2 border-t border-slate-200">
-                <label className="block font-semibold text-zinc-700">
-                  Winner Prize Label:
-                </label>
-                <input
-                  type="text"
-                  value={prizeNote}
-                  onChange={(e) => setPrizeNote(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded-md bg-slate-50 border border-slate-200 text-xs font-semibold outline-none"
-                />
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <button
-                    type="button"
-                    disabled={updatingSub}
-                    onClick={() => handleUpdateSubmissionStatus("winner")}
-                    className="h-9 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold flex items-center justify-center gap-1.5"
-                  >
-                    <Award className="w-3.5 h-3.5" />
-                    <span>Award Winner</span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={updatingSub}
-                    onClick={() => handleUpdateSubmissionStatus("rejected")}
-                    className="h-9 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold flex items-center justify-center gap-1.5"
-                  >
-                    <XCircle className="w-3.5 h-3.5" />
-                    <span>Reject Entry</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* DELETE CONTEST CONFIRMATION */}
+      {/* DELETE CONTEST CONFIRMATION MODAL */}
       {contestToDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs">
           <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-md w-full p-5">
@@ -1438,7 +2859,10 @@ export function HsgContestTab({
             </h3>
             <p className="text-xs text-zinc-600 mt-2">
               Are you sure you want to delete{" "}
-              <strong className="text-zinc-900">{contestToDelete.title}</strong>?
+              <strong className="text-zinc-900">
+                {contestToDelete.internal_title || contestToDelete.title}
+              </strong>
+              ?
             </p>
             <div className="mt-5 flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
               <button
@@ -3596,6 +5020,13 @@ export function HsgNewsTab({
   onRefresh: () => void;
 }) {
 
+  // 0ms Optimistic Local State
+  const [localAnnouncements, setLocalAnnouncements] = React.useState<HsgAnnouncementRecord[]>(announcements || []);
+  const [localHighlights, setLocalHighlights] = React.useState<HsgHighlightRecord[]>(highlights || []);
+
+  React.useEffect(() => { setLocalAnnouncements(announcements || []); }, [announcements]);
+  React.useEffect(() => { setLocalHighlights(highlights || []); }, [highlights]);
+
   // Navigation Studio Subtab: announcements vs highlights
   const [studioTab, setStudioTab] = React.useState<"announcements" | "highlights">("announcements");
 
@@ -3649,28 +5080,41 @@ export function HsgNewsTab({
       showToast("Please enter an announcement headline", "error");
       return;
     }
-    setSavingAnn(true);
+    const targetId = editingAnnId || `ANN-${Date.now().toString().slice(-6)}`;
+    const optRecord: HsgAnnouncementRecord = {
+      id: targetId,
+      title: annTitle.trim(),
+      body: annBody.trim(),
+      is_pinned: annPinned,
+      is_hidden: annHidden,
+      created_at: Date.now(),
+    } as any;
+
+    const prevAnnSnapshot = [...localAnnouncements];
+    if (editingAnnId) {
+      setLocalAnnouncements((prev) =>
+        prev.map((item) => (item.id === editingAnnId ? { ...item, ...optRecord } : item))
+      );
+    } else {
+      setLocalAnnouncements((prev) => [optRecord, ...prev]);
+    }
+    handleResetAnnForm();
+    showToast(
+      editingAnnId ? "Announcement updated successfully" : "Announcement published",
+      "success"
+    );
+
     try {
       const res = await fetch(`${WORKER_URL}/api/hsg-app/news/announcements`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: editingAnnId || undefined,
-          title: annTitle.trim(),
-          body: annBody.trim(),
-          is_pinned: annPinned,
-          is_hidden: annHidden,
-        }),
+        body: JSON.stringify(optRecord),
       });
       if (!res.ok) throw new Error("Failed");
-      handleResetAnnForm();
-      showToast(
-        editingAnnId ? "Announcement updated successfully" : "Announcement published",
-        "success"
-      );
       onRefresh();
     } catch {
-      showToast("Failed to save announcement", "error");
+      setLocalAnnouncements(prevAnnSnapshot);
+      showToast("Failed to save announcement to server", "error");
     } finally {
       setSavingAnn(false);
     }
@@ -3678,6 +5122,14 @@ export function HsgNewsTab({
 
   const handleToggleAnnVisibility = async (a: HsgAnnouncementRecord) => {
     const nextHidden = !a.is_hidden;
+    setLocalAnnouncements((prev) =>
+      prev.map((item) => (item.id === a.id ? { ...item, is_hidden: nextHidden } : item))
+    );
+    showToast(
+      nextHidden ? "Announcement hidden from mobile app" : "Announcement is now visible in mobile app",
+      "success"
+    );
+
     try {
       const res = await fetch(
         `${WORKER_URL}/api/hsg-app/news/announcements/${encodeURIComponent(a.id)}`,
@@ -3688,18 +5140,22 @@ export function HsgNewsTab({
         }
       );
       if (!res.ok) throw new Error("Failed");
-      showToast(
-        nextHidden ? "Announcement hidden from mobile app" : "Announcement is now visible in mobile app",
-        "success"
-      );
       onRefresh();
     } catch {
+      setLocalAnnouncements((prev) =>
+        prev.map((item) => (item.id === a.id ? { ...item, is_hidden: !nextHidden } : item))
+      );
       showToast("Failed to update visibility", "error");
     }
   };
 
   const handleToggleAnnPinned = async (a: HsgAnnouncementRecord) => {
     const nextPinned = !a.is_pinned;
+    setLocalAnnouncements((prev) =>
+      prev.map((item) => (item.id === a.id ? { ...item, is_pinned: nextPinned } : item))
+    );
+    showToast(nextPinned ? "Announcement pinned to top" : "Announcement unpinned", "success");
+
     try {
       const res = await fetch(
         `${WORKER_URL}/api/hsg-app/news/announcements/${encodeURIComponent(a.id)}`,
@@ -3710,23 +5166,29 @@ export function HsgNewsTab({
         }
       );
       if (!res.ok) throw new Error("Failed");
-      showToast(nextPinned ? "Announcement pinned to top" : "Announcement unpinned", "success");
       onRefresh();
     } catch {
+      setLocalAnnouncements((prev) =>
+        prev.map((item) => (item.id === a.id ? { ...item, is_pinned: !nextPinned } : item))
+      );
       showToast("Failed to update pin status", "error");
     }
   };
 
   const handleDeleteAnn = async (id: string) => {
+    const prevAnnSnapshot = [...localAnnouncements];
+    setLocalAnnouncements((prev) => prev.filter((item) => item.id !== id));
+    if (editingAnnId === id) handleResetAnnForm();
+    showToast("Announcement deleted", "success");
+
     try {
       await fetch(
         `${WORKER_URL}/api/hsg-app/news/announcements/${encodeURIComponent(id)}`,
         { method: "DELETE" }
       );
-      if (editingAnnId === id) handleResetAnnForm();
-      showToast("Announcement deleted", "success");
       onRefresh();
     } catch {
+      setLocalAnnouncements(prevAnnSnapshot);
       showToast("Failed to delete announcement", "error");
     }
   };
@@ -3758,32 +5220,45 @@ export function HsgNewsTab({
       showToast("Please enter a highlight title", "error");
       return;
     }
-    setSavingHl(true);
+    const targetId = editingHlId || `HL-${Date.now().toString().slice(-6)}`;
+    const optRecord: HsgHighlightRecord = {
+      id: targetId,
+      brand_name: hlBrand.trim(),
+      title: hlTitle.trim(),
+      subtitle: hlSubtitle.trim(),
+      post_url: hlPostUrl.trim(),
+      external_link: hlPostUrl.trim(),
+      image_url: hlImg,
+      is_hidden: hlHidden,
+      order_seq: localHighlights.length + 1,
+      created_at: Date.now(),
+    } as any;
+
+    const prevHlSnapshot = [...localHighlights];
+    if (editingHlId) {
+      setLocalHighlights((prev) =>
+        prev.map((item) => (item.id === editingHlId ? { ...item, ...optRecord } : item))
+      );
+    } else {
+      setLocalHighlights((prev) => [optRecord, ...prev]);
+    }
+    handleResetHlForm();
+    showToast(
+      editingHlId ? "Highlight card updated" : "Highlight card added",
+      "success"
+    );
+
     try {
       const res = await fetch(`${WORKER_URL}/api/hsg-app/news/highlights`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: editingHlId || undefined,
-          brand_name: hlBrand.trim(),
-          title: hlTitle.trim(),
-          subtitle: hlSubtitle.trim(),
-          post_url: hlPostUrl.trim(),
-          external_link: hlPostUrl.trim(),
-          image_url: hlImg,
-          is_hidden: hlHidden,
-          order_seq: highlights.length + 1,
-        }),
+        body: JSON.stringify(optRecord),
       });
       if (!res.ok) throw new Error("Failed");
-      handleResetHlForm();
-      showToast(
-        editingHlId ? "Highlight card updated" : "Highlight card added",
-        "success"
-      );
       onRefresh();
     } catch {
-      showToast("Failed to save highlight", "error");
+      setLocalHighlights(prevHlSnapshot);
+      showToast("Failed to save highlight to server", "error");
     } finally {
       setSavingHl(false);
     }
@@ -3791,6 +5266,14 @@ export function HsgNewsTab({
 
   const handleToggleHlVisibility = async (h: HsgHighlightRecord) => {
     const nextHidden = !h.is_hidden;
+    setLocalHighlights((prev) =>
+      prev.map((item) => (item.id === h.id ? { ...item, is_hidden: nextHidden } : item))
+    );
+    showToast(
+      nextHidden ? "Highlight hidden from mobile app" : "Highlight is now visible in mobile app",
+      "success"
+    );
+
     try {
       const res = await fetch(
         `${WORKER_URL}/api/hsg-app/news/highlights/${encodeURIComponent(h.id)}`,
@@ -3801,32 +5284,35 @@ export function HsgNewsTab({
         }
       );
       if (!res.ok) throw new Error("Failed");
-      showToast(
-        nextHidden ? "Highlight hidden from mobile app" : "Highlight is now visible in mobile app",
-        "success"
-      );
       onRefresh();
     } catch {
+      setLocalHighlights((prev) =>
+        prev.map((item) => (item.id === h.id ? { ...item, is_hidden: !nextHidden } : item))
+      );
       showToast("Failed to update visibility", "error");
     }
   };
 
   const handleDeleteHl = async (id: string) => {
+    const prevHlSnapshot = [...localHighlights];
+    setLocalHighlights((prev) => prev.filter((item) => item.id !== id));
+    if (editingHlId === id) handleResetHlForm();
+    showToast("Highlight card removed", "success");
+
     try {
       await fetch(
         `${WORKER_URL}/api/hsg-app/news/highlights/${encodeURIComponent(id)}`,
         { method: "DELETE" }
       );
-      if (editingHlId === id) handleResetHlForm();
-      showToast("Highlight deleted", "success");
       onRefresh();
     } catch {
-      showToast("Failed to delete highlight", "error");
+      setLocalHighlights(prevHlSnapshot);
+      showToast("Failed to delete highlight from server", "error");
     }
   };
 
   // Filtered lists
-  const filteredAnnouncements = announcements.filter((a) => {
+  const filteredAnnouncements = localAnnouncements.filter((a) => {
     if (annFilter === "visible" && a.is_hidden) return false;
     if (annFilter === "hidden" && !a.is_hidden) return false;
     if (searchQuery.trim()) {
@@ -3839,7 +5325,7 @@ export function HsgNewsTab({
     return true;
   });
 
-  const filteredHighlights = highlights.filter((h) => {
+  const filteredHighlights = localHighlights.filter((h) => {
     if (hlFilter === "visible" && h.is_hidden) return false;
     if (hlFilter === "hidden" && !h.is_hidden) return false;
     if (searchQuery.trim()) {
@@ -3854,8 +5340,8 @@ export function HsgNewsTab({
   });
 
   // Simulator Data (visible in mobile app)
-  const visibleAppAnnouncements = announcements.filter((a) => !a.is_hidden);
-  const visibleAppHighlights = highlights.filter((h) => !h.is_hidden);
+  const visibleAppAnnouncements = localAnnouncements.filter((a) => !a.is_hidden);
+  const visibleAppHighlights = localHighlights.filter((h) => !h.is_hidden);
 
   return (
     <div className="flex-1 min-h-0 flex flex-row overflow-hidden bg-white">
@@ -5233,6 +6719,45 @@ export function HsgEventsTab({
 // ============================================================================
 // 6. SYSTEM SETTINGS TAB VIEW (Pure Settings Only)
 // ============================================================================
+const THEME_PRESETS = [
+  {
+    name: "Sunshine & Berry",
+    desc: "Default HSG signature",
+    c1: "#FFEA00",
+    c2: "#EC008C",
+  },
+  {
+    name: "Ocean & Coral",
+    desc: "Vibrant azure & coral",
+    c1: "#0088FF",
+    c2: "#FF6B4A",
+  },
+  {
+    name: "Emerald & Lime",
+    desc: "Fresh botanical & lime",
+    c1: "#10B981",
+    c2: "#84CC16",
+  },
+  {
+    name: "Midnight & Gold",
+    desc: "Royal violet & amber",
+    c1: "#7C3AED",
+    c2: "#F59E0B",
+  },
+  {
+    name: "Cyber Cyan & Blue",
+    desc: "Electric neon & cobalt",
+    c1: "#06B6D4",
+    c2: "#3B82F6",
+  },
+  {
+    name: "Charcoal & Crimson",
+    desc: "Bold contrast street style",
+    c1: "#18181B",
+    c2: "#E11D48",
+  },
+];
+
 export function HsgSettingsTab({
   settings,
   onRefresh,
@@ -5495,19 +7020,91 @@ export function HsgSettingsTab({
               <label className="block text-[11px] font-medium text-zinc-400 mb-1">
                 Palette Preview
               </label>
-              <div className="h-7 rounded border border-slate-200 flex overflow-hidden">
+              <div className="h-7 rounded border border-slate-200 flex overflow-hidden shadow-2xs">
                 <div
-                  className="flex-1 flex items-center justify-center text-[10px] font-bold text-zinc-900"
+                  className="flex-1 flex items-center justify-center text-[10px] font-bold text-zinc-900 transition-colors"
                   style={{ backgroundColor: themeColor1 }}
                 >
                   Primary
                 </div>
                 <div
-                  className="flex-1 flex items-center justify-center text-[10px] font-bold text-white"
+                  className="flex-1 flex items-center justify-center text-[10px] font-bold text-white transition-colors"
                   style={{ backgroundColor: themeColor2 }}
                 >
                   Accent
                 </div>
+              </div>
+            </div>
+
+            {/* 6 CURATED COLOR COMBINATIONS */}
+            <div className="pt-2 border-t border-slate-100 flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-[11px] font-bold text-zinc-700 uppercase tracking-wider">
+                  Preset Combinations (6)
+                </label>
+                <span className="text-[10px] text-zinc-400">Click to apply</span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {THEME_PRESETS.map((preset) => {
+                  const isActive =
+                    themeColor1.trim().toUpperCase() === preset.c1.toUpperCase() &&
+                    themeColor2.trim().toUpperCase() === preset.c2.toUpperCase();
+                  return (
+                    <button
+                      key={preset.name}
+                      type="button"
+                      onClick={() => {
+                        setThemeColor1(preset.c1);
+                        setThemeColor2(preset.c2);
+                      }}
+                      className={`w-full p-2 rounded-lg border text-left transition flex items-center justify-between cursor-pointer ${
+                        isActive
+                          ? "border-[#0B57D0] bg-blue-50/50 shadow-2xs ring-1 ring-[#0B57D0]/20"
+                          : "border-slate-200 bg-white hover:bg-slate-50 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        {/* Dual swatch pill */}
+                        <div className="w-8 h-8 rounded-md border border-slate-200 overflow-hidden flex shrink-0 shadow-2xs">
+                          <div
+                            className="w-1/2 h-full"
+                            style={{ backgroundColor: preset.c1 }}
+                          />
+                          <div
+                            className="w-1/2 h-full"
+                            style={{ backgroundColor: preset.c2 }}
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-bold text-zinc-900 truncate">
+                              {preset.name}
+                            </span>
+                            {preset.c1 === "#FFEA00" && (
+                              <span className="text-[9px] font-semibold text-slate-500 bg-slate-100 px-1 py-0.2 rounded shrink-0">
+                                Default
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-[10px] font-mono text-zinc-400 truncate">
+                            {preset.c1} • {preset.c2}
+                          </div>
+                        </div>
+                      </div>
+
+                      {isActive ? (
+                        <div className="flex items-center gap-1 text-[11px] font-bold text-[#0B57D0] shrink-0 pl-1">
+                          <Check className="w-3.5 h-3.5 stroke-[2.5]" />
+                          <span>Active</span>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] font-semibold text-slate-400 hover:text-slate-600 shrink-0">
+                          Apply
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -5835,9 +7432,15 @@ export function HsgShopTab({
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [categoryFilter, setCategoryFilter] = React.useState<string>("ALL");
 
+  // 0ms Optimistic Local State
+  const [localMerch, setLocalMerch] = React.useState<any[]>(merch || []);
+  React.useEffect(() => {
+    setLocalMerch(merch || []);
+  }, [merch]);
+
   // Dedicated HSG+ Shop Catalog Items (100% strictly separate from master products DB)
   const allCatalogItems = React.useMemo(() => {
-    return (merch || []).map((m: any) => ({
+    return (localMerch || []).map((m: any) => ({
       id: m.id,
       name: m.name,
       brand: m.brand || "HSG+",
@@ -5853,7 +7456,7 @@ export function HsgShopTab({
       is_master_product: false,
       raw: m,
     }));
-  }, [merch]);
+  }, [localMerch]);
 
   // Dynamic Categories from Catalog
   const availableCategories = React.useMemo(() => {
@@ -5868,6 +7471,11 @@ export function HsgShopTab({
   const [modeFilter, setModeFilter] = React.useState<"ALL" | "both" | "points_only" | "cashback_only">("ALL");
 
   // Orders states
+  const [localOrders, setLocalOrders] = React.useState<any[]>(orders || []);
+  React.useEffect(() => {
+    setLocalOrders(orders || []);
+  }, [orders]);
+
   const [orderSearch, setOrderSearch] = React.useState<string>("");
   const [fulfillmentFilter, setFulfillmentFilter] = React.useState<"ALL" | "collect" | "delivery">("ALL");
   const [statusFilter, setStatusFilter] = React.useState<"ALL" | "pending" | "completed" | "cancelled">("ALL");
@@ -5935,55 +7543,122 @@ export function HsgShopTab({
       showToast("Product name is required", "error");
       return;
     }
-    setSavingMerch(true);
+    const tempId = editingMerchId || `PROD-${Date.now().toString().slice(-6)}`;
+    const optimisticRecord = {
+      id: tempId,
+      name: merchName.trim(),
+      category: merchCategory.trim() || "General",
+      redeem_mode: merchRedeemMode,
+      price_cashback: Number(merchPrice) || 0,
+      price_points: merchPoints
+        ? Number(merchPoints)
+        : Number(merchPrice)
+        ? Math.round(Number(merchPrice) * 10)
+        : 0,
+      stock_qty: Number(merchStock) || 0,
+      image_url: merchImg,
+      is_active: true,
+      created_at: Date.now(),
+    };
+
+    // 0ms Optimistic UI Update
+    const prevMerchSnapshot = [...localMerch];
+    if (editingMerchId) {
+      setLocalMerch((prev) =>
+        prev.map((item) =>
+          item.id === editingMerchId ? { ...item, ...optimisticRecord } : item
+        )
+      );
+    } else {
+      setLocalMerch((prev) => [optimisticRecord, ...prev]);
+    }
+
+    handleResetMerchForm();
+    showToast(
+      editingMerchId ? "Product updated" : "Product added to shop catalog",
+      "success"
+    );
+
+    // Silent background sync
     try {
       const res = await fetch(`${WORKER_URL}/api/hsg-app/merch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: editingMerchId || undefined,
-          name: merchName.trim(),
-
-
-          category: merchCategory.trim() || "General",
-          redeem_mode: merchRedeemMode,
-
-          price_cashback: Number(merchPrice) || 0,
-          price_points: merchPoints ? Number(merchPoints) : (Number(merchPrice) ? Math.round(Number(merchPrice) * 10) : 0),
-          stock_qty: Number(merchStock) || 0,
-          image_url: merchImg,
-          is_active: true,
-        }),
+        body: JSON.stringify(optimisticRecord),
       });
       if (!res.ok) throw new Error("Failed");
-      handleResetMerchForm();
-      showToast(
-        editingMerchId ? "Product updated" : "Product added to shop catalog",
-        "success"
-      );
       onRefresh();
     } catch {
-      showToast("Failed to save product", "error");
-    } finally {
-      setSavingMerch(false);
+      setLocalMerch(prevMerchSnapshot);
+      showToast("Failed to save product to server", "error");
+    }
+  };
+
+  const handleToggleMerchActive = async (m: any) => {
+    const nextActive = !(m.is_active !== false);
+    // 0ms Instant Optimistic Flip
+    setLocalMerch((prev) =>
+      prev.map((item) =>
+        item.id === m.id ? { ...item, is_active: nextActive } : item
+      )
+    );
+    showToast(
+      nextActive ? "Product visible in app" : "Product hidden from app",
+      "success"
+    );
+
+    // Silent background sync
+    try {
+      const res = await fetch(`${WORKER_URL}/api/hsg-app/merch/toggle-active`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: m.id, is_active: nextActive }),
+      });
+      if (!res.ok) throw new Error("Failed");
+    } catch {
+      // Rollback on failure
+      setLocalMerch((prev) =>
+        prev.map((item) =>
+          item.id === m.id ? { ...item, is_active: !nextActive } : item
+        )
+      );
+      showToast("Failed to update product visibility", "error");
     }
   };
 
   const handleDeleteMerch = async (id: string) => {
+    const prevMerchSnapshot = [...localMerch];
+    // 0ms Instant Optimistic Delete
+    setLocalMerch((prev) => prev.filter((item) => item.id !== id));
+    if (editingMerchId === id) handleResetMerchForm();
+    showToast("Product removed from catalog", "success");
+
+    // Silent background sync
     try {
-      await fetch(`${WORKER_URL}/api/hsg-app/merch/${encodeURIComponent(id)}`, {
-        method: "DELETE",
-      });
-      if (editingMerchId === id) handleResetMerchForm();
-      showToast("Product removed from catalog", "success");
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/merch/${encodeURIComponent(id)}`,
+        { method: "DELETE" }
+      );
+      if (!res.ok) throw new Error("Failed");
       onRefresh();
     } catch {
-      showToast("Failed to remove product", "error");
+      setLocalMerch(prevMerchSnapshot);
+      showToast("Failed to remove product from server", "error");
     }
   };
 
   const handleUpdateOrderStatus = async (orderId: string, newStatus: string) => {
-    setUpdatingOrderId(orderId);
+    const prevOrdersSnapshot = [...localOrders];
+    // 0ms Optimistic Update
+    setLocalOrders((prev) =>
+      prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
+    );
+    if (inspectOrder && inspectOrder.id === orderId) {
+      setInspectOrder((prev: any) => ({ ...prev, status: newStatus }));
+    }
+    showToast(`Order marked as ${newStatus}`, "success");
+
+    // Silent background sync
     try {
       const res = await fetch(`${WORKER_URL}/api/hsg-app/merch-orders/status`, {
         method: "POST",
@@ -5991,12 +7666,9 @@ export function HsgShopTab({
         body: JSON.stringify({ id: orderId, status: newStatus }),
       });
       if (!res.ok) throw new Error("Failed");
-      showToast(`Order marked as ${newStatus}`, "success");
-      if (inspectOrder && inspectOrder.id === orderId) {
-        setInspectOrder({ ...inspectOrder, status: newStatus });
-      }
       onRefresh();
     } catch {
+      setLocalOrders(prevOrdersSnapshot);
       showToast("Failed to update order status", "error");
     } finally {
       setUpdatingOrderId(null);
@@ -6027,7 +7699,7 @@ export function HsgShopTab({
 
   // Filter Orders
   const filteredOrders = React.useMemo(() => {
-    return orders.filter((o) => {
+    return localOrders.filter((o) => {
       if (fulfillmentFilter !== "ALL" && (o.fulfillment || "collect") !== fulfillmentFilter) {
         return false;
       }
@@ -6045,7 +7717,7 @@ export function HsgShopTab({
       }
       return true;
     });
-  }, [orders, fulfillmentFilter, statusFilter, orderSearch]);
+  }, [localOrders, fulfillmentFilter, statusFilter, orderSearch]);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col bg-white overflow-hidden font-primary">
@@ -6106,15 +7778,18 @@ export function HsgShopTab({
                 No products match the selected criteria.
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-3.5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 items-start">
                 {filteredCatalog.map((m) => {
                   const mode = m.redeem_mode || "both";
                   const cat = m.category || "Product";
                   const pts = m.price_points;
+                  const isActive = m.is_active !== false;
                   return (
                     <div
                       key={m.id}
-                      className="rounded-lg border border-slate-200 bg-white overflow-hidden flex flex-col justify-between shadow-2xs hover:border-slate-300 transition"
+                      className={`w-full max-w-[220px] rounded-lg border bg-white overflow-hidden flex flex-col justify-between shadow-2xs hover:border-slate-300 transition ${
+                        !isActive ? "border-slate-200/70 opacity-85" : "border-slate-200"
+                      }`}
                     >
                       <div>
                         <div className="relative w-full aspect-square bg-slate-100 flex items-center justify-center overflow-hidden">
@@ -6122,20 +7797,40 @@ export function HsgShopTab({
                             <img
                               src={m.image_url}
                               alt={m.name}
-                              className="w-full h-full object-cover"
+                              className={`w-full h-full object-cover transition ${!isActive ? "opacity-60" : ""}`}
                             />
                           ) : (
                             <ShoppingBag className="w-8 h-8 text-slate-300" />
                           )}
-                          <div className="absolute top-2 left-2 flex flex-col gap-1 items-start">
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-white/95 text-slate-800 border border-slate-200 shadow-2xs">
+                          <div className="absolute top-2 left-2 flex flex-col gap-1 items-start pointer-events-none">
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white/95 text-slate-800 border border-slate-200 shadow-2xs">
                               {cat}
                             </span>
                           </div>
-                          
+
+                          {/* Visibility Toggle Switch (Green = Display) */}
+                          <div className="absolute top-2 right-2 z-10">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleMerchActive(m);
+                              }}
+                              title={isActive ? "Displayed in App (Click to Hide)" : "Hidden from App (Click to Display)"}
+                              className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none shadow-xs ${
+                                isActive ? "bg-emerald-500 hover:bg-emerald-600" : "bg-slate-300 hover:bg-slate-400"
+                              }`}
+                            >
+                              <span
+                                className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                                  isActive ? "translate-x-4" : "translate-x-0"
+                                }`}
+                              />
+                            </button>
+                          </div>
                         </div>
 
-                        <div className="p-3 space-y-1">
+                        <div className="p-2.5 space-y-1">
                           <div className="text-xs font-bold text-slate-900 truncate" title={m.name}>
                             {m.name}
                           </div>
@@ -6155,7 +7850,7 @@ export function HsgShopTab({
                         </div>
                       </div>
 
-                      <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between text-[11px]">
+                      <div className="px-2.5 py-1.5 border-t border-slate-100 bg-slate-50/60 flex items-center justify-between text-[11px]">
                         <span className="text-slate-500 font-medium">
                           Stock: <strong className="text-slate-800">{m.stock_qty}</strong>
                         </span>
