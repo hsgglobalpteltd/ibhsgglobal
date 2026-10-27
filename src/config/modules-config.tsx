@@ -146,6 +146,10 @@ export const APP_PAGES_CONFIG: PageConfig[] = [
       {
         title: "Shop Manager",
         description: "Configure public storefront brands, custom mix carton rules, per-piece pricing, and store settings.",
+      },
+      {
+        title: "HSG+ App",
+        description: "Central command for HSG+ Community drops, cashback campaign launches, store visit rewards, and receipt claims.",
       }
     ]
   },

@@ -6,6 +6,7 @@ import { TenantModule } from "../modules/TenantModule";
 import { SiteModule } from "../modules/SiteModule";
 import { CatalogWebModule } from "../modules/CatalogWebModule";
 import { ShopManagerModule } from "../modules/ShopManagerModule";
+import { HsgAppModule } from "../modules/HsgAppModule";
 import { StoreMapConfigModule } from "../modules/StoreMapConfigModule";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { canViewModule } from "@/lib/permissions";
@@ -72,6 +73,8 @@ export function WebsitePage({ profile, idToken, breadcrumbPath }: WebsitePagePro
         return <CatalogWebModule idToken={idToken} profile={profile} />;
       case "Shop Manager":
         return <ShopManagerModule profile={profile} />;
+      case "HSG+ App":
+        return <HsgAppModule profile={profile} idToken={idToken} />;
       default:
         return null;
     }

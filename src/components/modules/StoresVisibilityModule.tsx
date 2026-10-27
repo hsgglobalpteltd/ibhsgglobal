@@ -190,7 +190,8 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
   // Selected filter states
   const [selectedRetailer, setSelectedRetailer] = React.useState<string>("all");
   const [selectedBrand, setSelectedBrand] = React.useState<string>("all");
-  const [includeNotCarry, setIncludeNotCarry] = React.useState<boolean>(false);
+  const [statusFilter, setStatusFilter] = React.useState<"all" | "carry" | "not_carry">("all");
+  const [selectedStoreIds, setSelectedStoreIds] = React.useState<Set<string>>(new Set());
   
   const [startDate, setStartDate] = React.useState<string>(() => {
     const d = new Date();
@@ -225,6 +226,49 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       )
     );
   }, [extractedStores, searchQuery]);
+
+  // Reset print selection when primary filters change
+  React.useEffect(() => {
+    setSelectedStoreIds(new Set());
+  }, [selectedRetailer, selectedBrand, statusFilter]);
+
+  const toggleSelectStore = React.useCallback((storeId: string | number) => {
+    const sId = String(storeId);
+    setSelectedStoreIds(prev => {
+      const next = new Set(prev);
+      if (next.has(sId)) {
+        next.delete(sId);
+      } else {
+        next.add(sId);
+      }
+      return next;
+    });
+  }, []);
+
+  const allDisplayedSelected = React.useMemo(() => {
+    return displayedStores.length > 0 && displayedStores.every(s => selectedStoreIds.has(String(s.id)));
+  }, [displayedStores, selectedStoreIds]);
+
+  const someDisplayedSelected = React.useMemo(() => {
+    return displayedStores.some(s => selectedStoreIds.has(String(s.id)));
+  }, [displayedStores, selectedStoreIds]);
+
+  const toggleSelectAll = React.useCallback(() => {
+    if (allDisplayedSelected) {
+      setSelectedStoreIds(prev => {
+        const next = new Set(prev);
+        displayedStores.forEach(s => next.delete(String(s.id)));
+        return next;
+      });
+    } else {
+      setSelectedStoreIds(prev => {
+        const next = new Set(prev);
+        displayedStores.forEach(s => next.add(String(s.id)));
+        return next;
+      });
+    }
+  }, [allDisplayedSelected, displayedStores]);
+
   const [selectedImage, setSelectedImage] = React.useState<ShelfImageItem | null>(null);
 
   // Parser helper to safely handle Unix Epoch milliseconds, seconds, and ISO date strings
@@ -417,7 +461,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
     if (selectedRetailer && selectedBrand && stores.length > 0) {
       handleExtract();
     }
-  }, [selectedRetailer, selectedBrand, startDate, endDate, includeNotCarry, stores, productLogs, shelfLogs, products, retailers, contacts, trackOrders]);
+  }, [selectedRetailer, selectedBrand, startDate, endDate, statusFilter, stores, productLogs, shelfLogs, products, retailers, contacts, trackOrders]);
 
   const handleExtract = () => {
     if (!selectedRetailer) {
@@ -440,13 +484,19 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
       const startMs = new Date(sYear, sMonth - 1, sDay, 0, 0, 0, 0).getTime();
       const endMs = new Date(eYear, eMonth - 1, eDay, 23, 59, 59, 999).getTime();
 
-      // Find stores belonging to the selected Retailer (pure snake_case)
-      const filteredStores = selectedRetailer === "all"
-        ? stores
-        : stores.filter(store => {
-            const retId = store.retailers_id !== undefined ? store.retailers_id : store.retailer_id;
-            return String(retId) === String(selectedRetailer);
-          });
+      // Find stores belonging to the selected Retailer and strictly exclude closed stores
+      const filteredStores = stores.filter(store => {
+        // Exclude closed stores
+        const storeStatus = String(store.status || "").trim().toLowerCase();
+        const storeName = String(store.display_name || "").trim().toLowerCase();
+        if (storeStatus.includes("close") || storeName.includes("closed") || storeName.includes("tutup")) return false;
+
+        if (selectedRetailer !== "all") {
+          const retId = store.retailers_id !== undefined ? store.retailers_id : store.retailer_id;
+          return String(retId) === String(selectedRetailer);
+        }
+        return true;
+      });
 
       // Filter products belonging to the selected Brand (or all brands if 'all' selected)
       const brandProducts = selectedBrand === "all"
@@ -497,16 +547,24 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             };
           });
 
-        // Find visits/audits within date range for this store (from product_logs)
-        const storeProductLogs = productLogs.filter(log => {
+        // All-time product logs for this store
+        const storeProductLogsAllTime = productLogs.filter(log => {
           const storeId = log.retailer_stores_id !== undefined ? log.retailer_stores_id : log.store_id;
-          if (String(storeId) !== String(store.id)) return false;
+          return String(storeId) === String(store.id);
+        });
+
+        // Find visits/audits within date range for this store (from product_logs)
+        const storeProductLogs = storeProductLogsAllTime.filter(log => {
           const timestamp = parseTimestamp(log.timestamp).getTime();
           return timestamp >= startMs && timestamp <= endMs;
         });
 
         // Sort descending to get latest visits within date range
         const sortedProductLogs = [...storeProductLogs].sort((a, b) => {
+          return parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime();
+        });
+
+        const sortedProductLogsAllTime = [...storeProductLogsAllTime].sort((a, b) => {
           return parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime();
         });
 
@@ -524,25 +582,64 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
           return parseTimestamp(b.timestamp).getTime() - parseTimestamp(a.timestamp).getTime();
         });
 
-        // The latest audit time of all time for sorting
-        const latestAuditTime = sortedShelfLogsAllTime.length > 0
-          ? parseTimestamp(sortedShelfLogsAllTime[0].timestamp).getTime()
+        // The latest audit time considering both product audits and shelf photos for sorting
+        const latestShelfTime = sortedShelfLogsAllTime.length > 0
+          ? parseTimestamp(sortedShelfLogsAllTime[0].timestamp).getTime() || 0
           : 0;
+        const latestProdTime = sortedProductLogsAllTime.length > 0
+          ? parseTimestamp(sortedProductLogsAllTime[0].timestamp).getTime() || 0
+          : 0;
+        const latestAuditTime = Math.max(latestShelfTime, latestProdTime);
 
-        // Deduplicate all-time visits by formatted date string, keeping the latest visit for each unique date
+        // Deduplicate all-time visits by formatted date string, combining product audits and shelf logs
         const uniqueDateVisitsMap = new Map<string, TimelineActivity>();
-        sortedShelfLogsAllTime.forEach(log => {
+
+        // 1. Add all product logs for this store
+        sortedProductLogsAllTime.forEach(log => {
           const formattedDate = formatDate(log.timestamp);
+          const rawRemark = String(log.remark ?? "").trim();
+          const cleanRemark = rawRemark === "No remark" || !rawRemark ? "" : rawRemark;
+          const ts = parseTimestamp(log.timestamp).getTime();
+
           if (!uniqueDateVisitsMap.has(formattedDate)) {
-            const rawRemark = String(log.remark ?? "").trim();
-            const ts = parseTimestamp(log.timestamp).getTime();
             uniqueDateVisitsMap.set(formattedDate, {
-              id: `visit-${log.id || ts}`,
+              id: `visit-prod-${log.id || ts}`,
               kind: "visit",
               date: formattedDate,
               timestamp: isNaN(ts) ? 0 : ts,
-              remark: rawRemark === "No remark" || !rawRemark ? "" : rawRemark
+              remark: cleanRemark
             });
+          } else {
+            const existing = uniqueDateVisitsMap.get(formattedDate)!;
+            if (!existing.remark && cleanRemark) {
+              existing.remark = cleanRemark;
+            }
+          }
+        });
+
+        // 2. Add/merge shelf logs for this store and brand
+        sortedShelfLogsAllTime.forEach(log => {
+          const formattedDate = formatDate(log.timestamp);
+          const rawRemark = String(log.remark ?? "").trim();
+          const cleanRemark = rawRemark === "No remark" || !rawRemark ? "" : rawRemark;
+          const ts = parseTimestamp(log.timestamp).getTime();
+
+          if (!uniqueDateVisitsMap.has(formattedDate)) {
+            uniqueDateVisitsMap.set(formattedDate, {
+              id: `visit-shelf-${log.id || ts}`,
+              kind: "visit",
+              date: formattedDate,
+              timestamp: isNaN(ts) ? 0 : ts,
+              remark: cleanRemark
+            });
+          } else {
+            const existing = uniqueDateVisitsMap.get(formattedDate)!;
+            if (!existing.remark && cleanRemark) {
+              existing.remark = cleanRemark;
+            }
+            if (existing.timestamp === 0 && !isNaN(ts)) {
+              existing.timestamp = ts;
+            }
           }
         });
 
@@ -760,15 +857,16 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
         };
       });
 
-      // Filter based on includeNotCarry option
+      // Filter based on statusFilter option (all / carry / not_carry)
       const filteredResults = results.filter(item => {
         if (!item) return false;
-        if (includeNotCarry) {
-          // "Not Carry" option selected: only display stores that do NOT carry the brand
+        if (statusFilter === "carry") {
+          return item.carriesBrand;
+        }
+        if (statusFilter === "not_carry") {
           return !item.carriesBrand;
         }
-        // "Carry" option selected: only display stores that carry the brand
-        return item.carriesBrand;
+        return true; // "all"
       });
 
       // Sort stores by latest audit date descending (latest first)
@@ -913,16 +1011,27 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
               </div>
 
               {/* Status Radio Selector */}
-              <div className="flex flex-col gap-1 w-36">
+              <div className="flex flex-col gap-1 w-44">
                 <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1 select-none">
                   <Filter size={9} /> Status
                 </label>
                 <div className="flex items-center bg-white border border-zinc-300 rounded p-0.5 h-7">
                   <button
                     type="button"
-                    onClick={() => setIncludeNotCarry(false)}
+                    onClick={() => setStatusFilter("all")}
                     className={`flex-1 h-full flex items-center justify-center text-[10px] font-bold transition-all duration-200 cursor-pointer rounded-sm select-none ${
-                      !includeNotCarry
+                      statusFilter === "all"
+                        ? "bg-[#E8F0FE] text-[#0B57D0] shadow-3xs"
+                        : "text-zinc-500 hover:text-zinc-800"
+                    }`}
+                  >
+                    All
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setStatusFilter("carry")}
+                    className={`flex-1 h-full flex items-center justify-center text-[10px] font-bold transition-all duration-200 cursor-pointer rounded-sm select-none ${
+                      statusFilter === "carry"
                         ? "bg-[#E8F0FE] text-[#0B57D0] shadow-3xs"
                         : "text-zinc-500 hover:text-zinc-800"
                     }`}
@@ -931,9 +1040,9 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                   </button>
                   <button
                     type="button"
-                    onClick={() => setIncludeNotCarry(true)}
+                    onClick={() => setStatusFilter("not_carry")}
                     className={`flex-1 h-full flex items-center justify-center text-[10px] font-bold transition-all duration-200 cursor-pointer rounded-sm select-none ${
-                      includeNotCarry
+                      statusFilter === "not_carry"
                         ? "bg-[#E8F0FE] text-[#0B57D0] shadow-3xs"
                         : "text-zinc-500 hover:text-zinc-800"
                     }`}
@@ -950,7 +1059,11 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
             {extractedStores.length > 0 && (
               <CustomButton variant="dark" onClick={handlePrint} className="h-8 py-0 px-3 text-xs">
                 <Printer size={12} />
-                <span>Print Report</span>
+                <span>
+                  {selectedStoreIds.size > 0 
+                    ? `Print Selected (${selectedStoreIds.size})` 
+                    : `Print Report (All ${displayedStores.length})`}
+                </span>
               </CustomButton>
             )}
           </div>
@@ -968,10 +1081,19 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                 <span className="bg-[#E8F0FE] text-[#0B57D0] border border-[#D2E3FC] rounded px-1.5 py-0.5">{activeBrandName}</span>
                 <span>/</span>
                 <span className="bg-[#E8F0FE] text-[#0B57D0] border border-[#D2E3FC] rounded px-1.5 py-0.5">
+                  {statusFilter === "all" ? "All Statuses" : statusFilter === "carry" ? "Carry Only" : "Not Carry Only"}
+                </span>
+                <span>/</span>
+                <span className="bg-[#E8F0FE] text-[#0B57D0] border border-[#D2E3FC] rounded px-1.5 py-0.5">
                   {formatDate(startDate)} - {formatDate(endDate)}
                 </span>
               </div>
-              <div>
+              <div className="flex items-center gap-2">
+                {selectedStoreIds.size > 0 && (
+                  <span className="bg-[#0B57D0] text-white px-2 py-0.5 rounded text-[11px] font-bold">
+                    Selected for Print: {selectedStoreIds.size}
+                  </span>
+                )}
                 <span>Found: <strong className="text-[#0B57D0] font-extrabold">{extractedStores.length}</strong> outlets</span>
               </div>
             </div>
@@ -982,9 +1104,21 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                 className="px-4 py-1 border-r border-slate-200 flex items-center justify-between gap-2 group transition-all duration-300" 
                 style={{ width: "20%" }}
               >
-                <span className="text-[10px] font-bold text-[#474747] uppercase tracking-wider select-none shrink-0 group-hover:scale-95 origin-left transition-transform duration-300">
-                  Store Details
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={allDisplayedSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someDisplayedSelected && !allDisplayedSelected;
+                    }}
+                    onChange={toggleSelectAll}
+                    className="w-3.5 h-3.5 rounded border-zinc-300 text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer"
+                    title={allDisplayedSelected ? "Deselect all displayed outlets" : "Select all displayed outlets for print"}
+                  />
+                  <span className="text-[10px] font-bold text-[#474747] uppercase tracking-wider select-none shrink-0 group-hover:scale-95 origin-left transition-transform duration-300">
+                    Store Details
+                  </span>
+                </div>
                 
                 {/* Search Container */}
                 <div 
@@ -1076,22 +1210,32 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                       displayedStores.map((item) => (
                         <tr 
                           key={item.id} 
-                          className="hover:bg-zinc-100/50 transition-colors align-top print:hover:bg-transparent relative hover:z-30"
+                          className={`hover:bg-zinc-100/50 transition-colors align-top print:hover:bg-transparent relative hover:z-30 ${
+                            selectedStoreIds.size > 0 && !selectedStoreIds.has(String(item.id)) ? "print:hidden" : ""
+                          }`}
                         >
                           {/* Store Details (Fixed 20% width) */}
                           <td className="px-4 py-3.5 border-r border-slate-200/60 text-xs" style={{ minWidth: "20%", maxWidth: "20%", width: "20%", verticalAlign: "top" }}>
-                            <div className="w-full overflow-hidden">
-                              {item.retailerName && (
-                                <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide mb-0.5">
-                                  {item.retailerName}
+                            <div className="w-full overflow-hidden flex items-start gap-2.5">
+                              <input
+                                type="checkbox"
+                                checked={selectedStoreIds.has(String(item.id))}
+                                onChange={() => toggleSelectStore(item.id)}
+                                className="w-3.5 h-3.5 rounded border-zinc-300 text-[#0B57D0] focus:ring-[#0B57D0] cursor-pointer mt-0.5 print:hidden shrink-0"
+                                title="Tick to select for print"
+                              />
+                              <div className="flex-1 min-w-0">
+                                {item.retailerName && (
+                                  <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-wide mb-0.5">
+                                    {item.retailerName}
+                                  </div>
+                                )}
+                                <div className="font-bold text-zinc-950 whitespace-normal break-words">
+                                  {item.storeName}
                                 </div>
-                              )}
-                              <div className="font-bold text-zinc-950 whitespace-normal break-words">
-                                {item.storeName}
-                              </div>
-                              <div className="text-zinc-500 mt-1 whitespace-normal break-words leading-relaxed">
-                                {item.address}
-                              </div>
+                                <div className="text-zinc-500 mt-1 whitespace-normal break-words leading-relaxed">
+                                  {item.address}
+                                </div>
 
                               {/* Store Contacts (Maximum 3 with Mr. / Ms. gender prefix) */}
                               {item.contacts && item.contacts.length > 0 && (
@@ -1113,6 +1257,7 @@ export function StoresVisibilityModule({ profile }: StoresVisibilityModuleProps)
                                   ))}
                                 </div>
                               )}
+                              </div>
                             </div>
                           </td>
 
