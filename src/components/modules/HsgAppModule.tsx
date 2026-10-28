@@ -378,6 +378,102 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [campaignSearch, setCampaignSearch] = React.useState<string>("");
 
+  // Helper to extract survey & velocity answers from a claim
+  const getClaimSurveyData = React.useCallback(
+    (clm: CashbackClaimRecord) => {
+      const camp = campaigns.find((c) => String(c.id) === String(clm.campaign_id));
+      const velocityEnabled = camp ? camp.velocity_task_enabled !== false : false;
+      const customQuestions = (camp?.custom_questions || []).filter(
+        (q) => Boolean(q.question?.trim())
+      );
+
+      const ans = clm.answers || clm.task_answers || {};
+
+      // Check velocity answer
+      const rawVelocity =
+        clm.cashier_task_qty ??
+        ans.a1 ??
+        ans.task_cashier_moving_qty ??
+        ans.task_1 ??
+        (typeof ans.q1 === "number" ? ans.q1 : null);
+
+      const hasVelocity =
+        velocityEnabled &&
+        rawVelocity !== null &&
+        rawVelocity !== undefined &&
+        String(rawVelocity).trim() !== "" &&
+        String(rawVelocity).trim() !== "-";
+
+      // Filter out internal metadata keys
+      const internalKeys = new Set([
+        "campaign_id",
+        "timestamp",
+        "id",
+        "user_id",
+        "claim_id",
+        "q1",
+        "a1",
+        "task_1",
+        "task_cashier_moving_qty",
+        "cashier_task_qty",
+      ]);
+
+      const items: { question: string; answer: string }[] = [];
+
+      // If campaign has defined custom questions, match them first:
+      if (customQuestions.length > 0) {
+        customQuestions.forEach((cq, idx) => {
+          const val =
+            ans[cq.id] ??
+            ans[`a${idx + 2}`] ??
+            ans[`q_${idx + 1}`] ??
+            (ans[cq.question] !== undefined ? ans[cq.question] : undefined);
+          if (val !== undefined && val !== null && String(val).trim() !== "") {
+            items.push({
+              question: cq.question,
+              answer: Array.isArray(val) ? val.join(", ") : String(val),
+            });
+          }
+        });
+      }
+
+      // Also check any other answers in ans:
+      Object.entries(ans).forEach(([k, v]) => {
+        if (internalKeys.has(k)) return;
+        if (k.startsWith("q") && k.length <= 3) return;
+        if (customQuestions.some((cq) => cq.id === k)) return;
+
+        let qText = "";
+        if (k.startsWith("a") && !isNaN(Number(k.slice(1)))) {
+          const qKey = `q${k.slice(1)}`;
+          if (ans[qKey]) qText = String(ans[qKey]);
+        }
+        if (!qText) qText = k;
+
+        if (v !== null && v !== undefined && String(v).trim() !== "") {
+          const formattedAnswer = Array.isArray(v) ? v.join(", ") : String(v);
+          if (!items.some((item) => item.question === qText && item.answer === formattedAnswer)) {
+            items.push({
+              question: qText,
+              answer: formattedAnswer,
+            });
+          }
+        }
+      });
+
+      const hasAnswers = hasVelocity || items.length > 0;
+
+      return {
+        velocityEnabled,
+        hasVelocity,
+        velocityAnswer: hasVelocity ? String(rawVelocity) : null,
+        items,
+        hasAnswers,
+      };
+    },
+    [campaigns]
+  );
+
   // Date range filter for claims (default: past 3 weeks)
   const [claimStartDate, setClaimStartDate] = React.useState<string>(() => {
     const d = new Date();
@@ -2349,14 +2445,28 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                             >
                               Review
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => setReadAnswerClaim(clm)}
-                              className="h-6 px-2 rounded-md bg-white hover:bg-slate-50 text-slate-700 text-[11px] font-normal border border-slate-200 transition"
-                              title="Read submitted survey & velocity answers"
-                            >
-                              Read Answer
-                            </button>
+                            {(() => {
+                              const surveyData = getClaimSurveyData(clm);
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => surveyData.hasAnswers && setReadAnswerClaim(clm)}
+                                  disabled={!surveyData.hasAnswers}
+                                  className={`h-6 px-2 rounded-md text-[11px] font-normal border transition ${
+                                    surveyData.hasAnswers
+                                      ? "bg-white hover:bg-slate-50 text-slate-700 border-slate-200 cursor-pointer"
+                                      : "bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed opacity-60"
+                                  }`}
+                                  title={
+                                    surveyData.hasAnswers
+                                      ? "Read submitted survey & velocity answers"
+                                      : "No survey questions or answers for this campaign"
+                                  }
+                                >
+                                  Read Answer
+                                </button>
+                              );
+                            })()}
                             <button
                               type="button"
                               onClick={() => setLogClaim(clm)}
@@ -3589,59 +3699,55 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
               </button>
             </div>
 
-            <div className="p-5 space-y-4 overflow-y-auto text-xs">
-              {/* Task 1: Velocity Check */}
-              <div className="p-3.5 rounded-lg bg-blue-50/60 border border-blue-200 space-y-1.5">
-                <span className="text-[10px] font-medium uppercase tracking-wider text-[#0B57D0]">
-                  Task 1 — Velocity Check
-                </span>
-                <p className="font-medium text-slate-800 text-xs">
-                  "Ask Cashier, this product move out how many avr perday"
-                </p>
-                <div className="flex items-center gap-2 pt-1">
-                  <span className="text-slate-500">Average Moving / Day:</span>
-                  <span className="px-2.5 py-0.5 rounded-md bg-blue-50 text-[#0B57D0] border border-blue-200 font-medium font-mono text-xs">
-                    {(readAnswerClaim.answers?.q1 || readAnswerClaim.cashier_task_qty) ? `${readAnswerClaim.answers?.q1 || readAnswerClaim.cashier_task_qty} pcs` : "-"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Custom Questions Answers */}
+            <div className="p-5 overflow-y-auto text-xs max-h-[65vh]">
               {(() => {
-                const ans = readAnswerClaim.answers || readAnswerClaim.task_answers || {};
-                const otherKeys = Object.keys(ans).filter((k) => k !== "q1");
+                const survey = getClaimSurveyData(readAnswerClaim);
 
-                if (otherKeys.length === 0) {
+                if (!survey.hasAnswers) {
                   return (
-                    <p className="text-slate-400 italic text-[11px] py-2">
-                      No additional custom questions were submitted for this receipt.
-                    </p>
+                    <div className="py-8 text-center text-slate-400 italic text-xs">
+                      No survey answers submitted for this receipt.
+                    </div>
                   );
                 }
 
                 return (
-                  <div className="space-y-2">
-                    <span className="text-[10px] font-medium uppercase tracking-wider text-slate-500">
-                      Custom Questions Answers
-                    </span>
-                    {otherKeys.map((key, idx) => (
-                      <div
-                        key={key}
-                        className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1"
-                      >
-                        <span className="font-medium text-slate-700 font-mono text-[11px]">
-                          Question #{idx + 2} ({key})
+                  <div className="divide-y divide-slate-100">
+                    {/* Task 1: Velocity Check (ONLY IF ENABLED FOR THIS CAMPAIGN AND ANSWERED) */}
+                    {survey.hasVelocity && (
+                      <div className="py-3 first:pt-0">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-[#0B57D0] block mb-1">
+                          Task 1 — Velocity Check
                         </span>
-                        <div className="text-slate-900 font-medium">
-                          {Array.isArray(ans[key]) ? ans[key].join(", ") : String(ans[key])}
+                        <p className="text-xs text-zinc-600 mb-1.5 font-normal">
+                          "Ask Cashier, this product move out how many avr perday"
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="text-zinc-500 text-[11px]">Average Moving / Day:</span>
+                          <span className="font-semibold text-zinc-900 font-mono text-xs">
+                            {survey.velocityAnswer} pcs / day
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Custom Questions Answers (Clean Flat List without Nested Cards) */}
+                    {survey.items.map((item, idx) => (
+                      <div key={idx} className="py-3 first:pt-0">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+                          Question #{idx + (survey.hasVelocity ? 2 : 1)}
+                        </span>
+                        <p className="text-xs text-zinc-700 mb-1 font-medium">
+                          {item.question}
+                        </p>
+                        <div className="text-xs font-semibold text-zinc-950">
+                          {item.answer}
                         </div>
                       </div>
                     ))}
                   </div>
                 );
               })()}
-
-              
             </div>
 
             <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex justify-end">

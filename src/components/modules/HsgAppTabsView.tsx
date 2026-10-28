@@ -694,6 +694,38 @@ export function HsgContestTab({
     }
   };
 
+  // Toggle Publish
+  const handleTogglePublish = async (c: HsgContestRecord, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const nextPublished = !c.is_published;
+    setLocalContests((prev) =>
+      prev.map((item) => (item.id === c.id ? { ...item, is_published: nextPublished } : item))
+    );
+    showToast(
+      nextPublished ? "Contest published" : "Contest set to draft (unpublished)",
+      "success"
+    );
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/${encodeURIComponent(c.id)}/publish`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ is_published: nextPublished }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Publish toggle failed");
+      onRefresh();
+    } catch (err: any) {
+      setLocalContests((prev) =>
+        prev.map((item) => (item.id === c.id ? { ...item, is_published: !nextPublished } : item))
+      );
+      showToast(err.message || "Error updating contest status", "error");
+    }
+  };
+
   // Toggle Archive
   const handleToggleArchive = async (c: HsgContestRecord) => {
     const nextArchived = !c.is_archived;
@@ -1240,15 +1272,31 @@ export function HsgContestTab({
                             <Trophy className="w-2.5 h-2.5" /> Announced
                           </span>
                         )}
-                        <span
-                          className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${
-                            c.is_published && !c.is_archived
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-slate-100 text-zinc-500 border-slate-200"
-                          }`}
+                        <button
+                          type="button"
+                          onClick={(e) => handleTogglePublish(c, e)}
+                          title={c.is_published ? "Published (click to unpublish)" : "Draft (click to publish)"}
+                          className="flex items-center gap-1.5 px-1.5 py-0.5 rounded cursor-pointer hover:bg-slate-100 transition-colors select-none"
                         >
-                          {c.is_published ? "Published" : "Draft"}
-                        </span>
+                          <span
+                            className={`text-[10px] font-semibold transition-colors ${
+                              c.is_published ? "text-emerald-700" : "text-zinc-500"
+                            }`}
+                          >
+                            {c.is_published ? "Published" : "Draft"}
+                          </span>
+                          <span
+                            className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors ${
+                              c.is_published ? "bg-emerald-500" : "bg-zinc-300"
+                            }`}
+                          >
+                            <span
+                              className={`inline-block h-3 w-3 transform rounded-full bg-white shadow-xs transition-transform ${
+                                c.is_published ? "translate-x-3.5" : "translate-x-0.5"
+                              }`}
+                            />
+                          </span>
+                        </button>
                       </div>
                     </div>
                     <p className="text-[11px] text-zinc-500 truncate mt-0.5">
@@ -2819,7 +2867,7 @@ export function HsgContestTab({
                   <div
                     onClick={() => setIsPublished((p) => !p)}
                     className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
-                      isPublished ? "bg-[#0B57D0]" : "bg-slate-300"
+                      isPublished ? "bg-emerald-500" : "bg-slate-300"
                     }`}
                   >
                     <div
