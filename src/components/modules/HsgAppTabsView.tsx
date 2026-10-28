@@ -287,6 +287,7 @@ export interface HsgEventRecord {
 export interface HsgEventRsvpRecord {
   id: string;
   event_id: string;
+  user_id?: string;
   user_phone: string;
   user_nickname: string;
   status: string;
@@ -4870,61 +4871,93 @@ export function HsgMembersTab({
                     {/* Vertical timeline line */}
                     <div className="absolute left-[139px] top-2 bottom-2 w-0.5 bg-slate-200" />
 
-                    <div className="flex flex-col gap-8">
+                    <div className="flex flex-col gap-6">
                       {logList.map((log: any, index: number) => {
-                        const isAdmin = log.action_by === "Admin";
+                        const isApp = log.action_by === "User in HSG+ App" || String(log.action_by || "").includes("App");
+                        const actorLabel = isApp ? "App" : log.action_by || "System";
+                        const isGenericNote =
+                          !log.note ||
+                          ["member details updated", "profile updated", "account registered"].includes(
+                            String(log.note).toLowerCase().trim()
+                          );
+
+                        const FIELD_LABELS: Record<string, string> = {
+                          nickname: "Nickname",
+                          paynow_number: "PayNow",
+                          paynow: "PayNow",
+                          is_blocked: "Access Status",
+                          privacy_mode: "Privacy",
+                          tt: "TikTok",
+                          ig: "Instagram",
+                          fb: "Facebook",
+                          thread: "Threads",
+                        };
+
+                        const cleanValue = (val: any) => {
+                          if (val === null || val === undefined || val === "") return "";
+                          if (typeof val === "boolean") return val ? "Active" : "Inactive";
+                          if (typeof val === "object") {
+                            if (val.updated) return "Updated";
+                            return JSON.stringify(val);
+                          }
+                          return String(val).trim();
+                        };
+
+                        const visibleChanges: any[] = log.changes && typeof log.changes === "object"
+                          ? Object.entries(log.changes)
+                              .map(([k, v]: [string, any]) => {
+                                const fromVal = cleanValue(v?.from);
+                                const toVal = cleanValue(v?.to ?? (v?.updated ? "Updated" : v));
+                                if (!toVal && !fromVal) return null;
+                                if (fromVal && toVal && fromVal === toVal) return null;
+                                const label = FIELD_LABELS[k] || k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+                                return { key: k, label, fromVal, toVal };
+                              })
+                              .filter(Boolean)
+                          : [];
+
                         return (
                           <div key={index} className="relative flex items-start">
                             {/* Left side: datetime */}
-                            <div className="absolute -left-[144px] w-28 text-right pr-4 text-[10px] text-zinc-400 font-semibold font-mono pt-0.5 leading-tight">
+                            <div className="absolute -left-[144px] w-28 text-right pr-4 text-[11px] text-zinc-400 font-medium pt-0.5 leading-tight">
                               {formatDateTime(log.timestamp)}
                             </div>
 
                             {/* Center: Dot timeline */}
-                            <div
-                              className={`absolute left-[3px] top-1.5 w-3 h-3 rounded-full border-2 border-white z-10 shadow-2xs ${
-                                isAdmin ? "bg-[#0B57D0]" : "bg-emerald-500"
-                              }`}
-                            />
+                            <div className="absolute left-[4px] top-1.5 w-2.5 h-2.5 rounded-full bg-zinc-400 border-2 border-white z-10 shadow-2xs" />
 
                             {/* Right side: Action details */}
-                            <div className="pl-6 flex-1 flex flex-col gap-1.5">
+                            <div className="pl-6 flex-1 flex flex-col gap-1">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <span className="font-bold text-zinc-900 text-sm">
                                   {log.action || "Log Entry"}
                                 </span>
-                                <span
-                                  className={`px-1.5 py-0.5 rounded font-semibold text-[10px] ${
-                                    isAdmin
-                                      ? "bg-blue-50 text-[#0B57D0] border border-blue-200"
-                                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                  }`}
-                                >
-                                  {log.action_by || "System"}
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-zinc-100 text-zinc-600">
+                                  {actorLabel}
                                 </span>
                               </div>
 
-                              {log.note && (
-                                <p className="text-zinc-600 text-[11px] font-medium leading-relaxed italic">
-                                  — {log.note}
+                              {!isGenericNote && (
+                                <p className="text-zinc-500 text-xs leading-relaxed">
+                                  {log.note}
                                 </p>
                               )}
 
-                              {log.changes && typeof log.changes === "object" && (
-                                <div className="space-y-1 pt-1">
-                                  {Object.entries(log.changes).map(([k, v]: [string, any]) => (
+                              {visibleChanges.length > 0 && (
+                                <div className="space-y-1 pt-0.5 text-xs">
+                                  {visibleChanges.map((change: any) => (
                                     <div
-                                      key={k}
-                                      className="flex items-center gap-1.5 font-mono text-[11px] text-zinc-600 bg-slate-50 px-2 py-1 rounded border border-slate-100"
+                                      key={change.key}
+                                      className="flex items-center gap-1.5 text-zinc-600"
                                     >
-                                      <span className="font-semibold text-zinc-800">{k}:</span>
-                                      <span className="text-zinc-400 line-through">
-                                        {JSON.stringify(v?.from ?? "")}
-                                      </span>
-                                      <span className="text-zinc-400">→</span>
-                                      <span className="font-bold text-[#0B57D0]">
-                                        {JSON.stringify(v?.to ?? "")}
-                                      </span>
+                                      <span className="text-zinc-500 text-[11px] font-medium">{change.label}:</span>
+                                      {change.fromVal && (
+                                        <>
+                                          <span className="text-zinc-400 line-through text-[11px]">{change.fromVal}</span>
+                                          <span className="text-zinc-400 text-[10px]">→</span>
+                                        </>
+                                      )}
+                                      <span className="font-semibold text-zinc-900">{change.toVal}</span>
                                     </div>
                                   ))}
                                 </div>
@@ -6087,10 +6120,12 @@ export function HsgNewsTab({
 export function HsgEventsTab({
   events,
   rsvps,
+  users = [],
   onRefresh,
 }: {
   events: HsgEventRecord[];
   rsvps: HsgEventRsvpRecord[];
+  users?: HsgUserRecord[];
   onRefresh: () => void;
 }) {
   const [selectedEventId, setSelectedEventId] = React.useState<string>("ALL");
@@ -6221,9 +6256,236 @@ export function HsgEventsTab({
     onRefresh();
   };
 
+  const selectedEvent = events.find((e) => e.id === selectedEventId);
   const visibleRsvps = rsvps.filter((r) =>
     selectedEventId === "ALL" ? true : r.event_id === selectedEventId
   );
+
+  const handlePrintAttendanceSheet = (ev: HsgEventRecord, rsvpsList: HsgEventRsvpRecord[]) => {
+    try {
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+
+      const pageWidth = 210;
+      const margin = 12;
+      const usableWidth = pageWidth - margin * 2; // 186mm
+
+      let y = 14;
+
+      // Brand / Top Header (Black & White Easy Print)
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.setTextColor(0, 0, 0);
+      doc.text("HSG+ EVENT ATTENDANCE SHEET", margin, y);
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(60, 60, 60);
+      const printedDate = new Date().toLocaleString("en-SG", {
+        timeZone: "Asia/Singapore",
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      doc.text(`Printed: ${printedDate}`, pageWidth - margin, y, { align: "right" });
+
+      y += 4.5;
+      doc.setDrawColor(0, 0, 0);
+      doc.setLineWidth(0.4);
+      doc.line(margin, y, pageWidth - margin, y);
+
+      // Event Title
+      y += 6;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11.5);
+      doc.setTextColor(0, 0, 0);
+      doc.text(ev.title || "Community Event", margin, y);
+
+      // Event Date & Venue
+      y += 4.5;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.setTextColor(0, 0, 0);
+
+      const eventDateStr = ev.date_timestamp
+        ? new Date(Number(ev.date_timestamp)).toLocaleString("en-SG", {
+            timeZone: "Asia/Singapore",
+            day: "2-digit",
+            month: "2-digit",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "-";
+      const locStr = [ev.location_name, ev.location_address].filter(Boolean).join(" — ") || "On-Site Venue";
+      doc.text(`Date & Time: ${eventDateStr}`, margin, y);
+      y += 3.8;
+      doc.text(`Venue: ${locStr}`, margin, y);
+
+      // Description Event
+      if (ev.description && ev.description.trim()) {
+        y += 3.8;
+        doc.setFont("helvetica", "italic");
+        doc.setFontSize(7.5);
+        doc.setTextColor(60, 60, 60);
+        const splitDesc = doc.splitTextToSize(`Description: ${ev.description.trim()}`, usableWidth);
+        doc.text(splitDesc, margin, y);
+        y += splitDesc.length * 3.3;
+      }
+
+      // Event Fee & Reward at Top Header
+      y += 3.8;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8);
+      doc.setTextColor(0, 0, 0);
+
+      const feeStr = Number(ev.fee_amount || 0) > 0 || Number(ev.fee_points || 0) > 0
+        ? [
+            Number(ev.fee_amount || 0) > 0 ? `$${Number(ev.fee_amount).toFixed(2)}` : null,
+            Number(ev.fee_points || 0) > 0 ? `${Number(ev.fee_points)} pts` : null,
+          ].filter(Boolean).join(" / ")
+        : "Free Entry";
+      const rewardStr = Number(ev.reward_points || 0) > 0 ? `+${ev.reward_points} pts` : "None";
+
+      doc.text(`Entry Fee: ${feeStr}   |   Check-In Reward: ${rewardStr}`, margin, y);
+
+      // Summary counts: Just total RSVP and total Checked In
+      y += 3.8;
+      const totalRsvps = rsvpsList.length;
+      const checkedInCount = rsvpsList.filter((r) => r.checked_in_at && Number(r.checked_in_at) > 0).length;
+      doc.text(
+        `Total RSVP: ${totalRsvps}   |   Total Checked In: ${checkedInCount}`,
+        margin,
+        y
+      );
+
+      y += 4;
+
+      // Table Columns without Paid (Usable width: 186mm)
+      // # (8mm), UserID (44mm), Member (54mm), Signature (40mm), Remark (40mm)
+      const colWidths = {
+        num: 8,
+        userId: 44,
+        member: 54,
+        sig: 40,
+        remark: 40,
+      };
+
+      const printTableHeader = (currentY: number) => {
+        doc.setFillColor(245, 245, 245);
+        doc.rect(margin, currentY, usableWidth, 6.5, "F");
+        doc.setDrawColor(0, 0, 0);
+        doc.rect(margin, currentY, usableWidth, 6.5, "S");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        doc.setTextColor(0, 0, 0);
+
+        let curX = margin;
+        doc.text("#", curX + 2, currentY + 4.5);
+        curX += colWidths.num;
+        doc.text("UserID", curX + 2, currentY + 4.5);
+        curX += colWidths.userId;
+        doc.text("Member", curX + 2, currentY + 4.5);
+        curX += colWidths.member;
+        doc.text("Signature", curX + 2, currentY + 4.5);
+        curX += colWidths.sig;
+        doc.text("Remark", curX + 2, currentY + 4.5);
+
+        return currentY + 6.5;
+      };
+
+      y = printTableHeader(y);
+
+      // Render Rows
+      const rowHeight = 7.5;
+      rsvpsList.forEach((r, idx) => {
+        if (y + rowHeight > 280) {
+          doc.addPage();
+          y = 15;
+          y = printTableHeader(y);
+        }
+
+        const u = users.find(
+          (usr: any) =>
+            (r.user_id && (usr.id === r.user_id || usr.user_id === r.user_id)) ||
+            (usr.phone_number && (usr.phone_number === r.user_phone || usr.raw_phone === r.user_phone))
+        );
+        const userId = r.user_id || u?.id || (u as any)?.user_id || "-";
+        const pLast4 =
+          u?.phone_last4 ||
+          (u?.privacy?.phone ? u.privacy.phone.replace(/\D/g, "").slice(-4) : "") ||
+          (r.user_phone ? r.user_phone.replace(/\D/g, "").slice(-4) : "") ||
+          (u?.phone_number ? u.phone_number.replace(/\D/g, "").slice(-4) : "");
+        const memberName = r.user_nickname || u?.nickname || "Member";
+        const memberDisplay = pLast4 ? `${memberName} ${pLast4}` : memberName;
+
+        // Row outline (black/grayscale)
+        doc.setDrawColor(180, 180, 180);
+        doc.rect(margin, y, usableWidth, rowHeight, "S");
+
+        // Vertical dividers
+        let divX = margin;
+        divX += colWidths.num;
+        doc.line(divX, y, divX, y + rowHeight);
+        divX += colWidths.userId;
+        doc.line(divX, y, divX, y + rowHeight);
+        divX += colWidths.member;
+        doc.line(divX, y, divX, y + rowHeight);
+        divX += colWidths.sig;
+        doc.line(divX, y, divX, y + rowHeight);
+
+        // Cell contents (pure black)
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(7.5);
+        doc.setTextColor(0, 0, 0);
+
+        let curX = margin;
+        // #
+        doc.text(String(idx + 1), curX + 2, y + 5);
+        curX += colWidths.num;
+
+        // UserID
+        const shortUserId = userId.length > 20 ? userId.slice(0, 18) + "…" : userId;
+        doc.setFont("courier", "normal");
+        doc.text(shortUserId, curX + 2, y + 5);
+        doc.setFont("helvetica", "normal");
+        curX += colWidths.userId;
+
+        // Member
+        const shortMember = memberDisplay.length > 26 ? memberDisplay.slice(0, 24) + "…" : memberDisplay;
+        doc.text(shortMember, curX + 2, y + 5);
+        curX += colWidths.member;
+
+        // Signature: if have check in .. just small word checked in.. no tick
+        if (r.checked_in_at && Number(r.checked_in_at) > 0) {
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(7);
+          doc.setTextColor(0, 0, 0);
+          doc.text("Checked In", curX + 3, y + 5);
+          doc.setFontSize(7.5);
+        }
+        curX += colWidths.sig;
+
+        // Remark: column empty for handwriting
+        // Left blank
+
+        y += rowHeight;
+      });
+
+      const pdfBlob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      window.open(blobUrl, "_blank");
+    } catch (err) {
+      console.error("Print attendance sheet error:", err);
+      showToast("Failed to generate attendance sheet", "error");
+    }
+  };
 
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden bg-white">
@@ -6331,57 +6593,129 @@ export function HsgEventsTab({
       {/* RIGHT 65%: EVENT RSVPS & CHECK-INS */}
       <section className="flex-1 h-full flex flex-col bg-white overflow-hidden">
         <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex items-center justify-between">
-          <span className="text-xs font-bold text-zinc-900">
-            Event RSVPs & On-Site Check-Ins
-          </span>
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="text-xs font-semibold text-zinc-900 truncate">
+              {selectedEvent ? selectedEvent.title : "All Community Events"}
+            </span>
+            {selectedEvent ? (
+              <>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-[#0B57D0] text-[11px] font-medium shrink-0">
+                  <Calendar className="w-3 h-3" />
+                  {formatDateTime(selectedEvent.date_timestamp)}
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-zinc-700 text-[11px] font-medium shrink-0">
+                  <span className="text-zinc-500">Fee:</span>
+                  <span className="font-semibold text-zinc-900">
+                    {Number(selectedEvent.fee_amount || 0) > 0 || Number(selectedEvent.fee_points || 0) > 0
+                      ? [
+                          Number(selectedEvent.fee_amount || 0) > 0 ? `$${Number(selectedEvent.fee_amount).toFixed(2)}` : null,
+                          Number(selectedEvent.fee_points || 0) > 0 ? `${Number(selectedEvent.fee_points)} pts` : null,
+                        ].filter(Boolean).join(" / ")
+                      : "Free Entry"}
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-100 border border-slate-200 text-zinc-700 text-[11px] font-medium shrink-0">
+                  <span className="text-zinc-500">Reward:</span>
+                  <span className="font-semibold text-zinc-900">
+                    {Number(selectedEvent.reward_points || 0) > 0
+                      ? `+${selectedEvent.reward_points} pts`
+                      : "-"}
+                  </span>
+                </span>
+              </>
+            ) : (
+              <span className="text-[11px] text-zinc-400 shrink-0">
+                (Click an event on the left to filter)
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="text-xs text-zinc-500 font-normal">
+              Total: <span className="font-semibold text-zinc-800">{visibleRsvps.length}</span> Members
+            </div>
+            {selectedEvent && (
+              <button
+                type="button"
+                onClick={() => handlePrintAttendanceSheet(selectedEvent, visibleRsvps)}
+                title="Print Participant Attendance Sheet (PDF Blob)"
+                className="h-7 px-2.5 rounded border border-slate-300 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 shadow-2xs transition cursor-pointer"
+              >
+                <Printer className="w-3.5 h-3.5 text-zinc-500" />
+                <span>Print Attendance Sheet</span>
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex-1 min-h-0 overflow-auto">
           <table className="w-full text-left border-collapse text-xs">
-            <thead className="sticky top-0 bg-[#F8F9FA] border-b border-slate-200 text-zinc-600 font-semibold">
+            <thead className="sticky top-0 bg-[#F8F9FA] border-b border-slate-200 text-slate-500 font-medium text-[11px] uppercase tracking-wider">
               <tr>
-                <th className="py-2.5 px-4">Member</th>
-                <th className="py-2.5 px-4">Event</th>
-                <th className="py-2.5 px-4">RSVP Status</th>
-                <th className="py-2.5 px-4">Checked-In At</th>
-                <th className="py-2.5 px-4 text-right">RSVP Date</th>
+                <th className="py-2.5 px-4 font-medium">UserID</th>
+                <th className="py-2.5 px-4 font-medium">Member</th>
+                <th className="py-2.5 px-4 text-center font-medium">Status</th>
+                <th className="py-2.5 px-4 text-right font-medium">Update Timestampe</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {visibleRsvps.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-12 text-center text-zinc-400">
+                  <td colSpan={4} className="py-12 text-center text-zinc-400 font-normal">
                     No event RSVPs recorded yet.
                   </td>
                 </tr>
               ) : (
                 visibleRsvps.map((r) => {
-                  const ev = events.find((e) => e.id === r.event_id);
+                  const u = users.find(
+                    (usr: any) =>
+                      (r.user_id && (usr.id === r.user_id || usr.user_id === r.user_id)) ||
+                      (usr.phone_number && (usr.phone_number === r.user_phone || usr.raw_phone === r.user_phone))
+                  );
+                  const userId = r.user_id || u?.id || (u as any)?.user_id || "-";
+                  const pLast4 =
+                    u?.phone_last4 ||
+                    (u?.privacy?.phone ? u.privacy.phone.replace(/\D/g, "").slice(-4) : "") ||
+                    (r.user_phone ? r.user_phone.replace(/\D/g, "").slice(-4) : "") ||
+                    (u?.phone_number ? u.phone_number.replace(/\D/g, "").slice(-4) : "");
+                  const memberName = r.user_nickname || u?.nickname || "Member";
+                  const memberDisplay = pLast4 ? `${memberName} ${pLast4}` : memberName;
+
+                  // Status: Joined if checked in, Singing Up... if only RSVP'd
+                  const isCheckedIn = Boolean(r.checked_in_at && Number(r.checked_in_at) > 0);
+
+                  // Update Timestamp: changes to check-in time once checked in
+                  const updateTimestamp = isCheckedIn ? r.checked_in_at : r.created_at;
+
                   return (
-                    <tr key={r.id} className="hover:bg-slate-50/80">
-                      <td className="py-3 px-4">
-                        <div className="font-bold text-zinc-900">
-                          {r.user_nickname}
-                        </div>
-                        <div className="text-[11px] font-mono text-zinc-500">
-                          +{maskPhoneLast4(r.user_phone)}
-                        </div>
+                    <tr key={r.id} className="hover:bg-slate-50/60 transition-colors">
+                      {/* UserID */}
+                      <td className="py-2.5 px-4 font-mono text-zinc-600 text-[11px] whitespace-nowrap">
+                        {userId}
                       </td>
-                      <td className="py-3 px-4 font-semibold text-zinc-800">
-                        {ev?.title || r.event_id}
+
+                      {/* Member: Name 4444 */}
+                      <td className="py-2.5 px-4 text-zinc-800 text-xs font-medium whitespace-nowrap">
+                        {memberDisplay}
                       </td>
-                      <td className="py-3 px-4">
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-bold">
-                          {r.status}
-                        </span>
+
+                      {/* Status with ✔ */}
+                      <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                        {isCheckedIn ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                            <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[2.5]" />
+                            <span>Joined</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                            <Check className="w-3.5 h-3.5 text-slate-400 stroke-[2]" />
+                            <span>Singing Up...</span>
+                          </span>
+                        )}
                       </td>
-                      <td className="py-3 px-4 text-zinc-600">
-                        {r.checked_in_at
-                          ? formatDateTime(r.checked_in_at)
-                          : "Not checked in"}
-                      </td>
-                      <td className="py-3 px-4 text-right text-zinc-500">
-                        {formatDateShort(r.created_at)}
+
+                      {/* Update Timestampe */}
+                      <td className="py-2.5 px-4 text-right font-mono text-zinc-500 text-[11px] whitespace-nowrap">
+                        {updateTimestamp ? formatDateTime(updateTimestamp) : "-"}
                       </td>
                     </tr>
                   );

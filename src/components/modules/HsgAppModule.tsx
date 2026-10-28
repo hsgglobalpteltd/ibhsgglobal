@@ -1966,6 +1966,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
           <HsgEventsTab
             events={events}
             rsvps={eventRsvps}
+            users={users}
             onRefresh={() => loadLiveData(true)}
           />
         )
