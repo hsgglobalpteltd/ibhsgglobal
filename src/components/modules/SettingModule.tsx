@@ -22,7 +22,8 @@ import {
 } from "@/lib/api";
 import { APP_PAGES_CONFIG } from "@/config/modules-config";
 import { fetchMaintenanceSettings, saveModuleUnderConstruction, saveAllUnderConstructionModules } from "@/lib/maintenance";
-import { Search, Construction, CheckCircle2, SlidersHorizontal, BookOpen, Plus, Trash2, Edit3, Tag, Cpu, Database, Sparkles, RefreshCw, Check, CheckSquare, Square, Layers } from "lucide-react";
+import { EmailInboxView } from "./EmailInboxView";
+import { Search, Construction, CheckCircle2, SlidersHorizontal, BookOpen, Plus, Trash2, Edit3, Tag, Cpu, Database, Sparkles, RefreshCw, Check, CheckSquare, Square, Layers, ExternalLink } from "lucide-react";
 
 interface SettingModuleProps {
   profile?: {
@@ -42,10 +43,12 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
     { id: "configuration", label: "Configuration", desc: "System parameters and configurations." },
     { id: "console", label: "Console", desc: "AI Console Brain & Knowledge Base: Manage live database Brain Cells and reference Contexts." },
     { id: "under_construction", label: "Under Construction", desc: "Control module availability and toggle under construction status." },
-    { id: "api", label: "API", desc: "Manage API integrations and secure credentials." }
+    { id: "api", label: "API", desc: "Manage API integrations and secure credentials." },
+    { id: "bot_webhook_terminal", label: "Bot Webhook Terminal", desc: "Live terminal stream of incoming and outgoing WhatsApp bot messages." },
+    { id: "inbox", label: "Email Inbox", desc: "PayNow & Inbound Email Alerts: Review received bank emails, detected references, amounts, and verification results." }
   ];
 
-  const [activeTab, setActiveTab] = React.useState<"configuration" | "console" | "under_construction" | "api">("configuration");
+  const [activeTab, setActiveTab] = React.useState<"configuration" | "console" | "under_construction" | "api" | "bot_webhook_terminal" | "inbox">("configuration");
   const [consoleSubTab, setConsoleSubTab] = React.useState<"brain_cells" | "console_context">("brain_cells");
   const [data, setData] = React.useState<any[]>([]);
   const [fetching, setFetching] = React.useState(false);
@@ -356,6 +359,10 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
       if (activeTab === "api") {
         await fetchFreshData(true);
         showToast("API Cache refreshed successfully!", "success");
+      } else if (activeTab === "bot_webhook_terminal") {
+        const iframe = document.getElementById("wa-bot-terminal-frame") as HTMLIFrameElement;
+        if (iframe) iframe.src = iframe.src;
+        showToast("Bot Terminal refreshed!", "success");
       }
     };
     window.addEventListener("db-refresh", handleDbRefresh);
@@ -600,7 +607,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
         />
       </div>
 
-      <div className="content-body flex-1 w-full overflow-y-auto no-scrollbar">
+      <div className={`content-body flex-1 w-full min-h-0 ${activeTab === "inbox" || activeTab === "bot_webhook_terminal" ? "overflow-hidden h-full flex flex-col" : "overflow-y-auto no-scrollbar"}`}>
         {activeTab === "configuration" ? (
           <div className="flex flex-col gap-4 bg-white border border-slate-200 rounded-lg p-5 shadow-xs">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
@@ -1214,7 +1221,7 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
               </div>
             )}
           </div>
-        ) : (
+        ) : activeTab === "api" ? (
           <DataTable
             columns={apiColumns}
             data={data}
@@ -1228,7 +1235,52 @@ export function SettingModule({ profile, idToken }: SettingModuleProps) {
             addNewText="Add API Key"
             height="h-full"
           />
-        )}
+        ) : activeTab === "bot_webhook_terminal" ? (
+          <div className="flex flex-col h-[calc(100vh-210px)] bg-black rounded-lg border border-zinc-800 overflow-hidden shadow-xs">
+            {/* Terminal Top Control Bar */}
+            <div className="flex items-center justify-between px-4 py-2.5 bg-zinc-950 border-b border-zinc-800 text-xs flex-shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#22c55e] animate-pulse" />
+                <span className="font-mono font-bold text-zinc-100 tracking-wide text-xs">WHATSAPP BOT WEBHOOK TERMINAL</span>
+                <span className="text-[10px] text-zinc-500 font-mono ml-2 border border-zinc-800 px-2 py-0.5 rounded bg-zinc-900 hidden sm:inline-block">
+                  Live Feed (Auto-refresh 2s)
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const iframe = document.getElementById("wa-bot-terminal-frame") as HTMLIFrameElement;
+                    if (iframe) iframe.src = iframe.src;
+                  }}
+                  className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 rounded text-[11px] font-mono text-zinc-300 hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw size={11} />
+                  <span>Reload</span>
+                </button>
+                <a
+                  href="https://ib-v2.hsgglobalpteltd.workers.dev/whatsapp-terminal"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700/80 rounded text-[11px] font-mono text-zinc-300 hover:text-white transition flex items-center gap-1.5"
+                >
+                  <ExternalLink size={11} />
+                  <span>Open Fullscreen</span>
+                </a>
+              </div>
+            </div>
+
+            {/* Terminal Body */}
+            <iframe
+              id="wa-bot-terminal-frame"
+              src="https://ib-v2.hsgglobalpteltd.workers.dev/whatsapp-terminal"
+              className="w-full flex-1 border-none bg-black"
+              title="WhatsApp Bot Webhook Terminal"
+            />
+          </div>
+        ) : activeTab === "inbox" ? (
+          <EmailInboxView />
+        ) : null}
       </div>
 
       {editingApi && (

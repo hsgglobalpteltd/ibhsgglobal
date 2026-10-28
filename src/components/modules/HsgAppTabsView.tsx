@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
+import jsPDF from "jspdf";
+import QRCode from "qrcode";
 import {
+  Printer,
   Plus,
   Trash2,
   Pencil,
@@ -4810,7 +4813,7 @@ export function HsgMembersTab({
         </div>
       )}
 
-      {/* USER AUDIT LOGS MODAL */ }
+      {/* USER AUDIT LOGS SLIDE-IN PANEL (DRAWER - SAME LIKE TRACK ORDER LOG TIMELINE) */}
       {showLogsModal && selectedLogUser && (() => {
         let logList: any[] = [];
         if (Array.isArray(selectedLogUser.logs)) {
@@ -4828,9 +4831,17 @@ export function HsgMembersTab({
             : "----");
 
         return (
-          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6">
-            <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[85vh]">
-              <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0">
+          <>
+            {/* Backdrop overlay to close when clicking outside */}
+            <div
+              className="fixed inset-0 bg-black/40 backdrop-blur-xs z-[999] transition-opacity duration-300"
+              onClick={() => setShowLogsModal(false)}
+            />
+
+            {/* Right Slide-in Panel Drawer */}
+            <div className="fixed top-0 right-0 h-screen w-full sm:w-[500px] bg-white shadow-2xl border-l border-slate-200 z-[1000] flex flex-col font-primary animate-in slide-in-from-right duration-200">
+              {/* Panel Header */}
+              <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between bg-slate-50 shrink-0">
                 <div>
                   <h3 className="text-sm font-bold text-zinc-950">
                     Audit Logs — {selectedLogUser.nickname || "Member"}
@@ -4842,56 +4853,103 @@ export function HsgMembersTab({
                 <button
                   type="button"
                   onClick={() => setShowLogsModal(false)}
-                  className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-zinc-600 hover:bg-slate-200 cursor-pointer"
+                  className="p-1.5 rounded-lg hover:bg-slate-200 text-zinc-500 hover:text-zinc-800 transition cursor-pointer shrink-0"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="p-5 flex-1 overflow-y-auto space-y-2.5 text-xs">
+
+              {/* Panel Body: Track Order Style Timeline */}
+              <div className="flex-1 overflow-y-auto p-5 text-xs bg-white">
                 {logList.length === 0 ? (
-                  <div className="py-8 text-center text-zinc-400">
+                  <div className="py-12 text-center text-zinc-400 italic">
                     No audit logs recorded for this member yet.
                   </div>
                 ) : (
-                  logList.map((log: any, idx: number) => (
-                    <div key={idx} className="p-3 rounded-lg border border-slate-200 bg-slate-50 space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-zinc-900">{log.action || "Log Entry"}</span>
-                        <span className="text-[10px] text-zinc-400 font-mono">{formatDateTime(log.timestamp)}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-[11px]">
-                        <span className="text-zinc-500">By:</span>
-                        <span className={`px-1.5 py-0.2 rounded font-semibold text-[10px] ${
-                          log.action_by === "Admin" ? "bg-blue-50 text-[#0B57D0] border border-blue-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                        }`}>
-                          {log.action_by || "System"}
-                        </span>
-                        {log.note && <span className="text-zinc-600 italic truncate">— {log.note}</span>}
-                      </div>
-                      {log.changes && typeof log.changes === "object" && (
-                        <div className="text-[10px] font-mono bg-white p-2 rounded border border-slate-200 text-zinc-700 space-y-0.5 mt-1">
-                          {Object.entries(log.changes).map(([k, v]: [string, any]) => (
-                            <div key={k}>
-                              <span className="font-semibold text-zinc-900">{k}:</span> {JSON.stringify(v?.from ?? "")} → <span className="font-bold text-[#0B57D0]">{JSON.stringify(v?.to ?? "")}</span>
+                  <div className="relative pl-32 ml-2 py-2">
+                    {/* Vertical timeline line */}
+                    <div className="absolute left-[139px] top-2 bottom-2 w-0.5 bg-slate-200" />
+
+                    <div className="flex flex-col gap-8">
+                      {logList.map((log: any, index: number) => {
+                        const isAdmin = log.action_by === "Admin";
+                        return (
+                          <div key={index} className="relative flex items-start">
+                            {/* Left side: datetime */}
+                            <div className="absolute -left-[144px] w-28 text-right pr-4 text-[10px] text-zinc-400 font-semibold font-mono pt-0.5 leading-tight">
+                              {formatDateTime(log.timestamp)}
                             </div>
-                          ))}
-                        </div>
-                      )}
+
+                            {/* Center: Dot timeline */}
+                            <div
+                              className={`absolute left-[3px] top-1.5 w-3 h-3 rounded-full border-2 border-white z-10 shadow-2xs ${
+                                isAdmin ? "bg-[#0B57D0]" : "bg-emerald-500"
+                              }`}
+                            />
+
+                            {/* Right side: Action details */}
+                            <div className="pl-6 flex-1 flex flex-col gap-1.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-bold text-zinc-900 text-sm">
+                                  {log.action || "Log Entry"}
+                                </span>
+                                <span
+                                  className={`px-1.5 py-0.5 rounded font-semibold text-[10px] ${
+                                    isAdmin
+                                      ? "bg-blue-50 text-[#0B57D0] border border-blue-200"
+                                      : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                  }`}
+                                >
+                                  {log.action_by || "System"}
+                                </span>
+                              </div>
+
+                              {log.note && (
+                                <p className="text-zinc-600 text-[11px] font-medium leading-relaxed italic">
+                                  — {log.note}
+                                </p>
+                              )}
+
+                              {log.changes && typeof log.changes === "object" && (
+                                <div className="space-y-1 pt-1">
+                                  {Object.entries(log.changes).map(([k, v]: [string, any]) => (
+                                    <div
+                                      key={k}
+                                      className="flex items-center gap-1.5 font-mono text-[11px] text-zinc-600 bg-slate-50 px-2 py-1 rounded border border-slate-100"
+                                    >
+                                      <span className="font-semibold text-zinc-800">{k}:</span>
+                                      <span className="text-zinc-400 line-through">
+                                        {JSON.stringify(v?.from ?? "")}
+                                      </span>
+                                      <span className="text-zinc-400">→</span>
+                                      <span className="font-bold text-[#0B57D0]">
+                                        {JSON.stringify(v?.to ?? "")}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                  ))
+                  </div>
                 )}
               </div>
+
+              {/* Panel Footer */}
               <div className="p-3 bg-slate-50 border-t border-slate-200 flex justify-end shrink-0">
                 <button
                   type="button"
                   onClick={() => setShowLogsModal(false)}
-                  className="h-8 px-4 rounded-lg bg-white border border-slate-200 text-zinc-700 font-semibold text-xs hover:bg-slate-100 cursor-pointer"
+                  className="h-8 px-4 rounded-lg bg-white border border-slate-200 text-zinc-700 font-semibold text-xs hover:bg-slate-100 cursor-pointer transition active:scale-98"
                 >
                   Close
                 </button>
               </div>
             </div>
-          </div>
+          </>
         );
       })()}
 
@@ -6810,28 +6868,28 @@ export function HsgSettingsTab({
     settings.referral_enabled !== false
   );
   const [refCashback, setRefCashback] = React.useState<number>(
-    Number(settings.referral_referrer_cashback ?? 1.0)
+    Number(settings.referral_referrer_cashback ?? 0)
   );
   const [refPoints, setRefPoints] = React.useState<number>(
-    Number(settings.referral_referrer_points ?? 50)
+    Number(settings.referral_referrer_points ?? 0)
   );
   const [refereeCashback, setRefereeCashback] = React.useState<number>(
-    Number(settings.referral_referee_cashback ?? 1.0)
+    Number(settings.referral_referee_cashback ?? 0)
   );
   const [refereePoints, setRefereePoints] = React.useState<number>(
-    Number(settings.referral_referee_points ?? 50)
+    Number(settings.referral_referee_points ?? 0)
   );
   const [tier2Points, setTier2Points] = React.useState<number>(
-    Number(settings.referral_tier2_points ?? 25)
+    Number(settings.referral_tier2_points ?? 0)
   );
   const [tier3Points, setTier3Points] = React.useState<number>(
-    Number(settings.referral_tier3_points ?? 15)
+    Number(settings.referral_tier3_points ?? 0)
   );
   const [tier4Points, setTier4Points] = React.useState<number>(
-    Number(settings.referral_tier4_points ?? 10)
+    Number(settings.referral_tier4_points ?? 0)
   );
   const [tier5Points, setTier5Points] = React.useState<number>(
-    Number(settings.referral_tier5_points ?? 5)
+    Number(settings.referral_tier5_points ?? 0)
   );
   const [savingSettings, setSavingSettings] = React.useState<boolean>(false);
 
@@ -6854,14 +6912,14 @@ export function HsgSettingsTab({
     setThemeColor1(settings.theme_color_1 || "#FFEA00");
     setThemeColor2(settings.theme_color_2 || "#EC008C");
     setReferralEnabled(settings.referral_enabled !== false);
-    setRefCashback(Number(settings.referral_referrer_cashback ?? 1.0));
-    setRefPoints(Number(settings.referral_referrer_points ?? 50));
-    setRefereeCashback(Number(settings.referral_referee_cashback ?? 1.0));
-    setRefereePoints(Number(settings.referral_referee_points ?? 50));
-    setTier2Points(Number(settings.referral_tier2_points ?? 25));
-    setTier3Points(Number(settings.referral_tier3_points ?? 15));
-    setTier4Points(Number(settings.referral_tier4_points ?? 10));
-    setTier5Points(Number(settings.referral_tier5_points ?? 5));
+    setRefCashback(Number(settings.referral_referrer_cashback ?? 0));
+    setRefPoints(Number(settings.referral_referrer_points ?? 0));
+    setRefereeCashback(Number(settings.referral_referee_cashback ?? 0));
+    setRefereePoints(Number(settings.referral_referee_points ?? 0));
+    setTier2Points(Number(settings.referral_tier2_points ?? 0));
+    setTier3Points(Number(settings.referral_tier3_points ?? 0));
+    setTier4Points(Number(settings.referral_tier4_points ?? 0));
+    setTier5Points(Number(settings.referral_tier5_points ?? 0));
   }, [settings]);
 
   const handleSaveSettings = async (e?: React.FormEvent) => {
@@ -7478,8 +7536,7 @@ export function HsgShopTab({
 
   const [orderSearch, setOrderSearch] = React.useState<string>("");
   const [fulfillmentFilter, setFulfillmentFilter] = React.useState<"ALL" | "collect" | "delivery">("ALL");
-  const [statusFilter, setStatusFilter] = React.useState<"ALL" | "pending" | "completed" | "cancelled">("ALL");
-  const [inspectOrder, setInspectOrder] = React.useState<any | null>(null);
+  const [statusFilter, setStatusFilter] = React.useState<"ALL" | "pending" | "preparing" | "delivered" | "cancelled">("ALL");
   const [updatingOrderId, setUpdatingOrderId] = React.useState<string | null>(null);
 
   // Merch Create/Edit Modal
@@ -7653,9 +7710,6 @@ export function HsgShopTab({
     setLocalOrders((prev) =>
       prev.map((o) => (o.id === orderId ? { ...o, status: newStatus } : o))
     );
-    if (inspectOrder && inspectOrder.id === orderId) {
-      setInspectOrder((prev: any) => ({ ...prev, status: newStatus }));
-    }
     showToast(`Order marked as ${newStatus}`, "success");
 
     // Silent background sync
@@ -7672,6 +7726,152 @@ export function HsgShopTab({
       showToast("Failed to update order status", "error");
     } finally {
       setUpdatingOrderId(null);
+    }
+  };
+
+  const handlePrintOrderReceipt = async (ord: any) => {
+    try {
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: [80, 220],
+      });
+
+      const isDelivery = String(ord.fulfillment_method || ord.fulfillment || "").toLowerCase() === "delivery";
+
+      const items: any[] = Array.isArray(ord.items) ? ord.items : [];
+
+      let y = 10;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(12);
+      doc.text("HSG+ STORE RECEIPT", 40, y, { align: "center" });
+
+      y += 4.5;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      doc.text("HSG Global Pte Ltd", 40, y, { align: "center" });
+
+      y += 4;
+      doc.text("Official Customer Merchandise Order", 40, y, { align: "center" });
+
+      y += 4;
+      doc.setDrawColor(210, 210, 210);
+      doc.line(5, y, 75, y);
+
+      y += 5;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.text(`ORDER ID: ${ord.id}`, 5, y);
+
+      y += 4;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      const dateStr = new Date(Number(ord.created_at || Date.now())).toLocaleString("en-SG", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+      doc.text(`Date: ${dateStr}`, 5, y);
+
+      y += 4;
+      doc.text(`Customer: ${ord.user_nickname || "Member"}`, 5, y);
+
+      y += 4;
+      doc.text(`Phone: ${ord.user_phone || "-"}`, 5, y);
+
+      y += 4;
+      doc.text(`Fulfillment: ${isDelivery ? "Home Delivery" : "Self-Collect"}`, 5, y);
+
+      if (isDelivery && ord.delivery_address) {
+        y += 4;
+        const splitAddr = doc.splitTextToSize(`Address: ${ord.delivery_address}`, 70);
+        doc.text(splitAddr, 5, y);
+        y += (splitAddr.length - 1) * 3.5;
+      }
+
+      y += 4.5;
+      doc.line(5, y, 75, y);
+
+      // Items Table
+      y += 4.5;
+      doc.setFont("helvetica", "bold");
+      doc.text("ITEM", 5, y);
+      doc.text("QTY", 48, y, { align: "center" });
+      doc.text("TOTAL", 75, y, { align: "right" });
+
+      y += 3;
+      doc.line(5, y, 75, y);
+      y += 4;
+
+      doc.setFont("helvetica", "normal");
+      items.forEach((it: any) => {
+        const nameLines = doc.splitTextToSize(String(it.name || it.merch_id || "Product"), 40);
+        doc.text(nameLines, 5, y);
+        doc.text(String(it.qty || 1), 48, y, { align: "center" });
+
+        const priceText = it.payWith === "points"
+          ? `${it.points || 0} pts`
+          : `$${Number(it.cash || it.price || 0).toFixed(2)}`;
+        doc.text(priceText, 75, y, { align: "right" });
+
+        y += Math.max(nameLines.length * 3.5, 4.5);
+      });
+
+      y += 2;
+      doc.line(5, y, 75, y);
+
+      // Totals
+      y += 4.5;
+      if (Number(ord.delivery_fee || 0) > 0) {
+        doc.setFont("helvetica", "normal");
+        doc.text("Delivery Fee:", 5, y);
+        doc.text(`$${Number(ord.delivery_fee).toFixed(2)}`, 75, y, { align: "right" });
+        y += 4;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(8.5);
+      doc.text("TOTAL PAID:", 5, y);
+
+      const paidParts: string[] = [];
+      if (ord.total_cash !== undefined && Number(ord.total_cash) > 0) {
+        paidParts.push(`$${Number(ord.total_cash).toFixed(2)}`);
+      }
+      if (ord.total_points !== undefined && Number(ord.total_points) > 0) {
+        paidParts.push(`${ord.total_points} pts`);
+      }
+      doc.text(paidParts.join(" + ") || "FREE", 75, y, { align: "right" });
+
+      y += 8;
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(7.5);
+      doc.text("Thank you for your order with HSG+!", 40, y, { align: "center" });
+      y += 3.5;
+      doc.text("plus.hsgglobal.sg", 40, y, { align: "center" });
+
+      // QR Code going to plus.hsgglobal.sg under Thank you
+      y += 4;
+      try {
+        const qrDataUrl = await QRCode.toDataURL("https://plus.hsgglobal.sg", {
+          margin: 1,
+          width: 140,
+        });
+        // 22mm x 22mm QR code centered at x = (80 - 22) / 2 = 29
+        doc.addImage(qrDataUrl, "PNG", 29, y, 22, 22);
+        y += 25;
+      } catch (qrErr) {
+        console.error("QR Code generation error:", qrErr);
+      }
+
+      // Output as blob and open print window
+      const pdfBlob = doc.output("blob");
+      const blobUrl = URL.createObjectURL(pdfBlob);
+      window.open(blobUrl, "_blank");
+    } catch (e) {
+      console.error("Print receipt error:", e);
+      showToast("Failed to generate PDF receipt", "error");
     }
   };
 
@@ -7703,8 +7903,19 @@ export function HsgShopTab({
       if (fulfillmentFilter !== "ALL" && (o.fulfillment || "collect") !== fulfillmentFilter) {
         return false;
       }
-      if (statusFilter !== "ALL" && (o.status || "pending") !== statusFilter) {
-        return false;
+      if (statusFilter !== "ALL") {
+        const oSt = String(o.status || "pending").toLowerCase();
+        if (statusFilter === "delivered") {
+          if (oSt !== "delivered" && oSt !== "completed" && oSt !== "fulfilled") return false;
+        } else if (statusFilter === "preparing") {
+          if (oSt !== "preparing" && oSt !== "processing" && oSt !== "prepare") return false;
+        } else if (statusFilter === "pending") {
+          if (oSt !== "pending" && oSt !== "placed") return false;
+        } else if (statusFilter === "cancelled") {
+          if (oSt !== "cancelled" && oSt !== "rejected") return false;
+        } else if (oSt !== statusFilter) {
+          return false;
+        }
       }
       if (orderSearch.trim()) {
         const q = orderSearch.toLowerCase();
@@ -7888,7 +8099,7 @@ export function HsgShopTab({
             <div className="flex items-center gap-2">
               <span className="text-xs font-semibold text-slate-700 mr-1">Status:</span>
               <div className="flex items-center gap-1 p-0.5 rounded-lg bg-slate-200/60 border border-slate-200 text-xs">
-                {(["ALL", "pending", "completed", "cancelled"] as const).map((st) => (
+                {(["ALL", "pending", "preparing", "delivered", "cancelled"] as const).map((st) => (
                   <button
                     key={st}
                     type="button"
@@ -7899,7 +8110,15 @@ export function HsgShopTab({
                         : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
-                    {st === "ALL" ? `All (${orders.length})` : st}
+                    {st === "ALL"
+                      ? `All (${orders.length})`
+                      : st === "pending"
+                      ? "Placed"
+                      : st === "preparing"
+                      ? "Preparing"
+                      : st === "delivered"
+                      ? "Delivered"
+                      : st}
                   </button>
                 ))}
               </div>
@@ -7932,37 +8151,31 @@ export function HsgShopTab({
             <table className="w-full text-left text-xs border-collapse">
               <thead className="bg-slate-50/80 sticky top-0 border-b border-slate-200 text-slate-500 uppercase text-[11px] font-semibold tracking-wider z-10">
                 <tr>
-                  <th className="py-2.5 px-4">Order ID & Date</th>
-                  <th className="py-2.5 px-4">Customer</th>
-                  <th className="py-2.5 px-4">Items Summary</th>
-                  <th className="py-2.5 px-4">Total Paid</th>
-                  <th className="py-2.5 px-4">Fulfillment</th>
-                  <th className="py-2.5 px-4">Status</th>
-                  <th className="py-2.5 px-4 text-right">Actions</th>
+                  <th className="py-2.5 px-4 font-semibold text-slate-600">Order ID & Date</th>
+                  <th className="py-2.5 px-4 font-semibold text-slate-600">Customer & Contact</th>
+                  <th className="py-2.5 px-4 font-semibold text-slate-600">Total Paid</th>
+                  <th className="py-2.5 px-4 font-semibold text-slate-600">Fulfillment</th>
+                  <th className="py-2.5 px-4 font-semibold text-slate-600">Status</th>
+                  <th className="py-2.5 px-4 font-semibold text-slate-600 text-right">Receipt</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 {filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="py-12 text-center text-xs text-slate-400">
+                    <td colSpan={6} className="py-12 text-center text-xs text-slate-400">
                       No customer orders found matching filters.
                     </td>
                   </tr>
                 ) : (
                   filteredOrders.map((ord) => {
-                    const isPending = ord.status === "pending" || !ord.status;
-                    const isCompleted = ord.status === "completed";
-                    const isDelivery = ord.fulfillment === "delivery";
-                    const items = Array.isArray(ord.items) ? ord.items : [];
-                    const itemsSummary = items
-                      .map((i: any) => `${i.qty}x ${i.name || i.merch_id || "Product"}`)
-                      .join(", ");
+                    const ordSt = String(ord.status || "pending").toLowerCase();
+                    const isDelivery = String(ord.fulfillment_method || ord.fulfillment || "").toLowerCase() === "delivery";
 
                     return (
                       <tr key={ord.id} className="hover:bg-slate-50/60 transition">
                         <td className="py-2.5 px-4">
-                          <div className="font-mono font-bold text-slate-900">{ord.id}</div>
-                          <div className="text-[11px] text-slate-400">
+                          <div className="font-mono text-xs font-semibold text-slate-900">{ord.id}</div>
+                          <div className="text-[11px] text-slate-400 mt-0.5">
                             {new Date(Number(ord.created_at || Date.now())).toLocaleDateString("en-GB", {
                               day: "2-digit",
                               month: "2-digit",
@@ -7973,86 +8186,62 @@ export function HsgShopTab({
                           </div>
                         </td>
                         <td className="py-2.5 px-4">
-                          <div className="font-semibold text-slate-900">
+                          <div className="text-xs font-medium text-slate-800">
                             {ord.user_nickname || "Member"}
                           </div>
-                          <div className="text-[11px] text-slate-500 font-mono">
-                            {ord.user_phone ? `+${maskPhoneLast4(ord.user_phone)}` : "-"}
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-4 max-w-[240px]">
-                          <div className="truncate font-medium text-slate-800" title={itemsSummary}>
-                            {itemsSummary || "1x Order Items"}
-                          </div>
-                          <div className="text-[10px] text-slate-400">
-                            {items.length} item line(s)
+                          <div className="text-[11px] text-slate-500 font-mono mt-0.5">
+                            {ord.user_phone || "-"}
                           </div>
                         </td>
                         <td className="py-2.5 px-4">
                           {ord.total_cash !== undefined && Number(ord.total_cash) > 0 && (
-                            <div className="font-bold text-emerald-700">
+                            <div className="text-xs font-semibold text-slate-800">
                               ${Number(ord.total_cash).toFixed(2)}
                             </div>
                           )}
                           {ord.total_points !== undefined && Number(ord.total_points) > 0 && (
-                            <div className="font-bold text-[#0B57D0]">
+                            <div className="text-xs font-semibold text-[#0B57D0]">
                               {ord.total_points} pts
                             </div>
                           )}
                         </td>
-                        <td className="py-2.5 px-4 max-w-[200px]">
-                          <span
-                            className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                              isDelivery
-                                ? "bg-blue-50 text-[#0B57D0] border border-blue-200"
-                                : "bg-slate-100 text-slate-700"
-                            }`}
-                          >
-                            {isDelivery ? "Delivery" : "Self-Collect"}
-                          </span>
-                          {ord.delivery_address && (
-                            <div className="text-[11px] text-slate-500 truncate mt-0.5">
+                        <td className="py-2.5 px-4 max-w-[220px]">
+                          <div className="text-xs font-medium text-slate-800">
+                            {isDelivery ? "Home Delivery" : "Self-Collect"}
+                          </div>
+                          {isDelivery && ord.delivery_address ? (
+                            <div className="text-[11px] text-slate-500 truncate mt-0.5" title={ord.delivery_address}>
                               {ord.delivery_address}
+                            </div>
+                          ) : (
+                            <div className="text-[11px] text-slate-400 mt-0.5">
+                              HSG Global HQ
                             </div>
                           )}
                         </td>
                         <td className="py-2.5 px-4">
-                          <span
-                            className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded uppercase ${
-                              isCompleted
-                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                : isPending
-                                ? "bg-amber-50 text-amber-800 border border-amber-200"
-                                : "bg-slate-100 text-slate-600 border border-slate-200"
-                            }`}
+                          <select
+                            value={ordSt === "completed" ? "delivered" : ordSt}
+                            disabled={updatingOrderId === ord.id}
+                            onChange={(e) => handleUpdateOrderStatus(ord.id, e.target.value)}
+                            className="h-7 px-2 rounded border border-slate-200 bg-white text-xs font-medium text-slate-700 outline-none focus:border-[#0B57D0] cursor-pointer"
                           >
-                            {ord.status || "Pending"}
-                          </span>
+                            <option value="pending">Order Placed</option>
+                            <option value="preparing">Preparing</option>
+                            <option value="delivered">Delivered</option>
+                            <option value="cancelled">Cancelled</option>
+                          </select>
                         </td>
                         <td className="py-2.5 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {isPending && (
-                              <button
-                                type="button"
-                                disabled={updatingOrderId === ord.id}
-                                onClick={() => handleUpdateOrderStatus(ord.id, "completed")}
-                                className="h-7 px-2 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold transition active:scale-95"
-                              >
-                                {updatingOrderId === ord.id ? (
-                                  <Loader2 className="w-3 h-3 animate-spin" />
-                                ) : (
-                                  "Mark Fulfilled"
-                                )}
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => setInspectOrder(ord)}
-                              className="h-7 px-2 rounded border border-slate-200 hover:bg-slate-50 text-slate-700 text-[11px] font-semibold transition"
-                            >
-                              Details
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handlePrintOrderReceipt(ord)}
+                            className="h-7 px-3 rounded border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-medium inline-flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-2xs"
+                            title="Print Receipt (PDF Blob)"
+                          >
+                            <Printer className="w-3.5 h-3.5 text-slate-500" />
+                            <span>Print</span>
+                          </button>
                         </td>
                       </tr>
                     );
@@ -8279,113 +8468,7 @@ export function HsgShopTab({
         </div>
       )}
 
-      {/* MODAL: VIEW ORDER DETAILS */}
-      {inspectOrder && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6">
-          <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden font-primary">
-            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950">
-                  Shop Order Receipt ({inspectOrder.id})
-                </h3>
-                <p className="text-[11px] text-zinc-500">
-                  Customer order itemization and delivery fulfillment status.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setInspectOrder(null)}
-                className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-zinc-600 hover:bg-slate-200"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-5 space-y-3.5 text-xs">
-              <div className="grid grid-cols-2 gap-2 p-3 rounded-lg bg-slate-50 border border-slate-200">
-                <div>
-                  <span className="text-[10px] text-slate-400 block uppercase">Customer</span>
-                  <span className="font-bold text-slate-900">{inspectOrder.user_nickname || "Member"}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block uppercase">Phone</span>
-                  <span className="font-mono font-bold text-slate-900">+{maskPhoneLast4(inspectOrder.user_phone)}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block uppercase">Fulfillment</span>
-                  <span className="font-semibold text-slate-800 capitalize">
-                    {inspectOrder.fulfillment || "Self-Collect"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[10px] text-slate-400 block uppercase">Status</span>
-                  <span className="font-bold text-[#0B57D0] capitalize">
-                    {inspectOrder.status || "Pending"}
-                  </span>
-                </div>
-              </div>
-
-              {inspectOrder.delivery_address && (
-                <div className="p-2.5 rounded-lg border border-slate-200 bg-white">
-                  <span className="text-[10px] text-slate-400 block uppercase font-bold">
-                    Delivery Address
-                  </span>
-                  <div className="text-xs text-slate-800 mt-0.5">
-                    {inspectOrder.delivery_address}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <span className="text-[11px] font-bold text-slate-900 block mb-1">
-                  Ordered Items
-                </span>
-                <div className="space-y-1.5 border border-slate-200 rounded-lg p-2.5 bg-slate-50/50">
-                  {Array.isArray(inspectOrder.items) && inspectOrder.items.length > 0 ? (
-                    inspectOrder.items.map((it: any, i: number) => (
-                      <div key={i} className="flex items-center justify-between text-xs">
-                        <span className="font-medium text-slate-800">
-                          {it.qty}x {it.name || it.merch_id || "Product Item"}
-                        </span>
-                        <span className="font-mono text-slate-600">
-                          {it.payWith === "points"
-                            ? `${it.points || 0} pts`
-                            : `$${Number(it.cash || it.price || 0).toFixed(2)}`}
-                        </span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-slate-400 text-center py-2">No item lines detailed</div>
-                  )}
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
-                <div>
-                  {inspectOrder.status !== "completed" && (
-                    <button
-                      type="button"
-                      disabled={updatingOrderId === inspectOrder.id}
-                      onClick={() => handleUpdateOrderStatus(inspectOrder.id, "completed")}
-                      className="h-8 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold flex items-center gap-1.5 shadow-xs"
-                    >
-                      {updatingOrderId === inspectOrder.id && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                      <span>Mark Fulfilled / Completed</span>
-                    </button>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setInspectOrder(null)}
-                  className="h-8 px-3.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 font-semibold text-slate-700"
-                >
-                  Close
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* MODAL: ADD / EDIT PRODUCT */}
     </div>
   );
 }
