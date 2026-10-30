@@ -7446,6 +7446,59 @@ export function HsgSettingsTab({
   );
   const [savingSettings, setSavingSettings] = React.useState<boolean>(false);
 
+  // Terms of Service & Privacy Policy (.txt file upload & editor)
+  const [policyText, setPolicyText] = React.useState<string>("");
+  const [policyUpdatedAt, setPolicyUpdatedAt] = React.useState<number | null>(null);
+  const [loadingPolicy, setLoadingPolicy] = React.useState<boolean>(false);
+  const [savingPolicy, setSavingPolicy] = React.useState<boolean>(false);
+  const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+
+  React.useEffect(() => {
+    setLoadingPolicy(true);
+    fetch(`${WORKER_URL}/api/hsg-app/settings/policy`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data) {
+          setPolicyText(data.policy_text || "");
+          setPolicyUpdatedAt(data.policy_updated_at || null);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoadingPolicy(false));
+  }, []);
+
+  const handleUploadTxtFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = String(event.target?.result || "");
+      setPolicyText(content);
+      showToast(`Loaded "${file.name}" (${content.length} characters). Click "Save Policy" to publish.`, "success");
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const handleSavePolicy = async () => {
+    setSavingPolicy(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/hsg-app/settings/policy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ policy_text: policyText }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      const data = await res.json();
+      setPolicyUpdatedAt(data.policy_updated_at || Date.now());
+      showToast("Terms & Conditions published successfully", "success");
+    } catch {
+      showToast("Failed to save Terms & Conditions", "error");
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
+
   React.useEffect(() => {
     setMinWithdraw(Number(settings.min_withdrawal_amount ?? 10));
     setWithdrawalPointsFee(Number(settings.withdrawal_points_fee ?? 0));
@@ -8014,6 +8067,77 @@ export function HsgSettingsTab({
                 placeholder="HSG Global HQ, Singapore"
                 className="w-full p-2 rounded border border-slate-200 bg-white text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0] resize-none"
               />
+            </div>
+          </div>
+        </div>
+
+        {/* ROW 2: TERMS OF SERVICE & PRIVACY POLICY (.txt Uploader & Editor) */}
+        <div className="bg-white rounded-lg border border-slate-200 shadow-2xs p-4 mt-4 flex flex-col gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-[#0B57D0]" />
+                <span className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                  Terms of Service &amp; Privacy Policy (T&amp;C)
+                </span>
+              </div>
+              <p className="text-[11px] text-zinc-500 mt-0.5">
+                Upload a .txt file or paste mobile app terms, membership rules, and privacy policy for member onboarding and account review.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {policyUpdatedAt && (
+                <span className="text-[10px] text-zinc-400 font-medium mr-1">
+                  Updated: {new Date(policyUpdatedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </span>
+              )}
+
+              {/* Upload .txt File Button */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".txt,text/plain"
+                onChange={handleUploadTxtFile}
+                className="hidden"
+                id="tnc_txt_upload"
+              />
+              <label
+                htmlFor="tnc_txt_upload"
+                className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1.5 shadow-2xs transition active:scale-98 cursor-pointer"
+              >
+                <Upload className="w-3.5 h-3.5 text-[#0B57D0]" />
+                <span>Upload .txt File</span>
+              </label>
+
+              {/* Save Policy Button */}
+              <button
+                type="button"
+                onClick={handleSavePolicy}
+                disabled={savingPolicy || loadingPolicy}
+                className="h-8 px-3.5 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition active:scale-98 cursor-pointer disabled:opacity-50"
+              >
+                {savingPolicy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Check className="w-3.5 h-3.5" />
+                )}
+                <span>Save Policy</span>
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <textarea
+              rows={8}
+              value={policyText}
+              onChange={(e) => setPolicyText(e.target.value)}
+              placeholder="Paste or upload your Terms of Service & Privacy Policy text here (.txt)... Currently empty."
+              className="w-full p-3 rounded-lg border border-slate-200 bg-zinc-50/50 font-mono text-xs text-zinc-800 leading-relaxed outline-none focus:border-[#0B57D0] focus:bg-white resize-y min-h-[140px]"
+            />
+            <div className="flex items-center justify-between text-[10px] text-zinc-400 mt-1 px-0.5">
+              <span>Supports raw text formatted with line breaks (.txt)</span>
+              <span>{policyText.length} characters</span>
             </div>
           </div>
         </div>
