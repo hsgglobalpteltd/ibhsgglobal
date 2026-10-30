@@ -183,9 +183,9 @@ export interface HsgContestSubmission {
 export interface HsgWithdrawalRecord {
   id: string;
   user_id?: string;
-  user_phone: string;
+  user_phone?: string;
   user_phone_last4?: string;
-  user_nickname: string;
+  user_nickname?: string;
   paynow_number: string;
   amount: number;
   status: "requested" | "completed" | "rejected";
@@ -207,6 +207,7 @@ export interface HsgUserRecord {
   phone_last4?: string;
   raw_phone?: string;
   nickname: string;
+  name?: string;
   paynow_number: string;
   wallet_balance: number;
   points_balance?: number;
@@ -372,6 +373,7 @@ export function HsgContestTab({
   winners = [],
   events = [],
   merchCatalog = [],
+  users = [],
   loading,
   onRefresh,
   openCreateTrigger,
@@ -381,6 +383,7 @@ export function HsgContestTab({
   winners?: HsgContestWinner[];
   events?: any[];
   merchCatalog?: any[];
+  users?: HsgUserRecord[];
   loading: boolean;
   onRefresh: () => void;
   openCreateTrigger?: number;
@@ -4210,14 +4213,27 @@ export function HsgMembersTab({
 
 
   const filteredWithdrawals = withdrawals.filter((w) => {
-    if (selectedPhone !== "ALL" && w.user_phone !== selectedPhone) return false;
+    const u = users.find(
+      (usr: any) =>
+        Boolean(w.user_id) &&
+        (String(usr.id).trim() === String(w.user_id).trim() ||
+          String(usr.user_id).trim() === String(w.user_id).trim())
+    );
+    if (selectedPhone !== "ALL") {
+      const uPhone = (u?.privacy?.phone ? u.privacy.phone.replace(/\D/g, "") : "") || u?.phone_number || "";
+      if (uPhone !== selectedPhone && w.user_id !== selectedPhone && (w.user_phone ? w.user_phone !== selectedPhone : true)) return false;
+    }
     if (statusFilter !== "all" && w.status !== statusFilter) return false;
     if (wdrSearch.trim()) {
       const q = wdrSearch.toLowerCase();
+      const pLast4 = (u?.privacy?.phone ? u.privacy.phone.replace(/\D/g, "").slice(-4) : "") || u?.phone_last4 || "";
+      const memberName = u?.nickname || u?.name || w.user_nickname || "";
+      const uid = String(w.user_id || u?.id || "").toLowerCase();
       return (
-        (w.user_nickname || "").toLowerCase().includes(q) ||
-        (w.user_phone || "").includes(q) ||
-        (w.paynow_number || "").includes(q) ||
+        memberName.toLowerCase().includes(q) ||
+        uid.includes(q) ||
+        pLast4.includes(q) ||
+        (w.paynow_number || u?.paynow_number || "").includes(q) ||
         (w.id || "").toLowerCase().includes(q)
       );
     }
@@ -4627,22 +4643,40 @@ export function HsgMembersTab({
                     </td>
                   </tr>
                 ) : (
-                  filteredWithdrawals.map((w) => (
-                    <tr key={w.id} className="hover:bg-slate-50/80">
-                      <td className="py-2.5 px-4 font-mono text-zinc-600">
-                        {w.id}
-                      </td>
-                      <td className="py-2.5 px-4">
-                        <div className="font-medium text-zinc-900">
-                          {w.user_nickname || "Member"}
-                        </div>
-                        <div className="text-[11px] font-mono text-zinc-400">
-                          {(w as any).user_phone_last4 ? `****${(w as any).user_phone_last4}` : (w.user_phone && w.user_phone.length !== 64 ? `+${maskPhoneLast4(w.user_phone)}` : `${w.user_id || 'Member'}`)}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-4 font-mono text-zinc-600">
-                        {w.paynow_number || "-"}
-                      </td>
+                  filteredWithdrawals.map((w) => {
+                    const u = users.find(
+                      (usr: any) =>
+                        Boolean(w.user_id) &&
+                        (String(usr.id).trim() === String(w.user_id).trim() ||
+                          String(usr.user_id).trim() === String(w.user_id).trim())
+                    );
+                    const pLast4 =
+                      (u?.privacy?.phone ? u.privacy.phone.replace(/\D/g, "").slice(-4) : "") ||
+                      u?.phone_last4 ||
+                      "";
+                    const rawName = u?.nickname || u?.name || w.user_nickname || "Member";
+                    const memberDisplay = pLast4 && !rawName.endsWith(pLast4)
+                      ? `${rawName} ${pLast4}`
+                      : rawName;
+                    const userId = w.user_id || u?.id || "-";
+                    const paynowNumber = w.paynow_number || u?.paynow_number || (u as any)?.paynow || "-";
+
+                    return (
+                      <tr key={w.id} className="hover:bg-slate-50/80">
+                        <td className="py-2.5 px-4 font-mono text-zinc-600">
+                          {w.id}
+                        </td>
+                        <td className="py-2.5 px-4">
+                          <div className="font-medium text-zinc-900">
+                            {memberDisplay}
+                          </div>
+                          <div className="text-[11px] font-mono text-zinc-400">
+                            {userId}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-4 font-mono text-zinc-600">
+                          {paynowNumber}
+                        </td>
                       <td className="py-2.5 px-4 font-medium text-zinc-900">
                         ${Number(w.amount || 0).toFixed(2)}
                       </td>
@@ -4698,7 +4732,8 @@ export function HsgMembersTab({
                         </button>
                       </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -5035,111 +5070,140 @@ export function HsgMembersTab({
       })()}
 
       {/* PROCESS PAYOUT MODAL */}
-      {selectedWdr && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6">
-          <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950">
-                  Process PayNow Withdrawal ({selectedWdr.id})
-                </h3>
-                <p className="text-[11px] text-zinc-500">
-                  {selectedWdr.user_nickname} (+{maskPhoneLast4(selectedWdr.user_phone)})
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedWdr(null)}
-                className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-zinc-600"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {selectedWdr && (() => {
+        const u = users.find(
+          (usr: any) =>
+            Boolean(selectedWdr.user_id) &&
+            (String(usr.id).trim() === String(selectedWdr.user_id).trim() ||
+              String(usr.user_id).trim() === String(selectedWdr.user_id).trim())
+        );
+        const pLast4 =
+          (u?.privacy?.phone ? u.privacy.phone.replace(/\D/g, "").slice(-4) : "") ||
+          u?.phone_last4 ||
+          "";
+        const rawName = u?.nickname || u?.name || selectedWdr.user_nickname || "Member";
+        const memberDisplay = pLast4 && !rawName.endsWith(pLast4)
+          ? `${rawName} ${pLast4}`
+          : rawName;
+        const userId = selectedWdr.user_id || u?.id || "-";
+        const paynowNumber = selectedWdr.paynow_number || u?.paynow_number || "-";
 
-            <div className="p-5 space-y-4 text-xs">
-              <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">PayNow Number:</span>
-                  <span className="font-mono font-bold text-[#0B57D0] text-sm">
-                    {selectedWdr.paynow_number}
-                  </span>
+        return (
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-6">
+            <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+              <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-950">
+                    Process PayNow Withdrawal ({selectedWdr.id})
+                  </h3>
+                  <p className="text-[11px] text-zinc-500">
+                    {memberDisplay} • <span className="font-mono text-zinc-600">{userId}</span>
+                  </p>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-zinc-500">Payout Amount:</span>
-                  <span className="font-bold text-zinc-950 text-sm">
-                    ${Number(selectedWdr.amount || 0).toFixed(2)}
-                  </span>
-                </div>
-                {Array.isArray(selectedWdr.claim_ids) &&
-                  selectedWdr.claim_ids.length > 0 && (
-                    <div className="pt-2 border-t border-slate-200">
-                      <span className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">
-                        Bundled Claim IDs:
-                      </span>
-                      <div className="flex flex-wrap gap-1">
-                        {selectedWdr.claim_ids.map((cid) => (
-                          <span
-                            key={cid}
-                            className="px-2 py-0.5 rounded bg-white border border-slate-200 font-mono text-[10px]"
-                          >
-                            {cid}
-                          </span>
-                        ))}
+                <button
+                  type="button"
+                  onClick={() => setSelectedWdr(null)}
+                  className="w-7 h-7 rounded-md bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-zinc-600 cursor-pointer transition"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-4 text-xs">
+                <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 space-y-2">
+                  <div className="flex justify-between items-center">
+                    <span className="text-zinc-500">PayNow Number:</span>
+                    <span className="font-mono font-bold text-[#0B57D0] text-sm">
+                      {paynowNumber}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-zinc-500">Payout Amount:</span>
+                    <span className="font-bold text-zinc-950 text-sm">
+                      ${Number(selectedWdr.amount || 0).toFixed(2)}
+                    </span>
+                  </div>
+                  {Array.isArray(selectedWdr.claim_ids) &&
+                    selectedWdr.claim_ids.length > 0 && (
+                      <div className="pt-2 border-t border-slate-200">
+                        <span className="text-[10px] font-bold uppercase text-zinc-400 block mb-1">
+                          Bundled Claim IDs:
+                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {selectedWdr.claim_ids.map((cid) => (
+                            <span
+                              key={cid}
+                              className="px-2 py-0.5 rounded bg-white border border-slate-200 font-mono text-[10px] text-zinc-700"
+                            >
+                              {cid}
+                            </span>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">
+                    PayNow Transaction Reference No. (for Completed Payout)
+                  </label>
+                  <input
+                    type="text"
+                    value={referenceNo}
+                    onChange={(e) => setReferenceNo(e.target.value)}
+                    placeholder="e.g. FAST-20261022-8890"
+                    className="w-full h-9 px-3 rounded-lg bg-slate-50 border border-slate-200 font-mono outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">
+                    Rejection Reason (if rejecting & refunding balance)
+                  </label>
+                  <input
+                    type="text"
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    placeholder="e.g. PayNow number not registered"
+                    className="w-full h-9 px-3 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#0B57D0]"
+                  />
+                </div>
               </div>
 
-              <div>
-                <label className="block font-semibold text-zinc-700 mb-1">
-                  PayNow Transaction Reference No. (for Completed Payout)
-                </label>
-                <input
-                  type="text"
-                  value={referenceNo}
-                  onChange={(e) => setReferenceNo(e.target.value)}
-                  placeholder="e.g. FAST-20261022-8890"
-                  className="w-full h-9 px-3 rounded-lg bg-slate-50 border border-slate-200 font-mono outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block font-semibold text-zinc-700 mb-1">
-                  Rejection Reason (if rejecting & refunding balance)
-                </label>
-                <input
-                  type="text"
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  placeholder="e.g. PayNow number not registered"
-                  className="w-full h-9 px-3 rounded-lg bg-slate-50 border border-slate-200 outline-none"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200">
+              {/* Modal Footer with proper spacing & no clipped text */}
+              <div className="px-5 py-3.5 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
                 <button
                   type="button"
-                  disabled={processingWdr}
-                  onClick={() => handleUpdatePayout("completed")}
-                  className="h-9 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold flex items-center justify-center gap-1.5"
+                  onClick={() => setSelectedWdr(null)}
+                  className="h-9 px-3.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-zinc-700 font-semibold text-xs transition cursor-pointer"
                 >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Mark Transferred</span>
+                  Cancel
                 </button>
-                <button
-                  type="button"
-                  disabled={processingWdr}
-                  onClick={() => handleUpdatePayout("rejected")}
-                  className="h-9 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold flex items-center justify-center gap-1.5"
-                >
-                  <XCircle className="w-3.5 h-3.5" />
-                  <span>Reject & Refund</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={processingWdr}
+                    onClick={() => handleUpdatePayout("rejected")}
+                    className="h-9 px-3.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                  >
+                    <XCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span className="whitespace-nowrap">Reject & Refund</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={processingWdr}
+                    onClick={() => handleUpdatePayout("completed")}
+                    className="h-9 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs flex items-center gap-1.5 transition cursor-pointer shadow-xs disabled:opacity-50 shrink-0"
+                  >
+                    {processingWdr ? <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" /> : <Check className="w-3.5 h-3.5 shrink-0" />}
+                    <span className="whitespace-nowrap">Mark Transferred</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -6309,7 +6373,43 @@ export function HsgEventsTab({
     selectedEventId === "ALL" ? true : r.event_id === selectedEventId
   );
 
-  const handlePrintAttendanceSheet = (ev: HsgEventRecord, rsvpsList: HsgEventRsvpRecord[]) => {
+  const [togglingRsvpId, setTogglingRsvpId] = React.useState<string | null>(null);
+
+  const handleToggleCheckin = async (r: HsgEventRsvpRecord, targetUserId?: string) => {
+    const isCurrentlyCheckedIn = Boolean(r.checked_in_at && Number(r.checked_in_at) > 0);
+    const nextAction = isCurrentlyCheckedIn ? "revoke" : "checkin";
+    setTogglingRsvpId(r.id);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/hsg-app/events/admin-toggle-checkin`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rsvp_id: r.id,
+          event_id: r.event_id,
+          user_id: r.user_id || targetUserId,
+          action: nextAction,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || "Failed to update status");
+      }
+      if (nextAction === "checkin") {
+        const ptsMsg = data.reward_points > 0 ? ` (+${data.reward_points} pts)` : "";
+        showToast(`Member marked as Joined${ptsMsg}`, "success");
+      } else {
+        const ptsMsg = data.reward_points > 0 ? ` (${data.reward_points} pts revoked)` : "";
+        showToast(`Status reverted to Signing Up${ptsMsg}`, "success");
+      }
+      onRefresh();
+    } catch (err: any) {
+      showToast(err.message || "Failed to change status", "error");
+    } finally {
+      setTogglingRsvpId(null);
+    }
+  };
+
+  const handlePrintAttendanceSheet = async (ev: HsgEventRecord, rsvpsList: HsgEventRsvpRecord[]) => {
     try {
       const doc = new jsPDF({
         orientation: "portrait",
@@ -6320,6 +6420,38 @@ export function HsgEventsTab({
       const pageWidth = 210;
       const margin = 12;
       const usableWidth = pageWidth - margin * 2; // 186mm
+
+      // Top right QR code configuration
+      const qrSize = 25; // 25mm x 25mm
+      const qrX = pageWidth - margin - qrSize;
+      const qrY = 12;
+      const headerTextWidth = usableWidth - qrSize - 6; // 155mm
+
+      // Generate QR Code data URL encoding https://plus.hsgglobal.sg/#events?id=${ev.id}&venue_scan=1
+      const checkinUrl = `https://plus.hsgglobal.sg/#events?id=${ev.id}&venue_scan=1`;
+      let qrDataUrl = "";
+      try {
+        qrDataUrl = await QRCode.toDataURL(checkinUrl, {
+          margin: 1,
+          width: 250,
+          errorCorrectionLevel: "M",
+        });
+      } catch (e) {
+        console.error("QR generation error:", e);
+      }
+
+      if (qrDataUrl) {
+        doc.addImage(qrDataUrl, "PNG", qrX, qrY, qrSize, qrSize);
+        // Clean frame around QR
+        doc.setDrawColor(180, 180, 180);
+        doc.setLineWidth(0.3);
+        doc.rect(qrX - 1, qrY - 1, qrSize + 2, qrSize + 5.5, "S");
+        // Label below QR
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(6.5);
+        doc.setTextColor(0, 0, 0);
+        doc.text("CHECK-IN QR", qrX + qrSize / 2, qrY + qrSize + 3.2, { align: "center" });
+      }
 
       let y = 14;
 
@@ -6461,17 +6593,19 @@ export function HsgEventsTab({
 
         const u = users.find(
           (usr: any) =>
-            (r.user_id && (usr.id === r.user_id || usr.user_id === r.user_id)) ||
-            (usr.phone_number && (usr.phone_number === r.user_phone || usr.raw_phone === r.user_phone))
+            Boolean(r.user_id) &&
+            (String(usr.id).trim() === String(r.user_id).trim() ||
+              String(usr.user_id).trim() === String(r.user_id).trim())
         );
         const userId = r.user_id || u?.id || (u as any)?.user_id || "-";
         const pLast4 =
-          u?.phone_last4 ||
           (u?.privacy?.phone ? u.privacy.phone.replace(/\D/g, "").slice(-4) : "") ||
-          (r.user_phone ? r.user_phone.replace(/\D/g, "").slice(-4) : "") ||
-          (u?.phone_number ? u.phone_number.replace(/\D/g, "").slice(-4) : "");
-        const memberName = r.user_nickname || u?.nickname || "Member";
-        const memberDisplay = pLast4 ? `${memberName} ${pLast4}` : memberName;
+          u?.phone_last4 ||
+          (r.user_phone ? r.user_phone.replace(/\D/g, "").slice(-4) : "");
+        const rawName = u?.nickname || u?.name || r.user_nickname || "HSG Member";
+        const memberDisplay = pLast4 && !rawName.endsWith(pLast4)
+          ? `${rawName} ${pLast4}`
+          : rawName;
 
         // Row outline (black/grayscale)
         doc.setDrawColor(180, 180, 180);
@@ -6702,13 +6836,14 @@ export function HsgEventsTab({
                 <th className="py-2.5 px-4 font-medium">UserID</th>
                 <th className="py-2.5 px-4 font-medium">Member</th>
                 <th className="py-2.5 px-4 text-center font-medium">Status</th>
-                <th className="py-2.5 px-4 text-right font-medium">Update Timestampe</th>
+                <th className="py-2.5 px-4 text-right font-medium">Update Timestamp</th>
+                <th className="py-2.5 px-4 text-center font-medium">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {visibleRsvps.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="py-12 text-center text-zinc-400 font-normal">
+                  <td colSpan={5} className="py-12 text-center text-zinc-400 font-normal">
                     No event RSVPs recorded yet.
                   </td>
                 </tr>
@@ -6716,20 +6851,23 @@ export function HsgEventsTab({
                 visibleRsvps.map((r) => {
                   const u = users.find(
                     (usr: any) =>
-                      (r.user_id && (usr.id === r.user_id || usr.user_id === r.user_id)) ||
-                      (usr.phone_number && (usr.phone_number === r.user_phone || usr.raw_phone === r.user_phone))
+                      Boolean(r.user_id) &&
+                      (String(usr.id).trim() === String(r.user_id).trim() ||
+                        String(usr.user_id).trim() === String(r.user_id).trim())
                   );
                   const userId = r.user_id || u?.id || (u as any)?.user_id || "-";
                   const pLast4 =
-                    u?.phone_last4 ||
                     (u?.privacy?.phone ? u.privacy.phone.replace(/\D/g, "").slice(-4) : "") ||
-                    (r.user_phone ? r.user_phone.replace(/\D/g, "").slice(-4) : "") ||
-                    (u?.phone_number ? u.phone_number.replace(/\D/g, "").slice(-4) : "");
-                  const memberName = r.user_nickname || u?.nickname || "Member";
-                  const memberDisplay = pLast4 ? `${memberName} ${pLast4}` : memberName;
+                    u?.phone_last4 ||
+                    (r.user_phone ? r.user_phone.replace(/\D/g, "").slice(-4) : "");
+                  const rawName = u?.nickname || u?.name || r.user_nickname || "HSG Member";
+                  const memberDisplay = pLast4 && !rawName.endsWith(pLast4)
+                    ? `${rawName} ${pLast4}`
+                    : rawName;
 
-                  // Status: Joined if checked in, Singing Up... if only RSVP'd
+                  // Status: Joined if checked in, Signing Up... if only RSVP'd
                   const isCheckedIn = Boolean(r.checked_in_at && Number(r.checked_in_at) > 0);
+                  const isToggling = togglingRsvpId === r.id;
 
                   // Update Timestamp: changes to check-in time once checked in
                   const updateTimestamp = isCheckedIn ? r.checked_in_at : r.created_at;
@@ -6746,24 +6884,57 @@ export function HsgEventsTab({
                         {memberDisplay}
                       </td>
 
-                      {/* Status with ✔ */}
+                      {/* Status */}
                       <td className="py-2.5 px-4 text-center whitespace-nowrap">
                         {isCheckedIn ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
                             <Check className="w-3.5 h-3.5 text-emerald-600 stroke-[2.5]" />
                             <span>Joined</span>
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
-                            <Check className="w-3.5 h-3.5 text-slate-400 stroke-[2]" />
-                            <span>Singing Up...</span>
+                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 font-medium">
+                            <Clock className="w-3.5 h-3.5 text-amber-500 stroke-[2]" />
+                            <span>Signing Up...</span>
                           </span>
                         )}
                       </td>
 
-                      {/* Update Timestampe */}
+                      {/* Update Timestamp */}
                       <td className="py-2.5 px-4 text-right font-mono text-zinc-500 text-[11px] whitespace-nowrap">
                         {updateTimestamp ? formatDateTime(updateTimestamp) : "-"}
+                      </td>
+
+                      {/* Action: Toggle Check In / Revoke */}
+                      <td className="py-2.5 px-4 text-center whitespace-nowrap">
+                        <button
+                          type="button"
+                          disabled={isToggling}
+                          onClick={() => handleToggleCheckin(r, userId !== "-" ? userId : undefined)}
+                          title={
+                            isCheckedIn
+                              ? "Revoke check-in and take back reward points"
+                              : "Check in member and award reward points"
+                          }
+                          className={`h-6 px-2.5 rounded text-[11px] font-semibold inline-flex items-center gap-1 transition shadow-2xs cursor-pointer ${
+                            isCheckedIn
+                              ? "border border-slate-300 bg-white hover:bg-slate-50 text-zinc-700"
+                              : "bg-[#0B57D0] hover:bg-[#0842A0] text-white"
+                          }`}
+                        >
+                          {isToggling ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : isCheckedIn ? (
+                            <>
+                              <RotateCcw className="w-3 h-3 text-zinc-500" />
+                              <span>Revoke</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check className="w-3 h-3" />
+                              <span>Check In</span>
+                            </>
+                          )}
+                        </button>
                       </td>
                     </tr>
                   );

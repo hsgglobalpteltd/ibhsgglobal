@@ -73,11 +73,16 @@ export type CashbackTaskType =
   | "multi_select";
 
 export interface StoreVisitMilestone {
-  step: number;
-  target_stores: number;
-  reward_type: MilestoneRewardType;
+  tier?: number;
+  step?: number;
+  stores?: number;
+  target_stores?: number;
+  reward?: string;
+  reward_label?: string;
+  reward_type?: MilestoneRewardType | string;
   reward_value?: number;
-  reward_label: string;
+  cash?: number;
+  points?: number;
 }
 
 export interface CashbackTaskItem {
@@ -120,6 +125,20 @@ export interface CashbackCampaign {
   reward_type?: "cashback" | "points" | "both";
   reward_cash?: number;
   reward_points?: number;
+  cashback_mode?: "flat" | "percent";
+  cashback_value?: number;
+  point_mode?: "flat" | "ratio";
+  point_value?: number;
+  reward?: {
+    type?: "cashback" | "points" | "both";
+    cash?: number;
+    points?: number;
+    cashback_mode?: "flat" | "percent";
+    cashback_value?: number;
+    point_mode?: "flat" | "ratio";
+    point_value?: number;
+    unlock_rewards?: any[];
+  };
   unlock_rewards?: { tier: number; stores: number; reward: string; cash?: number; points?: number }[];
   velocity_task_enabled?: boolean;
   custom_questions?: { id: string; question: string }[];
@@ -520,6 +539,10 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
   const [campRewardType, setCampRewardType] = React.useState<"cashback" | "points" | "both">("cashback");
   const [campRewardCash, setCampRewardCash] = React.useState<number>(1.0);
   const [campRewardPoints, setCampRewardPoints] = React.useState<number>(50);
+  const [campCashbackMode, setCampCashbackMode] = React.useState<"flat" | "percent">("flat");
+  const [campCashbackValue, setCampCashbackValue] = React.useState<number>(1.0);
+  const [campPointMode, setCampPointMode] = React.useState<"flat" | "ratio">("flat");
+  const [campPointValue, setCampPointValue] = React.useState<number>(50);
   const [campUnlockRewards, setCampUnlockRewards] = React.useState<{ tier: number; stores: number; reward: string; cash?: number; points?: number }[]>([]);
   const [campVelocityTaskEnabled, setCampVelocityTaskEnabled] = React.useState<boolean>(true);
   const [campCustomQuestions, setCampCustomQuestions] = React.useState<{ id: string; question: string }[]>([]);
@@ -538,8 +561,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
   const [campCashbackAmount, setCampCashbackAmount] = React.useState<number>(0);
   const [campMinQty, setCampMinQty] = React.useState<number>(1);
   const [campWhereToBuy, setCampWhereToBuy] = React.useState<string>("");
-  const [enableExtraMilestone, setEnableExtraMilestone] = React.useState<boolean>(false);
-  const [milestoneTargets, setMilestoneTargets] = React.useState<StoreVisitMilestone[]>([]);
+  const [enableMilestones, setEnableMilestones] = React.useState<boolean>(false);
   const [enableMovementTask, setEnableMovementTask] = React.useState<boolean>(true);
   const [coreTaskTitle, setCoreTaskTitle] = React.useState<string>("Task #1 — Store Velocity Check");
   const [coreTaskQuestion, setCoreTaskQuestion] = React.useState<string>(
@@ -1082,14 +1104,27 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
       setCampProductId(prefill.product_id || "");
       setCampStartTime(formatForDateTimeLocal(prefill.start_time || prefill.start_timestamp));
       setCampEndTime(formatForDateTimeLocal(prefill.end_time || prefill.end_timestamp));
-      const rType = (prefill.reward_type as any) || (prefill.purchase_reward_mode === "points" ? "points" : "cashback");
-      setCampRewardType(rType);
+      const rType = (prefill.reward_type as any) || (prefill.reward?.type) || (prefill.purchase_reward_mode === "points" ? "points" : "cashback");
+      setCampRewardType(rType === "both" ? "both" : rType === "points" ? "points" : "cashback");
       setCampRewardMode(rType === "points" ? "points" : "flat");
-      setCampRewardCash(prefill.reward_cash !== undefined ? prefill.reward_cash : (prefill.cashback_amount || 1.0));
-      setCampCashbackAmount(prefill.reward_cash !== undefined ? prefill.reward_cash : (prefill.cashback_amount || 1.0));
-      setCampRewardPoints(prefill.reward_points !== undefined ? prefill.reward_points : 50);
+      const rCash = prefill.reward_cash !== undefined ? prefill.reward_cash : (prefill.reward?.cash !== undefined ? prefill.reward.cash : (prefill.cashback_amount || 1.0));
+      setCampRewardCash(rCash);
+      setCampCashbackAmount(rCash);
+      const rPoints = prefill.reward_points !== undefined ? prefill.reward_points : (prefill.reward?.points !== undefined ? prefill.reward.points : 50);
+      setCampRewardPoints(rPoints);
+      const cbMode = prefill.cashback_mode || prefill.reward?.cashback_mode || "flat";
+      setCampCashbackMode(cbMode === "percent" ? "percent" : "flat");
+      const cbVal = prefill.cashback_value !== undefined ? prefill.cashback_value : (prefill.reward?.cashback_value !== undefined ? prefill.reward.cashback_value : rCash);
+      setCampCashbackValue(Number(cbVal || 1.0));
+      const ptMode = prefill.point_mode || prefill.reward?.point_mode || "flat";
+      setCampPointMode(ptMode === "ratio" ? "ratio" : "flat");
+      const ptVal = prefill.point_value !== undefined ? prefill.point_value : (prefill.reward?.point_value !== undefined ? prefill.reward.point_value : rPoints);
+      setCampPointValue(Number(ptVal || 50));
+      const rawMilestones = prefill.unlock_rewards || prefill.store_visit_milestones || prefill.reward?.unlock_rewards || [];
+      const isMilestonesOn = prefill.enable_milestones !== undefined ? Boolean(prefill.enable_milestones) : (rawMilestones && rawMilestones.length > 0);
+      setEnableMilestones(isMilestonesOn);
       setCampUnlockRewards(
-        (prefill.unlock_rewards || []).map((t: any, i: number) => ({
+        (rawMilestones || []).map((t: any, i: number) => ({
           tier: t.tier || i + 1,
           stores: Number(t.stores || (i + 1) * 2),
           cash: t.cash !== undefined ? Number(t.cash) : (parseFloat(String(t.reward || "").replace(/[^0-9.]/g, "")) || 0),
@@ -1122,6 +1157,11 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
       setCampRewardCash(1.0);
       setCampCashbackAmount(1.0);
       setCampRewardPoints(50);
+      setCampCashbackMode("flat");
+      setCampCashbackValue(1.0);
+      setCampPointMode("flat");
+      setCampPointValue(50);
+      setEnableMilestones(false);
       setCampUnlockRewards([]);
       setCampVelocityTaskEnabled(true);
       setCampCustomQuestions([]);
@@ -1141,6 +1181,26 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
     if (!finalTitle) {
       showToast("Please provide Campaign Title", "error");
       return;
+    }
+
+    if (enableMilestones) {
+      if (campUnlockRewards.length === 0) {
+        showToast("Please add at least one milestone tier or turn off Store Visit Milestones.", "error");
+        return;
+      }
+      for (let i = 0; i < campUnlockRewards.length; i++) {
+        const tier = campUnlockRewards[i];
+        const cVal = Number(tier.cash || 0);
+        const pVal = Number(tier.points || 0);
+        if (cVal <= 0 && pVal <= 0) {
+          showToast(`Milestone Tier #${tier.tier || i + 1} must have either Bonus Cashback or Bonus Points (or both).`, "error");
+          return;
+        }
+        if (Number(tier.stores || 0) <= 0) {
+          showToast(`Milestone Tier #${tier.tier || i + 1} target stores must be at least 1.`, "error");
+          return;
+        }
+      }
     }
 
     setSavingCampaign(true);
@@ -1167,11 +1227,27 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
         start_timestamp: campStartTime ? new Date(campStartTime).getTime() : Date.now(),
         end_timestamp: campEndTime ? new Date(campEndTime).getTime() : Date.now() + 86400000 * 30,
         reward_type: campRewardType,
-        reward_cash: campRewardType === "points" ? 0 : Number(campRewardCash || 0),
-        reward_points: campRewardType === "cashback" ? 0 : Number(campRewardPoints || 0),
-        cashback_amount: campRewardType === "points" ? 0 : Number(campRewardCash || 0),
+        reward_cash: campRewardType === "points" ? 0 : (campCashbackMode === "flat" ? Number(campCashbackValue || 0) : 0),
+        reward_points: campRewardType === "cashback" ? 0 : (campPointMode === "flat" ? Math.floor(Number(campPointValue || 0)) : 0),
+        cashback_amount: campRewardType === "points" ? 0 : (campCashbackMode === "flat" ? Number(campCashbackValue || 0) : 0),
         purchase_reward_mode: campRewardType === "points" ? "points" : "flat",
-        unlock_rewards: campUnlockRewards,
+        cashback_mode: campCashbackMode,
+        cashback_value: Number(campCashbackValue || 0),
+        point_mode: campPointMode,
+        point_value: Number(campPointValue || 0),
+        reward: {
+          type: campRewardType,
+          cash: campRewardType === "points" ? 0 : (campCashbackMode === "flat" ? Number(campCashbackValue || 0) : 0),
+          points: campRewardType === "cashback" ? 0 : (campPointMode === "flat" ? Math.floor(Number(campPointValue || 0)) : 0),
+          cashback_mode: campCashbackMode,
+          cashback_value: Number(campCashbackValue || 0),
+          point_mode: campPointMode,
+          point_value: Number(campPointValue || 0),
+          unlock_rewards: enableMilestones ? campUnlockRewards : [],
+        },
+        enable_milestones: enableMilestones,
+        store_visit_milestones: enableMilestones ? campUnlockRewards : [],
+        unlock_rewards: enableMilestones ? campUnlockRewards : [],
         velocity_task_enabled: campVelocityTaskEnabled,
         custom_questions: campCustomQuestions,
         display_order: campDisplayOrder,
@@ -1757,25 +1833,6 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
     }
   };
 
-  // Milestone target row update
-  const handleUpdateMilestoneRow = (idx: number, patch: Partial<StoreVisitMilestone>) => {
-    setMilestoneTargets((prev) =>
-      prev.map((m, i) => {
-        if (i !== idx) return m;
-        const next = { ...m, ...patch };
-        if (next.reward_type === "extra_cash") {
-          next.reward_label = `$${Number(next.reward_value || 4).toFixed(0)}`;
-        } else if (next.reward_type === "extra_percent") {
-          next.reward_label = `+${next.reward_value || 2}%`;
-        } else if (next.reward_type === "extra_points") {
-          next.reward_label = `+${Number(next.reward_value || 50)} pts`;
-        } else {
-          next.reward_label = "Redeem Point";
-        }
-        return next;
-      })
-    );
-  };
 
   const formatDate = (ts: number) => {
     if (!ts) return "-";
@@ -1808,6 +1865,12 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
       if (cb > 0 && pts > 0) return `$${cb.toFixed(2)} + ${pts} pts`;
       if (pts > 0) return `${pts} pts`;
       if (cb > 0) return `$${cb.toFixed(2)} Cashback`;
+      if (r.cashback_mode === "percent" && Number(r.cashback_value) > 0) {
+        return `${r.cashback_value}% Cashback`;
+      }
+      if (r.point_mode === "ratio" && Number(r.point_value) > 0) {
+        return `${r.point_value} pt/$1`;
+      }
     }
     const fallbackNum = Number(fallbackCashback || 0);
     if (fallbackNum > 0) {
@@ -2047,6 +2110,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
             winners={contestWinners}
             events={events}
             merchCatalog={merchCatalog}
+            users={users}
             loading={loading}
             onRefresh={() => loadLiveData(true)}
             openCreateTrigger={contestCreateTrigger}
@@ -2756,15 +2820,21 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                             <div className="flex items-center gap-1 font-semibold text-[#0B57D0]">
                               {(() => {
                                 const rType = camp.reward_type || (camp as any).reward?.type || (camp.purchase_reward_mode === "points" ? "points" : "cashback");
-                                const rCash = Number(camp.reward_cash !== undefined ? camp.reward_cash : ((camp as any).reward?.cash !== undefined ? (camp as any).reward.cash : (camp.cashback_amount || 0)));
-                                const rPoints = Number(camp.reward_points !== undefined ? camp.reward_points : ((camp as any).reward?.points !== undefined ? (camp as any).reward.points : 0));
+                                const cbMode = camp.cashback_mode || (camp as any).reward?.cashback_mode || "flat";
+                                const cbVal = Number(camp.cashback_value !== undefined ? camp.cashback_value : ((camp as any).reward?.cashback_value !== undefined ? (camp as any).reward.cashback_value : (camp.reward_cash ?? (camp.cashback_amount || 0))));
+                                const ptMode = camp.point_mode || (camp as any).reward?.point_mode || "flat";
+                                const ptVal = Number(camp.point_value !== undefined ? camp.point_value : ((camp as any).reward?.point_value !== undefined ? (camp as any).reward.point_value : (camp.reward_points || 0)));
+
+                                const cashLabel = cbMode === "percent" ? `${cbVal}%` : `$${cbVal.toFixed(2)}`;
+                                const ptsLabel = ptMode === "ratio" ? `${ptVal} pt/$1` : `${ptVal} Pts`;
+
                                 if (rType === "both") {
-                                  return <span>${rCash.toFixed(2)} & ${rPoints} Pts</span>;
+                                  return <span>{cashLabel} & {ptsLabel}</span>;
                                 }
                                 if (rType === "points") {
-                                  return <span>${rPoints || rCash} Pts</span>;
+                                  return <span>{ptsLabel}</span>;
                                 }
-                                return <span>${rCash.toFixed(2)}</span>;
+                                return <span>{cashLabel}</span>;
                               })()}
                             </div>
                           </div>
@@ -3114,178 +3184,376 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                   </div>
 
                   {/* Reward Type Selection: Dropdown + Compact Input */}
-                  <div>
-                    <label className="block font-semibold text-zinc-700 mb-1">
-                      Reward Type & Amount
-                    </label>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <select
-                        value={campRewardType}
-                        onChange={(e) => setCampRewardType(e.target.value as any)}
-                        className="h-8 px-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-slate-900 outline-none focus:border-[#0B57D0]"
-                      >
-                        <option value="cashback">Cashback ($)</option>
-                        <option value="points">Points (pts)</option>
-                        <option value="both">Cashback + Points</option>
-                      </select>
-
-                      {(campRewardType === "cashback" || campRewardType === "both") && (
-                        <div className="relative w-28">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 font-medium text-slate-400 text-xs">$</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={campRewardCash}
-                            onChange={(e) => setCampRewardCash(Number(e.target.value))}
-                            placeholder="1.00"
-                            className="w-full h-8 pl-6 pr-2 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-slate-900 outline-none focus:border-[#0B57D0]"
-                          />
-                        </div>
-                      )}
-
-                      {(campRewardType === "points" || campRewardType === "both") && (
-                        <div className="relative w-28">
-                          <input
-                            type="number"
-                            step="1"
-                            min="0"
-                            value={campRewardPoints}
-                            onChange={(e) => setCampRewardPoints(Number(e.target.value))}
-                            placeholder="50"
-                            className="w-full h-8 pl-2.5 pr-8 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-slate-900 outline-none focus:border-[#0B57D0]"
-                          />
-                          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-400">pts</span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Unlock More Reward (Max 3 Tiers) */}
-                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <label className="font-semibold text-zinc-800">
-                        Unlock More Reward <span className="text-slate-400 font-normal">(Max 3 Tiers)</span>
+                  {/* Reward Type Selection */}
+                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-3">
+                    <div>
+                      <label className="block font-semibold text-zinc-800 text-xs mb-1.5">
+                        Reward Type & Amount
                       </label>
-                      <button
-                        type="button"
-                        disabled={campUnlockRewards.length >= 3}
-                        onClick={() => {
-                          if (campUnlockRewards.length < 3) {
-                            const nextTier = campUnlockRewards.length + 1;
-                            const defaultCash = nextTier * 2;
-                            const defaultPts = nextTier * 50;
-                            setCampUnlockRewards((prev) => [
-                              ...prev,
-                              {
-                                tier: nextTier,
-                                stores: nextTier * 2,
-                                cash: defaultCash,
-                                points: defaultPts,
-                                reward: `$${defaultCash}.00 + ${defaultPts} pts`,
-                              },
-                            ]);
-                          }
-                        }}
-                        className="text-[11px] font-semibold text-[#0B57D0] hover:underline disabled:opacity-40 disabled:no-underline"
-                      >
-                        + Add Unlock Reward
-                      </button>
+                      <div className="grid grid-cols-3 gap-1.5 p-0.5 rounded-lg bg-white border border-slate-200 text-xs">
+                        <button
+                          type="button"
+                          onClick={() => setCampRewardType("both")}
+                          className={`h-7 px-2 rounded-md font-medium text-xs transition cursor-pointer flex items-center justify-center gap-1 ${
+                            campRewardType === "both"
+                              ? "bg-[#0B57D0] text-white shadow-xs font-semibold"
+                              : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-50"
+                          }`}
+                        >
+                          Cashback / Point
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCampRewardType("cashback")}
+                          className={`h-7 px-2 rounded-md font-medium text-xs transition cursor-pointer flex items-center justify-center gap-1 ${
+                            campRewardType === "cashback"
+                              ? "bg-[#0B57D0] text-white shadow-xs font-semibold"
+                              : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-50"
+                          }`}
+                        >
+                          Cashback
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCampRewardType("points")}
+                          className={`h-7 px-2 rounded-md font-medium text-xs transition cursor-pointer flex items-center justify-center gap-1 ${
+                            campRewardType === "points"
+                              ? "bg-[#0B57D0] text-white shadow-xs font-semibold"
+                              : "text-zinc-600 hover:text-zinc-900 hover:bg-slate-50"
+                          }`}
+                        >
+                          Point
+                        </button>
+                      </div>
                     </div>
 
-                    {campUnlockRewards.length === 0 ? (
-                      <p className="text-[11px] text-slate-400 italic">
-                        No unlock tiers added. Click "+ Add Unlock Reward" to motivate members to visit multiple store outlets.
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {campUnlockRewards.map((tier, idx) => (
-                          <div
-                            key={idx}
-                            className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between gap-2 shadow-2xs"
-                          >
-                            <span className="font-medium text-slate-700 text-[11px] shrink-0">
-                              Tier #{idx + 1}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              <span className="text-[11px] text-slate-500">Visit</span>
-                              <input
-                                type="number"
-                                min="1"
-                                value={tier.stores}
-                                onChange={(e) => {
-                                  const val = Number(e.target.value);
-                                  setCampUnlockRewards((prev) =>
-                                    prev.map((t, i) => (i === idx ? { ...t, stores: val } : t))
-                                  );
-                                }}
-                                className="w-12 h-7 px-1 text-center font-medium text-xs bg-slate-50 border border-slate-200 rounded outline-none focus:border-[#0B57D0]"
-                              />
-                              <span className="text-[11px] text-slate-500">stores</span>
-                            </div>
-
-                            <div className="flex items-center gap-1.5 flex-1 justify-end">
-                              {/* Cash input */}
-                              <div className="relative w-20">
-                                <span className="absolute left-2 top-1/2 -translate-y-1/2 font-medium text-slate-400 text-xs">$</span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={tier.cash !== undefined ? tier.cash : (parseFloat(String(tier.reward || "").replace(/[^0-9.]/g, "")) || 0)}
-                                  onChange={(e) => {
-                                    const cVal = Number(e.target.value);
-                                    setCampUnlockRewards((prev) =>
-                                      prev.map((t, i) => {
-                                        if (i !== idx) return t;
-                                        const p = t.points || 0;
-                                        const r = p > 0 ? `$${cVal.toFixed(2)} + ${p} pts` : `$${cVal.toFixed(2)}`;
-                                        return { ...t, cash: cVal, reward: r };
-                                      })
-                                    );
-                                  }}
-                                  placeholder="0.00"
-                                  className="w-full h-7 pl-5 pr-1 font-medium text-xs bg-slate-50 border border-slate-200 rounded outline-none focus:border-[#0B57D0]"
-                                />
-                              </div>
-
-                              {/* Points input */}
-                              <div className="relative w-20">
-                                <input
-                                  type="number"
-                                  step="1"
-                                  min="0"
-                                  value={tier.points !== undefined ? tier.points : 0}
-                                  onChange={(e) => {
-                                    const pVal = Number(e.target.value);
-                                    setCampUnlockRewards((prev) =>
-                                      prev.map((t, i) => {
-                                        if (i !== idx) return t;
-                                        const c = t.cash !== undefined ? t.cash : (parseFloat(String(t.reward || "").replace(/[^0-9.]/g, "")) || 0);
-                                        const r = c > 0 ? `$${c.toFixed(2)} + ${pVal} pts` : `${pVal} pts`;
-                                        return { ...t, points: pVal, reward: r };
-                                      })
-                                    );
-                                  }}
-                                  placeholder="0"
-                                  className="w-full h-7 pl-2 pr-7 font-medium text-xs bg-slate-50 border border-slate-200 rounded outline-none focus:border-[#0B57D0]"
-                                />
-                                <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] font-medium text-slate-400">pts</span>
-                              </div>
-                            </div>
-
+                    {/* Cashback Settings: choose between Flat / % */}
+                    {(campRewardType === "cashback" || campRewardType === "both") && (
+                      <div className="pt-2 border-t border-slate-200 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-zinc-700">Cashback Reward:</span>
+                          <div className="inline-flex rounded-md p-0.5 bg-slate-200/70 text-[11px]">
                             <button
                               type="button"
-                              onClick={() => {
-                                setCampUnlockRewards((prev) => prev.filter((_, i) => i !== idx));
-                              }}
-                              className="text-slate-400 hover:text-rose-600 transition p-1"
-                              title="Remove Tier"
+                              onClick={() => setCampCashbackMode("flat")}
+                              className={`px-2 py-0.5 rounded font-medium transition cursor-pointer ${
+                                campCashbackMode === "flat"
+                                  ? "bg-white text-zinc-900 shadow-2xs font-semibold"
+                                  : "text-zinc-600 hover:text-zinc-900"
+                              }`}
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              Flat ($)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCampCashbackMode("percent")}
+                              className={`px-2 py-0.5 rounded font-medium transition cursor-pointer ${
+                                campCashbackMode === "percent"
+                                  ? "bg-white text-zinc-900 shadow-2xs font-semibold"
+                                  : "text-zinc-600 hover:text-zinc-900"
+                              }`}
+                            >
+                              % (Percent)
                             </button>
                           </div>
-                        ))}
+                        </div>
+
+                        {campCashbackMode === "flat" ? (
+                          <div className="relative">
+                            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 font-medium text-slate-400 text-xs">$</span>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={campCashbackValue}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setCampCashbackValue(val);
+                                setCampRewardCash(val);
+                              }}
+                              placeholder="1.00"
+                              className="w-full h-8 pl-6 pr-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-900 outline-none focus:border-[#0B57D0]"
+                            />
+                            <span className="text-[10px] text-zinc-400 mt-0.5 block">
+                              Flat dollar payout per approved receipt
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              value={campCashbackValue}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setCampCashbackValue(val);
+                              }}
+                              placeholder="1.0"
+                              className="w-full h-8 pl-2.5 pr-7 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-900 outline-none focus:border-[#0B57D0]"
+                            />
+                            <span className="absolute right-2.5 top-2 font-bold text-slate-400 text-xs">%</span>
+                            <span className="text-[10px] text-zinc-500 mt-0.5 block">
+                              e.g. {campCashbackValue || 1}% of $5.00 purchase = ${(5 * ((campCashbackValue || 1) / 100)).toFixed(2)} cashback
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Point Settings: choose between Flat or $ to Pts */}
+                    {(campRewardType === "points" || campRewardType === "both") && (
+                      <div className="pt-2 border-t border-slate-200 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-zinc-700">Point Reward:</span>
+                          <div className="inline-flex rounded-md p-0.5 bg-slate-200/70 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={() => setCampPointMode("flat")}
+                              className={`px-2 py-0.5 rounded font-medium transition cursor-pointer ${
+                                campPointMode === "flat"
+                                  ? "bg-white text-zinc-900 shadow-2xs font-semibold"
+                                  : "text-zinc-600 hover:text-zinc-900"
+                              }`}
+                            >
+                              Flat (PTS)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setCampPointMode("ratio")}
+                              className={`px-2 py-0.5 rounded font-medium transition cursor-pointer ${
+                                campPointMode === "ratio"
+                                  ? "bg-white text-zinc-900 shadow-2xs font-semibold"
+                                  : "text-zinc-600 hover:text-zinc-900"
+                              }`}
+                            >
+                              $ to Pts
+                            </button>
+                          </div>
+                        </div>
+
+                        {campPointMode === "flat" ? (
+                          <div className="relative">
+                            <input
+                              type="number"
+                              step="1"
+                              min="0"
+                              value={campPointValue}
+                              onChange={(e) => {
+                                const val = Number(e.target.value);
+                                setCampPointValue(val);
+                                setCampRewardPoints(val);
+                              }}
+                              placeholder="50"
+                              className="w-full h-8 pl-2.5 pr-9 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-900 outline-none focus:border-[#0B57D0]"
+                            />
+                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-400">pts</span>
+                            <span className="text-[10px] text-zinc-400 mt-0.5 block">
+                              Fixed points awarded per approved receipt
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-semibold text-zinc-600 shrink-0">Every $1 spent =</span>
+                              <div className="relative flex-1">
+                                <input
+                                  type="number"
+                                  step="0.1"
+                                  min="0"
+                                  value={campPointValue}
+                                  onChange={(e) => {
+                                    const val = Number(e.target.value);
+                                    setCampPointValue(val);
+                                  }}
+                                  placeholder="1"
+                                  className="w-full h-8 pl-2.5 pr-8 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-900 outline-none focus:border-[#0B57D0]"
+                                />
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-slate-400">pts</span>
+                              </div>
+                            </div>
+                            <span className="text-[10px] text-zinc-500 block">
+                              e.g. $5.80 purchase = {Math.floor(5.8 * (campPointValue || 1))} pts (rounded down, 0 decimals)
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Store Visit Milestones (More Stores, More Rewards) */}
+                  <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="flex items-center gap-1.5">
+                          <label className="font-semibold text-zinc-800 text-xs">
+                            Store Visit Milestones
+                          </label>
+                          <span className="text-[10px] text-slate-400 font-normal">
+                            (More Stores, More Rewards)
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mt-0.5">
+                          Shop at different verified stores to unlock bonus rewards.
+                        </p>
+                      </div>
+
+                      {/* Enable / Disable Toggle Switch */}
+                      <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={enableMilestones}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setEnableMilestones(checked);
+                            if (checked && campUnlockRewards.length === 0) {
+                              setCampUnlockRewards([
+                                {
+                                  tier: 1,
+                                  stores: 2,
+                                  cash: 2,
+                                  points: 50,
+                                  reward: "$2.00 + 50 pts",
+                                },
+                              ]);
+                            }
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="w-8 h-4.5 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-[#0B57D0]"></div>
+                      </label>
+                    </div>
+
+                    {enableMilestones && (
+                      <div className="pt-2 border-t border-slate-200 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-semibold text-zinc-700">
+                            Milestone Tiers <span className="text-slate-400 font-normal">(Max 3 Tiers)</span>
+                          </span>
+                          <button
+                            type="button"
+                            disabled={campUnlockRewards.length >= 3}
+                            onClick={() => {
+                              if (campUnlockRewards.length < 3) {
+                                const nextTier = campUnlockRewards.length + 1;
+                                const defaultStores = nextTier * 2;
+                                const defaultCash = nextTier * 2;
+                                const defaultPts = nextTier * 50;
+                                setCampUnlockRewards((prev) => [
+                                  ...prev,
+                                  {
+                                    tier: nextTier,
+                                    stores: defaultStores,
+                                    cash: defaultCash,
+                                    points: defaultPts,
+                                    reward: `$${defaultCash}.00 + ${defaultPts} pts`,
+                                  },
+                                ]);
+                              }
+                            }}
+                            className="text-[11px] font-semibold text-[#0B57D0] hover:underline disabled:opacity-40 disabled:no-underline cursor-pointer"
+                          >
+                            + Add Milestone Tier
+                          </button>
+                        </div>
+
+                        {campUnlockRewards.length === 0 ? (
+                          <p className="text-[11px] text-slate-400 italic">
+                            No milestone tiers added. Click "+ Add Milestone Tier" to configure.
+                          </p>
+                        ) : (
+                          <div className="space-y-2">
+                            {campUnlockRewards.map((tier, idx) => (
+                              <div
+                                key={idx}
+                                className="p-2.5 rounded-lg bg-white border border-slate-200 flex items-center justify-between gap-2 shadow-2xs"
+                              >
+                                <span className="font-semibold text-slate-700 text-[11px] shrink-0">
+                                  Tier #{idx + 1}
+                                </span>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  <span className="text-[11px] text-slate-500">Visit</span>
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    value={tier.stores}
+                                    onChange={(e) => {
+                                      const val = Math.max(1, Number(e.target.value));
+                                      setCampUnlockRewards((prev) =>
+                                        prev.map((t, i) => (i === idx ? { ...t, stores: val } : t))
+                                      );
+                                    }}
+                                    className="w-12 h-7 px-1 text-center font-bold text-xs bg-slate-50 border border-slate-200 rounded outline-none focus:border-[#0B57D0]"
+                                  />
+                                  <span className="text-[11px] text-slate-500">stores</span>
+                                </div>
+
+                                <div className="flex items-center gap-1.5 flex-1 justify-end">
+                                  {/* Cash input */}
+                                  <div className="relative w-22">
+                                    <span className="absolute left-2 top-1/2 -translate-y-1/2 font-medium text-slate-400 text-xs">$</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      value={tier.cash !== undefined ? tier.cash : (parseFloat(String(tier.reward || "").replace(/[^0-9.]/g, "")) || 0)}
+                                      onChange={(e) => {
+                                        const cVal = e.target.value === "" ? 0 : Number(e.target.value);
+                                        setCampUnlockRewards((prev) =>
+                                          prev.map((t, i) => {
+                                            if (i !== idx) return t;
+                                            const p = t.points || 0;
+                                            const r = p > 0 ? (cVal > 0 ? `$${cVal.toFixed(2)} + ${p} pts` : `${p} pts`) : `$${cVal.toFixed(2)}`;
+                                            return { ...t, cash: cVal, reward: r };
+                                          })
+                                        );
+                                      }}
+                                      placeholder="0.00"
+                                      className="w-full h-7 pl-5 pr-1 font-semibold text-xs bg-slate-50 border border-slate-200 rounded outline-none focus:border-[#0B57D0]"
+                                      title="Bonus Cashback ($)"
+                                    />
+                                  </div>
+
+                                  {/* Points input */}
+                                  <div className="relative w-22">
+                                    <input
+                                      type="number"
+                                      step="1"
+                                      min="0"
+                                      value={tier.points !== undefined ? tier.points : 0}
+                                      onChange={(e) => {
+                                        const pVal = e.target.value === "" ? 0 : Math.floor(Number(e.target.value));
+                                        setCampUnlockRewards((prev) =>
+                                          prev.map((t, i) => {
+                                            if (i !== idx) return t;
+                                            const c = t.cash !== undefined ? t.cash : (parseFloat(String(t.reward || "").replace(/[^0-9.]/g, "")) || 0);
+                                            const r = c > 0 ? (pVal > 0 ? `$${c.toFixed(2)} + ${pVal} pts` : `$${c.toFixed(2)}`) : `${pVal} pts`;
+                                            return { ...t, points: pVal, reward: r };
+                                          })
+                                        );
+                                      }}
+                                      placeholder="0"
+                                      className="w-full h-7 pl-2 pr-7 font-semibold text-xs bg-slate-50 border border-slate-200 rounded outline-none focus:border-[#0B57D0]"
+                                      title="Bonus Points (pts)"
+                                    />
+                                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] font-semibold text-slate-400">pts</span>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setCampUnlockRewards((prev) => prev.filter((_, i) => i !== idx));
+                                  }}
+                                  className="text-slate-400 hover:text-rose-600 transition p-1 cursor-pointer"
+                                  title="Remove Tier"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
