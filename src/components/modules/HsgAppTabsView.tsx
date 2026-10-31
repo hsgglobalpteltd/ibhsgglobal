@@ -280,6 +280,7 @@ export interface HsgEventRecord {
   location_name: string;
   location_address: string;
   max_capacity: number;
+  venue_token?: string;
   is_active: boolean;
   created_at: number;
   updated_at: number;
@@ -6368,6 +6369,43 @@ export function HsgEventsTab({
     onRefresh();
   };
 
+  const [regeneratingToken, setRegeneratingToken] = React.useState<boolean>(false);
+
+  const handleRegenerateToken = async (eventId: string) => {
+    if (
+      !window.confirm(
+        "Regenerate venue check-in QR code? The current physical poster QR will become invalid immediately."
+      )
+    )
+      return;
+    setRegeneratingToken(true);
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/events/regenerate-token`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ event_id: eventId }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || "Failed");
+      const newToken = data.venue_token;
+      setQrModalEvent((prev) =>
+        prev ? { ...prev, venue_token: newToken } : null
+      );
+      onRefresh();
+      showToast(
+        "Venue QR & token regenerated! Old poster QR is now invalid.",
+        "success"
+      );
+    } catch (err: any) {
+      showToast(`⚠️ ${err.message || "Failed to regenerate QR"}`, "error");
+    } finally {
+      setRegeneratingToken(false);
+    }
+  };
+
   const selectedEvent = events.find((e) => e.id === selectedEventId);
   const visibleRsvps = rsvps.filter((r) =>
     selectedEventId === "ALL" ? true : r.event_id === selectedEventId
@@ -6743,9 +6781,21 @@ export function HsgEventsTab({
                     >
                       <button
                         type="button"
+                        title="Copy Public Share Link"
+                        onClick={() => {
+                          const publicUrl = `https://plus.hsgglobal.sg/e/${ev.id}`;
+                          navigator.clipboard.writeText(publicUrl);
+                          showToast("Event share link copied to clipboard", "success");
+                        }}
+                        className="w-5 h-5 rounded border border-emerald-200 bg-emerald-50 flex items-center justify-center text-emerald-700 hover:bg-emerald-100 cursor-pointer"
+                      >
+                        <Share2 className="w-2.5 h-2.5" />
+                      </button>
+                      <button
+                        type="button"
                         title="View & Download Venue QR"
                         onClick={() => setQrModalEvent(ev)}
-                        className="w-5 h-5 rounded border border-blue-200 bg-blue-50 flex items-center justify-center text-[#0B57D0] hover:bg-blue-100"
+                        className="w-5 h-5 rounded border border-blue-200 bg-blue-50 flex items-center justify-center text-[#0B57D0] hover:bg-blue-100 cursor-pointer"
                       >
                         <QrCode className="w-2.5 h-2.5" />
                       </button>
@@ -7041,7 +7091,7 @@ export function HsgEventsTab({
                   <input
                     type="number"
                     min={0}
-                    step="5"
+                    step="1"
                     value={rewardPoints}
                     onChange={(e) => setRewardPoints(e.target.value)}
                     placeholder="0"
@@ -7250,79 +7300,147 @@ export function HsgEventsTab({
       )}
 
       {/* VENUE CHECK-IN QR POSTER MODAL */}
-      {qrModalEvent && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-2xl space-y-4 border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950">Venue Check-In QR</h3>
-                <p className="text-[11px] text-zinc-500">Scan at entrance poster to check in</p>
+      {qrModalEvent &&
+        (() => {
+          const publicShareUrl = `https://plus.hsgglobal.sg/e/${qrModalEvent.id}`;
+          const venueQrUrl = `https://plus.hsgglobal.sg/#events?id=${qrModalEvent.id}&vt=${qrModalEvent.venue_token || ""}`;
+          return (
+            <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+              <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl space-y-4 border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-sm font-bold text-zinc-950">
+                      Event Share & Venue QR
+                    </h3>
+                    <p className="text-[11px] text-zinc-500">
+                      Public share link & entrance poster check-in QR
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setQrModalEvent(null)}
+                    className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center text-zinc-500 hover:bg-slate-50 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="text-xs font-bold text-zinc-950 truncate">
+                    {qrModalEvent.title}
+                  </div>
+                  <div className="text-[11px] text-zinc-500 truncate">
+                    {formatDateTime(qrModalEvent.date_timestamp)} •{" "}
+                    {qrModalEvent.location_name ||
+                      qrModalEvent.location_address ||
+                      "Singapore"}
+                  </div>
+                </div>
+
+                {/* 1. PUBLIC SHARE LINK */}
+                <div className="p-3 rounded-lg bg-emerald-50/60 border border-emerald-200 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider flex items-center gap-1">
+                      <Share2 className="w-3 h-3 text-emerald-700" /> Public
+                      Share Link (No Check-In Token)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(publicShareUrl);
+                        showToast("Public share link copied", "success");
+                      }}
+                      className="h-6 px-2.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-semibold cursor-pointer shadow-2xs"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                  <div className="text-[11px] font-mono text-emerald-950 truncate bg-white/80 px-2 py-1 rounded border border-emerald-200/60 select-all">
+                    {publicShareUrl}
+                  </div>
+                </div>
+
+                {/* 2. VENUE POSTER QR CODE */}
+                <div className="p-4 rounded-xl bg-white border border-slate-200 flex flex-col items-center justify-center space-y-2">
+                  <div className="text-[11px] font-bold text-zinc-800 flex items-center gap-1">
+                    <QrCode className="w-3.5 h-3.5 text-[#0B57D0]" /> On-Site
+                    Venue Check-In Poster QR
+                  </div>
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(venueQrUrl)}`}
+                    alt="Venue QR"
+                    className="w-44 h-44 object-contain"
+                  />
+                  <div className="text-center space-y-1">
+                    <div className="text-[11px] text-zinc-600">
+                      Active Token:{" "}
+                      <span className="font-mono text-zinc-950 font-bold bg-slate-100 px-1.5 py-0.5 rounded">
+                        {qrModalEvent.venue_token || "None"}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-zinc-400 max-w-xs">
+                      Print this QR on the venue poster. Attendees scan on event
+                      day to verify physical attendance.
+                    </p>
+                  </div>
+                </div>
+
+                {/* FOOTER ACTIONS */}
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
+                  <button
+                    type="button"
+                    disabled={regeneratingToken}
+                    onClick={() => handleRegenerateToken(qrModalEvent.id)}
+                    title="If the check-in QR got leaked, regenerate a new token to invalidate the old poster QR"
+                    className="h-8 px-3 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    <RefreshCw
+                      className={`w-3.5 h-3.5 text-amber-700 ${regeneratingToken ? "animate-spin" : ""}`}
+                    />
+                    <span>
+                      {regeneratingToken ? "Regenerating..." : "Regenerate QR"}
+                    </span>
+                  </button>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setQrModalEvent(null)}
+                      className="h-8 px-3 rounded-lg border border-slate-200 text-xs font-semibold text-zinc-700 hover:bg-slate-50 cursor-pointer"
+                    >
+                      Close
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(venueQrUrl)}`;
+                          const res = await fetch(qrUrl);
+                          const blob = await res.blob();
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `Venue_QR_${qrModalEvent.title.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
+                          document.body.appendChild(a);
+                          a.click();
+                          document.body.removeChild(a);
+                          URL.revokeObjectURL(url);
+                          showToast("Venue QR downloaded", "success");
+                        } catch {
+                          showToast("Failed to download QR image", "error");
+                        }
+                      }}
+                      className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download QR</span>
+                    </button>
+                  </div>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setQrModalEvent(null)}
-                className="w-7 h-7 rounded-lg border border-slate-200 flex items-center justify-center text-zinc-500 hover:bg-slate-50 cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
             </div>
-
-            <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 space-y-1">
-              <div className="text-xs font-bold text-zinc-950 truncate">{qrModalEvent.title}</div>
-              <div className="text-[11px] text-zinc-500 truncate">
-                {formatDateTime(qrModalEvent.date_timestamp)} • {qrModalEvent.location_name || qrModalEvent.location_address || "Singapore"}
-              </div>
-            </div>
-
-            <div className="p-4 rounded-xl bg-white border border-slate-200 flex flex-col items-center justify-center">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`https://shop.hsgglobal.sg/#events?id=${qrModalEvent.id}&venue_scan=1`)}`}
-                alt="Venue QR"
-                className="w-48 h-48 object-contain"
-              />
-              <p className="text-[11px] text-zinc-500 mt-2 text-center">
-                Deep-link: <span className="font-mono text-zinc-700 font-bold">#events?id={qrModalEvent.id}&venue_scan=1</span>
-              </p>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setQrModalEvent(null)}
-                className="h-8 px-3 rounded-lg border border-slate-200 text-xs font-semibold text-zinc-700 hover:bg-slate-50 cursor-pointer"
-              >
-                Close
-              </button>
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const venueUrl = `https://shop.hsgglobal.sg/#events?id=${qrModalEvent.id}&venue_scan=1`;
-                    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(venueUrl)}`;
-                    const res = await fetch(qrUrl);
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `Venue_QR_${qrModalEvent.title.replace(/[^a-zA-Z0-9_-]/g, "_")}.png`;
-                    document.body.appendChild(a);
-                    a.click();
-                    document.body.removeChild(a);
-                    URL.revokeObjectURL(url);
-                    showToast("Venue QR downloaded", "success");
-                  } catch {
-                    showToast("Failed to download QR image", "error");
-                  }
-                }}
-                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs cursor-pointer"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Download QR</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          );
+        })()}
     </div>
   );
 }
