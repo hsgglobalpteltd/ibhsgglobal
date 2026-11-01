@@ -328,6 +328,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
   const [storeOutlets, setStoreOutlets] = React.useState<HsgStoreOutlet[]>([]);
   const [storeOutletSearch, setStoreOutletSearch] = React.useState<string>("");
   const [showAddStoreOutletModal, setShowAddStoreOutletModal] = React.useState<boolean>(false);
+  const [editingStoreOutlet, setEditingStoreOutlet] = React.useState<HsgStoreOutlet | null>(null);
   const [newStoreOutletId, setNewStoreOutletId] = React.useState<string>("");
   const [newStoreOutletName, setNewStoreOutletName] = React.useState<string>("");
   const [newStoreOutletAddress, setNewStoreOutletAddress] = React.useState<string>("");
@@ -348,6 +349,12 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
   const [reviewEditQty, setReviewEditQty] = React.useState<number | string>(1);
   const [reviewRejectReason, setReviewRejectReason] = React.useState<string>("");
   const [savingReview, setSavingReview] = React.useState<boolean>(false);
+  const [reviewEditStoreId, setReviewEditStoreId] = React.useState<string>("");
+  const [reviewEditStoreName, setReviewEditStoreName] = React.useState<string>("");
+  const [reviewEditStoreAddress, setReviewEditStoreAddress] = React.useState<string>("");
+  const [reviewEditStoreBrand, setReviewEditStoreBrand] = React.useState<string>("");
+  const [storeSearchQuery, setStoreSearchQuery] = React.useState<string>("");
+  const [isStoreDropdownOpen, setIsStoreDropdownOpen] = React.useState<boolean>(false);
   const [readAnswerClaim, setReadAnswerClaim] = React.useState<CashbackClaimRecord | null>(null);
   const [ocrDataClaim, setOcrDataClaim] = React.useState<CashbackClaimRecord | null>(null);
   const [lightboxImageUrl, setLightboxImageUrl] = React.useState<string | null>(null);
@@ -1379,6 +1386,53 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
         : (clm.qty || 1)
     );
     setReviewRejectReason("");
+    setReviewEditStoreId(clm.assign_store_id || clm.ocr_data?.assign_store_id || "");
+    setReviewEditStoreName(clm.ocr_data?.store_name || clm.matched_outlet_name || "");
+    setReviewEditStoreAddress(clm.ocr_data?.store_address || clm.raw_address || "");
+    setReviewEditStoreBrand(clm.ocr_data?.brand || "");
+    setStoreSearchQuery("");
+    setIsStoreDropdownOpen(false);
+  };
+
+  // Filter store outlets for Review modal (hidden by default, appears only when >= 1 char typed, max 5 results)
+  const filteredStoresForReview = React.useMemo(() => {
+    const q = storeSearchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return storeOutlets
+      .filter(
+        (st) =>
+          st.id.toLowerCase().includes(q) ||
+          st.store_name.toLowerCase().includes(q) ||
+          st.store_address.toLowerCase().includes(q) ||
+          (st.brand || "").toLowerCase().includes(q)
+      )
+      .slice(0, 5);
+  }, [storeSearchQuery, storeOutlets]);
+
+  // Handle typing in Store ID: auto-updates name, address, and brand when an ID matches
+  const handleStoreIdInputChange = (val: string) => {
+    setReviewEditStoreId(val);
+    setStoreSearchQuery(val);
+    setIsStoreDropdownOpen(val.trim().length >= 1);
+
+    const matched = storeOutlets.find(
+      (st) => st.id.trim().toLowerCase() === val.trim().toLowerCase()
+    );
+    if (matched) {
+      setReviewEditStoreName(matched.store_name);
+      setReviewEditStoreAddress(matched.store_address);
+      setReviewEditStoreBrand(matched.brand || "");
+    }
+  };
+
+  // Handle clicking an option from the 5-item dropdown
+  const handleSelectStoreForReview = (st: HsgStoreOutlet) => {
+    setReviewEditStoreId(st.id);
+    setReviewEditStoreName(st.store_name);
+    setReviewEditStoreAddress(st.store_address);
+    setReviewEditStoreBrand(st.brand || "");
+    setStoreSearchQuery("");
+    setIsStoreDropdownOpen(false);
   };
 
   // Save Purchase & Qty edits inside Review Window
@@ -1394,13 +1448,17 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
           body: JSON.stringify({
             total_purchase: Number(reviewEditPurchase || 0),
             total_qty: Number(reviewEditQty || 1),
+            assign_store_id: reviewEditStoreId || undefined,
+            store_name: reviewEditStoreName || undefined,
+            store_address: reviewEditStoreAddress || undefined,
+            brand: reviewEditStoreBrand || undefined,
             verified_by: profile?.name || "Admin",
           }),
         }
       );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update review amounts");
-      showToast("Updated purchase amount and quantity!", "success");
+      showToast("Updated purchase amounts and store details!", "success");
       setReviewClaim((prev) =>
         prev
           ? {
@@ -1409,6 +1467,16 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
               receipt_amount: Number(reviewEditPurchase || 0),
               total_qty: Number(reviewEditQty || 1),
               qty: Number(reviewEditQty || 1),
+              assign_store_id: reviewEditStoreId || prev.assign_store_id,
+              matched_outlet_name: reviewEditStoreName || prev.matched_outlet_name,
+              ocr_data: {
+                ...prev.ocr_data,
+                assign_store_id: reviewEditStoreId || prev.ocr_data?.assign_store_id,
+                store_name: reviewEditStoreName || prev.ocr_data?.store_name,
+                store_address: reviewEditStoreAddress || prev.ocr_data?.store_address,
+                brand: reviewEditStoreBrand || prev.ocr_data?.brand,
+                store_edited_by_admin: true,
+              },
             }
           : null
       );
@@ -1434,6 +1502,10 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
             action: "approve",
             total_purchase: Number(reviewEditPurchase || 0),
             total_qty: Number(reviewEditQty || 1),
+            assign_store_id: reviewEditStoreId || undefined,
+            store_name: reviewEditStoreName || undefined,
+            store_address: reviewEditStoreAddress || undefined,
+            brand: reviewEditStoreBrand || undefined,
             verified_by: profile?.name || "Admin",
           }),
         }
@@ -1465,6 +1537,10 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
             reason: reviewRejectReason.trim() || "Receipt does not match criteria",
             total_purchase: Number(reviewEditPurchase || 0),
             total_qty: Number(reviewEditQty || 1),
+            assign_store_id: reviewEditStoreId || undefined,
+            store_name: reviewEditStoreName || undefined,
+            store_address: reviewEditStoreAddress || undefined,
+            brand: reviewEditStoreBrand || undefined,
             verified_by: profile?.name || "Admin",
           }),
         }
@@ -1502,8 +1578,9 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to save outlet");
-      showToast("Store outlet registered successfully!", "success");
+      showToast(editingStoreOutlet ? "Store outlet updated successfully!" : "Store outlet registered successfully!", "success");
       setShowAddStoreOutletModal(false);
+      setEditingStoreOutlet(null);
       setNewStoreOutletId("");
       setNewStoreOutletName("");
       setNewStoreOutletAddress("");
@@ -2577,6 +2654,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
               <button
                 type="button"
                 onClick={() => {
+                  setEditingStoreOutlet(null);
                   setNewStoreOutletId("");
                   setNewStoreOutletName("");
                   setNewStoreOutletAddress("");
@@ -2643,14 +2721,31 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteStoreOutlet(st.id)}
-                            className="w-7 h-7 rounded-md hover:bg-rose-50 text-slate-400 hover:text-rose-600 inline-flex items-center justify-center transition"
-                            title="Delete Outlet"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingStoreOutlet(st);
+                                setNewStoreOutletId(st.id);
+                                setNewStoreOutletName(st.store_name);
+                                setNewStoreOutletAddress(st.store_address);
+                                setNewStoreOutletBrand(st.brand || "");
+                                setShowAddStoreOutletModal(true);
+                              }}
+                              className="w-7 h-7 rounded-md hover:bg-slate-100 text-slate-400 hover:text-[#0B57D0] inline-flex items-center justify-center transition"
+                              title="Edit Outlet"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteStoreOutlet(st.id)}
+                              className="w-7 h-7 rounded-md hover:bg-rose-50 text-slate-400 hover:text-rose-600 inline-flex items-center justify-center transition"
+                              title="Delete Outlet"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -3771,14 +3866,18 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
 
               {/* Right Column: OCR Details & Editable Purchase/Qty */}
               <div className="space-y-4 flex flex-col">
-                {/* 1. OCR Data Card */}
+                {/* 1. OCR Data Card & Admin Store Override */}
                 <div className="p-4 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-3">
                   <div className="flex items-center justify-between border-b border-slate-100 pb-2">
                     <span className="font-medium text-slate-900 text-xs flex items-center gap-1.5">
                       <FileText className="w-3.5 h-3.5 text-[#0B57D0]" />
-                      <span>Receipt Details</span>
+                      <span>Receipt Details & Store Assignment</span>
                     </span>
-                    
+                    {reviewEditStoreBrand && (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200/60">
+                        {reviewEditStoreBrand}
+                      </span>
+                    )}
                   </div>
 
                   <div className="space-y-2 text-xs">
@@ -3794,23 +3893,116 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                         {reviewClaim.ocr_data?.purchase_datetime || "-"}
                       </span>
                     </div>
-                    <div className="flex justify-between items-start gap-2">
-                      <span className="text-slate-500 shrink-0">Store Name:</span>
-                      <span className="font-medium text-slate-900 text-right">
-                        {reviewClaim.ocr_data?.store_name || reviewClaim.matched_outlet_name || "-"}
-                      </span>
+                  </div>
+
+                  {/* Store Outlet Assignment (Admin Override with 5-Result Autocomplete Filter) */}
+                  <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                    <div className="relative">
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-medium text-zinc-700 flex items-center gap-1">
+                          <Store className="w-3 h-3 text-[#0B57D0]" />
+                          <span>Assigned Store ID</span>
+                        </label>
+                        <span className="text-[10px] text-slate-400">Type ID or name to filter (max 5)</span>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={reviewEditStoreId}
+                          onChange={(e) => handleStoreIdInputChange(e.target.value)}
+                          onFocus={() => {
+                            if (storeSearchQuery.trim().length >= 1) {
+                              setIsStoreDropdownOpen(true);
+                            }
+                          }}
+                          placeholder="Type 1 letter/number to search store outlet..."
+                          className="w-full h-8 px-2.5 pr-7 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono font-medium text-slate-900 outline-none focus:border-[#0B57D0] focus:bg-white transition"
+                        />
+                        {reviewEditStoreId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReviewEditStoreId("");
+                              setStoreSearchQuery("");
+                              setIsStoreDropdownOpen(false);
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                            title="Clear"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Dropdown Filter: Hidden by default, opens only when user puts >= 1 number or letter, max 5 results */}
+                      {isStoreDropdownOpen && storeSearchQuery.trim().length >= 1 && (
+                        <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden max-h-56 overflow-y-auto">
+                          {filteredStoresForReview.length === 0 ? (
+                            <div className="p-3 text-[11px] text-slate-500 text-center">
+                              No store outlet found matching "{storeSearchQuery}"
+                            </div>
+                          ) : (
+                            <div className="divide-y divide-slate-100">
+                              {filteredStoresForReview.map((st) => (
+                                <button
+                                  key={st.id}
+                                  type="button"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    handleSelectStoreForReview(st);
+                                  }}
+                                  className="w-full text-left p-2.5 hover:bg-blue-50/80 transition flex flex-col gap-0.5 group"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-semibold text-slate-900 text-xs group-hover:text-[#0B57D0]">
+                                      {st.store_name}
+                                    </span>
+                                    <span className="font-mono text-[10px] font-semibold text-[#0B57D0] bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60 shrink-0">
+                                      {st.id}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                                    <span className="truncate max-w-[260px]">{st.store_address}</span>
+                                    {st.brand && (
+                                      <span className="text-[10px] text-slate-400 font-medium shrink-0">
+                                        {st.brand}
+                                      </span>
+                                    )}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <div className="flex justify-between items-start gap-2">
-                      <span className="text-slate-500 shrink-0">Store Address:</span>
-                      <span className="font-normal text-slate-700 text-right max-w-[220px]">
-                        {reviewClaim.ocr_data?.store_address || reviewClaim.raw_address || "-"}
-                      </span>
+
+                    {/* Store Name (Editable, auto-updated by Store ID) */}
+                    <div>
+                      <label className="block text-[11px] font-medium text-zinc-700 mb-1">
+                        Store Name
+                      </label>
+                      <input
+                        type="text"
+                        value={reviewEditStoreName}
+                        onChange={(e) => setReviewEditStoreName(e.target.value)}
+                        placeholder="Store Name"
+                        className="w-full h-8 px-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-medium text-slate-900 outline-none focus:border-[#0B57D0] focus:bg-white transition"
+                      />
                     </div>
-                    <div className="flex justify-between items-start gap-2 pt-1 border-t border-slate-100">
-                      <span className="text-slate-500 shrink-0">Assigned Store ID:</span>
-                      <span className="font-mono font-medium text-[#0B57D0] text-right">
-                        {reviewClaim.assign_store_id || reviewClaim.ocr_data?.assign_store_id || "Unregistered Outlet"}
-                      </span>
+
+                    {/* Store Address (Editable, auto-updated by Store ID) */}
+                    <div>
+                      <label className="block text-[11px] font-medium text-zinc-700 mb-1">
+                        Store Address
+                      </label>
+                      <input
+                        type="text"
+                        value={reviewEditStoreAddress}
+                        onChange={(e) => setReviewEditStoreAddress(e.target.value)}
+                        placeholder="Store Address"
+                        className="w-full h-8 px-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-800 outline-none focus:border-[#0B57D0] focus:bg-white transition"
+                      />
                     </div>
                   </div>
                 </div>
@@ -3865,7 +4057,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                       onClick={handleSaveReviewAmounts}
                       className="h-7 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[11px] font-medium text-[#0B57D0] shadow-2xs transition"
                     >
-                      {savingReview ? "Saving..." : "Save Amounts"}
+                      {savingReview ? "Saving..." : "Save Changes"}
                     </button>
                   </div>
                 </div>
@@ -4142,15 +4334,18 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
               <div>
                 <h3 className="text-sm font-semibold text-zinc-950 flex items-center gap-1.5">
                   <Store className="w-4 h-4 text-[#0B57D0]" />
-                  <span>Register Store Outlet</span>
+                  <span>{editingStoreOutlet ? "Edit Store Outlet" : "Register Store Outlet"}</span>
                 </h3>
                 <p className="text-[11px] text-zinc-500 mt-0.5">
-                  Used for store verification matching
+                  {editingStoreOutlet ? `Editing details for outlet ${editingStoreOutlet.id}` : "Used for store verification matching"}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setShowAddStoreOutletModal(false)}
+                onClick={() => {
+                  setShowAddStoreOutletModal(false);
+                  setEditingStoreOutlet(null);
+                }}
                 className="w-7 h-7 rounded-md bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-zinc-600 transition"
               >
                 <X className="w-4 h-4" />
@@ -4165,10 +4360,15 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                 <input
                   type="text"
                   required
+                  readOnly={Boolean(editingStoreOutlet)}
                   value={newStoreOutletId}
                   onChange={(e) => setNewStoreOutletId(e.target.value)}
                   placeholder="e.g. 7E-0142 or FP-CLEMENTI"
-                  className="w-full h-8 px-2.5 rounded-lg bg-slate-50 border border-slate-200 font-mono font-medium text-slate-900 outline-none focus:border-[#0B57D0]"
+                  className={`w-full h-8 px-2.5 rounded-lg border border-slate-200 font-mono font-medium outline-none ${
+                    editingStoreOutlet
+                      ? "bg-slate-100 text-slate-500 cursor-not-allowed"
+                      : "bg-slate-50 text-slate-900 focus:border-[#0B57D0]"
+                  }`}
                 />
               </div>
 
@@ -4216,7 +4416,10 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
               <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowAddStoreOutletModal(false)}
+                  onClick={() => {
+                    setShowAddStoreOutletModal(false);
+                    setEditingStoreOutlet(null);
+                  }}
                   className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 transition"
                 >
                   Cancel
@@ -4227,7 +4430,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                   className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition active:scale-98 disabled:opacity-50"
                 >
                   {savingStoreOutlet && <Loader2 className="w-3 h-3 animate-spin" />}
-                  <span>Save Outlet</span>
+                  <span>{editingStoreOutlet ? "Update Outlet" : "Save Outlet"}</span>
                 </button>
               </div>
             </form>

@@ -273,6 +273,8 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
   // Offset states for Weekly and Monthly counters
   const [weekOffset, setWeekOffset] = React.useState(0);
   const [monthOffset, setMonthOffset] = React.useState(0);
+  // Report filter mode: "week" or "month" (one at a time)
+  const [filterMode, setFilterMode] = React.useState<"week" | "month">("week");
 
   // Helper calculation functions for offset dates
   const getWeekRange = React.useCallback((offset: number) => {
@@ -1151,6 +1153,11 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       return d.getDate() === todayDate.getDate() && d.getMonth() === todayDate.getMonth() && d.getFullYear() === todayDate.getFullYear();
     };
 
+    const yesterdayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+    const isYesterday = (d: Date) => {
+      return d.getDate() === yesterdayDate.getDate() && d.getMonth() === yesterdayDate.getMonth() && d.getFullYear() === yesterdayDate.getFullYear();
+    };
+
     const { monday, sunday } = getWeekRange(weekOffset);
     const isSelectedWeek = (d: Date) => {
       return d >= monday && d <= sunday;
@@ -1162,22 +1169,45 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
     };
 
     let todayCount = 0;
+    let yesterdayCount = 0;
     let weekCount = 0;
     let monthCount = 0;
+    const weekUniqueStores = new Set<string>();
+    const monthUniqueStores = new Set<string>();
 
-    const retailerGroup: Record<string, { today: number; week: number; month: number }> = {};
+    const retailerGroup: Record<string, {
+      yesterday: number;
+      today: number;
+      week: number;
+      month: number;
+      days: number[];
+      weeks: number[];
+      weekStores: Set<string>;
+      monthStores: Set<string>;
+    }> = {};
 
     filteredLogs.forEach((log) => {
       const logDate = parseTimestamp(log.timestamp);
-      const store = stores.find(s => String(s.id) === String(log.retailer_stores_id));
+      const storeId = String(log.retailer_stores_id || "");
+      const store = stores.find(s => String(s.id) === storeId);
       const retName = getRetailerName(store);
 
       if (retName && retName.toLowerCase() !== "unknown" && retName !== "-") {
         if (!retailerGroup[retName]) {
-          retailerGroup[retName] = { today: 0, week: 0, month: 0 };
+          retailerGroup[retName] = {
+            yesterday: 0,
+            today: 0,
+            week: 0,
+            month: 0,
+            days: [0, 0, 0, 0, 0, 0, 0],
+            weeks: [0, 0, 0, 0, 0],
+            weekStores: new Set<string>(),
+            monthStores: new Set<string>()
+          };
         }
 
         const matchesToday = isToday(logDate);
+        const matchesYesterday = isYesterday(logDate);
         const matchesWeek = isSelectedWeek(logDate);
         const matchesMonth = isSelectedMonth(logDate);
 
@@ -1185,29 +1215,79 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
           todayCount++;
           retailerGroup[retName].today++;
         }
+        if (matchesYesterday) {
+          yesterdayCount++;
+          retailerGroup[retName].yesterday++;
+        }
         if (matchesWeek) {
+          let dayIdx = logDate.getDay() - 1;
+          if (dayIdx < 0) dayIdx = 6;
+          retailerGroup[retName].days[dayIdx]++;
           weekCount++;
           retailerGroup[retName].week++;
+          if (storeId) {
+            weekUniqueStores.add(storeId);
+            retailerGroup[retName].weekStores.add(storeId);
+          }
         }
         if (matchesMonth) {
+          const dayOfMonth = logDate.getDate();
+          let weekIdx = 0;
+          if (dayOfMonth <= 7) weekIdx = 0;
+          else if (dayOfMonth <= 14) weekIdx = 1;
+          else if (dayOfMonth <= 21) weekIdx = 2;
+          else if (dayOfMonth <= 28) weekIdx = 3;
+          else weekIdx = 4;
+          retailerGroup[retName].weeks[weekIdx]++;
           monthCount++;
           retailerGroup[retName].month++;
+          if (storeId) {
+            monthUniqueStores.add(storeId);
+            retailerGroup[retName].monthStores.add(storeId);
+          }
         }
       }
     });
 
     const cleanRetailers = Object.entries(retailerGroup)
       .filter(([name]) => name && name.trim().toLowerCase() !== "unknown" && name.trim().toLowerCase() !== "-" && name.trim() !== "")
-      .map(([name, counts]) => ({
+      .map(([name, data]) => ({
         name,
-        ...counts
+        yesterday: data.yesterday,
+        today: data.today,
+        week: data.week,
+        month: data.month,
+        days: data.days,
+        weeks: data.weeks,
+        weekUniqueStores: data.weekStores.size,
+        monthUniqueStores: data.monthStores.size
       }));
 
     return {
-      totals: { today: todayCount, week: weekCount, month: monthCount },
+      totals: {
+        today: todayCount,
+        yesterday: yesterdayCount,
+        week: weekCount,
+        month: monthCount,
+        weekStores: weekUniqueStores.size,
+        monthStores: monthUniqueStores.size
+      },
       retailers: cleanRetailers
     };
   }, [productLogs, stores, getRetailerName, weekOffset, monthOffset, getWeekRange, getMonthRange, parseTimestamp]);
+
+  // Filtered retailers list for table display (omits 0 data, formats for active filter)
+  const displayRetailers = React.useMemo(() => {
+    if (filterMode === "week") {
+      return performanceStats.retailers
+        .filter(r => r.week > 0)
+        .sort((a, b) => b.week - a.week);
+    } else {
+      return performanceStats.retailers
+        .filter(r => r.month > 0)
+        .sort((a, b) => b.month - a.month);
+    }
+  }, [filterMode, performanceStats.retailers]);
 
   // 12-Month Performance Graph + Next 3-Month Projection Calculations
   const graphData = React.useMemo(() => {
@@ -1367,6 +1447,14 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       const selectedWeek = weekOptions[selectedPrintWeekIndex] || weekOptions[0];
       const { monday, sunday } = selectedWeek;
       const weekLabel = selectedWeek.label;
+
+      const monStr = monday.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+      const sunStr = sunday.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+      const monYear = monday.getFullYear();
+      const sunYear = sunday.getFullYear();
+      const weekRangeTitle = monYear === sunYear 
+        ? `${monStr} - ${sunStr} ${sunYear}`
+        : `${monStr} ${monYear} - ${sunStr} ${sunYear}`;
       
       const startOfDay = (d: Date) => {
         const res = new Date(d);
@@ -1388,8 +1476,8 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       });
       
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text("iB HSG Global - Merchandiser Weekly Performance Report", 14, 20);
+      doc.setFontSize(14);
+      doc.text(`Merchandiser Weekly Performance Report  (${weekRangeTitle})`, 14, 20);
       
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
@@ -1402,20 +1490,28 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       doc.setDrawColor(200, 200, 200);
       doc.line(14, 35, 196, 35);
       
-      const retailerDays: Record<string, number[]> = {};
+      // Table 1: Daily Visits Breakdown by Retailer
+      const retailerStats: Record<string, { days: number[]; uniqueStores: Set<string> }> = {};
       
       filteredLogs.forEach(log => {
         const logDate = parseTimestamp(log.timestamp);
-        const store = stores.find(s => String(s.id) === String(log.retailer_stores_id));
+        const storeId = String(log.retailer_stores_id || "");
+        const store = stores.find(s => String(s.id) === storeId);
         const retName = getRetailerName(store);
         
         if (retName) {
-          if (!retailerDays[retName]) {
-            retailerDays[retName] = [0, 0, 0, 0, 0, 0, 0];
+          if (!retailerStats[retName]) {
+            retailerStats[retName] = {
+              days: [0, 0, 0, 0, 0, 0, 0],
+              uniqueStores: new Set<string>()
+            };
           }
           let dayIdx = logDate.getDay() - 1;
           if (dayIdx < 0) dayIdx = 6;
-          retailerDays[retName][dayIdx]++;
+          retailerStats[retName].days[dayIdx]++;
+          if (storeId) {
+            retailerStats[retName].uniqueStores.add(storeId);
+          }
         }
       });
       
@@ -1431,38 +1527,61 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       
       doc.setFontSize(8.5);
       doc.text("Retailer", 16, yOffset + 5.5);
-      doc.text("Mon", 70, yOffset + 5.5);
-      doc.text("Tue", 86, yOffset + 5.5);
-      doc.text("Wed", 102, yOffset + 5.5);
-      doc.text("Thu", 118, yOffset + 5.5);
-      doc.text("Fri", 134, yOffset + 5.5);
-      doc.text("Sat", 150, yOffset + 5.5);
-      doc.text("Sun", 166, yOffset + 5.5);
-      doc.text("Total", 182, yOffset + 5.5);
+      doc.text("Mon", 64, yOffset + 5.5);
+      doc.text("Tue", 77, yOffset + 5.5);
+      doc.text("Wed", 90, yOffset + 5.5);
+      doc.text("Thu", 103, yOffset + 5.5);
+      doc.text("Fri", 116, yOffset + 5.5);
+      doc.text("Sat", 129, yOffset + 5.5);
+      doc.text("Sun", 142, yOffset + 5.5);
+      doc.text("Total Store", 156, yOffset + 5.5);
+      doc.text("Unique Store", 176, yOffset + 5.5);
       
       yOffset += 8;
       doc.setFont("helvetica", "normal");
       
-      const retailerRows = Object.entries(retailerDays);
+      const retailerRows = Object.entries(retailerStats);
       if (retailerRows.length > 0) {
-        retailerRows.forEach(([name, days], idx) => {
+        retailerRows.forEach(([name, data], idx) => {
+          if (yOffset > 275) {
+            doc.addPage();
+            yOffset = 20;
+            doc.setFillColor(229, 229, 229);
+            doc.rect(14, yOffset, 182, 8, "F");
+            doc.setFontSize(8.5);
+            doc.setFont("helvetica", "bold");
+            doc.text("Retailer", 16, yOffset + 5.5);
+            doc.text("Mon", 64, yOffset + 5.5);
+            doc.text("Tue", 77, yOffset + 5.5);
+            doc.text("Wed", 90, yOffset + 5.5);
+            doc.text("Thu", 103, yOffset + 5.5);
+            doc.text("Fri", 116, yOffset + 5.5);
+            doc.text("Sat", 129, yOffset + 5.5);
+            doc.text("Sun", 142, yOffset + 5.5);
+            doc.text("Total Store", 156, yOffset + 5.5);
+            doc.text("Unique Store", 176, yOffset + 5.5);
+            yOffset += 8;
+            doc.setFont("helvetica", "normal");
+          }
           if (idx % 2 === 0) {
             doc.setFillColor(245, 245, 245);
             doc.rect(14, yOffset, 182, 7, "F");
           }
-          const total = days.reduce((sum, d) => sum + d, 0);
+          const totalVisits = data.days.reduce((sum, d) => sum + d, 0);
+          const uniqueStoreCount = data.uniqueStores.size;
           
           doc.text(String(name), 16, yOffset + 5);
-          doc.text(String(days[0]), 70, yOffset + 5);
-          doc.text(String(days[1]), 86, yOffset + 5);
-          doc.text(String(days[2]), 102, yOffset + 5);
-          doc.text(String(days[3]), 118, yOffset + 5);
-          doc.text(String(days[4]), 134, yOffset + 5);
-          doc.text(String(days[5]), 150, yOffset + 5);
-          doc.text(String(days[6]), 166, yOffset + 5);
+          doc.text(String(data.days[0]), 64, yOffset + 5);
+          doc.text(String(data.days[1]), 77, yOffset + 5);
+          doc.text(String(data.days[2]), 90, yOffset + 5);
+          doc.text(String(data.days[3]), 103, yOffset + 5);
+          doc.text(String(data.days[4]), 116, yOffset + 5);
+          doc.text(String(data.days[5]), 129, yOffset + 5);
+          doc.text(String(data.days[6]), 142, yOffset + 5);
           
           doc.setFont("helvetica", "bold");
-          doc.text(String(total), 182, yOffset + 5);
+          doc.text(String(totalVisits), 156, yOffset + 5);
+          doc.text(String(uniqueStoreCount), 176, yOffset + 5);
           doc.setFont("helvetica", "normal");
           
           yOffset += 7;
@@ -1471,8 +1590,139 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         doc.text("No visits recorded for this week.", 16, yOffset + 5);
         yOffset += 7;
       }
+
+      // Table 2: Merchandiser Active Performance
+      yOffset += 10;
+      if (yOffset > 240) {
+        doc.addPage();
+        yOffset = 20;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(0, 0, 0);
+      doc.text("Merchandiser Active Performance", 14, yOffset);
+
+      yOffset += 6;
+      doc.setFillColor(229, 229, 229);
+      doc.rect(14, yOffset, 182, 8, "F");
+
+      doc.setFontSize(8.5);
+      doc.text("Merchandiser Name", 16, yOffset + 5.5);
+      doc.text("Mon", 64, yOffset + 5.5);
+      doc.text("Tue", 77, yOffset + 5.5);
+      doc.text("Wed", 90, yOffset + 5.5);
+      doc.text("Thu", 103, yOffset + 5.5);
+      doc.text("Fri", 116, yOffset + 5.5);
+      doc.text("Sat", 129, yOffset + 5.5);
+      doc.text("Sun", 142, yOffset + 5.5);
+      doc.text("Total Store", 170, yOffset + 5.5);
+
+      yOffset += 8;
+      doc.setFont("helvetica", "normal");
+
+      const merchStats: Record<string, { id: string; name: string; days: number[]; total: number }> = {};
+
+      const empMerchs = employees.filter(e => 
+        String(e.role || "").toLowerCase().includes("merch") || 
+        String(e.department || "").toLowerCase().includes("merch") ||
+        String(e.name || "").includes("(SM)")
+      );
+
+      empMerchs.forEach(e => {
+        const eId = String(e.id);
+        const info = getMerchInfo(eId);
+        merchStats[eId] = {
+          id: eId,
+          name: info.name,
+          days: [0, 0, 0, 0, 0, 0, 0],
+          total: 0
+        };
+      });
+
+      filteredLogs.forEach(log => {
+        const mId = String(log.merch_id || log.Merch_ID || log.employee_id || "").trim();
+        if (!mId || mId.toLowerCase() === "null" || mId.toLowerCase() === "undefined") return;
+
+        if (!merchStats[mId]) {
+          const info = getMerchInfo(mId);
+          merchStats[mId] = {
+            id: mId,
+            name: info.name,
+            days: [0, 0, 0, 0, 0, 0, 0],
+            total: 0
+          };
+        }
+
+        const logDate = parseTimestamp(log.timestamp);
+        let dayIdx = logDate.getDay() - 1;
+        if (dayIdx < 0) dayIdx = 6;
+        merchStats[mId].days[dayIdx]++;
+        merchStats[mId].total++;
+      });
+
+      const merchRows = Object.values(merchStats).filter(row => row.total > 0);
+      merchRows.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+
+      if (merchRows.length > 0) {
+        merchRows.forEach((row, idx) => {
+          if (yOffset > 275) {
+            doc.addPage();
+            yOffset = 20;
+            doc.setFillColor(229, 229, 229);
+            doc.rect(14, yOffset, 182, 8, "F");
+            doc.setFontSize(8.5);
+            doc.setFont("helvetica", "bold");
+            doc.text("Merchandiser Name", 16, yOffset + 5.5);
+            doc.text("Mon", 64, yOffset + 5.5);
+            doc.text("Tue", 77, yOffset + 5.5);
+            doc.text("Wed", 90, yOffset + 5.5);
+            doc.text("Thu", 103, yOffset + 5.5);
+            doc.text("Fri", 116, yOffset + 5.5);
+            doc.text("Sat", 129, yOffset + 5.5);
+            doc.text("Sun", 142, yOffset + 5.5);
+            doc.text("Total Store", 170, yOffset + 5.5);
+            yOffset += 8;
+            doc.setFont("helvetica", "normal");
+          }
+          if (idx % 2 === 0) {
+            doc.setFillColor(245, 245, 245);
+            doc.rect(14, yOffset, 182, 7, "F");
+          }
+
+          doc.text(String(row.name), 16, yOffset + 5);
+          doc.text(String(row.days[0]), 64, yOffset + 5);
+          doc.text(String(row.days[1]), 77, yOffset + 5);
+          doc.text(String(row.days[2]), 90, yOffset + 5);
+          doc.text(String(row.days[3]), 103, yOffset + 5);
+          doc.text(String(row.days[4]), 116, yOffset + 5);
+          doc.text(String(row.days[5]), 129, yOffset + 5);
+          doc.text(String(row.days[6]), 142, yOffset + 5);
+
+          doc.setFont("helvetica", "bold");
+          doc.text(String(row.total), 170, yOffset + 5);
+          doc.setFont("helvetica", "normal");
+
+          yOffset += 7;
+        });
+      } else {
+        doc.text("No active merchandiser records found for this week.", 16, yOffset + 5);
+        yOffset += 7;
+      }
       
-      doc.save(`merchandiser_weekly_report_${Date.now()}.pdf`);
+      // Footer stamp across all pages
+      const totalPages = doc.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(128, 128, 128);
+        doc.text("iB - HSG Global Internal Bridge", 105, 290, { align: "center" });
+      }
+
+      const blob = doc.output("blob");
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
     } else {
       const selectedMonth = monthOptions[selectedPrintMonthIndex] || monthOptions[0];
       const { start: monthStart, end: monthEnd } = getMonthRange(selectedMonth.offset);
@@ -1484,8 +1734,8 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       });
       
       doc.setFont("helvetica", "bold");
-      doc.setFontSize(16);
-      doc.text("iB HSG Global - Merchandiser Monthly Performance Report", 14, 20);
+      doc.setFontSize(14);
+      doc.text(`Merchandiser Monthly Performance Report  (${monthLabel})`, 14, 20);
       
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
@@ -1498,16 +1748,21 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       doc.setDrawColor(200, 200, 200);
       doc.line(14, 35, 196, 35);
       
-      const retailerWeeks: Record<string, number[]> = {};
+      // Table 1: Monthly Breakdown by Retailer
+      const retailerWeeks: Record<string, { weeks: number[]; uniqueStores: Set<string> }> = {};
       
       filteredLogs.forEach(log => {
         const logDate = parseTimestamp(log.timestamp);
-        const store = stores.find(s => String(s.id) === String(log.retailer_stores_id));
+        const storeId = String(log.retailer_stores_id || "");
+        const store = stores.find(s => String(s.id) === storeId);
         const retName = getRetailerName(store);
         
         if (retName) {
           if (!retailerWeeks[retName]) {
-            retailerWeeks[retName] = [0, 0, 0, 0, 0];
+            retailerWeeks[retName] = {
+              weeks: [0, 0, 0, 0, 0],
+              uniqueStores: new Set<string>()
+            };
           }
           const dayOfMonth = logDate.getDate();
           let weekIdx = 0;
@@ -1517,7 +1772,10 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
           else if (dayOfMonth <= 28) weekIdx = 3;
           else weekIdx = 4;
           
-          retailerWeeks[retName][weekIdx]++;
+          retailerWeeks[retName].weeks[weekIdx]++;
+          if (storeId) {
+            retailerWeeks[retName].uniqueStores.add(storeId);
+          }
         }
       });
       
@@ -1533,34 +1791,55 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
       
       doc.setFontSize(8.5);
       doc.text("Retailer", 16, yOffset + 5.5);
-      doc.text("Week 1 (1-7)", 70, yOffset + 5.5);
-      doc.text("Week 2 (8-14)", 95, yOffset + 5.5);
-      doc.text("Week 3 (15-21)", 120, yOffset + 5.5);
-      doc.text("Week 4 (22-28)", 145, yOffset + 5.5);
-      doc.text("Week 5 (29+)", 167, yOffset + 5.5);
-      doc.text("Total", 185, yOffset + 5.5);
+      doc.text("Week 1 (1-7)", 60, yOffset + 5.5);
+      doc.text("Week 2 (8-14)", 82, yOffset + 5.5);
+      doc.text("Week 3 (15-21)", 104, yOffset + 5.5);
+      doc.text("Week 4 (22-28)", 126, yOffset + 5.5);
+      doc.text("Week 5 (29+)", 148, yOffset + 5.5);
+      doc.text("Total Store", 166, yOffset + 5.5);
+      doc.text("Unique Store", 182, yOffset + 5.5);
       
       yOffset += 8;
       doc.setFont("helvetica", "normal");
       
       const retailerRows = Object.entries(retailerWeeks);
       if (retailerRows.length > 0) {
-        retailerRows.forEach(([name, weeks], idx) => {
+        retailerRows.forEach(([name, data], idx) => {
+          if (yOffset > 275) {
+            doc.addPage();
+            yOffset = 20;
+            doc.setFillColor(229, 229, 229);
+            doc.rect(14, yOffset, 182, 8, "F");
+            doc.setFontSize(8.5);
+            doc.setFont("helvetica", "bold");
+            doc.text("Retailer", 16, yOffset + 5.5);
+            doc.text("Week 1 (1-7)", 60, yOffset + 5.5);
+            doc.text("Week 2 (8-14)", 82, yOffset + 5.5);
+            doc.text("Week 3 (15-21)", 104, yOffset + 5.5);
+            doc.text("Week 4 (22-28)", 126, yOffset + 5.5);
+            doc.text("Week 5 (29+)", 148, yOffset + 5.5);
+            doc.text("Total Store", 166, yOffset + 5.5);
+            doc.text("Unique Store", 182, yOffset + 5.5);
+            yOffset += 8;
+            doc.setFont("helvetica", "normal");
+          }
           if (idx % 2 === 0) {
             doc.setFillColor(245, 245, 245);
             doc.rect(14, yOffset, 182, 7, "F");
           }
-          const total = weeks.reduce((sum, w) => sum + w, 0);
+          const total = data.weeks.reduce((sum, w) => sum + w, 0);
+          const uniqueCount = data.uniqueStores.size;
           
           doc.text(String(name), 16, yOffset + 5);
-          doc.text(String(weeks[0]), 70, yOffset + 5);
-          doc.text(String(weeks[1]), 95, yOffset + 5);
-          doc.text(String(weeks[2]), 120, yOffset + 5);
-          doc.text(String(weeks[3]), 145, yOffset + 5);
-          doc.text(String(weeks[4]), 167, yOffset + 5);
+          doc.text(String(data.weeks[0]), 60, yOffset + 5);
+          doc.text(String(data.weeks[1]), 82, yOffset + 5);
+          doc.text(String(data.weeks[2]), 104, yOffset + 5);
+          doc.text(String(data.weeks[3]), 126, yOffset + 5);
+          doc.text(String(data.weeks[4]), 148, yOffset + 5);
           
           doc.setFont("helvetica", "bold");
-          doc.text(String(total), 185, yOffset + 5);
+          doc.text(String(total), 166, yOffset + 5);
+          doc.text(String(uniqueCount), 182, yOffset + 5);
           doc.setFont("helvetica", "normal");
           
           yOffset += 7;
@@ -1569,12 +1848,143 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         doc.text("No visits recorded for this month.", 16, yOffset + 5);
         yOffset += 7;
       }
+
+      // Table 2: Merchandiser Active Performance for Month
+      yOffset += 10;
+      if (yOffset > 240) {
+        doc.addPage();
+        yOffset = 20;
+      }
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(0, 0, 0);
+      doc.text("Merchandiser Active Performance", 14, yOffset);
+
+      yOffset += 6;
+      doc.setFillColor(229, 229, 229);
+      doc.rect(14, yOffset, 182, 8, "F");
+
+      doc.setFontSize(8.5);
+      doc.text("Merchandiser Name", 16, yOffset + 5.5);
+      doc.text("Week 1 (1-7)", 60, yOffset + 5.5);
+      doc.text("Week 2 (8-14)", 82, yOffset + 5.5);
+      doc.text("Week 3 (15-21)", 104, yOffset + 5.5);
+      doc.text("Week 4 (22-28)", 126, yOffset + 5.5);
+      doc.text("Week 5 (29+)", 148, yOffset + 5.5);
+      doc.text("Total Store", 170, yOffset + 5.5);
+
+      yOffset += 8;
+      doc.setFont("helvetica", "normal");
+
+      const monthlyMerchStats: Record<string, { id: string; name: string; weeks: number[]; total: number }> = {};
+
+      const empMerchsMonthly = employees.filter(e => 
+        String(e.role || "").toLowerCase().includes("merch") || 
+        String(e.department || "").toLowerCase().includes("merch") ||
+        String(e.name || "").includes("(SM)")
+      );
+
+      empMerchsMonthly.forEach(e => {
+        const eId = String(e.id);
+        const info = getMerchInfo(eId);
+        monthlyMerchStats[eId] = {
+          id: eId,
+          name: info.name,
+          weeks: [0, 0, 0, 0, 0],
+          total: 0
+        };
+      });
+
+      filteredLogs.forEach(log => {
+        const mId = String(log.merch_id || log.Merch_ID || log.employee_id || "").trim();
+        if (!mId || mId.toLowerCase() === "null" || mId.toLowerCase() === "undefined") return;
+
+        if (!monthlyMerchStats[mId]) {
+          const info = getMerchInfo(mId);
+          monthlyMerchStats[mId] = {
+            id: mId,
+            name: info.name,
+            weeks: [0, 0, 0, 0, 0],
+            total: 0
+          };
+        }
+
+        const logDate = parseTimestamp(log.timestamp);
+        const dayOfMonth = logDate.getDate();
+        let weekIdx = 0;
+        if (dayOfMonth <= 7) weekIdx = 0;
+        else if (dayOfMonth <= 14) weekIdx = 1;
+        else if (dayOfMonth <= 21) weekIdx = 2;
+        else if (dayOfMonth <= 28) weekIdx = 3;
+        else weekIdx = 4;
+
+        monthlyMerchStats[mId].weeks[weekIdx]++;
+        monthlyMerchStats[mId].total++;
+      });
+
+      const monthlyMerchRows = Object.values(monthlyMerchStats).filter(row => row.total > 0);
+      monthlyMerchRows.sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+
+      if (monthlyMerchRows.length > 0) {
+        monthlyMerchRows.forEach((row, idx) => {
+          if (yOffset > 275) {
+            doc.addPage();
+            yOffset = 20;
+            doc.setFillColor(229, 229, 229);
+            doc.rect(14, yOffset, 182, 8, "F");
+            doc.setFontSize(8.5);
+            doc.setFont("helvetica", "bold");
+            doc.text("Merchandiser Name", 16, yOffset + 5.5);
+            doc.text("Week 1 (1-7)", 60, yOffset + 5.5);
+            doc.text("Week 2 (8-14)", 82, yOffset + 5.5);
+            doc.text("Week 3 (15-21)", 104, yOffset + 5.5);
+            doc.text("Week 4 (22-28)", 126, yOffset + 5.5);
+            doc.text("Week 5 (29+)", 148, yOffset + 5.5);
+            doc.text("Total Store", 170, yOffset + 5.5);
+            yOffset += 8;
+            doc.setFont("helvetica", "normal");
+          }
+          if (idx % 2 === 0) {
+            doc.setFillColor(245, 245, 245);
+            doc.rect(14, yOffset, 182, 7, "F");
+          }
+
+          doc.text(String(row.name), 16, yOffset + 5);
+          doc.text(String(row.weeks[0]), 60, yOffset + 5);
+          doc.text(String(row.weeks[1]), 82, yOffset + 5);
+          doc.text(String(row.weeks[2]), 104, yOffset + 5);
+          doc.text(String(row.weeks[3]), 126, yOffset + 5);
+          doc.text(String(row.weeks[4]), 148, yOffset + 5);
+
+          doc.setFont("helvetica", "bold");
+          doc.text(String(row.total), 170, yOffset + 5);
+          doc.setFont("helvetica", "normal");
+
+          yOffset += 7;
+        });
+      } else {
+        doc.text("No active merchandiser records found for this month.", 16, yOffset + 5);
+        yOffset += 7;
+      }
       
-      doc.save(`merchandiser_monthly_report_${Date.now()}.pdf`);
+      // Footer stamp across all pages
+      const totalPages = doc.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        doc.setPage(i);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(128, 128, 128);
+        doc.text("iB - HSG Global Internal Bridge", 105, 290, { align: "center" });
+      }
+
+      const blob = doc.output("blob");
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
     }
     
     setIsPrintModalOpen(false);
-  }, [printReportType, selectedPrintWeekIndex, selectedPrintMonthIndex, weekOptions, monthOptions, productLogs, stores, getRetailerName, parseTimestamp, getMonthRange]);
+  }, [printReportType, selectedPrintWeekIndex, selectedPrintMonthIndex, weekOptions, monthOptions, productLogs, stores, getRetailerName, parseTimestamp, getMonthRange, employees, getMerchInfo]);
 
   // Report Tab calculations (60 days) - pure snake_case
   const reportData = React.useMemo(() => {
@@ -1992,14 +2402,96 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
         <div className="flex items-center gap-2">
           {activeTab === "performance" && (
-            <CustomButton
-              variant="default"
-              onClick={() => setIsPrintModalOpen(true)}
-              className="flex items-center gap-1.5"
-            >
-              <Printer size={14} className="stroke-[2.5]" />
-              <span>Print / Export PDF</span>
-            </CustomButton>
+            <>
+              {/* Filter mode segmented toggle: either Week or Month */}
+              <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setFilterMode("week")}
+                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                    filterMode === "week"
+                      ? "bg-white text-zinc-950 shadow-xs"
+                      : "text-zinc-500 hover:text-zinc-900"
+                  }`}
+                >
+                  By Weeks
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterMode("month")}
+                  className={`px-3 py-1 text-xs font-bold rounded-md transition-all cursor-pointer ${
+                    filterMode === "month"
+                      ? "bg-white text-zinc-950 shadow-xs"
+                      : "text-zinc-500 hover:text-zinc-900"
+                  }`}
+                >
+                  By Month
+                </button>
+              </div>
+
+              {/* Date & Month Selection Stepper */}
+              {filterMode === "week" ? (
+                <div className="flex items-center gap-1.5 bg-slate-100 rounded-lg px-2 py-1 border border-slate-200">
+                  <button 
+                    type="button" 
+                    onClick={() => setWeekOffset(prev => Math.max(prev - 1, -52))}
+                    disabled={weekOffset === -52}
+                    className="p-1 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
+                    title="Previous Week"
+                  >
+                    <ChevronLeft size={13} className="stroke-[2.5]" />
+                  </button>
+                  <span className="text-xs font-bold text-zinc-800 min-w-[105px] text-center select-none tracking-tight">
+                    {formatWeekRange(getWeekRange(weekOffset).monday, getWeekRange(weekOffset).sunday)}
+                  </span>
+                  <button 
+                    type="button" 
+                    onClick={() => setWeekOffset(prev => Math.min(prev + 1, 0))}
+                    disabled={weekOffset === 0}
+                    className="p-1 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
+                    title="Next Week"
+                  >
+                    <ChevronRight size={13} className="stroke-[2.5]" />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 bg-slate-100 rounded-lg px-2 py-1 border border-slate-200">
+                  <button 
+                    type="button" 
+                    onClick={() => setMonthOffset(prev => Math.max(prev - 1, -12))}
+                    disabled={monthOffset === -12}
+                    className="p-1 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
+                    title="Previous Month"
+                  >
+                    <ChevronLeft size={13} className="stroke-[2.5]" />
+                  </button>
+                  <span className="text-xs font-bold text-zinc-800 min-w-[95px] text-center select-none tracking-tight">
+                    {formatMonthName(getMonthRange(monthOffset).start)}
+                  </span>
+                  <button 
+                    type="button" 
+                    onClick={() => setMonthOffset(prev => Math.min(prev + 1, 0))}
+                    disabled={monthOffset === 0}
+                    className="p-1 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
+                    title="Next Month"
+                  >
+                    <ChevronRight size={13} className="stroke-[2.5]" />
+                  </button>
+                </div>
+              )}
+
+              <CustomButton
+                variant="dark"
+                onClick={() => {
+                  setPrintReportType(filterMode === "week" ? "weekly" : "monthly");
+                  setIsPrintModalOpen(true);
+                }}
+                className="flex items-center gap-1.5"
+              >
+                <Printer size={14} className="stroke-[2.5]" />
+                <span>Print Report</span>
+              </CustomButton>
+            </>
           )}
 
           {activeTab === "setting" && !isViewer && (
@@ -2020,8 +2512,9 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
         {/* TAB 1: PERFORMANCE */}
         {activeTab === "performance" && (
           <div className="flex flex-col h-full gap-4 overflow-y-auto p-4 animate-tableFadeInOnly">
-            {/* Top Stat Counters */}
+            {/* Top Stat Counters - Displaying filter ONE AT A TIME (either Week or Month) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
+              {/* Card 1: Visits Today */}
               <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
                 <div className="flex flex-col">
                   <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visits Today</span>
@@ -2032,72 +2525,56 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                 </div>
               </div>
 
+              {/* Card 2: Filter Card (Only ONE active at a time: Weeks or Month) */}
               <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visits Selected Week</span>
-                  <span className="text-xl font-bold text-zinc-950">{performanceStats.totals.week}</span>
-                  <div className="flex items-center gap-1 mt-0.5 bg-slate-100 rounded px-1.5 py-0.5 w-fit border border-slate-200">
-                    <button 
-                      type="button" 
-                      onClick={() => setWeekOffset(prev => Math.max(prev - 1, -52))}
-                      disabled={weekOffset === -52}
-                      className="p-0.5 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
-                      title="Previous Week"
-                    >
-                      <ChevronLeft size={11} className="stroke-[2.5]" />
-                    </button>
-                    <span className="text-[9px] font-bold text-zinc-700 min-w-[70px] text-center select-none tracking-tight">
-                      {formatWeekRange(getWeekRange(weekOffset).monday, getWeekRange(weekOffset).sunday)}
-                    </span>
-                    <button 
-                      type="button" 
-                      onClick={() => setWeekOffset(prev => Math.min(prev + 1, 0))}
-                      disabled={weekOffset === 0}
-                      className="p-0.5 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
-                      title="Next Week"
-                    >
-                      <ChevronRight size={11} className="stroke-[2.5]" />
-                    </button>
-                  </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                    {filterMode === "week"
+                      ? (weekOffset === 0 ? "Visits This Week" : "Visits Selected Week")
+                      : (monthOffset === 0 ? "Visits This Month" : "Visits Selected Month")
+                    }
+                  </span>
+                  <span className="text-xl font-bold text-zinc-950 mt-0.5">
+                    {filterMode === "week" ? performanceStats.totals.week : performanceStats.totals.month}
+                  </span>
                 </div>
                 <div className="h-8 w-8 bg-[#E8F0FE] rounded-lg flex items-center justify-center text-[#0B57D0] shrink-0">
-                  <BarChart3 size={16} className="stroke-[2.5]" />
+                  {filterMode === "week" ? (
+                    <BarChart3 size={16} className="stroke-[2.5]" />
+                  ) : (
+                    <Calendar size={16} className="stroke-[2.5]" />
+                  )}
                 </div>
               </div>
 
-              <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visits Selected Month</span>
-                  <span className="text-xl font-bold text-zinc-950">{performanceStats.totals.month}</span>
-                  <div className="flex items-center gap-1 mt-0.5 bg-slate-100 rounded px-1.5 py-0.5 w-fit border border-slate-200">
-                    <button 
-                      type="button" 
-                      onClick={() => setMonthOffset(prev => Math.max(prev - 1, -12))}
-                      disabled={monthOffset === -12}
-                      className="p-0.5 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
-                      title="Previous Month"
-                    >
-                      <ChevronLeft size={11} className="stroke-[2.5]" />
-                    </button>
-                    <span className="text-[9px] font-bold text-zinc-700 min-w-[70px] text-center select-none tracking-tight">
-                      {formatMonthName(getMonthRange(monthOffset).start)}
-                    </span>
-                    <button 
-                      type="button" 
-                      onClick={() => setMonthOffset(prev => Math.min(prev + 1, 0))}
-                      disabled={monthOffset === 0}
-                      className="p-0.5 rounded hover:bg-slate-200 text-zinc-600 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed focus:outline-none"
-                      title="Next Month"
-                    >
-                      <ChevronRight size={11} className="stroke-[2.5]" />
-                    </button>
+              {/* Card 3: Visits Yesterday (if current week) or Active Retailers (if past week or month) */}
+              {filterMode === "week" && weekOffset === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Visits Yesterday</span>
+                    <span className="text-xl font-bold text-zinc-950 mt-0.5">{performanceStats.totals.yesterday}</span>
+                  </div>
+                  <div className="h-8 w-8 bg-[#E8F0FE] rounded-lg flex items-center justify-center text-[#0B57D0] shrink-0">
+                    <Clock size={16} className="stroke-[2.5]" />
                   </div>
                 </div>
-                <div className="h-8 w-8 bg-[#E8F0FE] rounded-lg flex items-center justify-center text-[#0B57D0] shrink-0">
-                  <Calendar size={16} className="stroke-[2.5]" />
+              ) : (
+                <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                      {filterMode === "week" ? "Active Retailers (Week)" : "Active Retailers (Month)"}
+                    </span>
+                    <span className="text-xl font-bold text-zinc-950 mt-0.5">
+                      {displayRetailers.length}
+                    </span>
+                  </div>
+                  <div className="h-8 w-8 bg-[#E8F0FE] rounded-lg flex items-center justify-center text-[#0B57D0] shrink-0">
+                    <UsersIcon size={16} className="stroke-[2.5]" />
+                  </div>
                 </div>
-              </div>
+              )}
 
+              {/* Card 4: Pending Special Tasks */}
               <div className="bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 flex items-start justify-between shadow-xs">
                 <div className="flex flex-col">
                   <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Pending Special Tasks</span>
@@ -2111,41 +2588,86 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
 
             {/* Main breakdown grids */}
             <div className="flex flex-col lg:flex-row gap-4 items-stretch flex-grow min-h-0">
-              {/* Retailer Breakdown table */}
-              <div className="w-full lg:w-[38%] bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs flex flex-col h-[380px] lg:h-auto">
+              {/* Retailer Breakdown table - wider container displaying Week days (Mon-Sun), Total Visit, Total Unique Store */}
+              <div className="w-full lg:w-[58%] bg-white border border-slate-200 rounded-lg overflow-hidden shadow-xs flex flex-col h-[380px] lg:h-auto">
                 <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between shrink-0">
                   <div className="flex items-center gap-2">
                     <UsersIcon size={14} className="text-[#0B57D0]" />
-                    <span className="font-bold text-xs text-zinc-800 uppercase tracking-wider">Visits per Retailer</span>
+                    <span className="font-bold text-xs text-zinc-800 uppercase tracking-wider">
+                      Visits per Retailer
+                    </span>
                   </div>
                   <span className="text-[10px] font-bold text-zinc-500 bg-white border border-slate-200 px-2 py-0.5 rounded">
-                    {performanceStats.retailers.length} Retailers
+                    {displayRetailers.length} {displayRetailers.length === 1 ? "Retailer" : "Retailers"}
                   </span>
                 </div>
-                <div className="overflow-y-auto flex-1 min-h-0">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead className="sticky top-0 z-10 bg-slate-50 shadow-2xs">
+                <div className="overflow-x-auto overflow-y-auto flex-1 min-h-0">
+                  <table className="w-full text-left border-collapse text-xs min-w-[620px]">
+                    <thead className="sticky top-0 z-10 bg-slate-50 shadow-2xs select-none">
                       <tr className="border-b border-slate-200 text-zinc-600 font-bold">
-                        <th className="py-2.5 px-4 bg-slate-50">Retailer</th>
-                        <th className="py-2.5 px-4 text-center bg-slate-50">Today</th>
-                        <th className="py-2.5 px-4 text-center bg-slate-50">Week</th>
-                        <th className="py-2.5 px-4 text-center bg-slate-50">Month</th>
+                        <th className="py-2.5 px-3 bg-slate-50 min-w-[130px]">Retailer</th>
+                        {filterMode === "week" ? (
+                          <>
+                            <th className="py-2.5 px-1.5 text-center bg-slate-50">Mon</th>
+                            <th className="py-2.5 px-1.5 text-center bg-slate-50">Tue</th>
+                            <th className="py-2.5 px-1.5 text-center bg-slate-50">Wed</th>
+                            <th className="py-2.5 px-1.5 text-center bg-slate-50">Thu</th>
+                            <th className="py-2.5 px-1.5 text-center bg-slate-50">Fri</th>
+                            <th className="py-2.5 px-1.5 text-center bg-slate-50">Sat</th>
+                            <th className="py-2.5 px-1.5 text-center bg-slate-50">Sun</th>
+                            <th className="py-2.5 px-2 text-center bg-slate-50 text-[#0B57D0]">Total Visit</th>
+                            <th className="py-2.5 px-2 text-center bg-slate-50 text-[#0B57D0]">Total Unique Store</th>
+                          </>
+                        ) : (
+                          <>
+                            <th className="py-2.5 px-2 text-center bg-slate-50">Week 1 (1-7)</th>
+                            <th className="py-2.5 px-2 text-center bg-slate-50">Week 2 (8-14)</th>
+                            <th className="py-2.5 px-2 text-center bg-slate-50">Week 3 (15-21)</th>
+                            <th className="py-2.5 px-2 text-center bg-slate-50">Week 4 (22-28)</th>
+                            <th className="py-2.5 px-2 text-center bg-slate-50">Week 5 (29+)</th>
+                            <th className="py-2.5 px-2 text-center bg-slate-50 text-[#0B57D0]">Total Visit</th>
+                            <th className="py-2.5 px-2 text-center bg-slate-50 text-[#0B57D0]">Total Unique Store</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {performanceStats.retailers.length > 0 ? (
-                        performanceStats.retailers.map((r, idx) => (
+                      {displayRetailers.length > 0 ? (
+                        displayRetailers.map((r, idx) => (
                           <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                            <td className="py-2.5 px-4 font-semibold text-zinc-900">{r.name}</td>
-                            <td className="py-2.5 px-4 text-center font-bold text-zinc-700">{r.today}</td>
-                            <td className="py-2.5 px-4 text-center font-bold text-zinc-700">{r.week}</td>
-                            <td className="py-2.5 px-4 text-center font-bold text-zinc-700">{r.month}</td>
+                            <td className="py-2 px-3 font-semibold text-zinc-900 whitespace-nowrap">{r.name}</td>
+                            {filterMode === "week" ? (
+                              <>
+                                <td className="py-2 px-1.5 text-center text-zinc-700 font-medium">{r.days[0]}</td>
+                                <td className="py-2 px-1.5 text-center text-zinc-700 font-medium">{r.days[1]}</td>
+                                <td className="py-2 px-1.5 text-center text-zinc-700 font-medium">{r.days[2]}</td>
+                                <td className="py-2 px-1.5 text-center text-zinc-700 font-medium">{r.days[3]}</td>
+                                <td className="py-2 px-1.5 text-center text-zinc-700 font-medium">{r.days[4]}</td>
+                                <td className="py-2 px-1.5 text-center text-zinc-700 font-medium">{r.days[5]}</td>
+                                <td className="py-2 px-1.5 text-center text-zinc-700 font-medium">{r.days[6]}</td>
+                                <td className="py-2 px-2 text-center font-bold text-[#0B57D0] bg-blue-50/40">{r.week}</td>
+                                <td className="py-2 px-2 text-center font-bold text-zinc-800 bg-slate-50/60">{r.weekUniqueStores}</td>
+                              </>
+                            ) : (
+                              <>
+                                <td className="py-2 px-2 text-center text-zinc-700 font-medium">{r.weeks[0]}</td>
+                                <td className="py-2 px-2 text-center text-zinc-700 font-medium">{r.weeks[1]}</td>
+                                <td className="py-2 px-2 text-center text-zinc-700 font-medium">{r.weeks[2]}</td>
+                                <td className="py-2 px-2 text-center text-zinc-700 font-medium">{r.weeks[3]}</td>
+                                <td className="py-2 px-2 text-center text-zinc-700 font-medium">{r.weeks[4]}</td>
+                                <td className="py-2 px-2 text-center font-bold text-[#0B57D0] bg-blue-50/40">{r.month}</td>
+                                <td className="py-2 px-2 text-center font-bold text-zinc-800 bg-slate-50/60">{r.monthUniqueStores}</td>
+                              </>
+                            )}
                           </tr>
                         ))
                       ) : (
                         <tr>
-                          <td colSpan={4} className="py-8 px-4 text-center text-zinc-400 italic">
-                            No visits recorded in the last 365 days.
+                          <td 
+                            colSpan={filterMode === "week" ? 10 : 8} 
+                            className="py-8 px-4 text-center text-zinc-400 italic"
+                          >
+                            No visits recorded for this selected period.
                           </td>
                         </tr>
                       )}
@@ -2154,8 +2676,8 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                 </div>
               </div>
 
-              {/* 12-Month Performance + 3-Month Projection Trend SVG Line Chart */}
-              <div className="w-full lg:w-[62%] bg-white border border-slate-200 rounded-lg p-4 shadow-xs relative flex flex-col gap-3 h-auto lg:h-full min-h-[320px] lg:min-h-0">
+              {/* 12-Month Performance + 3-Month Projection Trend SVG Line Chart - slightly smaller width */}
+              <div className="w-full lg:w-[42%] bg-white border border-slate-200 rounded-lg p-4 shadow-xs relative flex flex-col gap-3 h-auto lg:h-full min-h-[320px] lg:min-h-0">
                 <div className="flex flex-wrap items-center justify-between border-b border-slate-200 pb-2.5 gap-2 shrink-0">
                   <div className="flex items-center gap-2">
                     <BarChart3 size={14} className="text-[#0B57D0]" />
@@ -3259,7 +3781,7 @@ export function MerchandiserModule({ profile }: MerchandiserModuleProps) {
                 onClick={handlePrintPDF}
               >
                 <Printer size={13} className="stroke-[2.5]" strokeWidth={2.5} />
-                Generate PDF
+                Print Report
               </CustomButton>
             </div>
           </div>

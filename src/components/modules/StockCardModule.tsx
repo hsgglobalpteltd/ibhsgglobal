@@ -95,9 +95,11 @@ interface SummaryRow {
   brandName: string;
   brandRank: number;
   uom: number;
+  stockLevelBefore: number;
   totalIn: number;
   totalOut: number;
   netMovement: number;
+  stockLevelAfter: number;
 }
 
 interface MovementEventRow {
@@ -111,6 +113,9 @@ interface MovementEventRow {
   sku: string;
   productName: string;
   brandName: string;
+  uom: number;
+  stockLevelBefore: number;
+  stockLevelAfter: number;
   inQty: number;
   outQty: number;
   handledBy: string;
@@ -131,36 +136,45 @@ interface MovementEventRow {
   };
 }
 
-// Calculate the start (Sunday 00:00:00) and end (Saturday 23:59:59) of the current week
+function toDateInputString(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// Calculate the start (Monday 00:00:00) and end (Sunday 23:59:59) of the current week
 function getCurrentWeekRange(): { start: string; end: string } {
   const now = new Date();
-  const day = now.getDay(); // 0 is Sunday, 6 is Saturday
+  const day = now.getDay(); // 0 is Sunday, 1 is Monday, ..., 6 is Saturday
+  const diffToMonday = day === 0 ? -6 : 1 - day;
   
-  const sunday = new Date(now);
-  sunday.setDate(now.getDate() - day);
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToMonday);
   
-  const saturday = new Date(sunday);
-  saturday.setDate(sunday.getDate() + 6);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
   
   return {
-    start: sunday.toISOString().split("T")[0],
-    end: saturday.toISOString().split("T")[0]
+    start: toDateInputString(monday),
+    end: toDateInputString(sunday)
   };
 }
 
 function getLastWeekRange(): { start: string; end: string } {
   const now = new Date();
   const day = now.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
   
-  const prevSunday = new Date(now);
-  prevSunday.setDate(now.getDate() - day - 7);
+  const prevMonday = new Date(now);
+  prevMonday.setDate(now.getDate() + diffToMonday - 7);
   
-  const prevSaturday = new Date(prevSunday);
-  prevSaturday.setDate(prevSunday.getDate() + 6);
+  const prevSunday = new Date(prevMonday);
+  prevSunday.setDate(prevMonday.getDate() + 6);
   
   return {
-    start: prevSunday.toISOString().split("T")[0],
-    end: prevSaturday.toISOString().split("T")[0]
+    start: toDateInputString(prevMonday),
+    end: toDateInputString(prevSunday)
   };
 }
 
@@ -170,8 +184,8 @@ function getThisMonthRange(): { start: string; end: string } {
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
   
   return {
-    start: firstDay.toISOString().split("T")[0],
-    end: lastDay.toISOString().split("T")[0]
+    start: toDateInputString(firstDay),
+    end: toDateInputString(lastDay)
   };
 }
 
@@ -221,7 +235,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
   // Navigation Tabs: "summary" (By Total) or "movements" (By Movement List)
   const [activeTab, setActiveTab] = React.useState<"summary" | "movements">("summary");
 
-  // Date Range state (Default to Current Week: Sunday - Saturday)
+  // Date Range state (Default to Current Week: Monday - Sunday)
   const [datePreset, setDatePreset] = React.useState<"current_week" | "last_week" | "this_month" | "custom">("current_week");
   const [startDate, setStartDate] = React.useState<string>(() => getCurrentWeekRange().start);
   const [endDate, setEndDate] = React.useState<string>(() => getCurrentWeekRange().end);
@@ -231,10 +245,11 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
   const [brands, setBrands] = React.useState<BrandItem[]>([]);
   const [stockMovements, setStockMovements] = React.useState<StockMovementItem[]>([]);
   const [trackOrders, setTrackOrders] = React.useState<TrackOrderItem[]>([]);
+  const [stockTakeLogs, setStockTakeLogs] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState<boolean>(false);
 
   // Filters & Search
-  const [searchQuery, setSearchQuery] = React.useState<string>("" );
+  const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [selectedBrand, setSelectedBrand] = React.useState<string>("all");
   const [movementTypeFilter, setMovementTypeFilter] = React.useState<string>("all");
 
@@ -249,11 +264,12 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
   const loadData = React.useCallback(async () => {
     setLoading(true);
     try {
-      const [brandRes, prodRes, smRes, toRes] = await Promise.all([
+      const [brandRes, prodRes, smRes, toRes, logsRes] = await Promise.all([
         fetch(`${WORKER_URL}/api/inventory/brands`, { cache: "no-store" }).catch(() => null),
         fetch(`${WORKER_URL}/api/inventory/products`, { cache: "no-store" }).catch(() => null),
         fetch(`${WORKER_URL}/api/stock-movement`, { cache: "no-store" }).catch(() => null),
-        fetch(`${WORKER_URL}/api/track-orders`, { cache: "no-store" }).catch(() => null)
+        fetch(`${WORKER_URL}/api/track-orders`, { cache: "no-store" }).catch(() => null),
+        fetch(`${WORKER_URL}/api/inventory/logs`, { cache: "no-store" }).catch(() => null)
       ]);
 
       if (brandRes && brandRes.ok) {
@@ -279,6 +295,11 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       if (toRes && toRes.ok) {
         const toData = await toRes.json();
         setTrackOrders(Array.isArray(toData) ? toData : []);
+      }
+
+      if (logsRes && logsRes.ok) {
+        const lData = await logsRes.json();
+        setStockTakeLogs(Array.isArray(lData) ? lData : []);
       }
     } catch (err: any) {
       console.error(err);
@@ -308,10 +329,11 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
     const brandMap = new Map(brands.map((b) => [b.id, b]));
 
     products.forEach((p) => {
-      const sku = String(p.sku || p.SKU || p.Code || "").trim();
+      const sku = String(p.sku || p.SKU || p.Code || "").trim().toUpperCase();
       if (!sku) return;
 
-      const name = p.display_name || p.name || p.Title || p.Item_Description || sku;
+      const rawName = p.display_name || p.name || p.Title || p.Item_Description || sku;
+      const name = String(rawName).trim().toUpperCase();
       const brandObj = brandMap.get(p.brands_id || "");
       const brandName = brandObj?.display_name || brandObj?.name || "Other";
       const brandRank = Number(brandObj?.rank || 999);
@@ -365,20 +387,62 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
   }, [startDate, endDate]);
 
   // ==========================================================================
-  // PARSE, CLASSIFY & DE-DUPLICATE ALL INVENTORY MOVEMENT TRANSACTIONS
+  // PARSE STOCK TAKE AUDITS (BASELINE PHYSICAL COUNTS)
   // ==========================================================================
-  const allMovementEvents = React.useMemo<MovementEventRow[]>(() => {
-    const events: MovementEventRow[] = [];
+  const parsedStockTakes = React.useMemo(() => {
+    return stockTakeLogs.map((log: any) => {
+      let items: Array<{ sku: string; qty: number; skipped: boolean }> = [];
+      try {
+        const rawAudit = log.audit || log.Audit;
+        const parsed = typeof rawAudit === "string" ? JSON.parse(rawAudit) : rawAudit;
+        if (Array.isArray(parsed)) {
+          items = parsed.map((it: any) => ({
+            sku: String(it.sku || it.SKU || it.Code || "").trim().toLowerCase(),
+            qty: Number(it.qty || it.Qty || 0) || 0,
+            skipped: Boolean(it.skipped)
+          })).filter((it: any) => it.sku);
+        }
+      } catch (_) {}
+      return {
+        timestamp: Number(log.timestamp || log.Timestamp) || 0,
+        items
+      };
+    }).sort((a, b) => a.timestamp - b.timestamp);
+  }, [stockTakeLogs]);
 
+  // ==========================================================================
+  // PARSE, CLASSIFY & CALCULATE RUNNING STOCK LEVELS ACROSS ALL TRANSACTIONS
+  // ==========================================================================
+  const { allMovementEvents, summaryRows } = React.useMemo(() => {
     // Map of normalized document ref / DO number -> Stock Movement record
     // Used to automatically detect and de-duplicate if a DO exists in both Manage Stock & Track Orders
     const stockMovementsByDocRef = new Map<string, StockMovementItem>();
 
+    interface RawEvent {
+      id: string;
+      timestamp: number;
+      type: MovementEventRow["type"];
+      typeCategory: "IN" | "OUT";
+      millionRefNumber: string;
+      refNumber: string;
+      sku: string;
+      productName: string;
+      brandName: string;
+      uom: number;
+      inQty: number;
+      outQty: number;
+      handledBy: string;
+      destinationOrRemark: string;
+      sourceModule: MovementEventRow["sourceModule"];
+      sourceId: string;
+      traceDetails?: MovementEventRow["traceDetails"];
+    }
+
+    const rawEvents: RawEvent[] = [];
+
     // 1. Ingest stock_movement records
     stockMovements.forEach((m) => {
       const timestamp = Number(m.timestamp) || 0;
-      if (timestamp < startEpoch || timestamp > endEpoch) return;
-
       const actTypeRaw = String(m.action_type || m.reference?.action_type || "Stock Out").trim();
       const actLower = actTypeRaw.toLowerCase();
 
@@ -419,10 +483,9 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
           const qty = Number(it.qty || it.quantity || 0) || 0;
           if (qty <= 0) return;
 
-          events.push({
+          rawEvents.push({
             id: `sm-${m.id}-${skuRaw}-${Math.random().toString(36).substring(2, 6)}`,
             timestamp,
-            dateStr: formatDateTimeDisplay(timestamp),
             type: eventType,
             typeCategory: eventCat,
             millionRefNumber: millionRef,
@@ -430,6 +493,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
             sku: prodInfo.sku,
             productName: prodInfo.name,
             brandName: prodInfo.brandName,
+            uom: prodInfo.uom,
             inQty: eventCat === "IN" ? qty : 0,
             outQty: eventCat === "OUT" ? qty : 0,
             handledBy,
@@ -460,22 +524,13 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         orderTs = Number(order.timestamp) || 0;
       }
 
-      if (orderTs < startEpoch || orderTs > endEpoch) return;
-
       const isReturn = orderType === "return" || orderType.includes("return");
       const hasCreditNote = Boolean(order.credit_note_number && String(order.credit_note_number).trim() !== "");
 
-      let eventType: MovementEventRow["type"] = "DO Delivery";
-      let eventCat: "IN" | "OUT" = "OUT";
+      if (isReturn && !hasCreditNote) return; // Ignored: pending credit note
 
-      if (isReturn) {
-        if (!hasCreditNote) return; // Ignored: pending credit note
-        eventType = "Return (Credit Note)";
-        eventCat = "IN";
-      } else {
-        eventType = "DO Delivery";
-        eventCat = "OUT";
-      }
+      const eventType: MovementEventRow["type"] = isReturn ? "Return (Credit Note)" : "DO Delivery";
+      const eventCat: "IN" | "OUT" = isReturn ? "IN" : "OUT";
 
       const millionRef = isReturn 
         ? cleanRefNumber(order.credit_note_number)
@@ -497,7 +552,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
 
       if (matchingSM) {
         // Already recorded in Manage Stock! Update matching events to display "DO Delivery" and show synced status
-        events.forEach((ev) => {
+        rawEvents.forEach((ev) => {
           if (ev.sourceId === matchingSM.id) {
             ev.type = isReturn ? "Return (Credit Note)" : "DO Delivery";
             ev.sourceModule = "Synced (Stock & Track Order)";
@@ -534,10 +589,9 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
           const qty = Number(it.qty || it.quantity || 0) || 0;
           if (qty <= 0) return;
 
-          events.push({
+          rawEvents.push({
             id: `to-${order.id}-${skuRaw}-${Math.random().toString(36).substring(2, 6)}`,
             timestamp: orderTs,
-            dateStr: formatDateTimeDisplay(orderTs),
             type: eventType,
             typeCategory: eventCat,
             millionRefNumber: millionRef,
@@ -545,6 +599,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
             sku: prodInfo.sku,
             productName: prodInfo.name,
             brandName: prodInfo.brandName,
+            uom: prodInfo.uom,
             inQty: eventCat === "IN" ? qty : 0,
             outQty: eventCat === "OUT" ? qty : 0,
             handledBy,
@@ -567,27 +622,103 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       }
     });
 
-    // Sort newest to oldest by timestamp
-    events.sort((a, b) => b.timestamp - a.timestamp);
-    return events;
-  }, [stockMovements, trackOrders, startEpoch, endEpoch, productMap]);
+    // Sort chronologically ascending for precise running balance calculation
+    rawEvents.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
 
-  // ==========================================================================
-  // AGGREGATE SUMMARY BY SKU (TAB 1: BY TOTAL)
-  // ==========================================================================
-  const summaryRows = React.useMemo<SummaryRow[]>(() => {
-    // Map of normalized SKU -> In/Out totals
-    const totalsMap: Record<string, { totalIn: number; totalOut: number }> = {};
-
-    allMovementEvents.forEach((ev) => {
+    // Group raw events by normalized SKU
+    const eventsBySku = new Map<string, RawEvent[]>();
+    rawEvents.forEach((ev) => {
       const norm = ev.sku.toLowerCase();
-      if (!totalsMap[norm]) {
-        totalsMap[norm] = { totalIn: 0, totalOut: 0 };
-      }
-      totalsMap[norm].totalIn += ev.inQty;
-      totalsMap[norm].totalOut += ev.outQty;
+      if (!eventsBySku.has(norm)) eventsBySku.set(norm, []);
+      eventsBySku.get(norm)!.push(ev);
     });
 
+    // Compute running stock levels before and after each event
+    const processedEvents: MovementEventRow[] = [];
+
+    eventsBySku.forEach((skuEvents, normSku) => {
+      // Find all stock take records for this SKU (not skipped)
+      const skuTakes: Array<{ timestamp: number; qty: number }> = [];
+      parsedStockTakes.forEach((st) => {
+        const item = st.items.find((i) => i.sku === normSku);
+        if (item && !item.skipped) {
+          skuTakes.push({ timestamp: st.timestamp, qty: item.qty });
+        }
+      });
+
+      for (let i = 0; i < skuEvents.length; i++) {
+        const ev = skuEvents[i];
+
+        // Find latest stock take on or before ev.timestamp
+        let baselineQty = 0;
+        let baselineTs = 0;
+        for (let t = skuTakes.length - 1; t >= 0; t--) {
+          if (skuTakes[t].timestamp <= ev.timestamp) {
+            baselineQty = skuTakes[t].qty;
+            baselineTs = skuTakes[t].timestamp;
+            break;
+          }
+        }
+
+        // Sum movements of this SKU strictly after baselineTs and strictly before ev.timestamp
+        let runningBefore = baselineQty;
+        for (let j = 0; j < i; j++) {
+          const priorEv = skuEvents[j];
+          if (priorEv.timestamp <= baselineTs) continue;
+          runningBefore += (priorEv.inQty - priorEv.outQty);
+        }
+
+        const runningAfter = runningBefore + ev.inQty - ev.outQty;
+
+        processedEvents.push({
+          ...ev,
+          dateStr: formatDateTimeDisplay(ev.timestamp),
+          stockLevelBefore: runningBefore,
+          stockLevelAfter: runningAfter
+        });
+      }
+    });
+
+    // Helper to compute stock level for an SKU at a given timestamp
+    const getStockLevelAt = (normSku: string, targetTs: number) => {
+      const skuTakes: Array<{ timestamp: number; qty: number }> = [];
+      parsedStockTakes.forEach((st) => {
+        const item = st.items.find((i) => i.sku === normSku);
+        if (item && !item.skipped) {
+          skuTakes.push({ timestamp: st.timestamp, qty: item.qty });
+        }
+      });
+
+      let baselineQty = 0;
+      let baselineTs = 0;
+      for (let t = skuTakes.length - 1; t >= 0; t--) {
+        if (skuTakes[t].timestamp <= targetTs) {
+          baselineQty = skuTakes[t].qty;
+          baselineTs = skuTakes[t].timestamp;
+          break;
+        }
+      }
+
+      let running = baselineQty;
+      const moves = eventsBySku.get(normSku) || [];
+      for (const m of moves) {
+        if (m.timestamp <= baselineTs) continue;
+        if (m.timestamp > targetTs) break;
+        running += (m.inQty - m.outQty);
+      }
+      return running;
+    };
+
+    // Filter events to the selected date range [startEpoch, endEpoch]
+    const eventsInRange = processedEvents.filter(
+      (ev) => ev.timestamp >= startEpoch && ev.timestamp <= endEpoch
+    );
+    // Sort newest to oldest by timestamp for table view and export
+    eventsInRange.sort((a, b) => b.timestamp - a.timestamp);
+
+    // ==========================================================================
+    // AGGREGATE SUMMARY BY SKU (TAB 1: BY TOTAL)
+    // ==========================================================================
     // Generate summary rows ONLY for active catalog products
     const rows: SummaryRow[] = [];
 
@@ -601,22 +732,40 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       const info = productMap[norm];
       if (!info) return;
 
-      const movement = totalsMap[norm] || { totalIn: 0, totalOut: 0 };
+      // Opening Stock Level (right before startEpoch)
+      const stockLevelBefore = getStockLevelAt(norm, startEpoch - 1);
+
+      // Movements during the selected period
+      const skuEventsInRange = eventsInRange.filter((e) => e.sku.toLowerCase() === norm);
+      let totalIn = 0;
+      let totalOut = 0;
+      skuEventsInRange.forEach((e) => {
+        totalIn += e.inQty;
+        totalOut += e.outQty;
+      });
+
+      // Closing Stock Level (at endEpoch)
+      const stockLevelAfter = getStockLevelAt(norm, endEpoch);
 
       rows.push({
-        sku,
-        name: info.name || sku,
+        sku: (info.sku || sku).toUpperCase(),
+        name: (info.name || sku).toUpperCase(),
         brandName: info.brandName || "Other",
         brandRank: info.brandRank || 999,
         uom: info.uom || 1,
-        totalIn: movement.totalIn,
-        totalOut: movement.totalOut,
-        netMovement: movement.totalIn - movement.totalOut
+        stockLevelBefore,
+        totalIn,
+        totalOut,
+        netMovement: totalIn - totalOut,
+        stockLevelAfter
       });
     });
 
-    return rows;
-  }, [allMovementEvents, products, productMap]);
+    return {
+      allMovementEvents: eventsInRange,
+      summaryRows: rows
+    };
+  }, [stockMovements, trackOrders, parsedStockTakes, startEpoch, endEpoch, products, productMap]);
 
   // Filtered and Sorted Summary Rows
   const filteredSummaryRows = React.useMemo(() => {
@@ -706,34 +855,35 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
     try {
       const wb = XLSX.utils.book_new();
 
-      // Sheet 1: Summary By Total
+      // Sheet 1: Summary By Total (Carton only, clean headers, uppercase SKU and Product Name)
       const summaryExportData = filteredSummaryRows.map((r) => ({
-        "SKU": r.sku,
-        "Product Description": r.name,
+        "SKU": r.sku.toUpperCase(),
+        "Product Description": r.name.toUpperCase(),
         "Brand": r.brandName,
         "UOM (Carton)": r.uom,
-        "Total IN (Qty)": r.totalIn,
-        "Total IN (Carton)": formatCartonLoose(r.totalIn, r.uom),
-        "Total OUT (Qty)": r.totalOut,
-        "Total OUT (Carton)": formatCartonLoose(r.totalOut, r.uom),
-        "Net Movement (Qty)": r.netMovement,
-        "Net Movement (Carton)": formatCartonLoose(r.netMovement, r.uom)
+        "Stock Level Before": formatCartonLoose(r.stockLevelBefore, r.uom),
+        "Total IN": formatCartonLoose(r.totalIn, r.uom),
+        "Total OUT": formatCartonLoose(r.totalOut, r.uom),
+        "Net Movement": formatCartonLoose(r.netMovement, r.uom),
+        "Stock Level After": formatCartonLoose(r.stockLevelAfter, r.uom)
       }));
       const wsSummary = XLSX.utils.json_to_sheet(summaryExportData);
       XLSX.utils.book_append_sheet(wb, wsSummary, "Summary By Total");
 
-      // Sheet 2: Movement Detail List
+      // Sheet 2: Movement Detail List (Carton format, clean headers, uppercase SKU and Product Name)
       const movementExportData = filteredMovementEvents.map((ev) => ({
         "Date & Time": ev.dateStr,
         "Movement Type": ev.type,
         "Category": ev.typeCategory,
         "Million Ref. Number": ev.millionRefNumber,
         "Ref / Source": ev.refNumber,
-        "SKU": ev.sku,
-        "Product Description": ev.productName,
+        "SKU": ev.sku.toUpperCase(),
+        "Product Description": ev.productName.toUpperCase(),
         "Brand": ev.brandName,
-        "IN Qty": ev.inQty || "",
-        "OUT Qty": ev.outQty || "",
+        "Stock Level Before": formatCartonLoose(ev.stockLevelBefore, ev.uom),
+        "IN": ev.inQty > 0 ? formatCartonLoose(ev.inQty, ev.uom) : "",
+        "OUT": ev.outQty > 0 ? formatCartonLoose(ev.outQty, ev.uom) : "",
+        "Stock Level After": formatCartonLoose(ev.stockLevelAfter, ev.uom),
         "Handled By": ev.handledBy,
         "Destination / Remark": ev.destinationOrRemark
       }));
@@ -824,7 +974,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
                   ? "bg-white text-[#0B57D0] shadow-2xs"
                   : "text-zinc-600 hover:text-zinc-900"
               }`}
-              title="Sunday to Saturday Cycle"
+              title="Monday to Sunday Cycle"
             >
               Current Week
             </button>
@@ -836,6 +986,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
                   ? "bg-white text-[#0B57D0] shadow-2xs"
                   : "text-zinc-600 hover:text-zinc-900"
               }`}
+              title="Monday to Sunday Cycle (Previous Week)"
             >
               Last Week
             </button>
