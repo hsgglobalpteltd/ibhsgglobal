@@ -92,14 +92,17 @@ export interface StockCardModuleProps {
 interface SummaryRow {
   sku: string;
   name: string;
+  brandId: string;
   brandName: string;
   brandRank: number;
   uom: number;
+  supplierCost: number;
   stockLevelBefore: number;
   totalIn: number;
   totalOut: number;
   netMovement: number;
   stockLevelAfter: number;
+  stockValue: number;
 }
 
 interface MovementEventRow {
@@ -253,8 +256,8 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
   const [selectedBrand, setSelectedBrand] = React.useState<string>("all");
   const [movementTypeFilter, setMovementTypeFilter] = React.useState<string>("all");
 
-  // Sorting
-  const [sortField, setSortField] = React.useState<string>("sku");
+  // Sorting (Default to Brand order, then SKU inside brand)
+  const [sortField, setSortField] = React.useState<string>("brand");
   const [sortDirection, setSortDirection] = React.useState<"asc" | "desc">("asc");
 
   // Selected Movement Event for Trace Details Popup Card
@@ -325,8 +328,8 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
 
   // Map of active products by lowercase SKU
   const productMap = React.useMemo(() => {
-    const map: Record<string, { sku: string; name: string; brandName: string; brandRank: number; uom: number }> = {};
-    const brandMap = new Map(brands.map((b) => [b.id, b]));
+    const map: Record<string, { sku: string; name: string; brandId: string; brandName: string; brandRank: number; uom: number; supplierCost: number }> = {};
+    const brandMap = new Map(brands.map((b) => [String(b.id || "").trim(), b]));
 
     products.forEach((p) => {
       const sku = String(p.sku || p.SKU || p.Code || "").trim().toUpperCase();
@@ -334,17 +337,21 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
 
       const rawName = p.display_name || p.name || p.Title || p.Item_Description || sku;
       const name = String(rawName).trim().toUpperCase();
-      const brandObj = brandMap.get(p.brands_id || "");
-      const brandName = brandObj?.display_name || brandObj?.name || "Other";
+      const rawBrandId = String(p.brands_id || p["Brands ID"] || p.Brands_ID || "").trim();
+      const brandObj = brandMap.get(rawBrandId);
+      const brandName = brandObj?.display_name || brandObj?.name || (rawBrandId || "Other");
       const brandRank = Number(brandObj?.rank || 999);
       const uom = Number(p.carton || p.uom || 1) || 1;
+      const supplierCost = Number(p.supplier_cost ?? p.cost ?? 0) || 0;
 
       map[sku.toLowerCase()] = {
         sku,
         name,
+        brandId: rawBrandId,
         brandName,
-        brandRank,
-        uom
+        brandRank: isNaN(brandRank) ? 999 : brandRank,
+        uom,
+        supplierCost
       };
     });
 
@@ -746,18 +753,23 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
 
       // Closing Stock Level (at endEpoch)
       const stockLevelAfter = getStockLevelAt(norm, endEpoch);
+      const supplierCost = Number(info.supplierCost || 0);
+      const stockValue = stockLevelAfter * supplierCost;
 
       rows.push({
         sku: (info.sku || sku).toUpperCase(),
         name: (info.name || sku).toUpperCase(),
+        brandId: info.brandId || "",
         brandName: info.brandName || "Other",
         brandRank: info.brandRank || 999,
         uom: info.uom || 1,
+        supplierCost,
         stockLevelBefore,
         totalIn,
         totalOut,
         netMovement: totalIn - totalOut,
-        stockLevelAfter
+        stockLevelAfter,
+        stockValue
       });
     });
 
@@ -785,15 +797,32 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       return true;
     });
 
-    // Sorting
+    // Sorting (Defaults to Brand order -> brandRank -> brandName -> hidden brandId -> sku inside brand)
     result.sort((a, b) => {
       let comp = 0;
-      if (sortField === "sku") comp = a.sku.localeCompare(b.sku, undefined, { numeric: true });
-      else if (sortField === "name") comp = a.name.localeCompare(b.name);
-      else if (sortField === "brand") comp = (a.brandRank - b.brandRank) || a.brandName.localeCompare(b.brandName);
-      else if (sortField === "in") comp = a.totalIn - b.totalIn;
-      else if (sortField === "out") comp = a.totalOut - b.totalOut;
-      else if (sortField === "net") comp = a.netMovement - b.netMovement;
+      if (sortField === "brand") {
+        comp = (a.brandRank - b.brandRank) ||
+               a.brandName.localeCompare(b.brandName) ||
+               a.brandId.localeCompare(b.brandId, undefined, { numeric: true }) ||
+               a.sku.localeCompare(b.sku, undefined, { numeric: true });
+      } else if (sortField === "sku") {
+        comp = a.sku.localeCompare(b.sku, undefined, { numeric: true });
+      } else if (sortField === "name") {
+        comp = a.name.localeCompare(b.name);
+      } else if (sortField === "in") {
+        comp = a.totalIn - b.totalIn;
+      } else if (sortField === "out") {
+        comp = a.totalOut - b.totalOut;
+      } else if (sortField === "net") {
+        comp = a.netMovement - b.netMovement;
+      }
+
+      if (comp === 0) {
+        comp = (a.brandRank - b.brandRank) ||
+               a.brandName.localeCompare(b.brandName) ||
+               a.brandId.localeCompare(b.brandId, undefined, { numeric: true }) ||
+               a.sku.localeCompare(b.sku, undefined, { numeric: true });
+      }
 
       return sortDirection === "asc" ? comp : -comp;
     });
@@ -855,8 +884,8 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
     try {
       const wb = XLSX.utils.book_new();
 
-      // Sheet 1: Summary By Total (Carton only, clean headers, uppercase SKU and Product Name)
-      const summaryExportData = filteredSummaryRows.map((r) => ({
+      // Sheet 1: Summary By Total (Carton only, clean headers, uppercase SKU and Product Name, Stock Value)
+      const summaryExportData: any[] = filteredSummaryRows.map((r) => ({
         "SKU": r.sku.toUpperCase(),
         "Product Description": r.name.toUpperCase(),
         "Brand": r.brandName,
@@ -865,9 +894,40 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         "Total IN": formatCartonLoose(r.totalIn, r.uom),
         "Total OUT": formatCartonLoose(r.totalOut, r.uom),
         "Net Movement": formatCartonLoose(r.netMovement, r.uom),
-        "Stock Level After": formatCartonLoose(r.stockLevelAfter, r.uom)
+        "Stock Level After": formatCartonLoose(r.stockLevelAfter, r.uom),
+        "Stock Value": `$${r.stockValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
       }));
+
+      // Calculate total Stock Value in Hand across all filtered products
+      const totalStockValueInHand = filteredSummaryRows.reduce((acc, r) => acc + (r.stockValue || 0), 0);
+
+      // Append bottom summary row for Stock Value in Hand
+      summaryExportData.push({
+        "SKU": "",
+        "Product Description": "Stock Value in Hand",
+        "Brand": "",
+        "UOM (Carton)": "",
+        "Stock Level Before": "",
+        "Total IN": "",
+        "Total OUT": "",
+        "Net Movement": "",
+        "Stock Level After": "",
+        "Stock Value": `$${totalStockValueInHand.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      });
+
       const wsSummary = XLSX.utils.json_to_sheet(summaryExportData);
+      wsSummary["!cols"] = [
+        { wch: 18 },
+        { wch: 35 },
+        { wch: 18 },
+        { wch: 14 },
+        { wch: 20 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 18 },
+        { wch: 20 },
+        { wch: 20 }
+      ];
       XLSX.utils.book_append_sheet(wb, wsSummary, "Summary By Total");
 
       // Sheet 2: Movement Detail List (Carton format, clean headers, uppercase SKU and Product Name)
@@ -888,6 +948,22 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         "Destination / Remark": ev.destinationOrRemark
       }));
       const wsMovements = XLSX.utils.json_to_sheet(movementExportData);
+      wsMovements["!cols"] = [
+        { wch: 18 },
+        { wch: 20 },
+        { wch: 10 },
+        { wch: 22 },
+        { wch: 18 },
+        { wch: 18 },
+        { wch: 35 },
+        { wch: 18 },
+        { wch: 20 },
+        { wch: 16 },
+        { wch: 16 },
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 30 }
+      ];
       XLSX.utils.book_append_sheet(wb, wsMovements, "Movement Transactions");
 
       const filename = `Stock_Card_${startDate || "All"}_to_${endDate || "All"}.xlsx`;

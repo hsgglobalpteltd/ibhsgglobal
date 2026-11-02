@@ -28,6 +28,7 @@ function normalizeKeysToPretty(item: any): any {
     description: "Description",
     image: "Image",
     carton: "Carton",
+    supplier_cost: "Supplier Cost",
     cost: "Cost",
     rank: "Rank",
     status: "Status",
@@ -72,6 +73,7 @@ function normalizeKeysToRaw(item: any): any {
     description: "description",
     image: "image",
     carton: "carton",
+    suppliercost: "supplier_cost",
     cost: "cost",
     rank: "rank",
     status: "status",
@@ -110,6 +112,7 @@ const defaultProductColumns: Column[] = [
   { id: "Display Name", header: "Display Name", accessor: "Display Name" },
   { id: "Image", header: "Image", accessor: "Image" },
   { id: "Carton", header: "Carton", accessor: "Carton" },
+  { id: "Supplier Cost", header: "Supplier Cost", accessor: "Supplier Cost" },
   { id: "Cost", header: "Cost", accessor: "Cost" },
   { id: "Rank", header: "Rank", accessor: "Rank" },
   { id: "Status", header: "Status", accessor: "Status" },
@@ -345,6 +348,7 @@ export function ProductsDatabaseModule({ profile }: ProductsDatabaseModuleProps)
         "Display Name": "",
         Image: "",
         Carton: "",
+        "Supplier Cost": "",
         Cost: "",
         Rank: "",
         Status: "Active",
@@ -1218,7 +1222,7 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
             </div>
 
             {/* Pricing, Packaging & Status */}
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-5 gap-3">
               <div className="flex flex-col gap-1.5">
                 <label className="text-xs font-semibold text-zinc-600">Carton UOM</label>
                 <input
@@ -1226,6 +1230,17 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
                   placeholder="e.g. 24"
                   value={formData.Carton !== undefined ? formData.Carton : ""}
                   onChange={(e) => handleChange("Carton", e.target.value)}
+                  className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-semibold text-zinc-600">Supplier Cost ($)</label>
+                <input
+                  type="text"
+                  placeholder="0.00"
+                  value={formData["Supplier Cost"] !== undefined ? formData["Supplier Cost"] : ""}
+                  onChange={(e) => handleChange("Supplier Cost", e.target.value)}
                   className="w-full h-9 text-xs bg-white border border-slate-200 rounded-lg px-3 text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] font-medium transition-all"
                 />
               </div>
@@ -1376,7 +1391,7 @@ function ProductEditForm({ product, brands, onSave, onCancel }: { product: any; 
             {/* Extra Dynamic Fields */}
             {Object.keys(formData)
               .filter((k) => {
-                if (['sku', "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "Carton H (mm)", "Carton W (mm)", "Carton L (mm)", "Pallet CTN", "Storage Condition", "Shelf Life", "id", "isNew"].includes(k)) return false;
+                if (['sku', "Brands ID", "Brand Name", "Display Name", "Image", "Carton", "Supplier Cost", "Cost", "Rank", "Status", "Single Barcode", "Carton Barcode", " Carton Weight", "Carton H (mm)", "Carton W (mm)", "Carton L (mm)", "Pallet CTN", "Storage Condition", "Shelf Life", "id", "isNew"].includes(k)) return false;
                 const cleanK = k.toLowerCase().replace(/[^a-z0-9]/g, '');
                 if (cleanK === "productmeta" || cleanK === "listincatalog") return false;
                 const hasUpperCaseEquivalent = Object.keys(formData).some(otherKey => 

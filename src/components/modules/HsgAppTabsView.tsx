@@ -161,6 +161,7 @@ export interface HsgContestRecord {
 export interface HsgContestSubmission {
   id: string;
   contest_id: string;
+  contest_title?: string;
   user_id?: string;
   user_phone: string;
   user_nickname: string;
@@ -171,6 +172,8 @@ export interface HsgContestSubmission {
   points_awarded?: number;
   extra_answers?: Record<string, any>;
   answer_json: Record<string, any>;
+  unlocked_via_passcode?: boolean;
+  pass_mode?: string;
   reject_reason?: string;
   winner_data: {
     is_winner?: boolean;
@@ -1164,7 +1167,7 @@ export function HsgContestTab({
       : null;
 
   const filteredSubs = localSubmissions.filter((s) => {
-    if (selectedContestId !== "ALL" && s.contest_id !== selectedContestId) return false;
+    if (selectedContestId !== "ALL" && String(s.contest_id || "").toLowerCase() !== selectedContestId.toLowerCase()) return false;
     if (statusFilter !== "ALL") {
       if (statusFilter === "pending" && s.status !== "submitted") return false;
       if (statusFilter === "approved" && s.status !== "approved") return false;
@@ -1255,8 +1258,8 @@ export function HsgContestTab({
           ) : (
             visibleContests.map((c) => {
               const isSelected = selectedContestId === c.id;
-              const subCount = submissions.filter((s) => s.contest_id === c.id).length;
-              const winnerCount = winners.filter((w) => w.contest_id === c.id).length;
+              const subCount = submissions.filter((s) => String(s.contest_id || "").toLowerCase() === String(c.id || "").toLowerCase()).length;
+              const winnerCount = winners.filter((w) => String(w.contest_id || "").toLowerCase() === String(c.id || "").toLowerCase()).length;
               const cap = c.max_total || c.submission_limits?.total_cap || 0;
               const hasAnnounced = Boolean(c.winners_announced);
               const linkedEvent = events.find((ev: any) => ev.id === c.required_event_id);
@@ -1606,8 +1609,14 @@ export function HsgContestTab({
                         <td className="py-2.5 px-3 max-w-[200px]">
                           <div className="truncate text-[11px] text-zinc-600">
                             {Object.entries(sub.extra_answers || sub.answer_json || {})
+                              .filter(([k]) => !k.startsWith("unlocked_") && k !== "pass_mode")
                               .map(([k, v]) => `${k}: ${v}`)
                               .join(" • ") || "None"}
+                            {(sub.unlocked_via_passcode || (sub.extra_answers as any)?.unlocked_via_passcode) && (
+                              <span className="ml-1 text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-bold border border-emerald-200/60">
+                                Passcode ✓
+                              </span>
+                            )}
                           </div>
                         </td>
                         <td className="py-2.5 px-3 whitespace-nowrap">
@@ -1914,23 +1923,55 @@ export function HsgContestTab({
 
               {/* Extra Answers */}
               <div className="space-y-2 p-3 rounded-lg bg-slate-50 border border-slate-200">
-                <div className="text-[10px] font-bold uppercase text-zinc-400">
-                  Contest Answers
+                <div className="flex items-center justify-between text-[10px] font-bold uppercase text-zinc-400">
+                  <span>Contest Answers</span>
+                  {(inspectSub.unlocked_via_passcode || (inspectSub.extra_answers as any)?.unlocked_via_passcode) && (
+                    <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded font-bold border border-emerald-300/60 lowercase first-letter:uppercase">
+                      Event Gate: Passcode Unlocked ✓
+                    </span>
+                  )}
                 </div>
-                {Object.keys(inspectSub.extra_answers || inspectSub.answer_json || {}).length === 0 ? (
-                  <div className="text-zinc-400 italic">No extra questions answered</div>
-                ) : (
-                  Object.entries(inspectSub.extra_answers || inspectSub.answer_json || {}).map(
-                    ([k, v]) => (
-                      <div key={k} className="text-xs">
-                        <span className="font-semibold text-zinc-700">{k}: </span>
-                        <span className="font-bold text-zinc-950">
-                          {typeof v === "object" ? JSON.stringify(v) : String(v)}
-                        </span>
-                      </div>
-                    )
-                  )
-                )}
+                {(() => {
+                  const inspContest = localContests.find((c) => String(c.id).toLowerCase() === String(inspectSub.contest_id).toLowerCase());
+                  const qList = (inspContest?.extra_questions || inspContest?.submission_questions || []) as Array<{ id?: string; question?: string }>;
+                  const answersMap = (inspectSub.extra_answers || inspectSub.answer_json || {}) as Record<string, any>;
+                  const displayedKeys = new Set<string>();
+
+                  return (
+                    <div className="space-y-2">
+                      {qList.map((q, idx) => {
+                        const qKey = q.id || `q_${idx + 1}`;
+                        displayedKeys.add(qKey);
+                        if (q.id) displayedKeys.add(q.id);
+                        const ans = answersMap[qKey] ?? answersMap[q.id || ""] ?? answersMap[`q_${idx + 1}`];
+                        if (ans === undefined || ans === null || ans === "") return null;
+                        return (
+                          <div key={idx} className="text-xs bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
+                            <div className="font-semibold text-zinc-500 text-[11px]">
+                              {idx + 1}. {q.question || qKey}
+                            </div>
+                            <div className="font-bold text-zinc-950 mt-0.5">
+                              {typeof ans === "object" ? JSON.stringify(ans) : String(ans)}
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {Object.entries(answersMap)
+                        .filter(([k]) => !displayedKeys.has(k) && !k.startsWith("unlocked_") && k !== "pass_mode")
+                        .map(([k, v]) => (
+                          <div key={k} className="text-xs bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
+                            <div className="font-semibold text-zinc-500 text-[11px]">{k}</div>
+                            <div className="font-bold text-zinc-950 mt-0.5">
+                              {typeof v === "object" ? JSON.stringify(v) : String(v)}
+                            </div>
+                          </div>
+                        ))}
+                      {Object.keys(answersMap).filter(([k]) => !k.startsWith("unlocked_") && k !== "pass_mode").length === 0 && (
+                        <div className="text-zinc-400 italic text-xs">No questions configured or answered</div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Current Status */}
