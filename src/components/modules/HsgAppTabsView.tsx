@@ -643,7 +643,7 @@ export function HsgContestTab({
       };
 
       // 0ms Optimistic Update
-      const targetId = editingId || `CONT-${Date.now().toString().slice(-6)}`;
+      const targetId = editingId || `cont-${Date.now().toString().slice(-6)}`;
       const optimisticPayload: any = {
         ...payload,
         id: targetId,
@@ -1346,7 +1346,7 @@ export function HsgContestTab({
                         title="Copy Public Share Link"
                         onClick={(e) => {
                           e.stopPropagation();
-                          const publicUrl = `https://plus.hsgglobal.sg/c/${c.id}`;
+                          const publicUrl = `https://plus.hsgglobal.sg/c/${c.id}`.toLowerCase();
                           navigator.clipboard.writeText(publicUrl);
                           showToast("Contest share link copied to clipboard", "success");
                         }}
@@ -6828,7 +6828,7 @@ export function HsgEventsTab({
                         type="button"
                         title="Copy Public Share Link"
                         onClick={() => {
-                          const publicUrl = `https://plus.hsgglobal.sg/e/${ev.id}`;
+                          const publicUrl = `https://plus.hsgglobal.sg/e/${ev.id}`.toLowerCase();
                           navigator.clipboard.writeText(publicUrl);
                           showToast("Event share link copied to clipboard", "success");
                         }}
@@ -7347,7 +7347,7 @@ export function HsgEventsTab({
       {/* VENUE CHECK-IN QR POSTER MODAL */}
       {qrModalEvent &&
         (() => {
-          const publicShareUrl = `https://plus.hsgglobal.sg/e/${qrModalEvent.id}`;
+          const publicShareUrl = `https://plus.hsgglobal.sg/e/${qrModalEvent.id}`.toLowerCase();
           const venueQrUrl = `https://plus.hsgglobal.sg/#events?id=${qrModalEvent.id}&vt=${qrModalEvent.venue_token || ""}`;
           return (
             <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
