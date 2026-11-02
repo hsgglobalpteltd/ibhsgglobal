@@ -648,7 +648,7 @@ export function HsgContestTab({
           id: q.id || `q_${idx + 1}`,
           label: q.question,
           type: q.type || "text",
-          required: false,
+          required: true,
         })),
       };
 
