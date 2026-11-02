@@ -137,7 +137,7 @@ export interface HsgContestRecord {
   extra_questions?: Array<{
     id: string;
     question: string;
-    type?: "text" | "radio";
+    type?: "text" | "number" | "url" | "radio";
     options?: string[];
     required?: boolean;
   }>;
@@ -438,7 +438,9 @@ export function HsgContestTab({
   const [reqNote, setReqNote] = React.useState<string>("");
   const [reqEventPasscode, setReqEventPasscode] = React.useState<string>("");
   const [isPublished, setIsPublished] = React.useState<boolean>(true);
-  const [extraQuestions, setExtraQuestions] = React.useState<Array<{ id: string; question: string }>>([]);
+  const [extraQuestions, setExtraQuestions] = React.useState<
+    Array<{ id: string; question: string; type?: "text" | "number" | "url" }>
+  >([]);
   const [prizes, setPrizes] = React.useState<HsgContestPrize[]>([]);
 
   const [uploadingFpPhoto, setUploadingFpPhoto] = React.useState<boolean>(false);
@@ -494,7 +496,11 @@ export function HsgContestTab({
       setIsPublished(Boolean(prefill.is_published));
       setExtraQuestions(
         Array.isArray(prefill.extra_questions)
-          ? prefill.extra_questions.map((q) => ({ id: q.id, question: q.question }))
+          ? prefill.extra_questions.map((q) => ({
+              id: q.id,
+              question: q.question,
+              type: (q as any).type || "text",
+            }))
           : []
       );
       setPrizes(Array.isArray(prefill.prizes) ? prefill.prizes : []);
@@ -613,6 +619,7 @@ export function HsgContestTab({
         extra_questions: extraQuestions.slice(0, 5).map((q, idx) => ({
           id: q.id || `q_${idx + 1}`,
           question: q.question.trim(),
+          type: q.type || "text",
         })),
         prizes: prizes.slice(0, 10).map((p, idx) => ({
           id: p.id || `prz_${idx + 1}`,
@@ -640,7 +647,7 @@ export function HsgContestTab({
         submission_questions: extraQuestions.map((q, idx) => ({
           id: q.id || `q_${idx + 1}`,
           label: q.question,
-          type: "text",
+          type: q.type || "text",
           required: false,
         })),
       };
@@ -1950,8 +1957,22 @@ export function HsgContestTab({
                             <div className="font-semibold text-zinc-500 text-[11px]">
                               {idx + 1}. {q.question || qKey}
                             </div>
-                            <div className="font-bold text-zinc-950 mt-0.5">
-                              {typeof ans === "object" ? JSON.stringify(ans) : String(ans)}
+                            <div className="font-bold text-zinc-950 mt-0.5 break-all">
+                              {typeof ans === "string" && (ans.startsWith("http://") || ans.startsWith("https://")) ? (
+                                <a
+                                  href={ans}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1"
+                                >
+                                  <span>{ans}</span>
+                                  <ExternalLink className="w-3 h-3 shrink-0" />
+                                </a>
+                              ) : typeof ans === "object" ? (
+                                JSON.stringify(ans)
+                              ) : (
+                                String(ans)
+                              )}
                             </div>
                           </div>
                         );
@@ -1961,8 +1982,22 @@ export function HsgContestTab({
                         .map(([k, v]) => (
                           <div key={k} className="text-xs bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
                             <div className="font-semibold text-zinc-500 text-[11px]">{k}</div>
-                            <div className="font-bold text-zinc-950 mt-0.5">
-                              {typeof v === "object" ? JSON.stringify(v) : String(v)}
+                            <div className="font-bold text-zinc-950 mt-0.5 break-all">
+                              {typeof v === "string" && (v.startsWith("http://") || v.startsWith("https://")) ? (
+                                <a
+                                  href={v}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1"
+                                >
+                                  <span>{v}</span>
+                                  <ExternalLink className="w-3 h-3 shrink-0" />
+                                </a>
+                              ) : typeof v === "object" ? (
+                                JSON.stringify(v)
+                              ) : (
+                                String(v)
+                              )}
                             </div>
                           </div>
                         ))}
@@ -2600,7 +2635,7 @@ export function HsgContestTab({
                       onClick={() =>
                         setExtraQuestions((prev) => [
                           ...prev,
-                          { id: `q_${Date.now().toString().slice(-4)}`, question: "" },
+                          { id: `q_${Date.now().toString().slice(-4)}`, question: "", type: "text" },
                         ])
                       }
                       className="h-7 px-2.5 rounded-md bg-slate-100 hover:bg-slate-200 text-zinc-800 text-[11px] font-semibold flex items-center gap-1"
@@ -2635,9 +2670,29 @@ export function HsgContestTab({
                               )
                             )
                           }
-                          placeholder="e.g. Which supermarket branch did you purchase from?"
+                          placeholder="e.g. Share your TikTok / IG post link or answer..."
                           className="flex-1 h-8 px-2.5 rounded bg-white border border-slate-200 text-xs font-medium outline-none focus:border-[#0B57D0]"
                         />
+                        <select
+                          value={q.type || "text"}
+                          onChange={(e) =>
+                            setExtraQuestions((prev) =>
+                              prev.map((item, i) =>
+                                i === idx
+                                  ? {
+                                      ...item,
+                                      type: e.target.value as "text" | "number" | "url",
+                                    }
+                                  : item
+                              )
+                            )
+                          }
+                          className="h-8 px-2.5 rounded bg-white border border-slate-200 text-xs font-semibold text-zinc-700 outline-none focus:border-[#0B57D0] shrink-0"
+                        >
+                          <option value="text">Input Text</option>
+                          <option value="number">Input Number</option>
+                          <option value="url">Input URL</option>
+                        </select>
                         <button
                           type="button"
                           onClick={() =>
