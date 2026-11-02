@@ -133,6 +133,7 @@ export interface HsgContestRecord {
   max_total?: number;
   required_event_id?: string | null;
   requirement_note?: string;
+  event_passcode?: string | null;
   extra_questions?: Array<{
     id: string;
     question: string;
@@ -432,6 +433,7 @@ export function HsgContestTab({
   const [maxTotal, setMaxTotal] = React.useState<number>(0);
   const [reqEventId, setReqEventId] = React.useState<string>("");
   const [reqNote, setReqNote] = React.useState<string>("");
+  const [reqEventPasscode, setReqEventPasscode] = React.useState<string>("");
   const [isPublished, setIsPublished] = React.useState<boolean>(true);
   const [extraQuestions, setExtraQuestions] = React.useState<Array<{ id: string; question: string }>>([]);
   const [prizes, setPrizes] = React.useState<HsgContestPrize[]>([]);
@@ -485,6 +487,7 @@ export function HsgContestTab({
       setMaxTotal(Number(prefill.max_total ?? prefill.submission_limits?.total_cap ?? 0));
       setReqEventId(prefill.required_event_id || "");
       setReqNote(prefill.requirement_note || "");
+      setReqEventPasscode(prefill.event_passcode || "");
       setIsPublished(Boolean(prefill.is_published));
       setExtraQuestions(
         Array.isArray(prefill.extra_questions)
@@ -509,6 +512,7 @@ export function HsgContestTab({
       setMaxTotal(0);
       setReqEventId("");
       setReqNote("");
+      setReqEventPasscode("");
       setIsPublished(true);
       setExtraQuestions([]);
       setPrizes([]);
@@ -602,6 +606,7 @@ export function HsgContestTab({
         max_total: Number(maxTotal || 0),
         required_event_id: reqEventId || null,
         requirement_note: reqNote.trim(),
+        event_passcode: reqEventPasscode.trim() || null,
         extra_questions: extraQuestions.slice(0, 5).map((q, idx) => ({
           id: q.id || `q_${idx + 1}`,
           question: q.question.trim(),
@@ -2308,7 +2313,7 @@ export function HsgContestTab({
                       <option value="">-- No Event Requirement (Open to All) --</option>
                       {(events || []).map((ev: any) => (
                         <option key={ev.id} value={ev.id}>
-                          {ev.title} ({formatDateShort(ev.event_date || ev.date || ev.created_at)})
+                          {ev.title}
                         </option>
                       ))}
                     </select>
@@ -2333,6 +2338,32 @@ export function HsgContestTab({
                     </p>
                   </div>
                 </div>
+
+                {reqEventId && (
+                  <div className="p-3.5 rounded-lg bg-amber-50/70 border border-amber-200/80 mt-2">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-amber-950">
+                        Event Bypass Passcode (5 Digits)
+                      </label>
+                      <span className="text-[10px] font-semibold text-amber-700 uppercase tracking-wide">
+                        Offline / Missed Event Unlock
+                      </span>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-3">
+                      <input
+                        type="text"
+                        maxLength={5}
+                        value={reqEventPasscode}
+                        onChange={(e) => setReqEventPasscode(e.target.value.replace(/\D/g, "").slice(0, 5))}
+                        placeholder="e.g. 58392"
+                        className="w-44 h-9 px-3 rounded-lg bg-white border border-amber-300 font-mono text-sm tracking-widest font-bold text-zinc-900 outline-none focus:border-[#0B57D0] focus:ring-2 focus:ring-[#0B57D0]/20"
+                      />
+                      <span className="text-[11px] text-amber-900/80 leading-relaxed">
+                        Allows members who missed or skipped joining the event to still submit this contest by entering this 5-digit passcode.
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* SECTION 3: SCHEDULE & SUBMISSION REWARDS */}
