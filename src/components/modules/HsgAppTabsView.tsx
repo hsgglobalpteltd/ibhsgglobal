@@ -3,6 +3,7 @@
 import * as React from "react";
 import jsPDF from "jspdf";
 import QRCode from "qrcode";
+import * as XLSX from "xlsx";
 import {
   Printer,
   Plus,
@@ -52,6 +53,8 @@ import {
   Trophy,
   Copy,
   Store,
+  ScanLine,
+  AlertTriangle,
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { compressImageFile } from "@/lib/imageCompressor";
@@ -181,6 +184,7 @@ export interface HsgContestSubmission {
   unlocked_via_passcode?: boolean;
   pass_mode?: string;
   reject_reason?: string;
+  ocr_data?: any;
   winner_data: {
     is_winner?: boolean;
     prize_note?: string;
@@ -376,6 +380,17 @@ function formatDateShort(ts: number | string | any): string {
   });
 }
 
+function formatTime(ts: number | string | any): string {
+  if (!ts) return "";
+  const num = Number(ts);
+  const d = !isNaN(num) && num > 0 ? new Date(num) : new Date(ts);
+  if (isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 // ============================================================================
 // 1. CONTEST TAB VIEW
 // ============================================================================
@@ -441,12 +456,15 @@ export function HsgContestTab({
   const [inspectSub, setInspectSub] = React.useState<HsgContestSubmission | null>(null);
   const [rejectReason, setRejectReason] = React.useState<string>("");
   const [processingSubId, setProcessingSubId] = React.useState<string | null>(null);
+  const [runningOcrSubId, setRunningOcrSubId] = React.useState<string | null>(null);
   const [zoomReceipt, setZoomReceipt] = React.useState<boolean>(false);
   const [adminAmountPaid, setAdminAmountPaid] = React.useState<string>("");
   const [adminQtyPurchased, setAdminQtyPurchased] = React.useState<string>("");
   const [adminStoreId, setAdminStoreId] = React.useState<string>("");
   const [adminStoreName, setAdminStoreName] = React.useState<string>("");
   const [adminStoreAddress, setAdminStoreAddress] = React.useState<string>("");
+  const [adminTxRef, setAdminTxRef] = React.useState<string>("");
+  const [adminPurchaseDateTime, setAdminPurchaseDateTime] = React.useState<string>("");
   const [storeSearchQuery, setStoreSearchQuery] = React.useState<string>("");
   const [isStoreDropdownOpen, setIsStoreDropdownOpen] = React.useState<boolean>(false);
 
@@ -499,9 +517,33 @@ export function HsgContestTab({
     setAdminStoreId(sub.store_id || "");
     setAdminStoreName(sub.store_name || "");
     setAdminStoreAddress(sub.store_address || "");
+    setAdminTxRef(sub.ocr_data?.transaction_ref || "");
+    setAdminPurchaseDateTime(sub.ocr_data?.purchase_datetime || "");
     setStoreSearchQuery("");
     setIsStoreDropdownOpen(false);
   };
+
+  // Inspect Modal Duplicate Detection
+  const duplicateMatchesInModal = React.useMemo(() => {
+    if (!inspectSub) return [];
+    const tx = adminTxRef.trim().toLowerCase();
+    const pDate = adminPurchaseDateTime.trim().toLowerCase();
+    if (!tx || !pDate) return [];
+    return localSubmissions.filter(
+      (s) =>
+        s.id !== inspectSub.id &&
+        s.ocr_data?.transaction_ref &&
+        s.ocr_data?.purchase_datetime &&
+        s.ocr_data.transaction_ref.trim().toLowerCase() === tx &&
+        s.ocr_data.purchase_datetime.trim().toLowerCase() === pDate
+    );
+  }, [inspectSub, adminTxRef, adminPurchaseDateTime, localSubmissions]);
+
+  const isInspectDuplicate =
+    Boolean(
+      inspectSub?.ocr_data?.diagnose_status &&
+        String(inspectSub.ocr_data.diagnose_status).includes("duplicate")
+    ) || duplicateMatchesInModal.length > 0;
 
   // Contest Create / Edit Modal
   const [showModal, setShowModal] = React.useState<boolean>(false);
@@ -916,6 +958,8 @@ export function HsgContestTab({
       store_id: adminStoreId.trim() || null,
       store_name: adminStoreName.trim() || null,
       store_address: adminStoreAddress.trim() || null,
+      transaction_ref: adminTxRef.trim() || null,
+      purchase_datetime: adminPurchaseDateTime.trim() || null,
     };
     setLocalSubmissions((prev) =>
       prev.map((s) =>
@@ -928,6 +972,11 @@ export function HsgContestTab({
               store_id: payload.store_id ?? s.store_id,
               store_name: payload.store_name ?? s.store_name,
               store_address: payload.store_address ?? s.store_address,
+              ocr_data: {
+                ...s.ocr_data,
+                transaction_ref: adminTxRef.trim(),
+                purchase_datetime: adminPurchaseDateTime.trim(),
+              },
             }
           : s
       )
@@ -964,6 +1013,8 @@ export function HsgContestTab({
       store_id: adminStoreId.trim() || null,
       store_name: adminStoreName.trim() || null,
       store_address: adminStoreAddress.trim() || null,
+      transaction_ref: adminTxRef.trim() || null,
+      purchase_datetime: adminPurchaseDateTime.trim() || null,
     };
     try {
       const res = await fetch(
@@ -986,6 +1037,11 @@ export function HsgContestTab({
                 store_id: payload.store_id ?? s.store_id,
                 store_name: payload.store_name ?? s.store_name,
                 store_address: payload.store_address ?? s.store_address,
+                ocr_data: {
+                  ...s.ocr_data,
+                  transaction_ref: adminTxRef.trim(),
+                  purchase_datetime: adminPurchaseDateTime.trim(),
+                },
               }
             : s
         )
@@ -997,6 +1053,61 @@ export function HsgContestTab({
       showToast(err.message || "Failed to update details", "error");
     } finally {
       setProcessingSubId(null);
+    }
+  };
+
+  // Run OCR on submission directly from inside Inspect Modal
+  const handleRunOcrInModal = async (sub: HsgContestSubmission) => {
+    if (!sub.receipt_photo_url) {
+      showToast("No receipt photo available to scan", "error");
+      return;
+    }
+    setRunningOcrSubId(sub.id);
+    showToast("Running receipt OCR analysis...", "info");
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/run-check`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operator_name: "Admin" }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || data.message || "OCR run failed");
+      const updated = data.submission || sub;
+
+      if (updated.amount_paid !== null && updated.amount_paid !== undefined && Number(updated.amount_paid) > 0) {
+        setAdminAmountPaid(String(updated.amount_paid));
+      }
+      if (updated.items_count !== null && updated.items_count !== undefined && Number(updated.items_count) > 0) {
+        setAdminQtyPurchased(String(updated.items_count));
+      }
+      if (updated.store_id || updated.ocr_data?.assign_store_id) {
+        setAdminStoreId(updated.store_id || updated.ocr_data?.assign_store_id || "");
+      }
+      if (updated.store_name || updated.ocr_data?.store_name) {
+        setAdminStoreName(updated.store_name || updated.ocr_data?.store_name || "");
+      }
+      if (updated.store_address || updated.ocr_data?.store_address) {
+        setAdminStoreAddress(updated.store_address || updated.ocr_data?.store_address || "");
+      }
+      if (updated.ocr_data?.transaction_ref) {
+        setAdminTxRef(updated.ocr_data.transaction_ref);
+      }
+      if (updated.ocr_data?.purchase_datetime) {
+        setAdminPurchaseDateTime(updated.ocr_data.purchase_datetime);
+      }
+
+      setInspectSub(updated);
+      setLocalSubmissions((prev) => prev.map((s) => (s.id === sub.id ? updated : s)));
+      showToast("OCR analysis complete! Verification fields updated.", "success");
+      onRefresh();
+    } catch (err: any) {
+      showToast(err.message || "Failed to run OCR", "error");
+    } finally {
+      setRunningOcrSubId(null);
     }
   };
 
@@ -1104,6 +1215,76 @@ export function HsgContestTab({
       showToast(err.message || "Failed to reject entry", "error");
     } finally {
       setProcessingSubId(null);
+    }
+  };
+
+  // Revoke submission back to pending review
+  const handleRevokeSubmission = async (sub: HsgContestSubmission) => {
+    const prevStatus = sub.status;
+    const prevReason = sub.reject_reason;
+    setProcessingSubId(sub.id);
+    setLocalSubmissions((prev) =>
+      prev.map((s) =>
+        s.id === sub.id
+          ? { ...s, status: "submitted", reject_reason: undefined, points_awarded: 0 }
+          : s
+      )
+    );
+    showToast("Submission revoked back to pending review", "success");
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/re-review`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || data.error || "Revoke failed");
+      onRefresh();
+    } catch (err: any) {
+      setLocalSubmissions((prev) =>
+        prev.map((s) => (s.id === sub.id ? { ...s, status: prevStatus, reject_reason: prevReason } : s))
+      );
+      showToast(err.message || "Failed to revoke submission", "error");
+    } finally {
+      setProcessingSubId(null);
+    }
+  };
+
+  // Run OCR on single contest submission
+  const handleRunOcrSingle = async (sub: HsgContestSubmission) => {
+    if (!sub.receipt_photo_url) {
+      showToast("No receipt photo to analyze", "error");
+      return;
+    }
+    setRunningOcrSubId(sub.id);
+    showToast("Running receipt OCR analysis...", "info");
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/run-check`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ operator_name: "Admin" }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || data.message || "OCR run failed");
+      if (data.submission) {
+        setLocalSubmissions((prev) =>
+          prev.map((s) => (s.id === sub.id ? { ...s, ...data.submission } : s))
+        );
+      }
+      showToast("OCR analysis completed! Ticket data updated.", "success");
+      onRefresh();
+    } catch (err: any) {
+      showToast(err.message || "Failed to run OCR", "error");
+    } finally {
+      setRunningOcrSubId(null);
     }
   };
 
@@ -1260,7 +1441,7 @@ export function HsgContestTab({
     }
   };
 
-  // CSV Report Generator (Exact 5 columns as specified by user)
+  // Pure Contest Report Generator (.xlsx) — No summarization, pure submission records with hyperlinks
   const handleDownloadContestReport = () => {
     if (!selectedContestId || selectedContestId === "ALL") {
       showToast("Please select a specific contest to download the report", "error");
@@ -1277,119 +1458,194 @@ export function HsgContestTab({
       targetContest.frontpage_title ||
       selectedContestId;
 
-    const approvedSubs = submissions.filter(
-      (s) => s.contest_id === selectedContestId && s.status === "approved"
+    const contestSubs = submissions.filter(
+      (s) => String(s.contest_id).toLowerCase() === String(selectedContestId).toLowerCase()
     );
 
-    if (approvedSubs.length === 0) {
-      showToast("No approved submissions found for this contest", "error");
+    if (contestSubs.length === 0) {
+      showToast("No submissions found for this contest", "error");
       return;
     }
 
-    const userGroups = new Map<
-      string,
-      {
-        userDisplay: string;
-        subs: HsgContestSubmission[];
-      }
-    >();
+    // Sort submissions chronologically (oldest to newest)
+    contestSubs.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
 
-    approvedSubs.forEach((sub) => {
-      const uid = sub.user_id || sub.user_phone || "unknown";
-      if (!userGroups.has(uid)) {
-        const nick = sub.user_nickname || "User";
-        const phoneDigits = String(sub.user_phone || "").replace(/\D/g, "");
-        const last4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : phoneDigits || "0000";
-        const displayUserId = sub.user_id
-          ? sub.user_id.startsWith("USR-")
-            ? sub.user_id
-            : `USR-${sub.user_id.slice(-4)}`
-          : "USR-0000";
-        const userColumn = `${nick} ${last4} | ${displayUserId}`;
-        userGroups.set(uid, {
-          userDisplay: userColumn,
-          subs: [],
-        });
-      }
-      userGroups.get(uid)!.subs.push(sub);
+    // Dynamic question columns from contest definition and any submission answers
+    const contestQuestions = (targetContest.extra_questions || targetContest.submission_questions || []) as Array<{
+      id?: string;
+      question?: string;
+      type?: string;
+      options?: string[];
+    }>;
+
+    const questionCols: Array<{ key: string; header: string; type?: string }> = [];
+
+    contestQuestions.forEach((q, idx) => {
+      const key = q.id || `q_${idx + 1}`;
+      const header = (q.question && q.question.trim()) || `Question ${idx + 1}`;
+      questionCols.push({ key, header, type: q.type });
     });
 
+    // Check if any submission has additional question keys not in contestQuestions (e.g. q_1..q_8)
+    const existingKeys = new Set(questionCols.map((q) => q.key));
+    contestSubs.forEach((s) => {
+      const answers = (s.extra_answers || s.answer_json || {}) as Record<string, any>;
+      Object.keys(answers).forEach((k) => {
+        if (
+          !existingKeys.has(k) &&
+          !k.startsWith("unlocked_") &&
+          k !== "pass_mode" &&
+          k !== "receipt_photo_url"
+        ) {
+          existingKeys.add(k);
+          questionCols.push({
+            key: k,
+            header: k.startsWith("q_") ? `Question ${k.replace("q_", "")}` : k,
+            type: "text",
+          });
+        }
+      });
+    });
+
+    // Header labels as explicitly requested:
+    // Submit, User ID, Name, Buy at, Amount, Quantity, Status, {Question 1 text}, {Question 2 text} and so on
     const headers = [
-      "User",
-      "Total Submission",
-      "Total Qty Purchase",
-      "Total Amount Spend",
-      "Submissions & Answers",
+      "Submit",
+      "User ID",
+      "Name",
+      "Buy at",
+      "Amount",
+      "Quantity",
+      "Status",
+      ...questionCols.map((q) => q.header),
     ];
 
-    const rows: string[][] = [];
+    // Helper to format date cleanly as dd/mm/yyyy hh:mm
+    const formatSubmitDate = (ts: any) => {
+      if (!ts) return "-";
+      const num = Number(ts);
+      const d = !isNaN(num) && num > 0 ? new Date(num) : new Date(ts);
+      if (isNaN(d.getTime())) return "-";
+      const dd = String(d.getDate()).padStart(2, "0");
+      const mm = String(d.getMonth() + 1).padStart(2, "0");
+      const yyyy = d.getFullYear();
+      const hh = String(d.getHours()).padStart(2, "0");
+      const min = String(d.getMinutes()).padStart(2, "0");
+      return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+    };
 
-    userGroups.forEach(({ userDisplay, subs }) => {
-      subs.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+    const dataRows: any[][] = [];
+    const hyperlinksToAttach: Array<{ r: number; c: number; url: string }> = [];
 
-      const totalSub = subs.length;
-      let totalQty = 0;
-      let totalSpend = 0;
-      const submissionLines: string[] = [];
+    contestSubs.forEach((sub, rowIdx) => {
+      // 1. Submit timestamp
+      const submitTime = formatSubmitDate(sub.created_at);
 
-      subs.forEach((s) => {
-        totalQty += Number(s.items_count || 1);
-        totalSpend += Number(s.amount_paid || 0);
+      // 2. User ID
+      const displayUserId = sub.user_id
+        ? sub.user_id.startsWith("USR-")
+          ? sub.user_id
+          : `USR-${sub.user_id.slice(-4)}`
+        : "USR-0000";
 
-        const d = new Date(s.created_at || Date.now());
-        const dd = String(d.getDate()).padStart(2, "0");
-        const mm = String(d.getMonth() + 1).padStart(2, "0");
-        const yyyy = d.getFullYear();
-        const dateStr = `${dd}/${mm}/${yyyy}`;
+      // 3. Name and last 4 digit phone
+      const nick = sub.user_nickname || "User";
+      const phoneDigits = String(sub.user_phone || "").replace(/\D/g, "");
+      const last4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : phoneDigits;
+      const nameWithPhone = last4 ? `${nick} (${last4})` : nick;
 
-        const rawAnswers = s.extra_answers || s.answer_json || {};
-        const ansList: string[] = [];
-        Object.entries(rawAnswers).forEach(([k, v], idx) => {
-          if (v !== undefined && v !== null && v !== "") {
-            const vStr = typeof v === "object" ? JSON.stringify(v) : String(v).replace(/[\r\n]+/g, " ");
-            ansList.push(`A${idx + 1}: ${vStr}`);
-          }
-        });
-        const ansJoined = ansList.length > 0 ? ` ${ansList.join(", ")}` : "";
-        submissionLines.push(`${dateStr}${ansJoined}`);
+      // 4. Buy at (purchase store id and store name)
+      const buyAt = sub.store_id
+        ? sub.store_name && sub.store_name !== sub.store_id
+          ? `${sub.store_name} (${sub.store_id})`
+          : sub.store_id
+        : sub.store_name || "-";
+
+      // 5. Amount
+      const amount = Number(sub.amount_paid || 0);
+
+      // 6. Quantity
+      const quantity = Number(sub.items_count || 1);
+
+      // 7. Status
+      let statusText = "Pending";
+      if (sub.status === "approved" || sub.status === "winner") {
+        statusText = "Approved";
+      } else if (sub.status === "rejected") {
+        statusText = "Rejected";
+      }
+
+      // 8. Dynamic Answers
+      const answersMap = (sub.extra_answers || sub.answer_json || {}) as Record<string, any>;
+      const answerValues: any[] = [];
+
+      questionCols.forEach((qCol, colOffset) => {
+        const rawAns = answersMap[qCol.key] ?? answersMap[`q_${colOffset + 1}`];
+        let ansStr = "";
+        if (rawAns !== undefined && rawAns !== null && rawAns !== "") {
+          ansStr = typeof rawAns === "object" ? JSON.stringify(rawAns) : String(rawAns).trim();
+        }
+
+        const isUrl =
+          qCol.type === "url" ||
+          ansStr.startsWith("http://") ||
+          ansStr.startsWith("https://");
+
+        if (isUrl && ansStr) {
+          hyperlinksToAttach.push({
+            r: rowIdx + 1,
+            c: 7 + colOffset,
+            url: ansStr,
+          });
+        }
+
+        answerValues.push(ansStr || "-");
       });
 
-      rows.push([
-        userDisplay,
-        String(totalSub),
-        String(totalQty),
-        `$${totalSpend.toFixed(2)}`,
-        submissionLines.join("\n"),
+      dataRows.push([
+        submitTime,
+        displayUserId,
+        nameWithPhone,
+        buyAt,
+        amount,
+        quantity,
+        statusText,
+        ...answerValues,
       ]);
     });
 
-    const csvContent =
-      "\uFEFF" +
-      [
-        headers.join(","),
-        ...rows.map((row) =>
-          row
-            .map((field) => {
-              const str = String(field);
-              if (str.includes(",") || str.includes('"') || str.includes("\n")) {
-                return `"${str.replace(/"/g, '""')}"`;
-              }
-              return str;
-            })
-            .join(",")
-        ),
-      ].join("\r\n");
+    const aoa = [headers, ...dataRows];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
 
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `Contest_Report_${contestName.replace(/[^a-zA-Z0-9_-]/g, "_")}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-    showToast("Contest report exported successfully", "success");
+    // Attach hyperlinks for URL answers
+    hyperlinksToAttach.forEach(({ r, c, url }) => {
+      const cellRef = XLSX.utils.encode_cell({ r, c });
+      if (ws[cellRef]) {
+        ws[cellRef].l = { Target: url, Tooltip: url };
+      }
+    });
+
+    // Set readable column widths
+    ws["!cols"] = [
+      { wch: 18 }, // Submit
+      { wch: 14 }, // User ID
+      { wch: 22 }, // Name
+      { wch: 24 }, // Buy at
+      { wch: 12 }, // Amount
+      { wch: 10 }, // Quantity
+      { wch: 12 }, // Status
+      ...questionCols.map(() => ({ wch: 32 })), // Question columns
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Contest Submissions");
+
+    const safeContestName = contestName.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const dateStr = new Date().toISOString().split("T")[0];
+    const fileName = `Contest_Report_${safeContestName}_${dateStr}.xlsx`;
+
+    XLSX.writeFile(wb, fileName);
+    showToast("Contest report exported successfully (.xlsx)", "success");
   };
 
   // Filtered lists
@@ -1715,7 +1971,7 @@ export function HsgContestTab({
                 type="button"
                 onClick={handleDownloadContestReport}
                 className="h-7 px-3 rounded-md border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition active:scale-98"
-                title="Download Contest Report CSV"
+                title="Download Contest Report Excel (.xlsx)"
               >
                 <Download className="w-3.5 h-3.5 text-zinc-500" />
                 <span>Download Report</span>
@@ -1774,10 +2030,11 @@ export function HsgContestTab({
               <table className="w-full text-left text-xs border-collapse">
                 <thead className="sticky top-0 bg-[#F8F9FA] border-b border-slate-200 text-zinc-500 text-[11px] font-semibold select-none z-10">
                   <tr>
-                    <th className="py-2.5 px-3">Date</th>
+                    <th className="py-2.5 px-3">Submit</th>
                     <th className="py-2.5 px-3">User</th>
-                    <th className="py-2.5 px-3">Receipt</th>
-                    <th className="py-2.5 px-3">Amount & Qty</th>
+                    <th className="py-2.5 px-3">Ticket</th>
+                    <th className="py-2.5 px-3">Ticket Data</th>
+                    <th className="py-2.5 px-3">Answer</th>
                     <th className="py-2.5 px-3">Status</th>
                     <th className="py-2.5 px-3 text-right">Actions</th>
                   </tr>
@@ -1808,40 +2065,113 @@ export function HsgContestTab({
                       sub.user_phone?.replace(/^\+/, "") ||
                       "";
 
+                    // Determine base display name (prevent duplicating last4 if nickname is default "HSG Member xxxx")
+                    const rawNick = (sub.user_nickname || uObj?.nickname || "").trim();
+                    const isDefaultNick =
+                      !rawNick ||
+                      rawNick === "Member" ||
+                      rawNick === "HSG Member" ||
+                      rawNick.startsWith("HSG Member") ||
+                      rawNick.startsWith("Member_") ||
+                      rawNick.startsWith("Member ");
+                    const baseDisplayName = isDefaultNick ? "HSG Member" : rawNick;
+
+                    // Ticket data
+                    const hasAmount =
+                      sub.amount_paid !== null &&
+                      sub.amount_paid !== undefined &&
+                      Number(sub.amount_paid) > 0;
+                    const outletId = sub.store_id || sub.ocr_data?.assign_store_id || "";
+                    const hasTicketData = hasAmount || Boolean(outletId);
+                    const amountDisplay = `$${Number(sub.amount_paid || 0).toFixed(2)}`;
+                    const qtyDisplay = `${sub.items_count || 1} Pcs`;
+                    const outletDisplay = outletId || "-";
+
+                    // Duplicate receipt detection
+                    const subTx = (sub.ocr_data?.transaction_ref || "").trim().toLowerCase();
+                    const subTime = (sub.ocr_data?.purchase_datetime || "").trim().toLowerCase();
+                    const isDuplicateTicket =
+                      Boolean(sub.ocr_data?.diagnose_status && String(sub.ocr_data.diagnose_status).includes("duplicate")) ||
+                      (Boolean(subTx && subTime) &&
+                        filteredSubs.some(
+                          (other) =>
+                            other.id !== sub.id &&
+                            other.ocr_data?.transaction_ref &&
+                            other.ocr_data?.purchase_datetime &&
+                            other.ocr_data.transaction_ref.trim().toLowerCase() === subTx &&
+                            other.ocr_data.purchase_datetime.trim().toLowerCase() === subTime
+                        ));
+
+                    // Answers extraction
+                    const answersMap = (sub.extra_answers || sub.answer_json || {}) as Record<string, any>;
+                    const answerEntries: Array<{ label?: string; val: string; isUrl: boolean }> = [];
+                    Object.entries(answersMap).forEach(([k, v]) => {
+                      if (
+                        k.startsWith("unlocked_") ||
+                        k === "pass_mode" ||
+                        k === "receipt_photo_url" ||
+                        v === undefined ||
+                        v === null ||
+                        v === ""
+                      ) {
+                        return;
+                      }
+                      const valStr = typeof v === "object" ? JSON.stringify(v) : String(v).trim();
+                      if (!valStr) return;
+                      const isUrl = valStr.startsWith("http://") || valStr.startsWith("https://");
+                      answerEntries.push({
+                        label: k.startsWith("q_") ? `Q${k.replace("q_", "")}` : k,
+                        val: valStr,
+                        isUrl,
+                      });
+                    });
+
                     return (
                       <tr key={sub.id} className="hover:bg-slate-50/70 transition">
-                        <td className="py-2.5 px-3 whitespace-nowrap text-zinc-500">
-                          {formatDateShort(sub.created_at)}
-                        </td>
+                        {/* 1. Submit: Date and Time */}
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           <div className="font-semibold text-zinc-900">
-                            {sub.user_nickname || uObj?.nickname || "Member"}
+                            {formatDateShort(sub.created_at)}
                           </div>
-                          <div className="font-mono text-[11px] text-zinc-600 mt-0.5">
-                            {isPrivacyOff ? (
-                              <div className="inline-flex items-center gap-1.5">
-                                <span>{isRevealed ? fullPhone : `...${last4}`}</span>
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleRevealPhone(uKey);
-                                  }}
-                                  title={isRevealed ? "Hide Full Number" : "User privacy is OFF - Click to reveal"}
-                                  className="p-0.5 rounded hover:bg-slate-200 text-zinc-400 hover:text-zinc-700 transition cursor-pointer"
-                                >
-                                  {isRevealed ? (
-                                    <EyeOff className="w-3 h-3 text-[#0B57D0]" />
-                                  ) : (
-                                    <Eye className="w-3 h-3 text-zinc-500" />
-                                  )}
-                                </button>
-                              </div>
-                            ) : (
-                              <span>...{last4}</span>
+                          <div className="text-[11px] text-zinc-400 font-normal">
+                            {formatTime(sub.created_at)}
+                          </div>
+                        </td>
+
+                        {/* 2. User: Name and Phone (Single Line) */}
+                        <td className="py-2.5 px-3 whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5 text-xs">
+                            <span className="font-semibold text-zinc-900">
+                              {baseDisplayName}
+                            </span>
+                            <span className="font-mono text-zinc-600 font-medium">
+                              {isRevealed ? fullPhone : last4}
+                            </span>
+                            {isPrivacyOff && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  toggleRevealPhone(uKey);
+                                }}
+                                title={
+                                  isRevealed
+                                    ? "Hide Full Number"
+                                    : "User privacy is OFF - Click to reveal full number"
+                                }
+                                className="p-0.5 rounded hover:bg-slate-200 text-zinc-400 hover:text-zinc-700 transition cursor-pointer inline-flex items-center"
+                              >
+                                {isRevealed ? (
+                                  <EyeOff className="w-3.5 h-3.5 text-[#0B57D0]" />
+                                ) : (
+                                  <Eye className="w-3.5 h-3.5 text-zinc-500" />
+                                )}
+                              </button>
                             )}
                           </div>
                         </td>
+
+                        {/* 3. Ticket: Receipt thumbnail */}
                         <td className="py-2.5 px-3">
                           {sub.receipt_photo_url ? (
                             <img
@@ -1854,59 +2184,148 @@ export function HsgContestTab({
                             <span className="text-[11px] text-zinc-400">-</span>
                           )}
                         </td>
+
+                        {/* 4. Ticket Data: Plain text or Run OCR icon button + Duplicate warning */}
                         <td className="py-2.5 px-3 whitespace-nowrap">
-                          <div className="font-semibold text-zinc-900">
-                            ${Number(sub.amount_paid || 0).toFixed(2)}
-                          </div>
-                          <div className="text-[11px] text-zinc-400 font-normal">
-                            {sub.items_count || 1} item(s)
+                          <div className="inline-flex items-center gap-1.5">
+                            {isDuplicateTicket && (
+                              <span
+                                className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1 shrink-0"
+                                title={`Duplicate receipt detected: ${sub.ocr_data?.diagnose_status || "Same Transaction ID & Timestamp"}`}
+                              >
+                                <span>⚠️</span>
+                                <span>Duplicate</span>
+                              </span>
+                            )}
+                            {hasTicketData ? (
+                              <span className="text-xs text-zinc-800 font-medium">
+                                {amountDisplay} | {qtyDisplay} | Outlet ID : {outletDisplay}
+                              </span>
+                            ) : (
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={runningOcrSubId === sub.id || !sub.receipt_photo_url}
+                                  onClick={() => handleRunOcrSingle(sub)}
+                                  className="h-6 w-6 rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 hover:text-[#0B57D0] flex items-center justify-center transition shadow-2xs cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                                  title={
+                                    sub.receipt_photo_url
+                                      ? "Run OCR to detect amount, qty and outlet"
+                                      : "No receipt uploaded"
+                                  }
+                                >
+                                  {runningOcrSubId === sub.id ? (
+                                    <Loader2 className="w-3 h-3 animate-spin text-[#0B57D0]" />
+                                  ) : (
+                                    <ScanLine className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                                {!sub.receipt_photo_url && (
+                                  <span className="text-[11px] text-zinc-400">-</span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         </td>
+
+                        {/* 5. Answer: Hyperlink if URL */}
+                        <td className="py-2.5 px-3 max-w-[200px]">
+                          {answerEntries.length === 0 ? (
+                            <span className="text-[11px] text-zinc-400">-</span>
+                          ) : (
+                            <div className="flex flex-col gap-0.5">
+                              {answerEntries.map((ans, aIdx) => (
+                                <div key={aIdx} className="truncate text-xs">
+                                  {ans.isUrl ? (
+                                    <a
+                                      href={ans.val}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="text-[#0B57D0] hover:underline inline-flex items-center gap-1 font-medium"
+                                      title={ans.val}
+                                    >
+                                      <span className="truncate max-w-[170px]">
+                                        {ans.val.replace(/^https?:\/\/(www\.)?/i, "")}
+                                      </span>
+                                      <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                    </a>
+                                  ) : (
+                                    <span className="text-zinc-700 truncate" title={ans.val}>
+                                      {ans.val}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+
+                        {/* 6. Status: With rejection reason if rejected */}
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           {isApproved ? (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
                               Approved (+{sub.points_awarded || c?.reward_points || 10} pts)
                             </span>
                           ) : isRejected ? (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200">
-                              Rejected
-                            </span>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-rose-50 text-rose-700 border border-rose-200 w-fit">
+                                Rejected
+                              </span>
+                              {sub.reject_reason && (
+                                <span
+                                  className="text-[11px] text-rose-600 font-normal leading-tight max-w-[180px] truncate"
+                                  title={sub.reject_reason}
+                                >
+                                  {sub.reject_reason}
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
                               Pending Review
                             </span>
                           )}
                         </td>
+
+                        {/* 7. Actions: Dynamic Approve/Reject vs Revoke button switching */}
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              disabled={isProcessing}
-                              onClick={() => handleQuickApprove(sub)}
-                              className={`h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 ${
-                                isApproved
-                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200 opacity-60 cursor-default"
-                                  : "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98"
-                              }`}
-                              title={isApproved ? "Already Approved" : "Approve & Credit Points"}
-                            >
-                              <Check className="w-3 h-3" />
-                              <span>Approve</span>
-                            </button>
-                            <button
-                              type="button"
-                              disabled={isProcessing}
-                              onClick={() => handleQuickReject(sub)}
-                              className={`h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 ${
-                                isRejected
-                                  ? "bg-rose-50 text-rose-700 border border-rose-200 opacity-60 cursor-default"
-                                  : "bg-rose-600 hover:bg-rose-700 text-white cursor-pointer active:scale-98"
-                              }`}
-                              title={isRejected ? "Already Rejected" : "Reject & Revoke Points"}
-                            >
-                              <X className="w-3 h-3" />
-                              <span>Reject</span>
-                            </button>
+                            {!isApproved && !isRejected ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={isProcessing}
+                                  onClick={() => handleQuickApprove(sub)}
+                                  className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98 disabled:opacity-50"
+                                  title="Approve & Credit Points"
+                                >
+                                  <Check className="w-3 h-3" />
+                                  <span>Approve</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isProcessing}
+                                  onClick={() => handleQuickReject(sub)}
+                                  className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 bg-rose-600 hover:bg-rose-700 text-white cursor-pointer active:scale-98 disabled:opacity-50"
+                                  title="Reject & Revoke Points"
+                                >
+                                  <X className="w-3 h-3" />
+                                  <span>Reject</span>
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={isProcessing}
+                                onClick={() => handleRevokeSubmission(sub)}
+                                className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 border border-slate-200 bg-white hover:bg-amber-50 text-amber-700 hover:border-amber-300 cursor-pointer active:scale-98 disabled:opacity-50"
+                                title="Revoke status back to Pending Review"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                <span>Revoke</span>
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => openInspectSub(sub)}
@@ -2207,7 +2626,67 @@ export function HsgContestTab({
                     <span className="text-[11px] font-bold text-zinc-900 uppercase tracking-wide">
                       Purchase Verification (Reporting)
                     </span>
-                    <span className="text-[10px] text-zinc-400">Optional</span>
+                    <div className="flex items-center gap-2">
+                      {inspectSub.receipt_photo_url && (
+                        <button
+                          type="button"
+                          disabled={runningOcrSubId === inspectSub.id}
+                          onClick={() => handleRunOcrInModal(inspectSub)}
+                          title="Run OCR to detect amount, qty, store ID, transaction ID, and timestamp"
+                          className="h-6 w-6 rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 hover:text-[#0B57D0] flex items-center justify-center transition shadow-2xs cursor-pointer active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {runningOcrSubId === inspectSub.id ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-[#0B57D0]" />
+                          ) : (
+                            <ScanLine className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                      )}
+                      <span className="text-[10px] text-zinc-400">Optional</span>
+                    </div>
+                  </div>
+
+                  {/* Duplicate Receipt Alert */}
+                  {isInspectDuplicate && (
+                    <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 flex items-start gap-2 text-rose-800">
+                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                      <div className="text-[11px] leading-relaxed">
+                        <p className="font-bold">⚠️ Duplicate Receipt Alert</p>
+                        <p className="text-rose-700 mt-0.5">
+                          {duplicateMatchesInModal.length > 0
+                            ? `Identical Transaction ID (${adminTxRef.trim()}) and Purchase Timestamp found in other submission (${duplicateMatchesInModal.map((m) => m.id).join(", ")}).`
+                            : String(inspectSub?.ocr_data?.diagnose_status || "A submission with identical receipt transaction reference and date was already detected.")}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Transaction ID & Purchase Timestamp */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-zinc-600 mb-1">
+                        Transaction ID
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. TX-1092837 or Ref No."
+                        value={adminTxRef}
+                        onChange={(e) => setAdminTxRef(e.target.value)}
+                        className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-mono font-medium text-slate-900 outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-zinc-600 mb-1">
+                        Purchase Timestamp
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 2025-05-12 14:30"
+                        value={adminPurchaseDateTime}
+                        onChange={(e) => setAdminPurchaseDateTime(e.target.value)}
+                        className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-mono font-medium text-slate-900 outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]"
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
@@ -2244,9 +2723,8 @@ export function HsgContestTab({
                   <div className="grid grid-cols-2 gap-3">
                     <div className="relative">
                       <div className="mb-1">
-                        <label className="text-[11px] font-semibold text-zinc-600 flex items-center gap-1">
-                          <Store className="w-3 h-3 text-[#0B57D0]" />
-                          <span>Store ID</span>
+                        <label className="block text-[11px] font-semibold text-zinc-600">
+                          Store ID
                         </label>
                       </div>
                       <div className="relative">
@@ -2390,7 +2868,7 @@ export function HsgContestTab({
                                     rel="noopener noreferrer"
                                     className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1 font-semibold"
                                   >
-                                    <span>{ans}</span>
+                                    <span>{typeof ans === "string" ? ans.replace(/^https?:\/\/(www\.)?/i, "") : ans}</span>
                                     <ExternalLink className="w-3 h-3 shrink-0" />
                                   </a>
                                 ) : typeof ans === "object" ? (
@@ -2417,7 +2895,7 @@ export function HsgContestTab({
                                       rel="noopener noreferrer"
                                       className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1 font-semibold"
                                     >
-                                      <span>{v}</span>
+                                      <span>{typeof v === "string" ? v.replace(/^https?:\/\/(www\.)?/i, "") : v}</span>
                                       <ExternalLink className="w-3 h-3 shrink-0" />
                                     </a>
                                   ) : typeof v === "object" ? (

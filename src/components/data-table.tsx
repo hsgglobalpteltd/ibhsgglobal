@@ -89,6 +89,7 @@ interface DataTableProps {
   fetching?: boolean;
   syncStatus?: "idle" | "syncing" | "synced";
   headerActions?: React.ReactNode;
+  onRowContextMenu?: (e: React.MouseEvent, row: any) => void;
 }
 
 export function DataTable({
@@ -110,6 +111,7 @@ export function DataTable({
   syncStatus = "idle",
   height = "h-full",
   headerActions,
+  onRowContextMenu
 }: DataTableProps) {
   const [tableData, setTableData] = React.useState<any[]>(data);
   const [columns, setColumns] = React.useState<Column[]>(initialColumns);
@@ -741,6 +743,12 @@ export function DataTable({
                 return (
                   <tr 
                     key={getRowId(row) || rowIdx}
+                    onContextMenu={(e) => {
+                      if (onRowContextMenu) {
+                        e.preventDefault();
+                        onRowContextMenu(e, row);
+                      }
+                    }}
                     className={`transition-colors ${isRowEditing ? "bg-[#D3E3FD]/40 font-medium" : "hover:bg-[#F0F4F9]/70"}`}
                   >
                     {isEditMode && (

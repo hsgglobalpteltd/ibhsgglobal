@@ -4,7 +4,7 @@ import * as React from "react";
 import { 
   RotateCcw, 
   ShieldAlert, 
-  Sparkles, 
+  Copy, 
   Camera, 
   Save, 
   X, 
@@ -226,6 +226,40 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, []);
+
+  // Context Menu state for Proposal Table
+  const [contextMenu, setContextMenu] = React.useState<{
+    x: number;
+    y: number;
+    deal: SnapDeal;
+  } | null>(null);
+  const contextMenuRef = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!contextMenu) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(event.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setContextMenu(null);
+      }
+    };
+    const handleScroll = () => {
+      setContextMenu(null);
+    };
+
+    window.addEventListener("mousedown", handleClickOutside);
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("scroll", handleScroll, true);
+    return () => {
+      window.removeEventListener("mousedown", handleClickOutside);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [contextMenu]);
 
   // Save deal particulars modal
   const [saveModalOpen, setSaveModalOpen] = React.useState<boolean>(false);
@@ -811,6 +845,50 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     }
   };
 
+  // Duplicate an existing proposal
+  const handleDuplicateDeal = (deal: SnapDeal) => {
+    const newDealId = `deal_${Date.now()}`;
+    const duplicatedDeal: SnapDeal = {
+      id: newDealId,
+      dealing_with: `${deal.dealing_with} (Copy)`,
+      handshake_date: Date.now(),
+      notes: deal.notes || "",
+      terms_conditions: deal.terms_conditions || "",
+      deal_data: deal.deal_data,
+      status: "Draft",
+      signed_proof_url: undefined
+    };
+
+    // Optimistic UI Update: Prepend duplicated proposal to list
+    setDeals(prev => [duplicatedDeal, ...prev]);
+    showToast("Proposal duplicated successfully!", "success");
+
+    // Silently persist to backend
+    const payload = {
+      id: newDealId,
+      dealing_with: duplicatedDeal.dealing_with,
+      handshake_date: duplicatedDeal.handshake_date,
+      notes: duplicatedDeal.notes,
+      terms_conditions: duplicatedDeal.terms_conditions,
+      deal_data: duplicatedDeal.deal_data,
+      actor_email: profile?.email || "anonymous@hsg.com",
+      actor_name: profile?.name || "Anonymous User"
+    };
+
+    saveSnapDeal(payload)
+      .then(res => {
+        if (res.success) {
+          loadDeals();
+        } else {
+          console.error("Failed to duplicate deal silently:", res);
+        }
+      })
+      .catch(err => {
+        console.error("Silent duplicate error:", err);
+        showToast("Cloud sync failed. Will retry on next refresh.", "warning");
+      });
+  };
+
   const handleLoadDealById = () => {
     const targetId = loadDealIdInput.trim();
     if (!targetId) {
@@ -1359,7 +1437,9 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
     const canDelete = isAdmin || isManager;
     return filteredDeals.map((deal) => {
       return {
+        id: deal.id,
         id_raw: deal.id,
+        rawDeal: deal,
         client_info: (
           <div className="flex flex-col gap-0.5 whitespace-nowrap select-text pr-4">
             <span className="font-semibold text-zinc-900 text-xs whitespace-nowrap" title={deal.dealing_with}>
@@ -1412,7 +1492,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
           </div>
         ),
         actions: (
-          <div className="flex items-center gap-1.5 w-[110px] shrink-0 select-none">
+          <div className="flex items-center gap-1.5 w-[140px] shrink-0 select-none">
             <button
               onClick={() => handleOpenViewModal(deal)}
               className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
@@ -1429,6 +1509,14 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                   title="Edit Deal"
                 >
                   <Edit size={13} />
+                </button>
+
+                <button
+                  onClick={() => handleDuplicateDeal(deal)}
+                  className="p-1.5 rounded-md bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-xs"
+                  title="Duplicate Proposal"
+                >
+                  <Copy size={13} />
                 </button>
 
                 <button
@@ -1489,7 +1577,7 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
   };
 
   const columns: Column[] = [
-    { id: "actions", header: "Actions", accessor: "actions", width: "w-[110px] min-w-[110px]" },
+    { id: "actions", header: "Actions", accessor: "actions", width: "w-[140px] min-w-[140px]" },
     { id: "client_info", header: "Client Name", accessor: "client_info", width: "min-w-[200px] whitespace-nowrap" },
     { id: "notes", header: "Client Note", accessor: "notes", width: "w-[200px] max-w-[220px]" },
     { id: "items", header: "Deal Items", accessor: "items", width: "min-w-[260px]" },
@@ -2296,6 +2384,17 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
                 height="h-full"
                 title="Proposal Deals (Unsigned)"
                 userRole="admin"
+                onRowContextMenu={(e, row) => {
+                  e.preventDefault();
+                  const targetDeal = row.rawDeal || deals.find(d => d.id === (row.id || row.id_raw));
+                  if (targetDeal) {
+                    const menuWidth = 220;
+                    const menuHeight = 200;
+                    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 12);
+                    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 12);
+                    setContextMenu({ x, y, deal: targetDeal });
+                  }
+                }}
               />
             )}
           </div>
@@ -2725,6 +2824,75 @@ export function SnapDealsModule({ profile }: SnapDealsModuleProps) {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Right-Click Context Menu for Proposal Table */}
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          className="fixed z-50 min-w-[210px] bg-white rounded-lg border border-slate-200 shadow-xl py-1.5 animate-in fade-in zoom-in-95 duration-100 font-primary select-none text-xs"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 border-b border-slate-100 mb-1">
+            <div className="font-bold text-zinc-900 truncate max-w-[180px]" title={contextMenu.deal.dealing_with}>
+              {contextMenu.deal.dealing_with}
+            </div>
+            <div className="text-[10.5px] text-zinc-400 font-mono truncate" title={contextMenu.deal.id}>
+              {contextMenu.deal.id}
+            </div>
+          </div>
+
+          <button
+            onClick={() => {
+              const d = contextMenu.deal;
+              setContextMenu(null);
+              handleLoadDealForEdit(d);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-zinc-700 hover:text-zinc-950 hover:bg-[#F0F4F9] text-left transition-colors cursor-pointer"
+          >
+            <Edit size={14} className="text-[#0B57D0]" />
+            <span className="font-medium">Edit Proposal</span>
+          </button>
+
+          <button
+            onClick={() => {
+              const d = contextMenu.deal;
+              setContextMenu(null);
+              handleOpenTermsModal(d);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-zinc-700 hover:text-zinc-950 hover:bg-[#F0F4F9] text-left transition-colors cursor-pointer"
+          >
+            <FileText size={14} className="text-emerald-600" />
+            <span className="font-medium">Edit Terms & Condition</span>
+          </button>
+
+          <button
+            onClick={() => {
+              const d = contextMenu.deal;
+              setContextMenu(null);
+              handleOpenViewModal(d);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-zinc-700 hover:text-zinc-950 hover:bg-[#F0F4F9] text-left transition-colors cursor-pointer"
+          >
+            <Eye size={14} className="text-zinc-600" />
+            <span className="font-medium">Preview Proposal</span>
+          </button>
+
+          <div className="h-px bg-slate-100 my-1" />
+
+          <button
+            onClick={() => {
+              const d = contextMenu.deal;
+              setContextMenu(null);
+              handleDuplicateDeal(d);
+            }}
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-zinc-700 hover:text-zinc-950 hover:bg-[#F0F4F9] text-left transition-colors cursor-pointer"
+          >
+            <Copy size={14} className="text-[#0B57D0]" />
+            <span className="font-medium">Duplicate Proposal</span>
+          </button>
         </div>
       )}
 
