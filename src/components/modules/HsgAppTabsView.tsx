@@ -55,6 +55,7 @@ import {
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { compressImageFile } from "@/lib/imageCompressor";
+import { copyToClipboard } from "@/lib/utils";
 
 const WORKER_URL = "https://ib-v2.hsgglobalpteltd.workers.dev";
 
@@ -1572,11 +1573,15 @@ export function HsgContestTab({
                       <button
                         type="button"
                         title="Copy Public Share Link"
-                        onClick={(e) => {
+                        onClick={async (e) => {
                           e.stopPropagation();
                           const publicUrl = `https://plus.hsgglobal.sg/c/${c.id}`.toLowerCase();
-                          navigator.clipboard.writeText(publicUrl);
-                          showToast("Contest share link copied to clipboard", "success");
+                          const ok = await copyToClipboard(publicUrl);
+                          if (ok) {
+                            showToast("Contest share link copied to clipboard", "success");
+                          } else {
+                            showToast("Failed to copy link. Please copy manually.", "error");
+                          }
                         }}
                         className="w-5 h-5 rounded border border-emerald-200 bg-emerald-50 flex items-center justify-center text-emerald-700 hover:bg-emerald-100 cursor-pointer"
                       >
@@ -7382,10 +7387,14 @@ export function HsgEventsTab({
                       <button
                         type="button"
                         title="Copy Public Share Link"
-                        onClick={() => {
+                        onClick={async () => {
                           const publicUrl = `https://plus.hsgglobal.sg/e/${ev.id}`.toLowerCase();
-                          navigator.clipboard.writeText(publicUrl);
-                          showToast("Event share link copied to clipboard", "success");
+                          const ok = await copyToClipboard(publicUrl);
+                          if (ok) {
+                            showToast("Event share link copied to clipboard", "success");
+                          } else {
+                            showToast("Failed to copy link. Please copy manually.", "error");
+                          }
                         }}
                         className="w-5 h-5 rounded border border-emerald-200 bg-emerald-50 flex items-center justify-center text-emerald-700 hover:bg-emerald-100 cursor-pointer"
                       >
@@ -7943,9 +7952,13 @@ export function HsgEventsTab({
                     />
                     <button
                       type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(publicShareUrl);
-                        showToast("Public share link copied", "success");
+                      onClick={async () => {
+                        const ok = await copyToClipboard(publicShareUrl);
+                        if (ok) {
+                          showToast("Public share link copied", "success");
+                        } else {
+                          showToast("Failed to copy link. Please copy manually.", "error");
+                        }
                       }}
                       className="h-8 px-3 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-xs font-semibold text-zinc-700 flex items-center gap-1 shadow-2xs transition active:scale-98 cursor-pointer shrink-0"
                     >
