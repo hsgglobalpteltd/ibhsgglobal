@@ -51,6 +51,7 @@ import {
   Lock,
   Trophy,
   Copy,
+  Store,
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { compressImageFile } from "@/lib/imageCompressor";
@@ -134,6 +135,7 @@ export interface HsgContestRecord {
   required_event_id?: string | null;
   requirement_note?: string;
   event_passcode?: string | null;
+  terms_and_conditions?: string;
   extra_questions?: Array<{
     id: string;
     question: string;
@@ -169,6 +171,9 @@ export interface HsgContestSubmission {
   receipt_photo_url?: string;
   amount_paid?: number;
   items_count?: number;
+  store_id?: string;
+  store_name?: string;
+  store_address?: string;
   points_awarded?: number;
   extra_answers?: Record<string, any>;
   answer_json: Record<string, any>;
@@ -380,6 +385,7 @@ export function HsgContestTab({
   events = [],
   merchCatalog = [],
   users = [],
+  storeOutlets = [],
   loading,
   onRefresh,
   openCreateTrigger,
@@ -390,6 +396,7 @@ export function HsgContestTab({
   events?: any[];
   merchCatalog?: any[];
   users?: HsgUserRecord[];
+  storeOutlets?: any[];
   loading: boolean;
   onRefresh: () => void;
   openCreateTrigger?: number;
@@ -398,23 +405,102 @@ export function HsgContestTab({
   const [localContests, setLocalContests] = React.useState<HsgContestRecord[]>(contests || []);
   const [localSubmissions, setLocalSubmissions] = React.useState<HsgContestSubmission[]>(submissions || []);
   const [localWinners, setLocalWinners] = React.useState<HsgContestWinner[]>(winners || []);
+  const [localStoreOutlets, setLocalStoreOutlets] = React.useState<any[]>(storeOutlets || []);
 
   React.useEffect(() => { setLocalContests(contests || []); }, [contests]);
   React.useEffect(() => { setLocalSubmissions(submissions || []); }, [submissions]);
   React.useEffect(() => { setLocalWinners(winners || []); }, [winners]);
 
+  React.useEffect(() => {
+    if (storeOutlets && storeOutlets.length > 0) {
+      setLocalStoreOutlets(storeOutlets);
+    } else {
+      fetch(`${WORKER_URL}/api/hsg-app/cashback/store-outlets`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.outlets) setLocalStoreOutlets(d.outlets);
+        })
+        .catch((e) => console.warn("ContestTab store outlets fetch error:", e));
+    }
+  }, [storeOutlets]);
+
   // Navigation & Sub-tab: "submissions" vs "winners"
   const [activeSubTab, setActiveSubTab] = React.useState<"submissions" | "winners">("submissions");
   const [leftTab, setLeftTab] = React.useState<"active" | "archive">("active");
-  const [selectedContestId, setSelectedContestId] = React.useState<string>("ALL");
+  const [selectedContestId, setSelectedContestId] = React.useState<string>("");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [statusFilter, setStatusFilter] = React.useState<"ALL" | "pending" | "approved" | "rejected">("ALL");
+  const [revealedPhones, setRevealedPhones] = React.useState<Record<string, boolean>>({});
+
+  const toggleRevealPhone = (key: string) => {
+    setRevealedPhones((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
 
   // Inspect Submission Modal
   const [inspectSub, setInspectSub] = React.useState<HsgContestSubmission | null>(null);
   const [rejectReason, setRejectReason] = React.useState<string>("");
   const [processingSubId, setProcessingSubId] = React.useState<string | null>(null);
   const [zoomReceipt, setZoomReceipt] = React.useState<boolean>(false);
+  const [adminAmountPaid, setAdminAmountPaid] = React.useState<string>("");
+  const [adminQtyPurchased, setAdminQtyPurchased] = React.useState<string>("");
+  const [adminStoreId, setAdminStoreId] = React.useState<string>("");
+  const [adminStoreName, setAdminStoreName] = React.useState<string>("");
+  const [adminStoreAddress, setAdminStoreAddress] = React.useState<string>("");
+  const [storeSearchQuery, setStoreSearchQuery] = React.useState<string>("");
+  const [isStoreDropdownOpen, setIsStoreDropdownOpen] = React.useState<boolean>(false);
+
+  // Filter store outlets for Contest review (hidden by default, appears only when >= 1 char typed, max 5 results)
+  const filteredStoresForReview = React.useMemo(() => {
+    const q = storeSearchQuery.trim().toLowerCase();
+    if (!q) return [];
+    return localStoreOutlets
+      .filter(
+        (st) =>
+          (st.id || "").toLowerCase().includes(q) ||
+          (st.store_name || "").toLowerCase().includes(q) ||
+          (st.store_address || "").toLowerCase().includes(q) ||
+          (st.brand || "").toLowerCase().includes(q)
+      )
+      .slice(0, 5);
+  }, [storeSearchQuery, localStoreOutlets]);
+
+  const handleStoreIdInputChange = (val: string) => {
+    setAdminStoreId(val);
+    setStoreSearchQuery(val);
+    setIsStoreDropdownOpen(val.trim().length >= 1);
+
+    const matched = localStoreOutlets.find(
+      (st) => (st.id || "").trim().toLowerCase() === val.trim().toLowerCase()
+    );
+    if (matched) {
+      setAdminStoreName(matched.store_name || "");
+      setAdminStoreAddress(matched.store_address || "");
+    }
+  };
+
+  const handleSelectStoreForReview = (st: any) => {
+    setAdminStoreId(st.id || "");
+    setAdminStoreName(st.store_name || "");
+    setAdminStoreAddress(st.store_address || "");
+    setStoreSearchQuery("");
+    setIsStoreDropdownOpen(false);
+  };
+
+  const openInspectSub = (sub: HsgContestSubmission) => {
+    setInspectSub(sub);
+    setRejectReason(sub.reject_reason || "");
+    setAdminAmountPaid(
+      sub.amount_paid !== null && sub.amount_paid !== undefined && Number(sub.amount_paid) > 0 ? String(sub.amount_paid) : ""
+    );
+    setAdminQtyPurchased(
+      sub.items_count !== null && sub.items_count !== undefined && Number(sub.items_count) > 0 ? String(sub.items_count) : ""
+    );
+    setAdminStoreId(sub.store_id || "");
+    setAdminStoreName(sub.store_name || "");
+    setAdminStoreAddress(sub.store_address || "");
+    setStoreSearchQuery("");
+    setIsStoreDropdownOpen(false);
+  };
 
   // Contest Create / Edit Modal
   const [showModal, setShowModal] = React.useState<boolean>(false);
@@ -437,6 +523,7 @@ export function HsgContestTab({
   const [reqEventId, setReqEventId] = React.useState<string>("");
   const [reqNote, setReqNote] = React.useState<string>("");
   const [reqEventPasscode, setReqEventPasscode] = React.useState<string>("");
+  const [termsAndConditions, setTermsAndConditions] = React.useState<string>("");
   const [isPublished, setIsPublished] = React.useState<boolean>(true);
   const [extraQuestions, setExtraQuestions] = React.useState<
     Array<{ id: string; question: string; type?: "text" | "number" | "url" }>
@@ -493,6 +580,7 @@ export function HsgContestTab({
       setReqEventId(prefill.required_event_id || "");
       setReqNote(prefill.requirement_note || "");
       setReqEventPasscode(prefill.event_passcode || "");
+      setTermsAndConditions(prefill.terms_and_conditions || "");
       setIsPublished(Boolean(prefill.is_published));
       setExtraQuestions(
         Array.isArray(prefill.extra_questions)
@@ -522,6 +610,7 @@ export function HsgContestTab({
       setReqEventId("");
       setReqNote("");
       setReqEventPasscode("");
+      setTermsAndConditions("");
       setIsPublished(true);
       setExtraQuestions([]);
       setPrizes([]);
@@ -590,6 +679,10 @@ export function HsgContestTab({
       showToast("Please enter an internal Contest Title", "error");
       return;
     }
+    if (!reqNote.trim()) {
+      showToast("Please enter Contest Requirement (Proof of Purchase condition)", "error");
+      return;
+    }
     setSaving(true);
     try {
       const startMs = startDt ? new Date(startDt).getTime() : Date.now();
@@ -616,6 +709,7 @@ export function HsgContestTab({
         required_event_id: reqEventId || null,
         requirement_note: reqNote.trim(),
         event_passcode: reqEventPasscode.trim() || null,
+        terms_and_conditions: termsAndConditions.trim(),
         extra_questions: extraQuestions.slice(0, 5).map((q, idx) => ({
           id: q.id || `q_${idx + 1}`,
           question: q.question.trim(),
@@ -697,7 +791,7 @@ export function HsgContestTab({
     if (!contestToDelete) return;
     const prevContestsSnapshot = [...localContests];
     setLocalContests((prev) => prev.filter((item) => item.id !== contestToDelete.id));
-    if (selectedContestId === contestToDelete.id) setSelectedContestId("ALL");
+    if (selectedContestId === contestToDelete.id) setSelectedContestId("");
     setContestToDelete(null);
     showToast("Contest deleted", "success");
 
@@ -815,8 +909,27 @@ export function HsgContestTab({
   // Approve Entry
   const handleApproveSubmission = async (sub: HsgContestSubmission) => {
     const prevSubStatus = sub.status;
+    const payload = {
+      amount_paid: adminAmountPaid !== "" ? Number(adminAmountPaid) : null,
+      items_count: adminQtyPurchased !== "" ? Number(adminQtyPurchased) : null,
+      store_id: adminStoreId.trim() || null,
+      store_name: adminStoreName.trim() || null,
+      store_address: adminStoreAddress.trim() || null,
+    };
     setLocalSubmissions((prev) =>
-      prev.map((s) => (s.id === sub.id ? { ...s, status: "approved" } : s))
+      prev.map((s) =>
+        s.id === sub.id
+          ? {
+              ...s,
+              status: "approved",
+              amount_paid: payload.amount_paid ?? s.amount_paid,
+              items_count: payload.items_count ?? s.items_count,
+              store_id: payload.store_id ?? s.store_id,
+              store_name: payload.store_name ?? s.store_name,
+              store_address: payload.store_address ?? s.store_address,
+            }
+          : s
+      )
     );
     setInspectSub(null);
     showToast("Entry approved and points credited", "success");
@@ -827,7 +940,7 @@ export function HsgContestTab({
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
+          body: JSON.stringify(payload),
         }
       );
       const data = await res.json();
@@ -838,6 +951,51 @@ export function HsgContestTab({
         prev.map((s) => (s.id === sub.id ? { ...s, status: prevSubStatus } : s))
       );
       showToast(err.message || "Failed to approve entry", "error");
+    }
+  };
+
+  // Save Submission Details (without changing status)
+  const handleSaveSubmissionDetails = async (sub: HsgContestSubmission) => {
+    setProcessingSubId(sub.id);
+    const payload = {
+      amount_paid: adminAmountPaid !== "" ? Number(adminAmountPaid) : null,
+      items_count: adminQtyPurchased !== "" ? Number(adminQtyPurchased) : null,
+      store_id: adminStoreId.trim() || null,
+      store_name: adminStoreName.trim() || null,
+      store_address: adminStoreAddress.trim() || null,
+    };
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/update`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Update failed");
+      setLocalSubmissions((prev) =>
+        prev.map((s) =>
+          s.id === sub.id
+            ? {
+                ...s,
+                amount_paid: payload.amount_paid ?? s.amount_paid,
+                items_count: payload.items_count ?? s.items_count,
+                store_id: payload.store_id ?? s.store_id,
+                store_name: payload.store_name ?? s.store_name,
+                store_address: payload.store_address ?? s.store_address,
+              }
+            : s
+        )
+      );
+      showToast("Submission details saved successfully", "success");
+      setInspectSub(null);
+      onRefresh();
+    } catch (err: any) {
+      showToast(err.message || "Failed to update details", "error");
+    } finally {
+      setProcessingSubId(null);
     }
   };
 
@@ -871,6 +1029,76 @@ export function HsgContestTab({
     } catch (err: any) {
       setLocalSubmissions((prev) =>
         prev.map((s) => (s.id === sub.id ? { ...s, status: prevSubStatus } : s))
+      );
+      showToast(err.message || "Failed to reject entry", "error");
+    } finally {
+      setProcessingSubId(null);
+    }
+  };
+
+  // Quick Approve Submission directly from row
+  const handleQuickApprove = async (sub: HsgContestSubmission) => {
+    if (sub.status === "approved") {
+      showToast("Entry is already approved", "info");
+      return;
+    }
+    const prevStatus = sub.status;
+    setProcessingSubId(sub.id);
+    setLocalSubmissions((prev) =>
+      prev.map((s) => (s.id === sub.id ? { ...s, status: "approved" } : s))
+    );
+    showToast(`Entry approved (+${sub.points_awarded || activeContestObj?.reward_points || 10} pts)`, "success");
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/approve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Approval failed");
+      onRefresh();
+    } catch (err: any) {
+      setLocalSubmissions((prev) =>
+        prev.map((s) => (s.id === sub.id ? { ...s, status: prevStatus } : s))
+      );
+      showToast(err.message || "Failed to approve entry", "error");
+    } finally {
+      setProcessingSubId(null);
+    }
+  };
+
+  // Quick Reject Submission directly from row
+  const handleQuickReject = async (sub: HsgContestSubmission) => {
+    if (sub.status === "rejected") {
+      showToast("Entry is already rejected", "info");
+      return;
+    }
+    const prevStatus = sub.status;
+    setProcessingSubId(sub.id);
+    setLocalSubmissions((prev) =>
+      prev.map((s) => (s.id === sub.id ? { ...s, status: "rejected", reject_reason: "Rejected by Admin" } : s))
+    );
+    showToast("Entry rejected and points revoked", "success");
+
+    try {
+      const res = await fetch(
+        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/reject`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: "Rejected by Admin" }),
+        }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.message || "Rejection failed");
+      onRefresh();
+    } catch (err: any) {
+      setLocalSubmissions((prev) =>
+        prev.map((s) => (s.id === sub.id ? { ...s, status: prevStatus } : s))
       );
       showToast(err.message || "Failed to reject entry", "error");
     } finally {
@@ -1169,42 +1397,43 @@ export function HsgContestTab({
   );
 
   const activeContestObj =
-    selectedContestId !== "ALL"
-      ? localContests.find((c) => c.id === selectedContestId) || null
+    selectedContestId
+      ? localContests.find((c) => String(c.id).toLowerCase() === selectedContestId.toLowerCase()) || null
       : null;
 
-  const filteredSubs = localSubmissions.filter((s) => {
-    if (selectedContestId !== "ALL" && String(s.contest_id || "").toLowerCase() !== selectedContestId.toLowerCase()) return false;
-    if (statusFilter !== "ALL") {
-      if (statusFilter === "pending" && s.status !== "submitted") return false;
-      if (statusFilter === "approved" && s.status !== "approved") return false;
-      if (statusFilter === "rejected" && s.status !== "rejected") return false;
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const nickMatch = (s.user_nickname || "").toLowerCase().includes(q);
-      const phoneMatch = (s.user_phone || "").includes(q);
-      const ansMatch = JSON.stringify(s.extra_answers || s.answer_json || {})
-        .toLowerCase()
-        .includes(q);
-      return nickMatch || phoneMatch || ansMatch;
-    }
-    return true;
-  });
+  const filteredSubs = !selectedContestId
+    ? []
+    : localSubmissions.filter((s) => {
+        if (String(s.contest_id || "").toLowerCase() !== selectedContestId.toLowerCase()) return false;
+        if (statusFilter !== "ALL") {
+          if (statusFilter === "pending" && s.status !== "submitted") return false;
+          if (statusFilter === "approved" && s.status !== "approved") return false;
+          if (statusFilter === "rejected" && s.status !== "rejected") return false;
+        }
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          const nickMatch = (s.user_nickname || "").toLowerCase().includes(q);
+          const phoneMatch = (s.user_phone || "").includes(q);
+          return nickMatch || phoneMatch;
+        }
+        return true;
+      });
 
-  const filteredWinners = localWinners.filter((w) => {
-    if (selectedContestId !== "ALL" && w.contest_id !== selectedContestId) return false;
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      return (
-        (w.user_nickname || "").toLowerCase().includes(q) ||
-        (w.user_phone || "").includes(q) ||
-        (w.prize_title || "").toLowerCase().includes(q) ||
-        (w.delivery_address || "").toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
+  const filteredWinners = !selectedContestId
+    ? []
+    : localWinners.filter((w) => {
+        if (String(w.contest_id || "").toLowerCase() !== selectedContestId.toLowerCase()) return false;
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          return (
+            (w.user_nickname || "").toLowerCase().includes(q) ||
+            (w.user_phone || "").includes(q) ||
+            (w.prize_title || "").toLowerCase().includes(q) ||
+            (w.delivery_address || "").toLowerCase().includes(q)
+          );
+        }
+        return true;
+      });
 
   // Calculate Prize Quotas for Assign Modal
   const assignContest = localContests.find((c) => c.id === assignContestId);
@@ -1323,23 +1552,12 @@ export function HsgContestTab({
                       {c.frontpage_title || c.frontpage_config?.title || "No display title"}
                     </p>
 
-                    {linkedEvent && (
-                      <div className="flex items-center gap-1 text-[10px] text-zinc-600 bg-slate-50 px-2 py-0.5 rounded border border-slate-200 w-fit mt-1">
-                        <MapPin className="w-3 h-3 text-slate-400" />
-                        <span className="truncate">Req: {linkedEvent.title}</span>
-                      </div>
-                    )}
-
                     <div className="flex items-center gap-2 text-[11px] text-zinc-500 mt-1.5 font-medium">
                       <span>
                         {subCount} Entries{cap > 0 ? ` / ${cap} Cap` : ""}
                       </span>
                       <span>•</span>
                       <span>{winnerCount} Winner(s)</span>
-                      <span>•</span>
-                      <span className="text-[#0B57D0]">
-                        +{c.reward_points || c.submission_limits?.points_per_submission || 0} pts
-                      </span>
                     </div>
                   </div>
 
@@ -1399,64 +1617,54 @@ export function HsgContestTab({
 
       {/* RIGHT 70%: SUB-TABS (SUBMISSIONS vs WINNERS) */}
       <section className="flex-1 h-full flex flex-col bg-white overflow-hidden">
-        {/* Header Toolbar */}
-        <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            {/* Sub-tab Pill Switcher */}
-            <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-200/70 border border-slate-200 text-xs">
-              <button
-                type="button"
-                onClick={() => setActiveSubTab("submissions")}
-                className={`h-7 px-3 rounded-md text-[11px] transition flex items-center gap-1.5 ${
-                  activeSubTab === "submissions"
-                    ? "bg-white text-zinc-950 font-bold shadow-2xs"
-                    : "text-zinc-500 hover:text-zinc-800 font-medium"
-                }`}
-              >
-                <FileText className="w-3.5 h-3.5 text-zinc-500" />
-                <span>Submissions</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-zinc-600 font-semibold border border-slate-200">
-                  {filteredSubs.length}
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveSubTab("winners")}
-                className={`h-7 px-3 rounded-md text-[11px] transition flex items-center gap-1.5 ${
-                  activeSubTab === "winners"
-                    ? "bg-white text-zinc-950 font-bold shadow-2xs"
-                    : "text-zinc-500 hover:text-zinc-800 font-medium"
-                }`}
-              >
-                <Trophy className="w-3.5 h-3.5 text-zinc-500" />
-                <span>Prizes & Winners</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-zinc-600 font-semibold border border-slate-200">
-                  {filteredWinners.length}
-                </span>
-              </button>
+        {!selectedContestId ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-12 text-center select-none bg-[#F8F9FA]/40">
+            <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center justify-center text-slate-400 mb-3.5">
+              <Trophy className="w-7 h-7 text-slate-400 stroke-[1.75]" />
             </div>
-
-            {/* Selected Contest Tag (Replaces the crossed-out dropdown) */}
-            {selectedContestId !== "ALL" && activeContestObj ? (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-50/60 border border-blue-200 text-xs text-[#0B57D0]">
-                <span className="text-[11px] text-zinc-500 font-medium">Contest:</span>
-                <span className="text-xs font-semibold text-zinc-900 max-w-[200px] truncate" title={activeContestObj.internal_title || activeContestObj.title}>
-                  {activeContestObj.internal_title || activeContestObj.title}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedContestId("ALL")}
-                  className="w-4 h-4 rounded hover:bg-blue-100 flex items-center justify-center text-zinc-400 hover:text-zinc-700 ml-0.5 transition"
-                  title="View all contests"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-slate-100 border border-slate-200 text-[11px] text-zinc-500 font-medium">
-                <span>All Contests</span>
-              </div>
-            )}
+            <h3 className="text-sm font-bold text-zinc-900">Select a Contest First</h3>
+            <p className="text-xs text-zinc-500 max-w-xs mt-1 leading-relaxed">
+              Please click on a contest from the list on the left to view and review its submissions.
+            </p>
+          </div>
+        ) : (
+          <>
+            {/* Header Toolbar */}
+            <div className="px-4 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {/* Sub-tab Pill Switcher */}
+                <div className="flex items-center gap-0.5 p-0.5 rounded-lg bg-slate-200/70 border border-slate-200 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setActiveSubTab("submissions")}
+                    className={`h-7 px-3 rounded-md text-[11px] transition flex items-center gap-1.5 ${
+                      activeSubTab === "submissions"
+                        ? "bg-white text-zinc-950 font-bold shadow-2xs"
+                        : "text-zinc-500 hover:text-zinc-800 font-medium"
+                    }`}
+                  >
+                    <FileText className="w-3.5 h-3.5 text-zinc-500" />
+                    <span>Submissions</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-zinc-600 font-semibold border border-slate-200">
+                      {filteredSubs.length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveSubTab("winners")}
+                    className={`h-7 px-3 rounded-md text-[11px] transition flex items-center gap-1.5 ${
+                      activeSubTab === "winners"
+                        ? "bg-white text-zinc-950 font-bold shadow-2xs"
+                        : "text-zinc-500 hover:text-zinc-800 font-medium"
+                    }`}
+                  >
+                    <Trophy className="w-3.5 h-3.5 text-zinc-500" />
+                    <span>Prizes & Winners</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-slate-100 text-zinc-600 font-semibold border border-slate-200">
+                      {filteredWinners.length}
+                    </span>
+                  </button>
+                </div>
 
             {/* Status Pills (for submissions) */}
             {activeSubTab === "submissions" && (
@@ -1563,10 +1771,8 @@ export function HsgContestTab({
                   <tr>
                     <th className="py-2.5 px-3">Date</th>
                     <th className="py-2.5 px-3">User</th>
-                    <th className="py-2.5 px-3">Contest</th>
                     <th className="py-2.5 px-3">Receipt</th>
                     <th className="py-2.5 px-3">Amount & Qty</th>
-                    <th className="py-2.5 px-3">Answers</th>
                     <th className="py-2.5 px-3">Status</th>
                     <th className="py-2.5 px-3 text-right">Actions</th>
                   </tr>
@@ -1576,29 +1782,67 @@ export function HsgContestTab({
                     const c = contests.find((x) => x.id === sub.contest_id);
                     const isApproved = sub.status === "approved";
                     const isRejected = sub.status === "rejected";
+                    const isProcessing = processingSubId === sub.id;
+
+                    const uObj = users.find(
+                      (u) =>
+                        (sub.user_id && u.id === sub.user_id) ||
+                        (u.phone_number &&
+                          sub.user_phone &&
+                          u.phone_number.replace(/\D/g, "") === sub.user_phone.replace(/\D/g, ""))
+                    );
+                    const uKey = uObj?.id || sub.user_id || sub.user_phone || sub.id;
+                    const isRevealed = Boolean(revealedPhones[uKey]);
+                    const isPrivacyOff = uObj?.privacy?.mode === false;
+                    const cleanPhone = String(sub.user_phone || uObj?.phone_number || "").replace(/\D/g, "");
+                    const last4 = cleanPhone.length >= 4 ? cleanPhone.slice(-4) : cleanPhone || "----";
+                    const fullPhone =
+                      (uObj?.privacy?.phone ? uObj.privacy.phone.replace(/^\+/, "") : "") ||
+                      uObj?.raw_phone?.replace(/^\+/, "") ||
+                      cleanPhone ||
+                      sub.user_phone?.replace(/^\+/, "") ||
+                      "";
 
                     return (
                       <tr key={sub.id} className="hover:bg-slate-50/70 transition">
                         <td className="py-2.5 px-3 whitespace-nowrap text-zinc-500">
                           {formatDateShort(sub.created_at)}
                         </td>
-                        <td className="py-2.5 px-3">
+                        <td className="py-2.5 px-3 whitespace-nowrap">
                           <div className="font-semibold text-zinc-900">
-                            {sub.user_nickname || "Member"}
+                            {sub.user_nickname || uObj?.nickname || "Member"}
                           </div>
-                          <div className="font-mono text-[11px] text-zinc-400">
-                            +{maskPhoneLast4(sub.user_phone)}
+                          <div className="font-mono text-[11px] text-zinc-600 mt-0.5">
+                            {isPrivacyOff ? (
+                              <div className="inline-flex items-center gap-1.5">
+                                <span>{isRevealed ? fullPhone : `...${last4}`}</span>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    toggleRevealPhone(uKey);
+                                  }}
+                                  title={isRevealed ? "Hide Full Number" : "User privacy is OFF - Click to reveal"}
+                                  className="p-0.5 rounded hover:bg-slate-200 text-zinc-400 hover:text-zinc-700 transition cursor-pointer"
+                                >
+                                  {isRevealed ? (
+                                    <EyeOff className="w-3 h-3 text-[#0B57D0]" />
+                                  ) : (
+                                    <Eye className="w-3 h-3 text-zinc-500" />
+                                  )}
+                                </button>
+                              </div>
+                            ) : (
+                              <span>...{last4}</span>
+                            )}
                           </div>
-                        </td>
-                        <td className="py-2.5 px-3 text-zinc-700 font-medium max-w-[160px] truncate">
-                          {c?.internal_title || c?.title || sub.contest_id}
                         </td>
                         <td className="py-2.5 px-3">
                           {sub.receipt_photo_url ? (
                             <img
                               src={sub.receipt_photo_url}
                               alt="Receipt"
-                              onClick={() => setInspectSub(sub)}
+                              onClick={() => openInspectSub(sub)}
                               className="w-9 h-9 rounded object-cover border border-slate-200 cursor-pointer hover:opacity-80 transition bg-slate-100"
                             />
                           ) : (
@@ -1611,19 +1855,6 @@ export function HsgContestTab({
                           </div>
                           <div className="text-[11px] text-zinc-400 font-normal">
                             {sub.items_count || 1} item(s)
-                          </div>
-                        </td>
-                        <td className="py-2.5 px-3 max-w-[200px]">
-                          <div className="truncate text-[11px] text-zinc-600">
-                            {Object.entries(sub.extra_answers || sub.answer_json || {})
-                              .filter(([k]) => !k.startsWith("unlocked_") && k !== "pass_mode")
-                              .map(([k, v]) => `${k}: ${v}`)
-                              .join(" • ") || "None"}
-                            {(sub.unlocked_via_passcode || (sub.extra_answers as any)?.unlocked_via_passcode) && (
-                              <span className="ml-1 text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-bold border border-emerald-200/60">
-                                Passcode ✓
-                              </span>
-                            )}
                           </div>
                         </td>
                         <td className="py-2.5 px-3 whitespace-nowrap">
@@ -1642,16 +1873,43 @@ export function HsgContestTab({
                           )}
                         </td>
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setInspectSub(sub);
-                              setRejectReason(sub.reject_reason || "");
-                            }}
-                            className="h-6 px-2.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-[11px] font-medium transition shadow-2xs"
-                          >
-                            Inspect
-                          </button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={() => handleQuickApprove(sub)}
+                              className={`h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 ${
+                                isApproved
+                                  ? "bg-emerald-50 text-emerald-700 border border-emerald-200 opacity-60 cursor-default"
+                                  : "bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98"
+                              }`}
+                              title={isApproved ? "Already Approved" : "Approve & Credit Points"}
+                            >
+                              <Check className="w-3 h-3" />
+                              <span>Approve</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isProcessing}
+                              onClick={() => handleQuickReject(sub)}
+                              className={`h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 ${
+                                isRejected
+                                  ? "bg-rose-50 text-rose-700 border border-rose-200 opacity-60 cursor-default"
+                                  : "bg-rose-600 hover:bg-rose-700 text-white cursor-pointer active:scale-98"
+                              }`}
+                              title={isRejected ? "Already Rejected" : "Reject & Revoke Points"}
+                            >
+                              <X className="w-3 h-3" />
+                              <span>Reject</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openInspectSub(sub)}
+                              className="h-6 px-2.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-[11px] font-medium transition shadow-2xs cursor-pointer active:scale-98"
+                            >
+                              Inspect
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1858,198 +2116,382 @@ export function HsgContestTab({
             </div>
           </div>
         )}
+          </>
+        )}
       </section>
 
       {/* INSPECT SUBMISSION MODAL */}
       {inspectSub && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-lg bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
-            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0">
-              <div>
-                <h3 className="text-sm font-bold text-zinc-950">
-                  Inspect Submission ({inspectSub.id})
-                </h3>
-                <p className="text-[11px] text-zinc-500">
-                  {inspectSub.user_nickname} (+{maskPhoneLast4(inspectSub.user_phone)})
-                </p>
+          <div className="w-full max-w-4xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[85vh] max-h-[820px]">
+            {/* Header */}
+            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+              <div className="flex items-center gap-3 min-w-0">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-zinc-950 truncate">
+                      Inspect Submission ({inspectSub.id})
+                    </h3>
+                    {inspectSub.status === "approved" ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Approved
+                      </span>
+                    ) : inspectSub.status === "rejected" ? (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
+                        Rejected
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                        Pending Review
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">
+                    {inspectSub.user_nickname} (+{maskPhoneLast4(inspectSub.user_phone)}) • {inspectSub.contest_title || "Contest"}
+                  </p>
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => setInspectSub(null)}
-                className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-zinc-600 hover:bg-slate-200"
+                className="w-7 h-7 rounded-md bg-slate-100 flex items-center justify-center text-zinc-600 hover:bg-slate-200 transition shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-5 overflow-y-auto space-y-4 text-xs">
-              {/* Receipt Image */}
-              {inspectSub.receipt_photo_url ? (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px] font-semibold text-zinc-600">
-                    <span>Receipt Photo</span>
-                    <button
-                      type="button"
-                      onClick={() => setZoomReceipt((z) => !z)}
-                      className="text-[#0B57D0] hover:underline"
+            {/* 2-Column Content Area */}
+            <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-slate-200">
+              {/* Left Column: Full Receipt Image */}
+              <div className="w-full md:w-1/2 h-full flex flex-col bg-slate-50/60 min-h-0 overflow-hidden">
+                <div className="px-4 py-2 border-b border-slate-200 bg-white flex items-center justify-between text-xs font-semibold text-zinc-700 shrink-0">
+                  <span>Receipt Photo</span>
+                  {inspectSub.receipt_photo_url && (
+                    <a
+                      href={inspectSub.receipt_photo_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] font-semibold text-[#0B57D0] hover:underline flex items-center gap-1"
                     >
-                      {zoomReceipt ? "Normal View" : "Full View"}
-                    </button>
-                  </div>
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 overflow-hidden flex items-center justify-center p-1">
+                      <span>Open Full Size</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
+                <div className="flex-1 min-h-0 flex items-center justify-center p-3 overflow-auto bg-slate-100/60">
+                  {inspectSub.receipt_photo_url ? (
                     <img
                       src={inspectSub.receipt_photo_url}
                       alt="Receipt"
-                      className={`rounded object-contain ${
-                        zoomReceipt ? "max-h-[500px] w-full" : "max-h-56 w-auto"
-                      }`}
+                      className="max-h-full max-w-full object-contain rounded-lg border border-slate-200 shadow-xs bg-white select-none"
+                    />
+                  ) : (
+                    <div className="text-zinc-400 text-xs italic flex flex-col items-center gap-2">
+                      <FileText className="w-8 h-8 text-slate-300" />
+                      <span>No receipt photo uploaded</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: Verification Inputs & Questions */}
+              <div className="w-full md:w-1/2 h-full flex flex-col overflow-y-auto p-5 space-y-4 text-xs bg-white">
+                {/* Store & Purchase Verification Details */}
+                <div className="space-y-3 pb-3 border-b border-slate-100">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-zinc-900 uppercase tracking-wide">
+                      Purchase Verification (Reporting)
+                    </span>
+                    <span className="text-[10px] text-zinc-400">Optional</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-semibold text-zinc-600 mb-1">
+                        Amount Paid ($)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={adminAmountPaid}
+                        onChange={(e) => setAdminAmountPaid(e.target.value)}
+                        className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-semibold text-zinc-600 mb-1">
+                        Qty Purchased
+                      </label>
+                      <input
+                        type="number"
+                        step="1"
+                        min="0"
+                        placeholder="0"
+                        value={adminQtyPurchased}
+                        onChange={(e) => setAdminQtyPurchased(e.target.value)}
+                        className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-semibold focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="relative">
+                      <div className="mb-1">
+                        <label className="text-[11px] font-semibold text-zinc-600 flex items-center gap-1">
+                          <Store className="w-3 h-3 text-[#0B57D0]" />
+                          <span>Store ID</span>
+                        </label>
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="text"
+                          placeholder="Type ID or name to search..."
+                          value={adminStoreId}
+                          onChange={(e) => handleStoreIdInputChange(e.target.value)}
+                          onFocus={() => {
+                            if (storeSearchQuery.trim().length >= 1) {
+                              setIsStoreDropdownOpen(true);
+                            }
+                          }}
+                          className="w-full h-8 px-2.5 pr-7 rounded-lg border border-slate-200 text-xs font-mono font-medium text-slate-900 outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]"
+                        />
+                        {adminStoreId && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setAdminStoreId("");
+                              setStoreSearchQuery("");
+                              setIsStoreDropdownOpen(false);
+                            }}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                            title="Clear"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Dropdown Filter: Hidden by default, opens only when user types >= 1 char, max 5 results */}
+                      {isStoreDropdownOpen && storeSearchQuery.trim().length >= 1 && (
+                        <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden max-h-56 overflow-y-auto">
+                          {filteredStoresForReview.length === 0 ? (
+                            <div className="p-3 text-[11px] text-slate-500 text-center">
+                              No store outlet found matching "{storeSearchQuery}"
+                            </div>
+                          ) : (
+                            <div className="divide-y divide-slate-100">
+                              {filteredStoresForReview.map((st: any) => (
+                                <button
+                                  key={st.id}
+                                  type="button"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    handleSelectStoreForReview(st);
+                                  }}
+                                  className="w-full text-left p-2 hover:bg-blue-50/80 transition flex flex-col gap-0.5 group"
+                                >
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="font-semibold text-slate-900 text-xs group-hover:text-[#0B57D0] truncate">
+                                      {st.store_name}
+                                    </span>
+                                    <span className="font-mono text-[10px] font-semibold text-[#0B57D0] bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60 shrink-0">
+                                      {st.id}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                                    <span className="truncate max-w-[200px]">{st.store_address}</span>
+                                    {st.brand && (
+                                      <span className="text-[10px] text-slate-400 font-medium shrink-0">
+                                        {st.brand}
+                                      </span>
+                                    )}
+                                  </div>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="mb-1">
+                        <label className="text-[11px] font-semibold text-zinc-600">Store Name</label>
+                      </div>
+                      <input
+                        type="text"
+                        placeholder="e.g. FairPrice Supermarket"
+                        value={adminStoreName}
+                        onChange={(e) => setAdminStoreName(e.target.value)}
+                        className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-medium focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-zinc-600 mb-1">
+                      Store Address
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. 123 Orchard Road #01-01"
+                      value={adminStoreAddress}
+                      onChange={(e) => setAdminStoreAddress(e.target.value)}
+                      className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-medium focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] outline-none"
                     />
                   </div>
                 </div>
-              ) : null}
 
-              {/* Purchase Details */}
-              <div className="grid grid-cols-2 gap-3 p-3 rounded-lg bg-slate-50 border border-slate-200">
-                <div>
-                  <div className="text-[10px] font-bold uppercase text-zinc-400">
-                    Amount Paid ($)
-                  </div>
-                  <div className="text-sm font-extrabold text-zinc-900">
-                    ${Number(inspectSub.amount_paid || 0).toFixed(2)}
-                  </div>
-                </div>
-                <div>
-                  <div className="text-[10px] font-bold uppercase text-zinc-400">
-                    Qty Purchased
-                  </div>
-                  <div className="text-sm font-extrabold text-zinc-900">
-                    {inspectSub.items_count || 1} item(s)
-                  </div>
-                </div>
-              </div>
-
-              {/* Extra Answers */}
-              <div className="space-y-2 p-3 rounded-lg bg-slate-50 border border-slate-200">
-                <div className="flex items-center justify-between text-[10px] font-bold uppercase text-zinc-400">
-                  <span>Contest Answers</span>
-                  {(inspectSub.unlocked_via_passcode || (inspectSub.extra_answers as any)?.unlocked_via_passcode) && (
-                    <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded font-bold border border-emerald-300/60 lowercase first-letter:uppercase">
-                      Event Gate: Passcode Unlocked ✓
+                {/* Extra Questions & Answers */}
+                <div className="space-y-2.5 pb-3 border-b border-slate-100">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-zinc-900 uppercase tracking-wide">
+                      Contest Questions & Answers
                     </span>
-                  )}
+                    {(inspectSub.unlocked_via_passcode || (inspectSub.extra_answers as any)?.unlocked_via_passcode) && (
+                      <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-bold border border-emerald-200">
+                        Event Gate: Passcode Unlocked ✓
+                      </span>
+                    )}
+                  </div>
+
+                  {(() => {
+                    const inspContest = localContests.find((c) => String(c.id).toLowerCase() === String(inspectSub.contest_id).toLowerCase());
+                    const qList = (inspContest?.extra_questions || inspContest?.submission_questions || []) as Array<{ id?: string; question?: string }>;
+                    const answersMap = (inspectSub.extra_answers || inspectSub.answer_json || {}) as Record<string, any>;
+                    const displayedKeys = new Set<string>();
+
+                    return (
+                      <div className="space-y-2">
+                        {qList.map((q, idx) => {
+                          const qKey = q.id || `q_${idx + 1}`;
+                          displayedKeys.add(qKey);
+                          if (q.id) displayedKeys.add(q.id);
+                          const ans = answersMap[qKey] ?? answersMap[q.id || ""] ?? answersMap[`q_${idx + 1}`];
+                          if (ans === undefined || ans === null || ans === "") return null;
+                          const isUrl = typeof ans === "string" && (ans.startsWith("http://") || ans.startsWith("https://"));
+                          return (
+                            <div key={idx} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80">
+                              <div className="text-[11px] font-semibold text-zinc-500">
+                                {idx + 1}. {q.question || qKey}
+                              </div>
+                              <div className="text-xs font-bold text-zinc-900 mt-1 break-all">
+                                {isUrl ? (
+                                  <a
+                                    href={ans}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1 font-semibold"
+                                  >
+                                    <span>{ans}</span>
+                                    <ExternalLink className="w-3 h-3 shrink-0" />
+                                  </a>
+                                ) : typeof ans === "object" ? (
+                                  JSON.stringify(ans)
+                                ) : (
+                                  String(ans)
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {Object.entries(answersMap)
+                          .filter(([k]) => !displayedKeys.has(k) && !k.startsWith("unlocked_") && k !== "pass_mode")
+                          .map(([k, v]) => {
+                            const isUrl = typeof v === "string" && (v.startsWith("http://") || v.startsWith("https://"));
+                            return (
+                              <div key={k} className="p-2.5 rounded-lg bg-slate-50 border border-slate-200/80">
+                                <div className="text-[11px] font-semibold text-zinc-500">{k}</div>
+                                <div className="text-xs font-bold text-zinc-900 mt-1 break-all">
+                                  {isUrl ? (
+                                    <a
+                                      href={v}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1 font-semibold"
+                                    >
+                                      <span>{v}</span>
+                                      <ExternalLink className="w-3 h-3 shrink-0" />
+                                    </a>
+                                  ) : typeof v === "object" ? (
+                                    JSON.stringify(v)
+                                  ) : (
+                                    String(v)
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        {Object.keys(answersMap).filter(([k]) => !k.startsWith("unlocked_") && k !== "pass_mode").length === 0 && qList.length === 0 && (
+                          <div className="text-zinc-400 italic text-xs py-1">No extra questions configured or answered</div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
-                {(() => {
-                  const inspContest = localContests.find((c) => String(c.id).toLowerCase() === String(inspectSub.contest_id).toLowerCase());
-                  const qList = (inspContest?.extra_questions || inspContest?.submission_questions || []) as Array<{ id?: string; question?: string }>;
-                  const answersMap = (inspectSub.extra_answers || inspectSub.answer_json || {}) as Record<string, any>;
-                  const displayedKeys = new Set<string>();
 
-                  return (
-                    <div className="space-y-2">
-                      {qList.map((q, idx) => {
-                        const qKey = q.id || `q_${idx + 1}`;
-                        displayedKeys.add(qKey);
-                        if (q.id) displayedKeys.add(q.id);
-                        const ans = answersMap[qKey] ?? answersMap[q.id || ""] ?? answersMap[`q_${idx + 1}`];
-                        if (ans === undefined || ans === null || ans === "") return null;
-                        return (
-                          <div key={idx} className="text-xs bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
-                            <div className="font-semibold text-zinc-500 text-[11px]">
-                              {idx + 1}. {q.question || qKey}
-                            </div>
-                            <div className="font-bold text-zinc-950 mt-0.5 break-all">
-                              {typeof ans === "string" && (ans.startsWith("http://") || ans.startsWith("https://")) ? (
-                                <a
-                                  href={ans}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1"
-                                >
-                                  <span>{ans}</span>
-                                  <ExternalLink className="w-3 h-3 shrink-0" />
-                                </a>
-                              ) : typeof ans === "object" ? (
-                                JSON.stringify(ans)
-                              ) : (
-                                String(ans)
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                      {Object.entries(answersMap)
-                        .filter(([k]) => !displayedKeys.has(k) && !k.startsWith("unlocked_") && k !== "pass_mode")
-                        .map(([k, v]) => (
-                          <div key={k} className="text-xs bg-white p-2.5 rounded-lg border border-slate-200 shadow-2xs">
-                            <div className="font-semibold text-zinc-500 text-[11px]">{k}</div>
-                            <div className="font-bold text-zinc-950 mt-0.5 break-all">
-                              {typeof v === "string" && (v.startsWith("http://") || v.startsWith("https://")) ? (
-                                <a
-                                  href={v}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-blue-600 hover:text-blue-800 underline inline-flex items-center gap-1"
-                                >
-                                  <span>{v}</span>
-                                  <ExternalLink className="w-3 h-3 shrink-0" />
-                                </a>
-                              ) : typeof v === "object" ? (
-                                JSON.stringify(v)
-                              ) : (
-                                String(v)
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      {Object.keys(answersMap).filter(([k]) => !k.startsWith("unlocked_") && k !== "pass_mode").length === 0 && (
-                        <div className="text-zinc-400 italic text-xs">No questions configured or answered</div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-
-              {/* Current Status */}
-              <div className="flex items-center justify-between text-xs">
-                <span className="font-semibold text-zinc-600">Current Status:</span>
-                <span className="font-bold uppercase text-zinc-900">
-                  {inspectSub.status}
-                </span>
-              </div>
-
-              {/* Reject Reason input */}
-              <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                <label className="block text-[11px] font-semibold text-zinc-700">
-                  Rejection Reason (if rejecting):
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Ineligible receipt or blurry photo"
-                  value={rejectReason}
-                  onChange={(e) => setRejectReason(e.target.value)}
-                  className="w-full h-8 px-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs outline-none focus:border-rose-500"
-                />
+                {/* Rejection Reason (if rejecting) */}
+                <div className="space-y-1.5">
+                  <label className="block text-[11px] font-semibold text-zinc-700">
+                    Rejection Reason (if rejecting):
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Ineligible receipt or blurry photo"
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    className="w-full h-8 px-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs outline-none focus:border-rose-500"
+                  />
+                </div>
               </div>
             </div>
 
             {/* Actions Footer */}
-            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
-              <button
-                type="button"
-                disabled={Boolean(processingSubId)}
-                onClick={() => handleRejectSubmission(inspectSub)}
-                className="h-8 px-4 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs transition disabled:opacity-50"
-              >
-                Reject & Claw Back Points
-              </button>
-              <button
-                type="button"
-                disabled={Boolean(processingSubId)}
-                onClick={() => handleApproveSubmission(inspectSub)}
-                className="h-8 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition disabled:opacity-50"
-              >
-                Approve & Credit Points
-              </button>
+            <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
+              {/* Left Side: Close */}
+              <div className="flex items-center justify-start flex-1">
+                <button
+                  type="button"
+                  onClick={() => setInspectSub(null)}
+                  className="h-8 px-3.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-zinc-700 font-semibold text-xs transition shadow-2xs"
+                >
+                  Close
+                </button>
+              </div>
+
+              {/* Center: Reject & Approve */}
+              <div className="flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  disabled={Boolean(processingSubId)}
+                  onClick={() => handleRejectSubmission(inspectSub)}
+                  className="h-8 px-4 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs transition shadow-2xs disabled:opacity-50"
+                >
+                  Reject & Claw Back Points
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(processingSubId)}
+                  onClick={() => handleApproveSubmission(inspectSub)}
+                  className="h-8 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition shadow-2xs disabled:opacity-50"
+                >
+                  Approve & Credit Points
+                </button>
+              </div>
+
+              {/* Right Side: Save Details */}
+              <div className="flex items-center justify-end flex-1">
+                <button
+                  type="button"
+                  disabled={Boolean(processingSubId)}
+                  onClick={() => handleSaveSubmissionDetails(inspectSub)}
+                  className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs transition shadow-2xs disabled:opacity-50"
+                >
+                  {processingSubId === inspectSub.id ? "Saving..." : "Save Details"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -2400,17 +2842,18 @@ export function HsgContestTab({
 
                   <div>
                     <label className="block font-semibold text-zinc-700 mb-1">
-                      Contest Requirement Note / Condition
+                      Contest Requirement (Proof of Purchase) <span className="text-rose-500">*</span>
                     </label>
                     <input
                       type="text"
+                      required
                       value={reqNote}
                       onChange={(e) => setReqNote(e.target.value)}
-                      placeholder="e.g. Purchase any items with $50 worth and upload photo receipt here."
+                      placeholder="e.g. Buy 5 Bottles of Bibik Express"
                       className="w-full h-9 px-3 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#0B57D0]"
                     />
                     <p className="text-[10px] text-zinc-400 mt-1">
-                      Displayed on the contest submission card as the mandatory condition (e.g. minimum purchase amount, receipt requirements).
+                      Mandatory. Specifies the required purchase that users must fulfill by uploading their receipt.
                     </p>
                   </div>
                 </div>
@@ -2440,6 +2883,22 @@ export function HsgContestTab({
                     </div>
                   </div>
                 )}
+
+                <div>
+                  <label className="block font-semibold text-zinc-700 mb-1">
+                    Contest Terms &amp; Conditions (Paragraph)
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={termsAndConditions}
+                    onChange={(e) => setTermsAndConditions(e.target.value)}
+                    placeholder="Enter full contest terms and conditions, eligibility, rules, winner selection criteria, etc..."
+                    className="w-full p-2.5 rounded-lg bg-slate-50 border border-slate-200 outline-none focus:border-[#0B57D0]"
+                  />
+                  <p className="text-[10px] text-zinc-400 mt-1">
+                    Paragraph format. Displayed when members tap the &ldquo;Contest Terms &amp; Conditions&rdquo; link on the contest page.
+                  </p>
+                </div>
               </div>
 
               {/* SECTION 3: SCHEDULE & SUBMISSION REWARDS */}

@@ -2188,6 +2188,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
             events={events}
             merchCatalog={merchCatalog}
             users={users}
+            storeOutlets={storeOutlets}
             loading={loading}
             onRefresh={() => loadLiveData(true)}
             openCreateTrigger={contestCreateTrigger}
