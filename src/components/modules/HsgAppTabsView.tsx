@@ -1831,7 +1831,7 @@ export function HsgContestTab({
                         title="Copy Public Share Link"
                         onClick={async (e) => {
                           e.stopPropagation();
-                          const publicUrl = `https://plus.hsgglobal.sg/c/${c.id}`.toLowerCase();
+                          const publicUrl = `https://plus.hsgglobal.sg/c/${encodeURIComponent(String(c.id || "").trim())}`.toLowerCase();
                           const ok = await copyToClipboard(publicUrl);
                           if (ok) {
                             showToast("Contest share link copied to clipboard", "success");
@@ -7549,7 +7549,7 @@ export function HsgEventsTab({
       const headerTextWidth = usableWidth - qrSize - 6; // 155mm
 
       // Generate QR Code data URL encoding https://plus.hsgglobal.sg/#events?id=${ev.id}&venue_scan=1
-      const checkinUrl = `https://plus.hsgglobal.sg/#events?id=${ev.id}&venue_scan=1`;
+      const checkinUrl = `https://plus.hsgglobal.sg/#events?id=${encodeURIComponent(String(ev.id || "").trim()).toLowerCase()}&venue_scan=1`;
       let qrDataUrl = "";
       try {
         qrDataUrl = await QRCode.toDataURL(checkinUrl, {
@@ -7866,7 +7866,7 @@ export function HsgEventsTab({
                         type="button"
                         title="Copy Public Share Link"
                         onClick={async () => {
-                          const publicUrl = `https://plus.hsgglobal.sg/e/${ev.id}`.toLowerCase();
+                          const publicUrl = `https://plus.hsgglobal.sg/e/${encodeURIComponent(String(ev.id || "").trim())}`.toLowerCase();
                           const ok = await copyToClipboard(publicUrl);
                           if (ok) {
                             showToast("Event share link copied to clipboard", "success");
@@ -8389,8 +8389,8 @@ export function HsgEventsTab({
       {/* VENUE CHECK-IN QR POSTER MODAL */}
       {qrModalEvent &&
         (() => {
-          const publicShareUrl = `https://plus.hsgglobal.sg/e/${qrModalEvent.id}`.toLowerCase();
-          const venueQrUrl = `https://plus.hsgglobal.sg/#events?id=${qrModalEvent.id}&vt=${qrModalEvent.venue_token || ""}`;
+          const publicShareUrl = `https://plus.hsgglobal.sg/e/${encodeURIComponent(String(qrModalEvent.id || "").trim())}`.toLowerCase();
+          const venueQrUrl = `https://plus.hsgglobal.sg/#events?id=${encodeURIComponent(String(qrModalEvent.id || "").trim()).toLowerCase()}&vt=${encodeURIComponent(String(qrModalEvent.venue_token || "").trim())}`;
           return (
             <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
               <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-2xl space-y-4 border border-slate-200 animate-in fade-in zoom-in-95 duration-150 font-primary">
