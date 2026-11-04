@@ -684,7 +684,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
       }
 
       // 2. Fetch claims
-      const clRes = await fetch(`${WORKER_URL}/api/hsg-app/cashback/claims?time_filter=all`);
+      const clRes = await fetch(`${WORKER_URL}/api/hsg-app/cashback/claims?time_filter=all&admin=true`);
       if (clRes.ok) {
         const clJson = await clRes.json();
         if (clJson.claims) {
@@ -774,7 +774,7 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
 
       // 12. Fetch Live Transactions Ledger (Unified Database Traceability)
       try {
-        const txRes = await fetch(`${WORKER_URL}/api/hsg-app/transactions?limit=250`);
+        const txRes = await fetch(`${WORKER_URL}/api/hsg-app/transactions?limit=250&admin=true`);
         if (txRes.ok) {
           const txJson = await txRes.json();
           if (txJson.transactions) setTransactions(txJson.transactions);
