@@ -719,16 +719,18 @@ export function InventoryModule({ profile }: InventoryModuleProps) {
         const A = count.qty;
 
         // (B) Track Orders deduction
+        // Under Option 1: Deduct active orders (Delivered, Ready to Deliver, Out for Delivery, etc.)
         let B = 0;
         trackOrders.forEach(order => {
           const type = String(order.type || "").trim().toLowerCase();
           const status = String(order.status || "").trim().toLowerCase();
-          if (type !== "return" && status === "delivered") {
+          const isCancelled = status.includes("cancel") || status.includes("void") || status === "draft";
+          if (type !== "return" && !isCancelled) {
             let deliveredTs = Number(order.delivered_at) || 0;
             if (!deliveredTs) {
               try {
                 const logsArr = typeof order.logs === "string" ? JSON.parse(order.logs) : (order.logs || []);
-                const match = logsArr.find((l: any) => l.action && l.action.toLowerCase().includes("delivered"));
+                const match = logsArr.find((l: any) => l.action && (l.action.toLowerCase().includes("delivered") || l.action.toLowerCase().includes("picked")));
                 if (match) deliveredTs = Number(match.timestamp) || 0;
               } catch (_) {}
             }

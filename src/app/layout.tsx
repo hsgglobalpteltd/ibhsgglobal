@@ -33,6 +33,7 @@ import { PwaUpdateManager } from "@/components/pwa-update-manager";
 import { DeviceGuard } from "@/components/device-guard";
 import { NetworkGuard } from "@/components/network-guard";
 import { ToastContainer } from "@/components/toast-container";
+import "@/lib/storage";
 
 export const metadata: Metadata = {
   title: "iB - HSG Global Internal Bridge",

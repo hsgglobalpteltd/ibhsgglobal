@@ -25,8 +25,11 @@ export function InvoiceBarcodeGeneratorModule() {
   // Restore session data on mount
   React.useEffect(() => {
     try {
-      const savedPdf = localStorage.getItem("last_invoice_pdf");
-      const savedNum = localStorage.getItem("last_invoice_number");
+      const savedPdf = sessionStorage.getItem("last_invoice_pdf") || localStorage.getItem("last_invoice_pdf");
+      const savedNum = sessionStorage.getItem("last_invoice_number") || localStorage.getItem("last_invoice_number");
+
+      // Clean up heavy pdf from localStorage if previously stored there
+      try { localStorage.removeItem("last_invoice_pdf"); } catch {}
 
       if (savedPdf) {
         setCurrentPdfData(savedPdf);
@@ -41,8 +44,12 @@ export function InvoiceBarcodeGeneratorModule() {
   }, []);
 
   const resetTool = () => {
-    localStorage.removeItem("last_invoice_pdf");
-    localStorage.removeItem("last_invoice_number");
+    try {
+      sessionStorage.removeItem("last_invoice_pdf");
+      sessionStorage.removeItem("last_invoice_number");
+      localStorage.removeItem("last_invoice_pdf");
+      localStorage.removeItem("last_invoice_number");
+    } catch {}
     setCurrentPdfData(null);
     setFileName("");
     setInvoiceNumber("");
@@ -111,14 +118,20 @@ export function InvoiceBarcodeGeneratorModule() {
     reader.onload = async (e) => {
       const base64 = e.target?.result as string;
       try {
-        localStorage.setItem("last_invoice_pdf", base64);
+        try {
+          sessionStorage.setItem("last_invoice_pdf", base64);
+          localStorage.removeItem("last_invoice_pdf");
+        } catch {}
         setCurrentPdfData(base64);
         setFileName(file.name);
 
         const detectedNum = await extractInvoiceNumber(base64);
         if (detectedNum) {
           setInvoiceNumber(detectedNum);
-          localStorage.setItem("last_invoice_number", detectedNum);
+          try {
+            sessionStorage.setItem("last_invoice_number", detectedNum);
+            localStorage.setItem("last_invoice_number", detectedNum);
+          } catch {}
           setStatusMsg("Invoice Number Auto-Detected!");
           setStatusType("success");
           showToast("Invoice number scanned successfully!", "success");

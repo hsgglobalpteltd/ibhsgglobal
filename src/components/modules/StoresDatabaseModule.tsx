@@ -3,6 +3,7 @@
 import * as React from "react";
 import { DataTable, Column } from "../data-table";
 import { showToast } from "@/lib/toast";
+import { safeLocalStorageSet } from "@/lib/storage";
 import { Upload, X, Download, FileSpreadsheet, AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
 import { NavigationTabs } from "../navigation-tabs";
 import { CustomButton } from "../custom-button";
@@ -117,7 +118,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
       const json = await res.json();
       const items = Array.isArray(json) ? json : [];
       setStoresData(items);
-      localStorage.setItem("stores_db_data", JSON.stringify(items));
+      try { safeLocalStorageSet("stores_db_data", items); } catch {}
       setSyncStatus("synced");
       return items;
     } catch (err: any) {
@@ -137,7 +138,7 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
       const json = await res.json();
       const items = Array.isArray(json) ? json : [];
       setRetailersData(items);
-      localStorage.setItem("retailers_db_data", JSON.stringify(items));
+      try { safeLocalStorageSet("retailers_db_data", items); } catch {}
       setSyncStatus("synced");
       return items;
     } catch (err: any) {
@@ -329,14 +330,14 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
           ? [...retailersData, cleanData]
           : retailersData.map((item) => (String(item.id) === String(cleanData.id) ? { ...item, ...cleanData } : item));
         setRetailersData(updatedList);
-        localStorage.setItem(storageKey, JSON.stringify(updatedList));
+        try { safeLocalStorageSet(storageKey, updatedList); } catch {}
         setEditingRetailer(null);
       } else {
         const updatedList = isNew
           ? [...storesData, cleanData]
           : storesData.map((item) => (String(item.id) === String(cleanData.id) ? { ...item, ...cleanData } : item));
         setStoresData(updatedList);
-        localStorage.setItem(storageKey, JSON.stringify(updatedList));
+        try { safeLocalStorageSet(storageKey, updatedList); } catch {}
         setEditingStore(null);
       }
 
@@ -383,11 +384,11 @@ export function StoresDatabaseModule({ profile }: StoresDatabaseModuleProps) {
       if (isRetailer) {
         const updated = retailersData.filter((r) => String(r.id) !== String(rowId));
         setRetailersData(updated);
-        localStorage.setItem(storageKey, JSON.stringify(updated));
+        try { safeLocalStorageSet(storageKey, updated); } catch {}
       } else {
         const updated = storesData.filter((s) => String(s.id) !== String(rowId));
         setStoresData(updated);
-        localStorage.setItem(storageKey, JSON.stringify(updated));
+        try { safeLocalStorageSet(storageKey, updated); } catch {}
       }
 
       showToast(`${isRetailer ? "Retailer" : "Store"} deleted successfully!`, "success");

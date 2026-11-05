@@ -100,6 +100,7 @@ interface SummaryRow {
   stockLevelBefore: number;
   totalIn: number;
   totalOut: number;
+  pendingOut: number;
   netMovement: number;
   stockLevelAfter: number;
   stockValue: number;
@@ -125,6 +126,8 @@ interface MovementEventRow {
   destinationOrRemark: string;
   sourceModule: "Manage Stock" | "Track Order" | "Synced (Stock & Track Order)";
   sourceId: string;
+  isPending?: boolean;
+  orderStatus?: string;
   traceDetails?: {
     origin: string;
     actionType: string;
@@ -442,6 +445,8 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       destinationOrRemark: string;
       sourceModule: MovementEventRow["sourceModule"];
       sourceId: string;
+      isPending?: boolean;
+      orderStatus?: string;
       traceDetails?: MovementEventRow["traceDetails"];
     }
 
@@ -539,6 +544,11 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       const eventType: MovementEventRow["type"] = isReturn ? "Return (Credit Note)" : "DO Delivery";
       const eventCat: "IN" | "OUT" = isReturn ? "IN" : "OUT";
 
+      const rawStatus = String(order.status || "").trim();
+      const sLower = rawStatus.toLowerCase();
+      const isDelivered = sLower === "delivered" || sLower === "collected";
+      const isPending = !isReturn && !isDelivered;
+
       const millionRef = isReturn 
         ? cleanRefNumber(order.credit_note_number)
         : (cleanRefNumber(order.invoice_number) || cleanRefNumber(order.do_number || order.id));
@@ -563,6 +573,8 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
           if (ev.sourceId === matchingSM.id) {
             ev.type = isReturn ? "Return (Credit Note)" : "DO Delivery";
             ev.sourceModule = "Synced (Stock & Track Order)";
+            ev.isPending = isPending;
+            ev.orderStatus = rawStatus;
             if (destOrRemark && destOrRemark !== "-") {
               ev.destinationOrRemark = destOrRemark;
             }
@@ -571,6 +583,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
               ev.traceDetails.origin = isReturn ? "Synced Return (Credit Note)" : "Synced Delivery Order (DO Delivery)";
               ev.traceDetails.deliverTo = order.deliver_to;
               ev.traceDetails.poscode = order.poscode;
+              ev.traceDetails.status = rawStatus || (isDelivered ? "Delivered" : "Pending Delivery");
               if (order.driver) ev.traceDetails.driverOrCreator = `${ev.traceDetails.driverOrCreator} • Driver: ${order.driver}`;
             }
           }
@@ -613,6 +626,8 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
             destinationOrRemark: destOrRemark,
             sourceModule: "Track Order",
             sourceId: order.id,
+            isPending,
+            orderStatus: rawStatus || (isDelivered ? "Delivered" : "Pending"),
             traceDetails: {
               origin: "Track Order (Delivery Order)",
               actionType: order.type || "DO Delivery",
@@ -621,7 +636,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
               deliverTo: order.deliver_to,
               poscode: order.poscode,
               driverOrCreator: order.driver || "Driver Dispatch",
-              status: order.status || "Delivered",
+              status: rawStatus || (isDelivered ? "Delivered" : "Pending Delivery"),
               syncedTrackOrder: true
             }
           });
@@ -746,9 +761,13 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
       const skuEventsInRange = eventsInRange.filter((e) => e.sku.toLowerCase() === norm);
       let totalIn = 0;
       let totalOut = 0;
+      let pendingOut = 0;
       skuEventsInRange.forEach((e) => {
         totalIn += e.inQty;
         totalOut += e.outQty;
+        if (e.isPending) {
+          pendingOut += e.outQty;
+        }
       });
 
       // Closing Stock Level (at endEpoch)
@@ -767,6 +786,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         stockLevelBefore,
         totalIn,
         totalOut,
+        pendingOut,
         netMovement: totalIn - totalOut,
         stockLevelAfter,
         stockValue
@@ -864,6 +884,7 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
   // Total KPIs
   const totalInSum = React.useMemo(() => filteredSummaryRows.reduce((acc, r) => acc + r.totalIn, 0), [filteredSummaryRows]);
   const totalOutSum = React.useMemo(() => filteredSummaryRows.reduce((acc, r) => acc + r.totalOut, 0), [filteredSummaryRows]);
+  const totalPendingOutSum = React.useMemo(() => filteredSummaryRows.reduce((acc, r) => acc + (r.pendingOut || 0), 0), [filteredSummaryRows]);
   const netFlowSum = totalInSum - totalOutSum;
 
   // Helper to format carton / loose
@@ -1188,9 +1209,19 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
         {/* Total OUT */}
         <div className="bg-white border border-slate-200 rounded-md px-3 py-1.5 shadow-2xs flex items-center justify-between">
           <div>
-            <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block">
-              Total Stock Out
-            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider block">
+                Total Stock Out
+              </span>
+              {totalPendingOutSum > 0 && (
+                <span 
+                  className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-50 text-amber-900 border border-amber-200 tracking-tight"
+                  title={`${totalPendingOutSum.toLocaleString()} pcs in pending delivery`}
+                >
+                  {totalPendingOutSum.toLocaleString()} Pending
+                </span>
+              )}
+            </div>
             <span className="text-sm font-bold text-zinc-900 mt-0.5 block tabular-nums">
               -{totalOutSum.toLocaleString()} <span className="text-[10px] font-normal text-zinc-400">pcs</span>
             </span>
@@ -1320,9 +1351,17 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
                       {/* Total OUT */}
                       <td className="p-3 text-right">
                         {row.totalOut > 0 ? (
-                          <div className="flex flex-col items-end">
+                          <div className="flex flex-col items-end gap-0.5">
                             <span className="font-semibold text-rose-700 tabular-nums">-{row.totalOut.toLocaleString()}</span>
                             <span className="text-[10px] text-zinc-400">{formatCartonLoose(row.totalOut, row.uom)}</span>
+                            {row.pendingOut > 0 && (
+                              <span 
+                                className="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-50 text-amber-900 border border-amber-200 tracking-tight mt-0.5"
+                                title={`${row.pendingOut.toLocaleString()} pcs (${formatCartonLoose(row.pendingOut, row.uom)}) in pending delivery`}
+                              >
+                                {formatCartonLoose(row.pendingOut, row.uom)} Pending
+                              </span>
+                            )}
                           </div>
                         ) : (
                           <span className="text-zinc-300">-</span>
@@ -1407,9 +1446,19 @@ export function StockCardModule({ profile }: StockCardModuleProps) {
                               <Repeat className="w-3 h-3" /> Transfer
                             </span>
                           ) : ev.type === "DO Delivery" ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-900 border border-amber-200">
-                              <Truck className="w-3 h-3" /> DO Delivery
-                            </span>
+                            <div className="inline-flex items-center gap-1.5 flex-wrap">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-900 border border-amber-200">
+                                <Truck className="w-3 h-3" /> DO Delivery
+                              </span>
+                              {ev.isPending && (
+                                <span 
+                                  className="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-bold tracking-tight bg-amber-100 text-amber-950 border border-amber-300"
+                                  title={`Status: ${ev.orderStatus || "Pending Delivery"}`}
+                                >
+                                  Pending
+                                </span>
+                              )}
+                            </div>
                           ) : (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-50 text-rose-800 border border-rose-200">
                               <ArrowUpRight className="w-3 h-3" /> Stock Out
