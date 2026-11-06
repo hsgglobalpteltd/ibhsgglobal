@@ -3936,44 +3936,38 @@ export function HsgAppModule({ profile }: HsgAppModuleProps) {
                       </div>
 
                       {/* Dropdown Filter: Hidden by default, opens only when user puts >= 1 number or letter, max 5 results */}
-                      {isStoreDropdownOpen && storeSearchQuery.trim().length >= 1 && (
+                      {isStoreDropdownOpen && storeSearchQuery.trim().length >= 1 && filteredStoresForReview.length > 0 && (
                         <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden max-h-56 overflow-y-auto">
-                          {filteredStoresForReview.length === 0 ? (
-                            <div className="p-3 text-[11px] text-slate-500 text-center">
-                              No store outlet found matching "{storeSearchQuery}"
-                            </div>
-                          ) : (
-                            <div className="divide-y divide-slate-100">
-                              {filteredStoresForReview.map((st) => (
-                                <button
-                                  key={st.id}
-                                  type="button"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    handleSelectStoreForReview(st);
-                                  }}
-                                  className="w-full text-left p-2.5 hover:bg-blue-50/80 transition flex flex-col gap-0.5 group"
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="font-semibold text-slate-900 text-xs group-hover:text-[#0B57D0]">
-                                      {st.store_name}
+                          <div className="divide-y divide-slate-100">
+                            {filteredStoresForReview.map((st) => (
+                              <button
+                                key={st.id}
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  handleSelectStoreForReview(st);
+                                }}
+                                className="w-full text-left p-2.5 hover:bg-blue-50/80 transition flex flex-col gap-0.5 group"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-semibold text-slate-900 text-xs group-hover:text-[#0B57D0]">
+                                    {st.store_name}
+                                  </span>
+                                  <span className="font-mono text-[10px] font-semibold text-[#0B57D0] bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60 shrink-0">
+                                    {st.id}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                                  <span className="truncate max-w-[260px]">{st.store_address}</span>
+                                  {st.brand && (
+                                    <span className="text-[10px] text-slate-400 font-medium shrink-0">
+                                      {st.brand}
                                     </span>
-                                    <span className="font-mono text-[10px] font-semibold text-[#0B57D0] bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60 shrink-0">
-                                      {st.id}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                                    <span className="truncate max-w-[260px]">{st.store_address}</span>
-                                    {st.brand && (
-                                      <span className="text-[10px] text-slate-400 font-medium shrink-0">
-                                        {st.brand}
-                                      </span>
-                                    )}
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          )}
+                                  )}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>

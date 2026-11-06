@@ -173,17 +173,17 @@ export interface HsgContestSubmission {
   user_nickname: string;
   status: "submitted" | "approved" | "winner" | "rejected";
   receipt_photo_url?: string;
-  amount_paid?: number;
-  items_count?: number;
-  store_id?: string;
-  store_name?: string;
-  store_address?: string;
-  points_awarded?: number;
+  amount_paid?: number | null;
+  items_count?: number | null;
+  store_id?: string | null;
+  store_name?: string | null;
+  store_address?: string | null;
+  points_awarded?: number | null;
   extra_answers?: Record<string, any>;
   answer_json: Record<string, any>;
   unlocked_via_passcode?: boolean;
   pass_mode?: string;
-  reject_reason?: string;
+  reject_reason?: string | null;
   ocr_data?: any;
   winner_data: {
     is_winner?: boolean;
@@ -468,6 +468,111 @@ export function HsgContestTab({
   const [storeSearchQuery, setStoreSearchQuery] = React.useState<string>("");
   const [isStoreDropdownOpen, setIsStoreDropdownOpen] = React.useState<boolean>(false);
 
+  // Inline reject in submissions table
+  const [inlineRejectSubId, setInlineRejectSubId] = React.useState<string | null>(null);
+  const [inlineRejectReason, setInlineRejectReason] = React.useState<string>("Rejected by Admin");
+
+  // Receipt Image Zoom & Pan in Inspect modal
+  const [receiptZoom, setReceiptZoom] = React.useState<number>(1);
+  const [receiptPan, setReceiptPan] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDraggingReceipt, setIsDraggingReceipt] = React.useState<boolean>(false);
+  const receiptDragStart = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Store Outlet Registration in Inspect modal
+  const [registeringStore, setRegisteringStore] = React.useState<boolean>(false);
+
+  const isStoreIdRegistered = React.useMemo(() => {
+    const sId = adminStoreId.trim().toLowerCase();
+    if (!sId) return false;
+    return localStoreOutlets.some((st) => (st.id || "").trim().toLowerCase() === sId);
+  }, [adminStoreId, localStoreOutlets]);
+
+  const handleRegisterNewStore = async () => {
+    const sId = adminStoreId.trim();
+    const sName = adminStoreName.trim();
+    const sAddr = adminStoreAddress.trim();
+    if (!sId || !sName || !sAddr) {
+      showToast("Please provide Store ID, Store Name, and Store Address", "error");
+      return;
+    }
+
+    setRegisteringStore(true);
+    try {
+      const res = await fetch(`${WORKER_URL}/api/hsg-app/cashback/store-outlets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: sId,
+          store_name: sName,
+          store_address: sAddr,
+          brand: sName.split(" ")[0] || "Store",
+          is_active: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || data.message || "Failed to register store");
+
+      const newOutlet = data.outlet || {
+        id: sId,
+        store_name: sName,
+        store_address: sAddr,
+        brand: sName.split(" ")[0] || "Store",
+        is_active: true,
+      };
+
+      setLocalStoreOutlets((prev) => [newOutlet, ...prev.filter((o) => o.id !== sId)]);
+      showToast(`Store outlet "${sName}" (${sId}) registered successfully!`, "success");
+      onRefresh();
+    } catch (err: any) {
+      showToast(err.message || "Failed to register store", "error");
+    } finally {
+      setRegisteringStore(false);
+    }
+  };
+
+  const handleReceiptWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const zoomDelta = e.deltaY < 0 ? 0.2 : -0.2;
+    setReceiptZoom((prev) => {
+      const next = Math.min(Math.max(Number((prev + zoomDelta).toFixed(2)), 1), 6);
+      if (next <= 1) setReceiptPan({ x: 0, y: 0 });
+      return next;
+    });
+  };
+
+  const handleReceiptMouseDown = (e: React.MouseEvent) => {
+    if (receiptZoom <= 1) return;
+    setIsDraggingReceipt(true);
+    receiptDragStart.current = { x: e.clientX - receiptPan.x, y: e.clientY - receiptPan.y };
+  };
+
+  const handleReceiptMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingReceipt || receiptZoom <= 1) return;
+    setReceiptPan({
+      x: e.clientX - receiptDragStart.current.x,
+      y: e.clientY - receiptDragStart.current.y,
+    });
+  };
+
+  const handleReceiptMouseUp = () => setIsDraggingReceipt(false);
+
+  const handleResetReceiptZoom = () => {
+    setReceiptZoom(1);
+    setReceiptPan({ x: 0, y: 0 });
+  };
+
+  const handleZoomInReceipt = () => {
+    setReceiptZoom((prev) => Math.min(Number((prev + 0.3).toFixed(2)), 6));
+  };
+
+  const handleZoomOutReceipt = () => {
+    setReceiptZoom((prev) => {
+      const next = Math.max(Number((prev - 0.3).toFixed(2)), 1);
+      if (next <= 1) setReceiptPan({ x: 0, y: 0 });
+      return next;
+    });
+  };
+
   // Filter store outlets for Contest review (hidden by default, appears only when >= 1 char typed, max 5 results)
   const filteredStoresForReview = React.useMemo(() => {
     const q = storeSearchQuery.trim().toLowerCase();
@@ -507,6 +612,9 @@ export function HsgContestTab({
 
   const openInspectSub = (sub: HsgContestSubmission) => {
     setInspectSub(sub);
+    setReceiptZoom(1);
+    setReceiptPan({ x: 0, y: 0 });
+    setIsDraggingReceipt(false);
     setRejectReason(sub.reject_reason || "");
     setAdminAmountPaid(
       sub.amount_paid !== null && sub.amount_paid !== undefined && Number(sub.amount_paid) > 0 ? String(sub.amount_paid) : ""
@@ -514,35 +622,38 @@ export function HsgContestTab({
     setAdminQtyPurchased(
       sub.items_count !== null && sub.items_count !== undefined && Number(sub.items_count) > 0 ? String(sub.items_count) : ""
     );
-    setAdminStoreId(sub.store_id || "");
-    setAdminStoreName(sub.store_name || "");
-    setAdminStoreAddress(sub.store_address || "");
-    setAdminTxRef(sub.ocr_data?.transaction_ref || "");
-    setAdminPurchaseDateTime(sub.ocr_data?.purchase_datetime || "");
+    setAdminStoreId(sub.store_id && sub.store_id !== "null" ? sub.store_id : "");
+    setAdminStoreName(sub.store_name && sub.store_name !== "null" ? sub.store_name : "");
+    setAdminStoreAddress(sub.store_address && sub.store_address !== "null" ? sub.store_address : "");
+    const rawTx = sub.ocr_data?.transaction_ref;
+    setAdminTxRef(rawTx && rawTx !== "null" ? String(rawTx) : "");
+    const rawPDate = sub.ocr_data?.purchase_datetime;
+    setAdminPurchaseDateTime(rawPDate && rawPDate !== "null" ? String(rawPDate) : "");
     setStoreSearchQuery("");
     setIsStoreDropdownOpen(false);
   };
 
-  // Inspect Modal Duplicate Detection
+  // Inspect Modal Duplicate Detection (compare Transaction Ref or Receipt Photo)
   const duplicateMatchesInModal = React.useMemo(() => {
     if (!inspectSub) return [];
     const tx = adminTxRef.trim().toLowerCase();
-    const pDate = adminPurchaseDateTime.trim().toLowerCase();
-    if (!tx || !pDate) return [];
+    const photo = inspectSub.receipt_photo_url?.trim();
+    if (!tx && !photo) return [];
     return localSubmissions.filter(
-      (s) =>
-        s.id !== inspectSub.id &&
-        s.ocr_data?.transaction_ref &&
-        s.ocr_data?.purchase_datetime &&
-        s.ocr_data.transaction_ref.trim().toLowerCase() === tx &&
-        s.ocr_data.purchase_datetime.trim().toLowerCase() === pDate
+      (s) => {
+        if (s.id === inspectSub.id) return false;
+        const sTx = String(s.ocr_data?.transaction_ref || "").trim().toLowerCase();
+        if (tx && tx !== "null" && tx.length >= 3 && sTx === tx) return true;
+        if (photo && s.receipt_photo_url && s.receipt_photo_url === photo) return true;
+        return false;
+      }
     );
-  }, [inspectSub, adminTxRef, adminPurchaseDateTime, localSubmissions]);
+  }, [inspectSub, adminTxRef, localSubmissions]);
 
   const isInspectDuplicate =
     Boolean(
       inspectSub?.ocr_data?.diagnose_status &&
-        String(inspectSub.ocr_data.diagnose_status).includes("duplicate")
+        String(inspectSub.ocr_data.diagnose_status).toLowerCase().includes("duplicate")
     ) || duplicateMatchesInModal.length > 0;
 
   // Contest Create / Edit Modal
@@ -1010,11 +1121,11 @@ export function HsgContestTab({
     const payload = {
       amount_paid: adminAmountPaid !== "" ? Number(adminAmountPaid) : null,
       items_count: adminQtyPurchased !== "" ? Number(adminQtyPurchased) : null,
-      store_id: adminStoreId.trim() || null,
-      store_name: adminStoreName.trim() || null,
-      store_address: adminStoreAddress.trim() || null,
-      transaction_ref: adminTxRef.trim() || null,
-      purchase_datetime: adminPurchaseDateTime.trim() || null,
+      store_id: adminStoreId.trim() && adminStoreId.trim() !== "null" ? adminStoreId.trim() : null,
+      store_name: adminStoreName.trim() && adminStoreName.trim() !== "null" ? adminStoreName.trim() : null,
+      store_address: adminStoreAddress.trim() && adminStoreAddress.trim() !== "null" ? adminStoreAddress.trim() : null,
+      transaction_ref: adminTxRef.trim() && adminTxRef.trim() !== "null" ? adminTxRef.trim() : null,
+      purchase_datetime: adminPurchaseDateTime.trim() && adminPurchaseDateTime.trim() !== "null" ? adminPurchaseDateTime.trim() : null,
     };
     try {
       const res = await fetch(
@@ -1026,7 +1137,7 @@ export function HsgContestTab({
         }
       );
       const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.message || "Update failed");
+      if (!res.ok || !data.ok) throw new Error(data.message || data.error || "Update failed");
       setLocalSubmissions((prev) =>
         prev.map((s) =>
           s.id === sub.id
@@ -1039,8 +1150,8 @@ export function HsgContestTab({
                 store_address: payload.store_address ?? s.store_address,
                 ocr_data: {
                   ...s.ocr_data,
-                  transaction_ref: adminTxRef.trim(),
-                  purchase_datetime: adminPurchaseDateTime.trim(),
+                  transaction_ref: payload.transaction_ref || "",
+                  purchase_datetime: payload.purchase_datetime || "",
                 },
               }
             : s
@@ -1111,14 +1222,12 @@ export function HsgContestTab({
     }
   };
 
-  // Reject Entry
+  // Reject Entry from Inspect Modal
   const handleRejectSubmission = async (sub: HsgContestSubmission) => {
-    if (!rejectReason.trim()) {
-      showToast("Please provide a rejection reason", "error");
-      return;
-    }
-    const rReason = rejectReason.trim();
+    const rReason = rejectReason.trim() || "Rejected by Admin";
     const prevSubStatus = sub.status;
+    const prevRejectReason = sub.reject_reason;
+    setProcessingSubId(sub.id);
     setLocalSubmissions((prev) =>
       prev.map((s) => (s.id === sub.id ? { ...s, status: "rejected", reject_reason: rReason } : s))
     );
@@ -1140,7 +1249,7 @@ export function HsgContestTab({
       onRefresh();
     } catch (err: any) {
       setLocalSubmissions((prev) =>
-        prev.map((s) => (s.id === sub.id ? { ...s, status: prevSubStatus } : s))
+        prev.map((s) => (s.id === sub.id ? { ...s, status: prevSubStatus, reject_reason: prevRejectReason } : s))
       );
       showToast(err.message || "Failed to reject entry", "error");
     } finally {
@@ -1183,39 +1292,65 @@ export function HsgContestTab({
     }
   };
 
-  // Quick Reject Submission directly from row
-  const handleQuickReject = async (sub: HsgContestSubmission) => {
-    if (sub.status === "rejected") {
-      showToast("Entry is already rejected", "info");
-      return;
-    }
+  // Start Inline Reject in Table Row
+  const handleStartInlineReject = (sub: HsgContestSubmission) => {
+    setInlineRejectSubId(sub.id);
+    setInlineRejectReason(sub.reject_reason || "Rejected by Admin");
+  };
+
+  // Confirm Inline Reject / Update Rejection Reason in Table Row
+  const handleConfirmInlineReject = async (sub: HsgContestSubmission) => {
+    const finalReason = inlineRejectReason.trim() || "Rejected by Admin";
     const prevStatus = sub.status;
+    const prevReason = sub.reject_reason;
     setProcessingSubId(sub.id);
+    setInlineRejectSubId(null);
     setLocalSubmissions((prev) =>
-      prev.map((s) => (s.id === sub.id ? { ...s, status: "rejected", reject_reason: "Rejected by Admin" } : s))
+      prev.map((s) => (s.id === sub.id ? { ...s, status: "rejected", reject_reason: finalReason } : s))
     );
-    showToast("Entry rejected and points revoked", "success");
 
     try {
-      const res = await fetch(
-        `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/reject`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason: "Rejected by Admin" }),
-        }
-      );
-      const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.message || "Rejection failed");
+      if (prevStatus === "rejected") {
+        // Already rejected -> update reason only
+        const res = await fetch(
+          `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/update`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reject_reason: finalReason }),
+          }
+        );
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.message || data.error || "Update failed");
+        showToast("Rejection reason updated", "success");
+      } else {
+        // Pending or approved -> reject and revoke points
+        const res = await fetch(
+          `${WORKER_URL}/api/hsg-app/contests/submissions/${encodeURIComponent(sub.id)}/reject`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reason: finalReason }),
+          }
+        );
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.message || "Rejection failed");
+        showToast("Entry rejected and points revoked", "success");
+      }
       onRefresh();
     } catch (err: any) {
       setLocalSubmissions((prev) =>
-        prev.map((s) => (s.id === sub.id ? { ...s, status: prevStatus } : s))
+        prev.map((s) => (s.id === sub.id ? { ...s, status: prevStatus, reject_reason: prevReason } : s))
       );
       showToast(err.message || "Failed to reject entry", "error");
     } finally {
       setProcessingSubId(null);
     }
+  };
+
+  // Quick Reject Submission directly from row (fallback)
+  const handleQuickReject = async (sub: HsgContestSubmission) => {
+    handleStartInlineReject(sub);
   };
 
   // Revoke submission back to pending review
@@ -1541,18 +1676,29 @@ export function HsgContestTab({
       // 1. Submit timestamp
       const submitTime = formatSubmitDate(sub.created_at);
 
-      // 2. User ID
-      const displayUserId = sub.user_id
-        ? sub.user_id.startsWith("USR-")
-          ? sub.user_id
-          : `USR-${sub.user_id.slice(-4)}`
-        : "USR-0000";
+      // 2. User ID (100% authentic ID directly from Member User Database)
+      const uObj = users.find(
+        (u) =>
+          (sub.user_id && u.id === sub.user_id) ||
+          (u.phone_number &&
+            sub.user_phone &&
+            u.phone_number.replace(/\D/g, "") === sub.user_phone.replace(/\D/g, ""))
+      );
+      const displayUserId = uObj?.id || sub.user_id || "-";
 
       // 3. Name and last 4 digit phone
-      const nick = sub.user_nickname || "User";
-      const phoneDigits = String(sub.user_phone || "").replace(/\D/g, "");
-      const last4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : phoneDigits;
-      const nameWithPhone = last4 ? `${nick} (${last4})` : nick;
+      const rawNick = (uObj?.nickname || sub.user_nickname || "").trim();
+      const isDefaultNick =
+        !rawNick ||
+        rawNick === "Member" ||
+        rawNick === "HSG Member" ||
+        rawNick.startsWith("HSG Member") ||
+        rawNick.startsWith("Member_") ||
+        rawNick.startsWith("Member ");
+      const baseDisplayName = isDefaultNick ? "HSG Member" : rawNick;
+      const cleanPhone = String(uObj?.raw_phone || sub.user_phone || uObj?.phone_number || "").replace(/\D/g, "");
+      const last4 = cleanPhone.length >= 4 ? cleanPhone.slice(-4) : cleanPhone;
+      const nameWithPhone = last4 ? `${baseDisplayName} (${last4})` : baseDisplayName;
 
       // 4. Buy at (purchase store id and store name)
       const buyAt = sub.store_id
@@ -2087,20 +2233,22 @@ export function HsgContestTab({
                     const qtyDisplay = `${sub.items_count || 1} Pcs`;
                     const outletDisplay = outletId || "-";
 
-                    // Duplicate receipt detection
-                    const subTx = (sub.ocr_data?.transaction_ref || "").trim().toLowerCase();
-                    const subTime = (sub.ocr_data?.purchase_datetime || "").trim().toLowerCase();
+                    // Duplicate receipt detection (strictly by transaction_ref or receipt_photo_url across all submissions, no timestamp required)
+                    const subTx = String(sub.ocr_data?.transaction_ref || "").trim().toLowerCase();
+                    const subPhoto = String(sub.receipt_photo_url || "").trim();
                     const isDuplicateTicket =
-                      Boolean(sub.ocr_data?.diagnose_status && String(sub.ocr_data.diagnose_status).includes("duplicate")) ||
-                      (Boolean(subTx && subTime) &&
-                        filteredSubs.some(
-                          (other) =>
-                            other.id !== sub.id &&
-                            other.ocr_data?.transaction_ref &&
-                            other.ocr_data?.purchase_datetime &&
-                            other.ocr_data.transaction_ref.trim().toLowerCase() === subTx &&
-                            other.ocr_data.purchase_datetime.trim().toLowerCase() === subTime
-                        ));
+                      Boolean(sub.ocr_data?.diagnose_status && String(sub.ocr_data.diagnose_status).toLowerCase().includes("duplicate")) ||
+                      localSubmissions.some((other) => {
+                        if (other.id === sub.id) return false;
+                        const otherTx = String(other.ocr_data?.transaction_ref || "").trim().toLowerCase();
+                        if (subTx && subTx !== "null" && subTx !== "-" && subTx.length >= 3 && otherTx === subTx) {
+                          return true;
+                        }
+                        if (subPhoto && other.receipt_photo_url && other.receipt_photo_url.trim() === subPhoto) {
+                          return true;
+                        }
+                        return false;
+                      });
 
                     // Answers extraction
                     const answersMap = (sub.extra_answers || sub.answer_json || {}) as Record<string, any>;
@@ -2178,7 +2326,12 @@ export function HsgContestTab({
                               src={sub.receipt_photo_url}
                               alt="Receipt"
                               onClick={() => openInspectSub(sub)}
-                              className="w-9 h-9 rounded object-cover border border-slate-200 cursor-pointer hover:opacity-80 transition bg-slate-100"
+                              className={`w-9 h-9 rounded object-cover cursor-pointer hover:opacity-80 transition bg-slate-100 ${
+                                isDuplicateTicket
+                                  ? "border-2 border-rose-400 ring-2 ring-rose-100"
+                                  : "border border-slate-200"
+                              }`}
+                              title={isDuplicateTicket ? "⚠️ Duplicate receipt detected" : "View receipt"}
                             />
                           ) : (
                             <span className="text-[11px] text-zinc-400">-</span>
@@ -2190,8 +2343,8 @@ export function HsgContestTab({
                           <div className="inline-flex items-center gap-1.5">
                             {isDuplicateTicket && (
                               <span
-                                className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1 shrink-0"
-                                title={`Duplicate receipt detected: ${sub.ocr_data?.diagnose_status || "Same Transaction ID & Timestamp"}`}
+                                className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 inline-flex items-center gap-1 shrink-0 shadow-2xs"
+                                title={`Duplicate receipt detected: Same Transaction Ref (${subTx}) found in another submission`}
                               >
                                 <span>⚠️</span>
                                 <span>Duplicate</span>
@@ -2273,12 +2426,15 @@ export function HsgContestTab({
                                 Rejected
                               </span>
                               {sub.reject_reason && (
-                                <span
-                                  className="text-[11px] text-rose-600 font-normal leading-tight max-w-[180px] truncate"
-                                  title={sub.reject_reason}
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartInlineReject(sub)}
+                                  className="inline-flex items-center gap-1 text-[11px] text-rose-600 font-normal leading-tight max-w-[190px] text-left hover:text-rose-800 transition cursor-pointer group"
+                                  title={`${sub.reject_reason} (Click to edit reason)`}
                                 >
-                                  {sub.reject_reason}
-                                </span>
+                                  <Pencil className="w-2.5 h-2.5 text-rose-400 group-hover:text-rose-600 shrink-0" />
+                                  <span className="truncate italic">{sub.reject_reason}</span>
+                                </button>
                               )}
                             </div>
                           ) : (
@@ -2290,50 +2446,97 @@ export function HsgContestTab({
 
                         {/* 7. Actions: Dynamic Approve/Reject vs Revoke button switching */}
                         <td className="py-2.5 px-3 text-right whitespace-nowrap">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {!isApproved && !isRejected ? (
-                              <>
-                                <button
-                                  type="button"
-                                  disabled={isProcessing}
-                                  onClick={() => handleQuickApprove(sub)}
-                                  className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98 disabled:opacity-50"
-                                  title="Approve & Credit Points"
-                                >
-                                  <Check className="w-3 h-3" />
-                                  <span>Approve</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isProcessing}
-                                  onClick={() => handleQuickReject(sub)}
-                                  className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 bg-rose-600 hover:bg-rose-700 text-white cursor-pointer active:scale-98 disabled:opacity-50"
-                                  title="Reject & Revoke Points"
-                                >
-                                  <X className="w-3 h-3" />
-                                  <span>Reject</span>
-                                </button>
-                              </>
-                            ) : (
+                          {inlineRejectSubId === sub.id ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <input
+                                type="text"
+                                autoFocus
+                                value={inlineRejectReason}
+                                onChange={(e) => setInlineRejectReason(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleConfirmInlineReject(sub);
+                                  if (e.key === "Escape") setInlineRejectSubId(null);
+                                }}
+                                placeholder="Reason for rejection..."
+                                className="h-6.5 w-44 px-2 rounded border border-rose-300 bg-white text-[11px] text-zinc-800 placeholder-zinc-400 outline-none focus:ring-1 focus:ring-rose-500 focus:border-rose-500 shadow-2xs"
+                              />
                               <button
                                 type="button"
                                 disabled={isProcessing}
-                                onClick={() => handleRevokeSubmission(sub)}
-                                className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 border border-slate-200 bg-white hover:bg-amber-50 text-amber-700 hover:border-amber-300 cursor-pointer active:scale-98 disabled:opacity-50"
-                                title="Revoke status back to Pending Review"
+                                onClick={() => handleConfirmInlineReject(sub)}
+                                className="h-6.5 px-2 rounded text-[11px] font-semibold bg-rose-600 hover:bg-rose-700 text-white transition shadow-2xs flex items-center gap-1 cursor-pointer active:scale-98 disabled:opacity-50"
+                                title="Save Rejection Reason"
                               >
-                                <RotateCcw className="w-3 h-3" />
-                                <span>Revoke</span>
+                                <Check className="w-3 h-3" />
+                                <span>Save</span>
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => openInspectSub(sub)}
-                              className="h-6 px-2.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-[11px] font-medium transition shadow-2xs cursor-pointer active:scale-98"
-                            >
-                              Inspect
-                            </button>
-                          </div>
+                              <button
+                                type="button"
+                                disabled={isProcessing}
+                                onClick={() => setInlineRejectSubId(null)}
+                                className="h-6.5 px-2 rounded text-[11px] font-medium border border-slate-200 bg-white hover:bg-slate-50 text-zinc-600 transition shadow-2xs cursor-pointer active:scale-98"
+                                title="Cancel"
+                              >
+                                <span>Cancel</span>
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-1.5">
+                              {!isApproved && !isRejected ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    disabled={isProcessing}
+                                    onClick={() => handleQuickApprove(sub)}
+                                    className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer active:scale-98 disabled:opacity-50"
+                                    title="Approve & Credit Points"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>Approve</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={isProcessing}
+                                    onClick={() => handleStartInlineReject(sub)}
+                                    className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 bg-rose-600 hover:bg-rose-700 text-white cursor-pointer active:scale-98 disabled:opacity-50"
+                                    title="Reject Submission"
+                                  >
+                                    <X className="w-3 h-3" />
+                                    <span>Reject</span>
+                                  </button>
+                                </>
+                              ) : isRejected ? (
+                                <button
+                                  type="button"
+                                  disabled={isProcessing}
+                                  onClick={() => handleRevokeSubmission(sub)}
+                                  className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 border border-slate-200 bg-white hover:bg-amber-50 text-amber-700 hover:border-amber-300 cursor-pointer active:scale-98 disabled:opacity-50"
+                                  title="Revoke status back to Pending Review"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>Revoke</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={isProcessing}
+                                  onClick={() => handleRevokeSubmission(sub)}
+                                  className="h-6 px-2 rounded text-[11px] font-semibold transition shadow-2xs flex items-center gap-1 border border-slate-200 bg-white hover:bg-amber-50 text-amber-700 hover:border-amber-300 cursor-pointer active:scale-98 disabled:opacity-50"
+                                  title="Revoke status back to Pending Review"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>Revoke</span>
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openInspectSub(sub)}
+                                className="h-6 px-2.5 rounded border border-slate-200 bg-white hover:bg-slate-50 text-zinc-700 text-[11px] font-medium transition shadow-2xs cursor-pointer active:scale-98"
+                              >
+                                Inspect
+                              </button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );
@@ -2550,30 +2753,30 @@ export function HsgContestTab({
           <div className="w-full max-w-4xl bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col h-[85vh] max-h-[820px]">
             {/* Header */}
             <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
-              <div className="flex items-center gap-3 min-w-0">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-bold text-zinc-950 truncate">
-                      Inspect Submission ({inspectSub.id})
-                    </h3>
-                    {inspectSub.status === "approved" ? (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                        Approved
-                      </span>
-                    ) : inspectSub.status === "rejected" ? (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200">
-                        Rejected
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
-                        Pending Review
+              <div className="flex items-center gap-2.5 flex-wrap min-w-0 pr-2">
+                <h3 className="text-sm font-bold text-zinc-950 truncate">
+                  Inspect Submission ({inspectSub.id})
+                </h3>
+                {inspectSub.status === "approved" ? (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    Approved
+                  </span>
+                ) : inspectSub.status === "rejected" ? (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 shrink-0">
+                      Rejected
+                    </span>
+                    {inspectSub.reject_reason && (
+                      <span className="text-xs text-rose-600 italic font-normal ml-1" title={inspectSub.reject_reason}>
+                        {inspectSub.reject_reason}
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-zinc-500 mt-0.5">
-                    {inspectSub.user_nickname} (+{maskPhoneLast4(inspectSub.user_phone)}) • {inspectSub.contest_title || "Contest"}
-                  </p>
-                </div>
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                    Pending Review
+                  </span>
+                )}
               </div>
               <button
                 type="button"
@@ -2587,27 +2790,83 @@ export function HsgContestTab({
             {/* 2-Column Content Area */}
             <div className="flex-1 min-h-0 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-slate-200">
               {/* Left Column: Full Receipt Image */}
-              <div className="w-full md:w-1/2 h-full flex flex-col bg-slate-50/60 min-h-0 overflow-hidden">
+              <div className="w-full md:w-1/2 h-full flex flex-col bg-slate-900 min-h-0 overflow-hidden">
                 <div className="px-4 py-2 border-b border-slate-200 bg-white flex items-center justify-between text-xs font-semibold text-zinc-700 shrink-0">
-                  <span>Receipt Photo</span>
+                  <div className="flex items-center gap-2">
+                    <span>Receipt Photo</span>
+                    {inspectSub.receipt_photo_url && (
+                      <span className="text-[10px] text-zinc-400 font-normal">
+                        (Scroll/pinch to zoom, drag to pan)
+                      </span>
+                    )}
+                  </div>
                   {inspectSub.receipt_photo_url && (
-                    <a
-                      href={inspectSub.receipt_photo_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] font-semibold text-[#0B57D0] hover:underline flex items-center gap-1"
-                    >
-                      <span>Open Full Size</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </a>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200 text-[10px] font-mono font-semibold text-zinc-700">
+                        <button
+                          type="button"
+                          onClick={handleZoomOutReceipt}
+                          disabled={receiptZoom <= 1}
+                          className="hover:text-blue-600 disabled:opacity-40 p-0.5 cursor-pointer disabled:cursor-not-allowed"
+                          title="Zoom Out"
+                        >
+                          <ZoomOut className="w-3 h-3" />
+                        </button>
+                        <span className="w-9 text-center select-none">{Math.round(receiptZoom * 100)}%</span>
+                        <button
+                          type="button"
+                          onClick={handleZoomInReceipt}
+                          disabled={receiptZoom >= 6}
+                          className="hover:text-blue-600 disabled:opacity-40 p-0.5 cursor-pointer disabled:cursor-not-allowed"
+                          title="Zoom In"
+                        >
+                          <ZoomIn className="w-3 h-3" />
+                        </button>
+                        {receiptZoom > 1 && (
+                          <button
+                            type="button"
+                            onClick={handleResetReceiptZoom}
+                            className="hover:text-blue-600 p-0.5 border-l border-slate-300 ml-0.5 pl-1 cursor-pointer"
+                            title="Reset Zoom"
+                          >
+                            <RotateCcw className="w-2.5 h-2.5" />
+                          </button>
+                        )}
+                      </div>
+                      <a
+                        href={inspectSub.receipt_photo_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-[11px] font-semibold text-[#0B57D0] hover:underline flex items-center gap-1"
+                      >
+                        <span>Full Size</span>
+                        <ExternalLink className="w-3 h-3" />
+                      </a>
+                    </div>
                   )}
                 </div>
-                <div className="flex-1 min-h-0 flex items-center justify-center p-3 overflow-auto bg-slate-100/60">
+                <div
+                  onWheel={handleReceiptWheel}
+                  onMouseDown={handleReceiptMouseDown}
+                  onMouseMove={handleReceiptMouseMove}
+                  onMouseUp={handleReceiptMouseUp}
+                  onMouseLeave={handleReceiptMouseUp}
+                  onDoubleClick={handleResetReceiptZoom}
+                  className="flex-1 min-h-0 relative flex items-center justify-center p-0 overflow-hidden bg-zinc-950 select-none cursor-grab active:cursor-grabbing"
+                >
                   {inspectSub.receipt_photo_url ? (
                     <img
                       src={inspectSub.receipt_photo_url}
                       alt="Receipt"
-                      className="max-h-full max-w-full object-contain rounded-lg border border-slate-200 shadow-xs bg-white select-none"
+                      draggable={false}
+                      style={{
+                        transform: `translate(${receiptPan.x}px, ${receiptPan.y}px) scale(${receiptZoom})`,
+                        transformOrigin: "center center",
+                        transition: isDraggingReceipt ? "none" : "transform 0.08s ease-out",
+                      }}
+                      className={`w-full h-full object-cover rounded-none select-none ${
+                        receiptZoom > 1 ? (isDraggingReceipt ? "cursor-grabbing" : "cursor-grab") : "cursor-default"
+                      }`}
                     />
                   ) : (
                     <div className="text-zinc-400 text-xs italic flex flex-col items-center gap-2">
@@ -2654,18 +2913,18 @@ export function HsgContestTab({
                         <p className="font-bold">⚠️ Duplicate Receipt Alert</p>
                         <p className="text-rose-700 mt-0.5">
                           {duplicateMatchesInModal.length > 0
-                            ? `Identical Transaction ID (${adminTxRef.trim()}) and Purchase Timestamp found in other submission (${duplicateMatchesInModal.map((m) => m.id).join(", ")}).`
-                            : String(inspectSub?.ocr_data?.diagnose_status || "A submission with identical receipt transaction reference and date was already detected.")}
+                            ? `Identical Transaction Ref (${adminTxRef.trim()}) found in other submission (${duplicateMatchesInModal.map((m) => m.id).join(", ")}).`
+                            : String(inspectSub?.ocr_data?.diagnose_status || "A submission with identical receipt transaction reference was already detected.")}
                         </p>
                       </div>
                     </div>
                   )}
 
-                  {/* Transaction ID & Purchase Timestamp */}
+                  {/* Transaction Ref & Purchase Timestamp */}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[11px] font-semibold text-zinc-600 mb-1">
-                        Transaction ID
+                        Transaction Ref
                       </label>
                       <input
                         type="text"
@@ -2756,45 +3015,39 @@ export function HsgContestTab({
                         )}
                       </div>
 
-                      {/* Dropdown Filter: Hidden by default, opens only when user types >= 1 char, max 5 results */}
-                      {isStoreDropdownOpen && storeSearchQuery.trim().length >= 1 && (
+                      {/* Dropdown Filter: Hidden by default, opens only when user types >= 1 char and matching stores exist */}
+                      {isStoreDropdownOpen && storeSearchQuery.trim().length >= 1 && filteredStoresForReview.length > 0 && (
                         <div className="absolute left-0 right-0 top-full mt-1 z-30 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden max-h-56 overflow-y-auto">
-                          {filteredStoresForReview.length === 0 ? (
-                            <div className="p-3 text-[11px] text-slate-500 text-center">
-                              No store outlet found matching "{storeSearchQuery}"
-                            </div>
-                          ) : (
-                            <div className="divide-y divide-slate-100">
-                              {filteredStoresForReview.map((st: any) => (
-                                <button
-                                  key={st.id}
-                                  type="button"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    handleSelectStoreForReview(st);
-                                  }}
-                                  className="w-full text-left p-2 hover:bg-blue-50/80 transition flex flex-col gap-0.5 group"
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="font-semibold text-slate-900 text-xs group-hover:text-[#0B57D0] truncate">
-                                      {st.store_name}
+                          <div className="divide-y divide-slate-100">
+                            {filteredStoresForReview.map((st: any) => (
+                              <button
+                                key={st.id}
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  handleSelectStoreForReview(st);
+                                }}
+                                className="w-full text-left p-2 hover:bg-blue-50/80 transition flex flex-col gap-0.5 group"
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-semibold text-slate-900 text-xs group-hover:text-[#0B57D0] truncate">
+                                    {st.store_name}
+                                  </span>
+                                  <span className="font-mono text-[10px] font-semibold text-[#0B57D0] bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60 shrink-0">
+                                    {st.id}
+                                  </span>
+                                </div>
+                                <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                                  <span className="truncate max-w-[200px]">{st.store_address}</span>
+                                  {st.brand && (
+                                    <span className="text-[10px] text-slate-400 font-medium shrink-0">
+                                      {st.brand}
                                     </span>
-                                    <span className="font-mono text-[10px] font-semibold text-[#0B57D0] bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200/60 shrink-0">
-                                      {st.id}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                                    <span className="truncate max-w-[200px]">{st.store_address}</span>
-                                    {st.brand && (
-                                      <span className="text-[10px] text-slate-400 font-medium shrink-0">
-                                        {st.brand}
-                                      </span>
-                                    )}
-                                  </div>
-                                </button>
-                              ))}
-                            </div>
-                          )}
+                                  )}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -2825,6 +3078,44 @@ export function HsgContestTab({
                       className="w-full h-8 px-2.5 rounded-lg border border-slate-200 text-xs font-medium focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0] outline-none"
                     />
                   </div>
+
+                  {/* Register New Store Action Banner */}
+                  {adminStoreId.trim() && !isStoreIdRegistered && (
+                    <div className="p-2.5 rounded-lg bg-blue-50/70 border border-blue-200 flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[11px] font-bold text-blue-900 truncate">
+                          Register New Store ({adminStoreId.trim()})
+                        </p>
+                        {(!adminStoreName.trim() || !adminStoreAddress.trim()) ? (
+                          <p className="text-[10px] text-blue-700/80 mt-0.5">
+                            Enter Store Name &amp; Address to enable registration
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-emerald-700 font-medium mt-0.5">
+                            Ready to save to store list
+                          </p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={registeringStore || !adminStoreName.trim() || !adminStoreAddress.trim()}
+                        onClick={handleRegisterNewStore}
+                        className="h-7 px-3 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-semibold flex items-center gap-1.5 transition shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer active:scale-98 shrink-0"
+                      >
+                        {registeringStore ? (
+                          <>
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            <span>Saving...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="w-3 h-3" />
+                            <span>Register Store</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Extra Questions & Answers */}
@@ -2914,67 +3205,26 @@ export function HsgContestTab({
                     );
                   })()}
                 </div>
-
-                {/* Rejection Reason (if rejecting) */}
-                <div className="space-y-1.5">
-                  <label className="block text-[11px] font-semibold text-zinc-700">
-                    Rejection Reason (if rejecting):
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Ineligible receipt or blurry photo"
-                    value={rejectReason}
-                    onChange={(e) => setRejectReason(e.target.value)}
-                    className="w-full h-8 px-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs outline-none focus:border-rose-500"
-                  />
-                </div>
               </div>
             </div>
 
             {/* Actions Footer */}
             <div className="px-5 py-3 border-t border-slate-200 bg-slate-50 flex items-center justify-between shrink-0">
-              {/* Left Side: Close */}
-              <div className="flex items-center justify-start flex-1">
-                <button
-                  type="button"
-                  onClick={() => setInspectSub(null)}
-                  className="h-8 px-3.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-zinc-700 font-semibold text-xs transition shadow-2xs"
-                >
-                  Close
-                </button>
-              </div>
-
-              {/* Center: Reject & Approve */}
-              <div className="flex items-center justify-center gap-2">
-                <button
-                  type="button"
-                  disabled={Boolean(processingSubId)}
-                  onClick={() => handleRejectSubmission(inspectSub)}
-                  className="h-8 px-4 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs transition shadow-2xs disabled:opacity-50"
-                >
-                  Reject & Claw Back Points
-                </button>
-                <button
-                  type="button"
-                  disabled={Boolean(processingSubId)}
-                  onClick={() => handleApproveSubmission(inspectSub)}
-                  className="h-8 px-4 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition shadow-2xs disabled:opacity-50"
-                >
-                  Approve & Credit Points
-                </button>
-              </div>
-
-              {/* Right Side: Save Details */}
-              <div className="flex items-center justify-end flex-1">
-                <button
-                  type="button"
-                  disabled={Boolean(processingSubId)}
-                  onClick={() => handleSaveSubmissionDetails(inspectSub)}
-                  className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs transition shadow-2xs disabled:opacity-50"
-                >
-                  {processingSubId === inspectSub.id ? "Saving..." : "Save Details"}
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => setInspectSub(null)}
+                className="h-8 px-3.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-zinc-700 font-semibold text-xs transition shadow-2xs"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(processingSubId)}
+                onClick={() => handleSaveSubmissionDetails(inspectSub)}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white font-semibold text-xs transition shadow-2xs disabled:opacity-50"
+              >
+                {processingSubId === inspectSub.id ? "Saving..." : "Save Details"}
+              </button>
             </div>
           </div>
         </div>
