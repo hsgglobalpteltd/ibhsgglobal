@@ -56,6 +56,7 @@ import jsPDF from "jspdf";
 interface SKUItem {
   sku: string;
   qty: number;
+  pack_uom?: number;
 }
 
 export interface DriverLogDiscrepancy {
@@ -2108,7 +2109,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
     if (editingOrder) {
       const orderId = editingOrder.id;
-      let parsedItems: SKUItem[] = createItems.filter(i => i.sku.trim() !== "");
+      let parsedItems: SKUItem[] = createItems
+        .filter(i => i.sku.trim() !== "")
+        .map(i => ({
+          sku: i.sku.trim(),
+          qty: Number(i.qty) || 1,
+          pack_uom: Number(i.pack_uom) || 0
+        }));
 
       const payloadData: Partial<DbOrder> = {
         id: orderId,
@@ -2186,7 +2193,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       type: createType,
       deliverTo: createDeliverTo,
       poscode: cleanPoscode,
-      items: createItems.filter(i => i.sku.trim() !== ""),
+      items: createItems
+        .filter(i => i.sku.trim() !== "")
+        .map(i => ({
+          sku: i.sku.trim(),
+          qty: Number(i.qty) || 1,
+          pack_uom: Number(i.pack_uom) || 0
+        })),
       appointmentDate: createType === "Appointment" ? createAppointmentDate : undefined,
       appointmentTimeWindow: createType === "Appointment" ? createTimeWindow : undefined,
       deadline: deadlineVal,
@@ -2418,6 +2431,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     try {
       itemsList = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
     } catch (_) {}
+    if (Array.isArray(itemsList)) {
+      itemsList = itemsList.map((item: any) => {
+        const sku = String(item.sku || "").trim();
+        const savedPackUom = item.pack_uom !== undefined && item.pack_uom !== null && item.pack_uom !== ""
+          ? Number(item.pack_uom)
+          : undefined;
+        return {
+          sku,
+          qty: Number(item.qty || 1) || 1,
+          pack_uom: savedPackUom !== undefined ? savedPackUom : (getCartonSize(sku) || 0)
+        };
+      });
+    }
     setReturnItems(itemsList || []);
     setReturnCollectMethod(order.deliver_method || "Company Vehicle");
     setIsReturnPanelOpen(true);
@@ -2446,6 +2472,19 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
     try {
       parsedItems = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
     } catch (_) {}
+    if (Array.isArray(parsedItems)) {
+      parsedItems = parsedItems.map((item: any) => {
+        const sku = String(item.sku || "").trim();
+        const savedPackUom = item.pack_uom !== undefined && item.pack_uom !== null && item.pack_uom !== ""
+          ? Number(item.pack_uom)
+          : undefined;
+        return {
+          sku,
+          qty: Number(item.qty || 1) || 1,
+          pack_uom: savedPackUom !== undefined ? savedPackUom : (getCartonSize(sku) || 0)
+        };
+      });
+    }
     setCreateItems(parsedItems || []);
     
     if (parsedType === "Appointment" && order.deadline) {
@@ -2557,8 +2596,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       type: "Return",
       deliver_to: returnLocation,
       deliver_method: returnCollectMethod,
-      poscode: returnPoscode.trim(),
-      items: JSON.stringify(returnItems.filter(i => i.sku.trim() !== "")),
+      items: JSON.stringify(
+        returnItems
+          .filter(i => i.sku.trim() !== "")
+          .map(i => ({
+            sku: i.sku.trim(),
+            qty: Number(i.qty) || 1,
+            pack_uom: Number(i.pack_uom) || 0
+          }))
+      ),
       status: isEdit ? editingReturn.status : "Pending",
       timestamp: isEdit ? editingReturn.timestamp : Date.now(),
       deadline: epochDate,
@@ -2617,7 +2663,13 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
         type: "Return",
         deliverTo: returnLocation,
         poscode: returnPoscode.trim(),
-        items: returnItems.filter(i => i.sku.trim() !== ""),
+        items: returnItems
+          .filter(i => i.sku.trim() !== "")
+          .map(i => ({
+            sku: i.sku.trim(),
+            qty: Number(i.qty) || 1,
+            pack_uom: Number(i.pack_uom) || 0
+          })),
         deadline: epochDate,
         deliverMethod: returnCollectMethod,
         latitude: lat,
@@ -3034,9 +3086,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
 
   // Carton size lookup helper
   const getCartonSize = (sku: string): number => {
-    const product = productsDb.find((p) => p.sku === sku);
-    if (product && product.Carton) {
-      const c = Number(product.Carton);
+    if (!sku) return 0;
+    const clean = sku.trim().toLowerCase();
+    const product = productsDb.find((p) => {
+      const s = String(p.sku || p.SKU || "").trim().toLowerCase();
+      return s === clean;
+    });
+    if (product) {
+      const c = Number(product.carton ?? product.Carton);
       return isNaN(c) || c <= 0 ? 0 : c;
     }
     return 0;
@@ -4192,10 +4249,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           try {
             const parsed = JSON.parse(str);
             if (Array.isArray(parsed)) {
-              return parsed.map((it: any) => ({
-                sku: String(it.sku || it.name || it.item || "Unknown SKU").trim(),
-                qty: Number(it.qty || it.quantity || 1) || 1
-              }));
+              return parsed.map((it: any) => {
+                const sku = String(it.sku || it.name || it.item || "Unknown SKU").trim();
+                const savedPackUom = it.pack_uom !== undefined && it.pack_uom !== null && it.pack_uom !== "" ? Number(it.pack_uom) : undefined;
+                return {
+                  sku,
+                  qty: Number(it.qty || it.quantity || 1) || 1,
+                  pack_uom: savedPackUom !== undefined ? savedPackUom : (getCartonSize(sku) || 0)
+                };
+              });
             }
           } catch (_) {}
         }
@@ -4210,7 +4272,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               const sku = parts[0].trim();
               const qty = parseInt(parts[parts.length - 1].trim(), 10) || 1;
               if (sku) {
-                itemsList.push({ sku, qty });
+                itemsList.push({ sku, qty, pack_uom: getCartonSize(sku) || 0 });
                 continue;
               }
             }
@@ -4224,13 +4286,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             if (next !== undefined && /^\d+(\.\d+)?$/.test(next)) {
               itemsList.push({
                 sku: current,
-                qty: Number(next) || 1
+                qty: Number(next) || 1,
+                pack_uom: getCartonSize(current) || 0
               });
               i += 2;
             } else {
               itemsList.push({
                 sku: current,
-                qty: 1
+                qty: 1,
+                pack_uom: getCartonSize(current) || 0
               });
               i += 1;
             }
@@ -4787,10 +4851,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           try {
             const parsed = JSON.parse(str);
             if (Array.isArray(parsed)) {
-              return parsed.map((it: any) => ({
-                sku: String(it.sku || it.name || it.item || "Unknown SKU").trim(),
-                qty: Number(it.qty || it.quantity || 1) || 1
-              }));
+              return parsed.map((it: any) => {
+                const sku = String(it.sku || it.name || it.item || "Unknown SKU").trim();
+                const savedPackUom = it.pack_uom !== undefined && it.pack_uom !== null && it.pack_uom !== "" ? Number(it.pack_uom) : undefined;
+                return {
+                  sku,
+                  qty: Number(it.qty || it.quantity || 1) || 1,
+                  pack_uom: savedPackUom !== undefined ? savedPackUom : (getCartonSize(sku) || 0)
+                };
+              });
             }
           } catch (_) {}
         }
@@ -4805,7 +4874,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               const sku = parts[0].trim();
               const qty = parseInt(parts[parts.length - 1].trim(), 10) || 1;
               if (sku) {
-                itemsList.push({ sku, qty });
+                itemsList.push({ sku, qty, pack_uom: getCartonSize(sku) || 0 });
                 continue;
               }
             }
@@ -4819,13 +4888,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             if (next !== undefined && /^\d+(\.\d+)?$/.test(next)) {
               itemsList.push({
                 sku: current,
-                qty: Number(next) || 1
+                qty: Number(next) || 1,
+                pack_uom: getCartonSize(current) || 0
               });
               i += 2;
             } else {
               itemsList.push({
                 sku: current,
-                qty: 1
+                qty: 1,
+                pack_uom: getCartonSize(current) || 0
               });
               i += 1;
             }
@@ -5085,10 +5156,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
           try {
             const parsed = JSON.parse(str);
             if (Array.isArray(parsed)) {
-              return parsed.map((it: any) => ({
-                sku: String(it.sku || it.name || it.item || "Unknown SKU").trim(),
-                qty: Number(it.qty || it.quantity || 1) || 1
-              }));
+              return parsed.map((it: any) => {
+                const sku = String(it.sku || it.name || it.item || "Unknown SKU").trim();
+                const savedPackUom = it.pack_uom !== undefined && it.pack_uom !== null && it.pack_uom !== "" ? Number(it.pack_uom) : undefined;
+                return {
+                  sku,
+                  qty: Number(it.qty || it.quantity || 1) || 1,
+                  pack_uom: savedPackUom !== undefined ? savedPackUom : (getCartonSize(sku) || 0)
+                };
+              });
             }
           } catch (_) {}
         }
@@ -5103,7 +5179,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               const sku = parts[0].trim();
               const qty = parseInt(parts[parts.length - 1].trim(), 10) || 1;
               if (sku) {
-                itemsList.push({ sku, qty });
+                itemsList.push({ sku, qty, pack_uom: getCartonSize(sku) || 0 });
                 continue;
               }
             }
@@ -5117,13 +5193,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
             if (next !== undefined && /^\d+(\.\d+)?$/.test(next)) {
               itemsList.push({
                 sku: current,
-                qty: Number(next) || 1
+                qty: Number(next) || 1,
+                pack_uom: getCartonSize(current) || 0
               });
               i += 2;
             } else {
               itemsList.push({
                 sku: current,
-                qty: 1
+                qty: 1,
+                pack_uom: getCartonSize(current) || 0
               });
               i += 1;
             }
@@ -7360,7 +7438,11 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const openItemsPanel = (mode: "edit" | "view", orderId: string, currentItems: SKUItem[]) => {
     setPanelMode(mode);
     setPanelOrderId(orderId);
-    setPanelItems([...currentItems]);
+    const mapped = (currentItems || []).map((i: any) => ({
+      ...i,
+      pack_uom: i.pack_uom !== undefined && i.pack_uom !== null && i.pack_uom !== "" ? Number(i.pack_uom) : (getCartonSize(i.sku) || 0)
+    }));
+    setPanelItems(mapped);
     setIsPanelOpen(true);
   };
 
@@ -7369,7 +7451,16 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
       // Find and update drafts
       const updatedDrafts = drafts.map((d) => {
         if (d.id === panelOrderId) {
-          return { ...d, items: panelItems.filter((i) => i.sku.trim() !== "") };
+          return {
+            ...d,
+            items: panelItems
+              .filter((i) => i.sku.trim() !== "")
+              .map((i) => ({
+                sku: i.sku.trim(),
+                qty: Number(i.qty) || 1,
+                pack_uom: Number(i.pack_uom) || 0
+              }))
+          };
         }
         return d;
       });
@@ -7382,7 +7473,17 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   const handleUpdatePanelItemRow = (idx: number, field: keyof SKUItem, value: any) => {
     const updated = panelItems.map((item, index) => {
       if (index === idx) {
-        return { ...item, [field]: field === "qty" ? Math.max(1, Number(value)) : value };
+        if (field === "qty") return { ...item, qty: Math.max(1, Number(value)) };
+        if (field === "pack_uom") return { ...item, pack_uom: value === "" ? 0 : Math.max(0, Number(value)) };
+        if (field === "sku") {
+          const cSize = getCartonSize(value);
+          return {
+            ...item,
+            sku: value,
+            pack_uom: cSize > 0 ? cSize : (item.pack_uom ?? 0)
+          };
+        }
+        return { ...item, [field]: value };
       }
       return item;
     });
@@ -7390,7 +7491,7 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
   };
 
   const handleAddPanelItemRow = () => {
-    setPanelItems([...panelItems, { sku: "", qty: 1 }]);
+    setPanelItems([...panelItems, { sku: "", qty: 1, pack_uom: 0 }]);
   };
 
   const handleDeletePanelItemRow = (idx: number) => {
@@ -10409,6 +10510,14 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               </CustomButton>
             </div>
 
+            {/* Column Header */}
+            <div className="flex gap-2 px-2.5 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+              <span className="flex-1">SKU / Item</span>
+              <span className="w-16 text-center">Qty</span>
+              <span className="w-20 text-center">Pack UOM</span>
+              <span className="w-6"></span>
+            </div>
+
             <div className="flex flex-col gap-2">
               {(() => {
                 const skuCounts = panelItems.reduce((acc, curr) => {
@@ -10452,7 +10561,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                             type="number"
                             min={1}
                             value={item.qty}
+                            placeholder="Qty"
+                            title="Total Quantity (pcs)"
                             onChange={(e) => handleUpdatePanelItemRow(idx, "qty", e.target.value)}
+                            className="w-full h-8 px-2 rounded border border-zinc-300 text-xs text-center bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-bold"
+                          />
+                        </div>
+                        <div className="w-20 flex-shrink-0">
+                          <input
+                            type="number"
+                            min={0}
+                            value={item.pack_uom !== undefined ? item.pack_uom : (getCartonSize(item.sku) || 0)}
+                            placeholder="Pack UOM"
+                            title="Carton Pack UOM (0 = Loose pcs)"
+                            onChange={(e) => handleUpdatePanelItemRow(idx, "pack_uom", e.target.value)}
                             className="w-full h-8 px-2 rounded border border-zinc-300 text-xs text-center bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-bold"
                           />
                         </div>
@@ -10733,12 +10855,20 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               <span className="font-bold text-zinc-700">SKU / Items List</span>
               <button
                 type="button"
-                onClick={() => setCreateItems([...createItems, { sku: "", qty: 1 }])}
+                onClick={() => setCreateItems([...createItems, { sku: "", qty: 1, pack_uom: 0 }])}
                 className="px-2 py-1 rounded bg-white hover:bg-slate-50 border border-slate-200 flex items-center gap-1 font-semibold text-zinc-700 cursor-pointer"
               >
                 <Plus size={12} />
                 Add SKU
               </button>
+            </div>
+
+            {/* Column Header */}
+            <div className="flex gap-1.5 px-2 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+              <span className="flex-1">SKU / Item</span>
+              <span className="w-16 text-center">Qty</span>
+              <span className="w-20 text-center">Pack UOM</span>
+              <span className="w-6"></span>
             </div>
 
             <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
@@ -10751,8 +10881,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       value={item.sku}
                       placeholder="SKU/Item Name"
                       onChange={(e) => {
+                        const newSku = e.target.value;
                         const updated = [...createItems];
-                        updated[idx].sku = e.target.value;
+                        updated[idx].sku = newSku;
+                        const cSize = getCartonSize(newSku);
+                        if (cSize > 0) {
+                          updated[idx].pack_uom = cSize;
+                        } else if (updated[idx].pack_uom === undefined) {
+                          updated[idx].pack_uom = 0;
+                        }
                         setCreateItems(updated);
                       }}
                       className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
@@ -10763,9 +10900,27 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       type="number"
                       min={1}
                       value={item.qty}
+                      placeholder="Qty"
+                      title="Total Quantity (pcs)"
                       onChange={(e) => {
                         const updated = [...createItems];
                         updated[idx].qty = Math.max(1, Number(e.target.value));
+                        setCreateItems(updated);
+                      }}
+                      className="w-full h-8 px-2 rounded border border-zinc-300 text-xs text-center bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+                    />
+                  </div>
+                  <div className="w-20">
+                    <input
+                      type="number"
+                      min={0}
+                      value={item.pack_uom !== undefined ? item.pack_uom : (getCartonSize(item.sku) || 0)}
+                      placeholder="Pack UOM"
+                      title="Carton Pack UOM (0 = Loose pcs)"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const updated = [...createItems];
+                        updated[idx].pack_uom = val === "" ? 0 : Math.max(0, Number(val));
                         setCreateItems(updated);
                       }}
                       className="w-full h-8 px-2 rounded border border-zinc-300 text-xs text-center bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
@@ -10962,13 +11117,22 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
               <span className="font-bold text-zinc-700">SKU / Items to Return</span>
               <button
                 type="button"
-                onClick={() => setReturnItems([...returnItems, { sku: "", qty: 1 }])}
+                onClick={() => setReturnItems([...returnItems, { sku: "", qty: 1, pack_uom: 0 }])}
                 className="px-2 py-1 rounded bg-white hover:bg-slate-50 border border-slate-200 flex items-center gap-1 font-semibold text-zinc-700 cursor-pointer"
               >
                 <Plus size={12} />
                 Add SKU
               </button>
             </div>
+
+            {/* Column Header */}
+            <div className="flex gap-1.5 px-2 text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+              <span className="flex-1">SKU / Item</span>
+              <span className="w-16 text-center">Qty</span>
+              <span className="w-20 text-center">Pack UOM</span>
+              <span className="w-6"></span>
+            </div>
+
             <div className="flex flex-col gap-2 max-h-48 overflow-y-auto pr-1">
               {returnItems.map((item, idx) => (
                 <div key={idx} className="flex gap-1.5 items-center bg-white p-2 rounded border border-zinc-300 shadow-xs">
@@ -10979,8 +11143,15 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       value={item.sku}
                       placeholder="SKU/Item Name"
                       onChange={(e) => {
+                        const newSku = e.target.value;
                         const updated = [...returnItems];
-                        updated[idx].sku = e.target.value;
+                        updated[idx].sku = newSku;
+                        const cSize = getCartonSize(newSku);
+                        if (cSize > 0) {
+                          updated[idx].pack_uom = cSize;
+                        } else if (updated[idx].pack_uom === undefined) {
+                          updated[idx].pack_uom = 0;
+                        }
                         setReturnItems(updated);
                       }}
                       className="w-full h-8 px-2 rounded border border-zinc-300 text-xs bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
@@ -10991,9 +11162,27 @@ export function TrackOrderModule({ profile }: TrackOrderModuleProps) {
                       type="number"
                       min={1}
                       value={item.qty}
+                      placeholder="Qty"
+                      title="Total Quantity (pcs)"
                       onChange={(e) => {
                         const updated = [...returnItems];
                         updated[idx].qty = Math.max(1, Number(e.target.value));
+                        setReturnItems(updated);
+                      }}
+                      className="w-full h-8 px-2 rounded border border-zinc-300 text-xs text-center bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
+                    />
+                  </div>
+                  <div className="w-20">
+                    <input
+                      type="number"
+                      min={0}
+                      value={item.pack_uom !== undefined ? item.pack_uom : (getCartonSize(item.sku) || 0)}
+                      placeholder="Pack UOM"
+                      title="Carton Pack UOM (0 = Loose pcs)"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const updated = [...returnItems];
+                        updated[idx].pack_uom = val === "" ? 0 : Math.max(0, Number(val));
                         setReturnItems(updated);
                       }}
                       className="w-full h-8 px-2 rounded border border-zinc-300 text-xs text-center bg-white text-zinc-950 focus:outline-none focus:ring-1 focus:ring-zinc-400 font-semibold"
