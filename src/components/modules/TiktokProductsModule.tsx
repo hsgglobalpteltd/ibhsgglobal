@@ -376,6 +376,12 @@ export function TiktokProductsModule({
 
   // Open Modal to assign/edit
   const handleOpenModal = (mapping: SkuMapping) => {
+    const sSku = String(mapping.seller_sku || "").trim().toUpperCase();
+    if (!sSku || sSku === "N/A" || sSku === "NA") {
+      showToast("Cannot map products with Seller SKU 'N/A'. Please configure Seller SKU in TikTok Shop first.", "warning");
+      return;
+    }
+
     setEditingMapping(mapping);
     setFocusedRowIndex(0);
 
@@ -430,6 +436,12 @@ export function TiktokProductsModule({
   // Save Mapping
   const handleSaveMapping = async () => {
     if (!editingMapping) return;
+
+    const sSku = String(editingMapping.seller_sku || "").trim().toUpperCase();
+    if (!sSku || sSku === "N/A" || sSku === "NA") {
+      showToast("Cannot map products with Seller SKU 'N/A'. Please configure Seller SKU in TikTok Shop first.", "error");
+      return;
+    }
 
     let validLines: MappedItem[] = [];
 
@@ -576,11 +588,13 @@ export function TiktokProductsModule({
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredMappings.map((m) => {
-                const isFreeGift = !!(
+                const skuUpper = String(m.seller_sku || "").trim().toUpperCase();
+                const isNaSku = !skuUpper || skuUpper === "N/A" || skuUpper === "NA";
+                const isFreeGift = !isNaSku && !!(
                   m.is_free_gift ||
                   (Array.isArray(m.items) && m.items.some(it => it.sku === "__FREE_GIFT__" || (it as any).is_free_gift))
                 );
-                const isAssigned = isFreeGift || (m.is_assigned && Array.isArray(m.items) && m.items.some(it => it.sku && it.sku !== "__FREE_GIFT__"));
+                const isAssigned = !isNaSku && (isFreeGift || (m.is_assigned && Array.isArray(m.items) && m.items.some(it => it.sku && it.sku !== "__FREE_GIFT__")));
                 const rawName = m.tiktok_product_name || "—";
                 const displayTitle = rawName.length > 50 ? `${rawName.slice(0, 50)}...` : rawName;
 
@@ -588,7 +602,13 @@ export function TiktokProductsModule({
                   <tr key={`${m.seller_sku}_${m.tiktok_product_name}`} className="hover:bg-slate-50/80 transition-colors">
                     {/* Column 1: Seller SKU */}
                     <td className="py-2.5 px-4 font-mono font-medium text-zinc-800 select-all w-48">
-                      <span>{m.seller_sku}</span>
+                      {isNaSku ? (
+                        <span className="inline-flex items-center gap-1 text-rose-600 font-semibold">
+                          {m.seller_sku || "N/A"}
+                        </span>
+                      ) : (
+                        <span>{m.seller_sku}</span>
+                      )}
                     </td>
 
                     {/* Column 2: TikTok Listing Name (max 50 chars) & Shop */}
@@ -606,7 +626,11 @@ export function TiktokProductsModule({
 
                     {/* Column 3: Assigned Product (Simple plain text, comma-separated) */}
                     <td className="py-2.5 px-4 text-xs text-zinc-800 leading-relaxed">
-                      {isFreeGift ? (
+                      {isNaSku ? (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-zinc-100 text-zinc-500 border border-zinc-200">
+                          SKU Not Configured
+                        </span>
+                      ) : isFreeGift ? (
                         <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700 border border-slate-200">
                           Not for sale / No SKU
                         </span>
@@ -621,7 +645,17 @@ export function TiktokProductsModule({
 
                     {/* Column 4: Action */}
                     <td className="py-2.5 px-4">
-                      {!isAssigned ? (
+                      {isNaSku ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-zinc-100 text-zinc-400 border border-zinc-200 opacity-60 cursor-not-allowed shadow-none"
+                          title="Seller SKU is N/A in TikTok Shop. Set Seller SKU in TikTok Seller Center before mapping."
+                        >
+                          <AlertTriangle size={13} className="text-zinc-400 shrink-0" />
+                          <span>No Permission (N/A)</span>
+                        </button>
+                      ) : !isAssigned ? (
                         <button
                           onClick={() => handleOpenModal(m)}
                           className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 transition cursor-pointer shadow-2xs"

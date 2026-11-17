@@ -1007,34 +1007,15 @@ export function TiktokSalesReportModule({
   }, [filteredValidOrders, periodType, selectedYear, selectedMonth, selectedWeekIndex, availableWeeks]);
 
   // Dynamic Guardrails evaluation for "Print Output Report"
+  // Dynamic Guardrails evaluation for "Print Output Report"
   const outputGuardrails = React.useMemo(() => {
     // 1. Condition 1: Specific shop required
-    if (selectedShopId === "all") {
-      return {
-        enabled: false,
-        tooltip: "Please select a specific TikTok shop to generate SKU Output."
-      };
-    }
+    const isShopSelected = selectedShopId !== "all";
 
-    // 2. Condition 2: Closed past months only (periodType must be month and month must be strictly past)
-    if (periodType !== "month") {
-      return {
-        enabled: false,
-        tooltip: "SKU Output reports can only be generated in 'By Month' view."
-      };
-    }
-
-    const now = new Date();
-    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    if (selectedMonth >= currentYearMonth) {
-      return {
-        enabled: false,
-        tooltip: "Current month is in progress. SKU Output reports are only generated for closed past months."
-      };
-    }
+    // 2. Condition 2: Period type must be month
+    const isMonthPeriod = periodType === "month";
 
     // 3. Condition 3: Check for unassigned TikTok SKUs in this month's orders
-    // Build set of assigned seller SKUs from skuMappings
     const assignedSellerSkus = new Set<string>();
     skuMappings.forEach(m => {
       const isFreeGift = !!(
@@ -1056,15 +1037,57 @@ export function TiktokSalesReportModule({
       });
     });
 
-    if (unassignedSellerSkusSet.size > 0) {
+    const isMappingComplete = unassignedSellerSkusSet.size === 0;
+
+    const now = new Date();
+    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const isCurrentOrFuture = selectedMonth >= currentYearMonth;
+
+    if (!isShopSelected) {
       return {
         enabled: false,
+        reason: "no_shop" as const,
+        isShopSelected,
+        isMappingComplete,
+        tooltip: "Please select a specific TikTok shop to generate SKU Output."
+      };
+    }
+
+    if (!isMonthPeriod) {
+      return {
+        enabled: false,
+        reason: "not_month" as const,
+        isShopSelected,
+        isMappingComplete,
+        tooltip: "SKU Output reports can only be generated in 'By Month' view."
+      };
+    }
+
+    if (!isMappingComplete) {
+      return {
+        enabled: false,
+        reason: "unassigned_skus" as const,
+        isShopSelected,
+        isMappingComplete,
         tooltip: `Cannot generate: ${unassignedSellerSkusSet.size} unassigned TikTok SKU(s) found in this period. Please assign them in TikTok Orders > Products.`
+      };
+    }
+
+    if (isCurrentOrFuture) {
+      return {
+        enabled: false,
+        reason: "current_month_in_progress" as const,
+        isShopSelected,
+        isMappingComplete,
+        tooltip: "Current month is in progress. SKU Output reports are only generated for closed past months."
       };
     }
 
     return {
       enabled: true,
+      reason: "ok" as const,
+      isShopSelected,
+      isMappingComplete,
       tooltip: "Click to generate and print SKU Output Report (PDF/Print Blob)"
     };
   }, [selectedShopId, periodType, selectedMonth, filteredValidOrders, skuMappings]);
@@ -1122,9 +1145,48 @@ export function TiktokSalesReportModule({
     }
   };
 
+  // Continuous 5-click override tracker for Print SKU Output during current month
+  const continuousClickCountRef = React.useRef(0);
+  const continuousClickTimerRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  const handleSkuOutputButtonClick = () => {
+    // 1. If guardrails are fully met (closed past month, shop selected, mapped):
+    if (outputGuardrails.enabled) {
+      handlePrintReportPDF(false);
+      return;
+    }
+
+    // 2. If shop not selected OR mapping not done: do nothing
+    if (!outputGuardrails.isShopSelected || !outputGuardrails.isMappingComplete) {
+      return;
+    }
+
+    // 3. If shop selected AND mapping done, but current month is in progress:
+    if (outputGuardrails.reason === "current_month_in_progress") {
+      if (continuousClickTimerRef.current) {
+        clearTimeout(continuousClickTimerRef.current);
+      }
+
+      continuousClickCountRef.current += 1;
+      const currentClick = continuousClickCountRef.current;
+
+      // Show toast on each click
+      showToast("Current month in progress", "warning");
+
+      if (currentClick >= 5) {
+        continuousClickCountRef.current = 0;
+        handlePrintReportPDF(true);
+      } else {
+        continuousClickTimerRef.current = setTimeout(() => {
+          continuousClickCountRef.current = 0;
+        }, 2500);
+      }
+    }
+  };
+
   // Generate Clean Printable PDF Document opened as Blob URL (Strictly 3 Columns: SKU | Product Name | Qty)
-  const handlePrintReportPDF = () => {
-    if (!outputGuardrails.enabled) {
+  const handlePrintReportPDF = (forceOverride: boolean = false) => {
+    if (!forceOverride && !outputGuardrails.enabled) {
       showToast(outputGuardrails.tooltip, "warning");
       return;
     }
@@ -2215,10 +2277,10 @@ export function TiktokSalesReportModule({
             <span>Print Report</span>
           </button>
 
-          {/* Print Output Report Button with Dynamic Guardrails */}
+          {/* Print Output Report Button with Dynamic Guardrails & 5-Click Override */}
           <button
-            onClick={handlePrintReportPDF}
-            disabled={!outputGuardrails.enabled}
+            onClick={handleSkuOutputButtonClick}
+            aria-disabled={!outputGuardrails.enabled}
             title={outputGuardrails.tooltip}
             className={`h-8 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition shadow-2xs ${
               outputGuardrails.enabled
