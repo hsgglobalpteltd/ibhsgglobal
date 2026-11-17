@@ -49,7 +49,7 @@ interface BrandItem {
   [key: string]: any;
 }
 
-type TemplateType = "shelf_tag" | "barcode_list" | "pallet_placard" | "pallet_manifest" | "stock_count_sheet";
+type TemplateType = "shelf_tag" | "warehouse_shelf_card" | "barcode_list" | "pallet_placard" | "pallet_manifest" | "stock_count_sheet";
 
 // Helper: Convert and downscale image url to lightweight Base64 data URL (max 200px to prevent huge PDF memory & printer hang)
 async function getBase64ImageFromUrl(imageUrl: string, maxDim: number = 200, quality: number = 0.70): Promise<string | null> {
@@ -182,6 +182,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
   const [selectedBrand, setSelectedBrand] = React.useState<string>("all");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const [selectedSkus, setSelectedSkus] = React.useState<Set<string>>(new Set());
+  const [skuQuantities, setSkuQuantities] = React.useState<Record<string, number>>({});
 
   // Template & Options
   const [activeTemplate, setActiveTemplate] = React.useState<TemplateType>("shelf_tag");
@@ -292,9 +293,9 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
     return list;
   }, [products, selectedBrand, searchQuery]);
 
-  // Selected Products List
+  // Selected Products List (multiplied by print quantity per SKU)
   const selectedProducts = React.useMemo(() => {
-    return products
+    const base = products
       .filter(p => selectedSkus.has(p.sku))
       .sort((a, b) => {
         const brandA = a.brand_name || "";
@@ -305,7 +306,33 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
         if (rankA !== rankB) return rankA - rankB;
         return (a.sku || "").localeCompare(b.sku || "");
       });
-  }, [products, selectedSkus]);
+
+    const expanded: ProductItem[] = [];
+    for (const item of base) {
+      const count = Math.max(1, skuQuantities[item.sku] ?? 1);
+      for (let i = 0; i < count; i++) {
+        expanded.push(item);
+      }
+    }
+    return expanded;
+  }, [products, selectedSkus, skuQuantities]);
+
+  const handleSetSkuQuantity = (sku: string, qty: number) => {
+    const validQty = Math.max(1, Math.min(999, Math.floor(qty) || 1));
+    setSkuQuantities(prev => ({
+      ...prev,
+      [sku]: validQty,
+    }));
+    // Auto-select SKU if user specifies quantity
+    setSelectedSkus(prev => {
+      if (!prev.has(sku)) {
+        const next = new Set(prev);
+        next.add(sku);
+        return next;
+      }
+      return prev;
+    });
+  };
 
   // Selection handlers
   const handleToggleSku = (sku: string) => {
@@ -345,6 +372,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
   // Pagination calculation for preview
   const itemsPerPage = 
     activeTemplate === "shelf_tag" ? 4 : 
+    activeTemplate === "warehouse_shelf_card" ? 2 :
     activeTemplate === "barcode_list" ? 21 : 
     activeTemplate === "pallet_placard" ? 1 : 
     activeTemplate === "pallet_manifest" ? 6 : 
@@ -373,19 +401,20 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
 
     try {
       const { jsPDF } = (window as any).jspdf;
-      // Standard A4 portrait: 210mm x 297mm
+      // Standard A4 landscape for warehouse_shelf_card (297mm x 210mm), portrait for others
       const doc = new jsPDF({
-        orientation: "portrait",
+        orientation: activeTemplate === "warehouse_shelf_card" ? "landscape" : "portrait",
         unit: "mm",
         format: "a4",
       });
 
-      // Pre-cache all product images in base64
-      setGenerationProgress(`Rendering product images (0/${selectedProducts.length})...`);
+      // Pre-cache all unique product images in base64
+      const uniqueItems = Array.from(new Map(selectedProducts.map(p => [p.sku, p])).values());
+      setGenerationProgress(`Rendering product images (0/${uniqueItems.length})...`);
       const imageCache: Map<string, string | null> = new Map();
       
-      for (let i = 0; i < selectedProducts.length; i++) {
-        const item = selectedProducts[i];
+      for (let i = 0; i < uniqueItems.length; i++) {
+        const item = uniqueItems[i];
         if (item.image) {
           try {
             const b64 = await getBase64ImageFromUrl(item.image);
@@ -394,8 +423,8 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
             imageCache.set(item.sku, null);
           }
         }
-        if ((i + 1) % 5 === 0 || i === selectedProducts.length - 1) {
-          setGenerationProgress(`Rendering product images (${i + 1}/${selectedProducts.length})...`);
+        if ((i + 1) % 5 === 0 || i === uniqueItems.length - 1) {
+          setGenerationProgress(`Rendering product images (${i + 1}/${uniqueItems.length})...`);
         }
       }
 
@@ -488,6 +517,189 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
           doc.setFontSize(9.5);
           doc.setTextColor(71, 85, 105); // slate-600
           doc.text(splitTitle, x0 + colWidth / 2, titleY, { align: "center" });
+        }
+      }
+
+      // ==========================================
+      // TEMPLATE: WAREHOUSE SHELF CARD (2x A5 on A4 Landscape - Daily Stock Marker)
+      // ==========================================
+      else if (activeTemplate === "warehouse_shelf_card") {
+        setGenerationProgress("Compiling Warehouse Shelf Cards (A4 Landscape 2-in-1)...");
+        const pageWidth = 297;
+        const pageHeight = 210;
+        const colWidth = pageWidth / 2; // 148.5mm
+
+        for (let i = 0; i < selectedProducts.length; i++) {
+          const item = selectedProducts[i];
+          const posOnPage = i % 2; // 0 = left card, 1 = right card
+
+          if (i > 0 && posOnPage === 0) {
+            doc.addPage();
+          }
+
+          const col = posOnPage;
+          const x0 = col * colWidth;
+
+          // Draw center vertical dashed cut-line (only once per page on pos 0)
+          if (posOnPage === 0) {
+            doc.setDrawColor(200, 205, 215);
+            doc.setLineDashPattern([3, 3], 0);
+            doc.line(colWidth, 0, colWidth, pageHeight);
+            doc.setLineDashPattern([], 0); // reset dash
+          }
+
+          // Card content boundaries
+          const marginX = 8;
+          const cardLeft = x0 + marginX;
+          const cardWidth = colWidth - (marginX * 2); // 132.5mm
+
+          // 1. TOP SECTION: 1:1 Image + SKU + Name + Single EAN-13 Barcode + (Pallet & Expired Date on Right)
+          const topY = 6;
+          const imgSize = 28.5; // 28.5mm x 28.5mm 1:1 image
+          const imgX = cardLeft;
+          const imgY = topY;
+
+          const imgData = imageCache.get(item.sku);
+          if (imgData) {
+            try {
+              doc.addImage(imgData, "JPEG", imgX, imgY, imgSize, imgSize, undefined, "FAST");
+            } catch (e) {
+              doc.setDrawColor(20, 20, 20);
+              doc.rect(imgX, imgY, imgSize, imgSize);
+            }
+          } else {
+            doc.setDrawColor(210, 215, 225);
+            doc.setFillColor(248, 250, 252);
+            doc.roundedRect(imgX, imgY, imgSize, imgSize, 1.5, 1.5, "FD");
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(7);
+            doc.setTextColor(160, 160, 160);
+            doc.text("NO IMAGE", imgX + imgSize / 2, imgY + imgSize / 2, { align: "center" });
+          }
+
+          // Image crisp outline border
+          doc.setDrawColor(15, 23, 42);
+          doc.setLineWidth(0.3);
+          doc.rect(imgX, imgY, imgSize, imgSize);
+
+          // Top Right Boxes: Pallet & Expired Date (Width: 35mm)
+          const boxesW = 35;
+          const boxX = cardLeft + cardWidth - boxesW;
+
+          // Box 1: Pallet (Option B: Black header + completely blank open box)
+          doc.setFillColor(15, 23, 42);
+          doc.rect(boxX, topY, boxesW, 4.6, "F");
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(7);
+          doc.setTextColor(255, 255, 255);
+          doc.text("PALLET", boxX + boxesW / 2, topY + 3.3, { align: "center" });
+
+          doc.setDrawColor(15, 23, 42);
+          doc.setLineWidth(0.5);
+          doc.rect(boxX, topY + 4.6, boxesW, 8.5, "S");
+
+          // Box 2: Expired Date (Option B: Black header + completely blank open box)
+          const expY = topY + 4.6 + 8.5 + 2.3;
+          doc.setFillColor(15, 23, 42);
+          doc.rect(boxX, expY, boxesW, 4.6, "F");
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(7);
+          doc.setTextColor(255, 255, 255);
+          doc.text("EXPIRED DATE", boxX + boxesW / 2, expY + 3.3, { align: "center" });
+
+          doc.setDrawColor(15, 23, 42);
+          doc.setLineWidth(0.5);
+          doc.rect(boxX, expY + 4.6, boxesW, 8.5, "S");
+
+          // Top Info in the middle (between image and boxes)
+          const textX = cardLeft + imgSize + 3;
+          const textW = boxX - textX - 3; // ~63mm
+
+          // SKU
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(7);
+          doc.setTextColor(100, 116, 139);
+          doc.text("SKU:", textX, topY + 3.8);
+
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(10.5);
+          doc.setTextColor(15, 23, 42);
+          doc.text(String(item.sku || "").toUpperCase(), textX + 8.5, topY + 3.8, { maxWidth: textW - 8.5 });
+
+          // Product Title
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8);
+          doc.setTextColor(15, 23, 42);
+          const titleLines = doc.splitTextToSize(String(item.display_name || item.sku || ""), textW);
+          doc.text(titleLines.slice(0, 2), textX, topY + 8.8);
+
+          // Single EAN-13 Barcode (Strictly empty if no valid barcode)
+          const rawBarcode = item.single_barcode;
+          const barcodeValue = isValidBarcode(rawBarcode) ? String(rawBarcode).trim() : "";
+          if (barcodeValue) {
+            const bcDataUrl = generateBarcodeDataUrl(barcodeValue, "EAN13", 2, 32, 9);
+            if (bcDataUrl) {
+              try {
+                const bcW = Math.min(textW - 1, 48);
+                const bcH = 12;
+                const bcY = topY + imgSize - bcH;
+                doc.addImage(bcDataUrl, "PNG", textX, bcY, bcW, bcH);
+              } catch (e) {
+                // If draw fails, leave empty
+              }
+            }
+          }
+
+          // Divider under top section
+          const divY = topY + imgSize + 2.5;
+          doc.setDrawColor(15, 23, 42);
+          doc.setLineWidth(0.5);
+          doc.line(cardLeft, divY, cardLeft + cardWidth, divY);
+
+          // 2. YESTERDAY STOCK CONTAINER (Black Header + 100% Blank Box)
+          const yestY = divY + 2.5;
+          const bannerH = 6;
+          doc.setFillColor(15, 23, 42);
+          doc.rect(cardLeft, yestY, cardWidth, bannerH, "F");
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8);
+          doc.setTextColor(255, 255, 255);
+          doc.text("YESTERDAY STOCK", cardLeft + 3, yestY + 4.2);
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(6.5);
+          doc.setTextColor(203, 213, 225);
+          doc.text("Opening Count", cardLeft + cardWidth - 3, yestY + 4.2, { align: "right" });
+
+          const yestBoxH = 34;
+          doc.setDrawColor(15, 23, 42);
+          doc.setLineWidth(0.6);
+          doc.rect(cardLeft, yestY + bannerH, cardWidth, yestBoxH, "S");
+
+          // 3. TODAY OUT CONTAINER (Black Header + 100% Blank Box)
+          const todayY = yestY + bannerH + yestBoxH + 3.5;
+          doc.setFillColor(15, 23, 42);
+          doc.rect(cardLeft, todayY, cardWidth, bannerH, "F");
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(8);
+          doc.setTextColor(255, 255, 255);
+          doc.text("TODAY OUT", cardLeft + 3, todayY + 4.2);
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(6.5);
+          doc.setTextColor(203, 213, 225);
+          doc.text("Deductions / Tallies", cardLeft + cardWidth - 3, todayY + 4.2, { align: "right" });
+
+          const footerY = 205;
+          const todayBoxH = (footerY - 4) - (todayY + bannerH);
+          doc.setDrawColor(15, 23, 42);
+          doc.setLineWidth(0.6);
+          doc.rect(cardLeft, todayY + bannerH, cardWidth, todayBoxH, "S");
+
+          // 4. FOOTER (Exact requested text)
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(6.5);
+          doc.setTextColor(100, 116, 139);
+          doc.text("iB HSG Global Internal Bridge", cardLeft, footerY);
+          doc.text("Last Update :        /        /       | ..............................", cardLeft + cardWidth, footerY, { align: "right" });
         }
       }
 
@@ -1064,6 +1276,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
                 className="w-full h-9 pl-3 pr-8 text-xs font-semibold bg-[#F8F9FC] border border-slate-200 rounded-lg text-zinc-900 outline-none focus:border-[#0B57D0] focus:ring-2 focus:ring-[#0B57D0]/15 cursor-pointer appearance-none transition-all shadow-2xs"
               >
                 <option value="shelf_tag">Shelf Tag (2x2 A4 Cut-out Cards)</option>
+                <option value="warehouse_shelf_card">Warehouse Shelf Card (2x A5 on A4 Landscape - Daily Stock Marker)</option>
                 <option value="barcode_list">Barcode List (3-Column A4 Grid)</option>
                 <option value="pallet_placard">Pallet Identification Placard (1 A4 per Pallet - Manual Fill)</option>
                 <option value="pallet_manifest">Pallet Manifest (3-Column A4 - Manual Qty Fill)</option>
@@ -1074,7 +1287,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
           </div>
 
           {/* Additional Options (Barcode Type switcher) */}
-          {activeTemplate !== "shelf_tag" && (
+          {activeTemplate !== "shelf_tag" && activeTemplate !== "warehouse_shelf_card" && (
             <div className="flex items-center justify-between p-2 rounded-lg bg-[#F8F9FA] border border-slate-200/80">
               <span className="text-[11px] font-semibold text-zinc-700">Barcode Source:</span>
               <div className="flex items-center gap-1">
@@ -1113,7 +1326,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
                 2. Filter & Select Products
               </span>
               <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#D3E3FD] text-[#041E49]">
-                {selectedSkus.size} / {products.length} Selected
+                {selectedSkus.size} SKUs ({selectedProducts.length} copies)
               </span>
             </div>
 
@@ -1174,65 +1387,96 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
             </div>
           </div>
 
-          {/* Product Items List Table */}
-          <div className="flex-1 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100 bg-[#FDFDFD]">
-            {loadingData ? (
-              <div className="flex items-center justify-center h-48 gap-2 text-zinc-400 text-xs">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                <span>Loading products...</span>
-              </div>
-            ) : filteredProducts.length === 0 ? (
-              <div className="p-8 text-center text-xs text-zinc-400 italic">
-                No matching products found.
-              </div>
-            ) : (
-              filteredProducts.map((p) => {
-                const isSelected = selectedSkus.has(p.sku);
-                return (
-                  <div
-                    key={p.sku}
-                    onClick={() => handleToggleSku(p.sku)}
-                    className={cn(
-                      "flex items-center gap-2.5 p-2 transition-colors cursor-pointer select-none",
-                      isSelected ? "bg-[#D3E3FD]/25 hover:bg-[#D3E3FD]/40" : "hover:bg-zinc-50"
-                    )}
-                  >
-                    <button type="button" className="text-zinc-700 shrink-0">
-                      {isSelected ? (
-                        <CheckSquare size={16} className="text-[#0B57D0]" />
-                      ) : (
-                        <Square size={16} className="text-zinc-300" />
-                      )}
-                    </button>
+          {/* Product Items List Table Header & Scrollable List */}
+          <div className="flex-1 overflow-hidden flex flex-col border border-slate-200 rounded-lg bg-[#FDFDFD]">
+            <div className="flex items-center justify-between text-[10px] font-bold text-zinc-400 uppercase tracking-wider px-2.5 py-1.5 bg-slate-50 border-b border-slate-200 shrink-0">
+              <span>Product Item</span>
+              <span>Copies</span>
+            </div>
 
-                    {/* Product Image Thumbnail */}
-                    <div className="w-8 h-8 rounded bg-zinc-100 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
-                      {p.image ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={p.image} alt={p.sku} className="w-full h-full object-cover" />
-                      ) : (
-                        <span className="text-[8px] text-zinc-400">N/A</span>
+            <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
+              {loadingData ? (
+                <div className="flex items-center justify-center h-48 gap-2 text-zinc-400 text-xs">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Loading products...</span>
+                </div>
+              ) : filteredProducts.length === 0 ? (
+                <div className="p-8 text-center text-xs text-zinc-400 italic">
+                  No matching products found.
+                </div>
+              ) : (
+                filteredProducts.map((p) => {
+                  const isSelected = selectedSkus.has(p.sku);
+                  return (
+                    <div
+                      key={p.sku}
+                      onClick={() => handleToggleSku(p.sku)}
+                      className={cn(
+                        "flex items-center gap-2.5 p-2 transition-colors cursor-pointer select-none",
+                        isSelected ? "bg-[#D3E3FD]/25 hover:bg-[#D3E3FD]/40" : "hover:bg-zinc-50"
                       )}
-                    </div>
+                    >
+                      <button type="button" className="text-zinc-700 shrink-0">
+                        {isSelected ? (
+                          <CheckSquare size={16} className="text-[#0B57D0]" />
+                        ) : (
+                          <Square size={16} className="text-zinc-300" />
+                        )}
+                      </button>
 
-                    {/* Info */}
-                    <div className="flex flex-col min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="text-xs font-bold text-zinc-900 truncate">
-                          {p.sku}
-                        </span>
-                        <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-600 truncate max-w-[90px]">
-                          {p.brand_name}
+                      {/* Product Image Thumbnail */}
+                      <div className="w-8 h-8 rounded bg-zinc-100 border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                        {p.image ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={p.image} alt={p.sku} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-[8px] text-zinc-400">N/A</span>
+                        )}
+                      </div>
+
+                      {/* Info */}
+                      <div className="flex flex-col min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-xs font-bold text-zinc-900 truncate">
+                            {p.sku}
+                          </span>
+                          <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-zinc-100 text-zinc-600 truncate max-w-[85px]">
+                            {p.brand_name}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-zinc-500 truncate">
+                          {p.display_name || "-"}
                         </span>
                       </div>
-                      <span className="text-[10px] text-zinc-500 truncate">
-                        {p.display_name || "-"}
-                      </span>
+
+                      {/* Quantity Input: how many copies/pages to print */}
+                      <div 
+                        className="shrink-0 flex items-center ml-1"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          type="number"
+                          min="1"
+                          max="999"
+                          value={skuQuantities[p.sku] ?? 1}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            handleSetSkuQuantity(p.sku, isNaN(val) ? 1 : val);
+                          }}
+                          className={cn(
+                            "w-11 h-7 text-center text-xs font-bold font-mono rounded border transition-all outline-none",
+                            isSelected
+                              ? "bg-white text-zinc-950 border-[#0B57D0] shadow-2xs focus:ring-2 focus:ring-[#0B57D0]/20"
+                              : "bg-zinc-100 text-zinc-400 border-slate-200 focus:bg-white focus:text-zinc-950 focus:border-[#0B57D0]"
+                          )}
+                          title="Copies to print"
+                        />
+                      </div>
                     </div>
-                  </div>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </div>
           </div>
         </div>
 
@@ -1248,6 +1492,8 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
               <span className="text-[10px] text-zinc-500 font-semibold bg-white px-2 py-0.5 rounded border border-slate-200">
                 {activeTemplate === "shelf_tag"
                   ? "Shelf Tag (4 cards / page)"
+                  : activeTemplate === "warehouse_shelf_card"
+                  ? "Warehouse Shelf Card (2 A5 cards / A4 landscape)"
                   : activeTemplate === "barcode_list"
                   ? "Barcode List (21 items / page)"
                   : activeTemplate === "pallet_placard"
@@ -1261,7 +1507,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
             {/* Pagination Controls */}
             <div className="flex items-center gap-2">
               <span className="text-xs text-zinc-600 font-medium">
-                Page {previewPage} of {totalPages} ({selectedProducts.length} items total)
+                Page {previewPage} of {totalPages} ({selectedProducts.length} copies total)
               </span>
               <div className="flex items-center gap-1">
                 <button
@@ -1289,10 +1535,11 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
             <div 
               className="bg-white rounded-md shadow-md border border-slate-300 relative select-none overflow-hidden transition-all"
               style={{
-                width: "480px",
-                height: "678px", // exact A4 aspect ratio 1 : 1.4142
+                width: activeTemplate === "warehouse_shelf_card" ? "640px" : "480px",
+                height: activeTemplate === "warehouse_shelf_card" ? "452px" : "678px",
+                maxWidth: "100%",
                 maxHeight: "100%",
-                padding: "16px",
+                padding: activeTemplate === "warehouse_shelf_card" ? "12px" : "16px",
               }}
             >
               {selectedProducts.length === 0 ? (
@@ -1306,7 +1553,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
                 <div className="w-full h-full grid grid-cols-2 grid-rows-2 gap-2">
                   {previewItems.map((item, idx) => (
                     <div
-                      key={item.sku || idx}
+                      key={`shelf_tag_${item.sku}_${idx}`}
                       className="border border-dashed border-slate-300 rounded p-3 flex flex-col items-center justify-center text-center bg-white relative overflow-hidden"
                     >
                       {/* 1:1 Image */}
@@ -1341,6 +1588,134 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
                     </div>
                   ))}
                 </div>
+              ) : activeTemplate === "warehouse_shelf_card" ? (
+                /* WAREHOUSE SHELF CARD PREVIEW: 2 A5 PORTRAIT CARDS SIDE-BY-SIDE */
+                <div className="w-full h-full grid grid-cols-2 gap-0 divide-x-2 divide-dashed divide-slate-300 relative bg-white">
+                  {/* Left & Right Card Slots */}
+                  {Array.from({ length: 2 }).map((_, slotIdx) => {
+                    const item = previewItems[slotIdx];
+                    if (!item) {
+                      return (
+                        <div
+                          key={`empty-slot-${slotIdx}`}
+                          className="p-3 flex flex-col items-center justify-center text-zinc-300 text-[10px] italic h-full bg-slate-50/50"
+                        >
+                          <span>[Blank Card Slot]</span>
+                        </div>
+                      );
+                    }
+
+                    const rawBarcode = item.single_barcode;
+                    const bcVal = isValidBarcode(rawBarcode) ? String(rawBarcode).trim() : "";
+
+                    return (
+                      <div
+                        key={`wh_card_${item.sku}_${slotIdx}`}
+                        className="px-3 py-1 flex flex-col justify-between h-full bg-white text-zinc-900 overflow-hidden"
+                      >
+                        {/* Top Section: 1:1 Image + Details + Barcode + (Pallet & Expired Date) */}
+                        <div className="pb-1.5 border-b-2 border-zinc-900">
+                          <div className="flex gap-2 items-start justify-between">
+                            {/* 1:1 Image */}
+                            <div className="w-12 h-12 rounded border border-zinc-900 bg-zinc-50 overflow-hidden shrink-0 flex items-center justify-center">
+                              {item.image ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={item.image} alt={item.sku} className="w-full h-full object-cover" />
+                              ) : (
+                                <span className="text-[7px] text-zinc-400">NO IMAGE</span>
+                              )}
+                            </div>
+
+                            {/* Info & Barcode (Middle) */}
+                            <div className="flex flex-col justify-between min-w-0 flex-1 px-1">
+                              <div>
+                                <span className="text-[7px] font-bold text-zinc-500 uppercase tracking-wider">
+                                  SKU: <span className="font-mono text-zinc-950 font-extrabold text-[8.5px]">{item.sku}</span>
+                                </span>
+                                <h3 className="text-[8px] font-extrabold text-zinc-950 truncate leading-tight mt-0.5">
+                                  {item.display_name || "-"}
+                                </h3>
+                              </div>
+
+                              {/* EAN-13 Barcode or completely empty */}
+                              <div className="mt-1">
+                                {bcVal ? (
+                                  <div className="flex flex-col items-center">
+                                    <div className="h-3.5 flex items-center gap-[1px] w-full justify-center">
+                                      {Array.from({ length: 26 }).map((_, i) => (
+                                        <div
+                                          key={i}
+                                          className={cn(
+                                            "h-full",
+                                            i === 0 || i === 1 || i === 12 || i === 13 || i === 24 || i === 25
+                                              ? "w-[1.5px] bg-zinc-950"
+                                              : i % 2 === 0
+                                              ? "w-[1px] bg-zinc-900"
+                                              : "w-[1px] bg-transparent"
+                                          )}
+                                        />
+                                      ))}
+                                    </div>
+                                    <span className="text-[6px] font-mono text-zinc-800 font-bold tracking-wider">
+                                      {bcVal}
+                                    </span>
+                                  </div>
+                                ) : (
+                                  <div className="h-5" />
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Top Right: Pallet & Expired Date */}
+                            <div className="w-24 shrink-0 flex flex-col gap-1 pl-1.5 border-l border-slate-200">
+                              {/* Pallet Box */}
+                              <div className="border border-zinc-900 rounded overflow-hidden">
+                                <div className="bg-zinc-900 text-white text-[6.5px] font-extrabold uppercase px-1 py-0.2 tracking-wider text-center">
+                                  Pallet
+                                </div>
+                                <div className="h-4 bg-white" />
+                              </div>
+
+                              {/* Expired Date Box */}
+                              <div className="border border-zinc-900 rounded overflow-hidden">
+                                <div className="bg-zinc-900 text-white text-[6.5px] font-extrabold uppercase px-1 py-0.2 tracking-wider text-center">
+                                  Expired Date
+                                </div>
+                                <div className="h-4 bg-white" />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Yesterday Stock */}
+                        <div className="mt-1">
+                          <div className="flex items-center justify-between bg-zinc-900 text-white px-2 py-0.5 rounded-t">
+                            <span className="text-[8px] font-extrabold uppercase tracking-wider">Yesterday Stock</span>
+                            <span className="text-[6.5px] text-zinc-300 font-mono">Opening Count</span>
+                          </div>
+                          {/* Completely blank open box */}
+                          <div className="h-14 border-2 border-zinc-900 rounded-b bg-white" />
+                        </div>
+
+                        {/* Today Out */}
+                        <div className="mt-1 flex-1 flex flex-col min-h-0">
+                          <div className="flex items-center justify-between bg-zinc-900 text-white px-2 py-0.5 rounded-t">
+                            <span className="text-[8px] font-extrabold uppercase tracking-wider">Today Out</span>
+                            <span className="text-[6.5px] text-zinc-300 font-mono">Deductions / Tallies</span>
+                          </div>
+                          {/* Completely blank open box */}
+                          <div className="flex-1 border-2 border-zinc-900 rounded-b bg-white min-h-[60px]" />
+                        </div>
+
+                        {/* Footer */}
+                        <div className="mt-1 text-[6.5px] text-zinc-500 flex justify-between border-t border-slate-200 pt-0.5">
+                          <span>iB HSG Global Internal Bridge</span>
+                          <span>Last Update :        /        /       | ..............................</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               ) : activeTemplate === "barcode_list" ? (
                 /* BARCODE LIST PREVIEW: 3 COLUMNS */
                 <div className="w-full h-full grid grid-cols-3 gap-1.5 content-start overflow-hidden">
@@ -1350,7 +1725,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
 
                     return (
                       <div
-                        key={item.sku || idx}
+                        key={`barcode_list_${item.sku}_${idx}`}
                         className="border border-slate-200 rounded p-1.5 flex flex-col justify-between bg-white text-left h-[78px]"
                       >
                         <div>
@@ -1514,7 +1889,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
                         const ctnBc = isValidBarcode(item.carton_barcode) ? String(item.carton_barcode).trim() : "";
 
                         return (
-                          <div key={item.sku || idx} className="grid grid-cols-12 py-1 items-stretch text-left text-[6px] flex-1">
+                          <div key={`manifest_${item.sku}_${idx}`} className="grid grid-cols-12 py-1 items-stretch text-left text-[6px] flex-1">
                             {/* Col 1: Product Description (No running number) */}
                             <div className="col-span-5 pl-1.5 min-w-0 pr-1 flex flex-col justify-center">
                               <span className="font-bold text-zinc-950 uppercase truncate block text-[7px]">
@@ -1587,7 +1962,7 @@ export function ShelfTagBarcodePrintModule({ profile }: ShelfTagBarcodePrintModu
                         const globalIdx = (previewPage - 1) * itemsPerPage + idx + 1;
 
                         return (
-                          <div key={item.sku || idx} className="grid grid-cols-12 py-1 items-center text-center text-[6px]">
+                          <div key={`audit_${item.sku}_${idx}`} className="grid grid-cols-12 py-1 items-center text-center text-[6px]">
                             <div className="col-span-1 font-bold text-zinc-500">{globalIdx}</div>
                             <div className="col-span-2 text-left pl-1 font-bold text-zinc-950 truncate uppercase">{item.sku}</div>
                             <div className="col-span-4 text-left pl-1 text-zinc-600 truncate">{item.display_name || "-"}</div>
