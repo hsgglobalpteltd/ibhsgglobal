@@ -29,8 +29,7 @@ import {
   RotateCcw,
   ChevronUp,
   BarChart3,
-  Eye,
-  EyeOff
+  Tag
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -125,6 +124,7 @@ interface CustomSelectProps {
   placeholder?: string;
   className?: string;
   minWidth?: string;
+  width?: string;
   placement?: "bottom" | "top" | "auto";
   maxHeight?: string;
 }
@@ -136,6 +136,7 @@ function CustomSelect({
   placeholder = "Select...",
   className = "",
   minWidth = "min-w-[130px]",
+  width = "",
   placement = "auto",
   maxHeight = "max-h-44"
 }: CustomSelectProps) {
@@ -173,18 +174,20 @@ function CustomSelect({
   const selectedOpt = options.find((o) => o.value === value);
 
   return (
-    <div className={`relative inline-block text-left ${className}`} ref={ref}>
+    <div className={`relative inline-block text-left ${width ? `${width} shrink-0` : ""} ${className}`} ref={ref}>
       <button
         type="button"
         onClick={handleToggle}
-        className={`h-8 px-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-zinc-700 flex items-center justify-between gap-1.5 focus:outline-none focus:border-[#0B57D0] cursor-pointer transition-colors shadow-2xs ${minWidth}`}
+        className={`h-8 px-2.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-zinc-700 flex items-center justify-between gap-1.5 focus:outline-none focus:border-[#0B57D0] cursor-pointer transition-colors shadow-2xs ${
+          width ? `${width} w-full` : minWidth
+        }`}
       >
         <span className="truncate">{selectedOpt ? selectedOpt.label : placeholder}</span>
         <ChevronDown size={12} className={`text-zinc-400 shrink-0 transition-transform duration-150 ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && (
-        <div className={`absolute left-0 ${openUp ? "bottom-full mb-1" : "top-full mt-1"} w-full min-w-[160px] ${maxHeight} overflow-auto bg-white border border-slate-200 rounded-lg shadow-xl py-1 z-50 text-xs font-medium text-zinc-700 animate-in fade-in zoom-in-95 duration-100`}>
+        <div className={`absolute left-0 ${openUp ? "bottom-full mb-1" : "top-full mt-1"} min-w-full w-max max-w-[280px] ${maxHeight} overflow-auto bg-white border border-slate-200 rounded-lg shadow-xl py-1 z-50 text-xs font-medium text-zinc-700 animate-in fade-in zoom-in-95 duration-100`}>
           {options.length === 0 ? (
             <div className="px-3 py-2 text-zinc-400 text-[11px] text-center">No options</div>
           ) : (
@@ -243,6 +246,15 @@ const getSingaporeCurrentPeriod = (): string => {
   return sgtDate.toISOString().slice(0, 7);
 };
 
+const getSingaporeLastMonthPeriod = (): string => {
+  const now = new Date();
+  const sgtDate = new Date(now.getTime() + (8 * 60 * 60 * 1000));
+  const prevDate = new Date(sgtDate.getFullYear(), sgtDate.getMonth() - 1, 1);
+  const y = prevDate.getFullYear();
+  const m = String(prevDate.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+};
+
 const ITEM_TYPES = [
   {
     value: "product",
@@ -285,6 +297,13 @@ const ITEM_TYPES = [
     shortLabel: "BCRS",
     description: "Beverage Container Return Scheme deposit/mark ($0.10). Demand qty is 0.",
     badgeClass: "bg-slate-100 text-zinc-700 border-slate-200/90 hover:bg-slate-200/70"
+  },
+  {
+    value: "bundle",
+    label: "Bundle / Package",
+    shortLabel: "Bundle",
+    description: "Packaged merchandise containing multiple sub-items. Sub-items are grouped inside this bundle.",
+    badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200/90 hover:bg-indigo-100"
   }
 ];
 
@@ -293,9 +312,9 @@ interface SellInModuleProps {
 }
 
 export function SellInModule({ profile }: SellInModuleProps) {
-  // Global Month Filter initialized to Singapore active current month
+  // Global Month Filter initialized to last month by default (user opens last month first, can forward to active month)
   const [currentPeriod, setCurrentPeriod] = React.useState<string>(() => {
-    return getSingaporeCurrentPeriod();
+    return getSingaporeLastMonthPeriod();
   });
 
   const isCurrentActiveMonth = currentPeriod === getSingaporeCurrentPeriod();
@@ -325,15 +344,20 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [tempProductRemarks, setTempProductRemarks] = React.useState<string>("");
   const [savingTempProduct, setSavingTempProduct] = React.useState<boolean>(false);
 
+  // Inline Landing Price Edit in Product List
+  const [editingLandingPriceKey, setEditingLandingPriceKey] = React.useState<string | null>(null);
+  const [inlineLandingPriceValue, setInlineLandingPriceValue] = React.useState<string>("");
+  const [savingInlineLandingPrice, setSavingInlineLandingPrice] = React.useState<boolean>(false);
+
   // Print Reports State
   const [availableYears, setAvailableYears] = React.useState<string[]>([]);
   const [reportSelectedYear, setReportSelectedYear] = React.useState<number>(() => {
-    const parts = (currentPeriod || "2026-08").split("-");
+    const parts = (currentPeriod || getSingaporeLastMonthPeriod()).split("-");
     return parseInt(parts[0], 10) || 2026;
   });
   const [reportSelectedMonth, setReportSelectedMonth] = React.useState<number>(() => {
-    const parts = (currentPeriod || "2026-08").split("-");
-    return parseInt(parts[1], 10) || 8;
+    const parts = (currentPeriod || getSingaporeLastMonthPeriod()).split("-");
+    return parseInt(parts[1], 10) || 10;
   });
   const [reportDurationMonths, setReportDurationMonths] = React.useState<number>(3); // 3, 6, 12
   const [reportBrandFilter, setReportBrandFilter] = React.useState<string>("all");
@@ -402,7 +426,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [brandsList, setBrandsList] = React.useState<any[]>([]);
 
   // Sub-filter tab in Sell-In view
-  const [subFilterTab, setSubFilterTab] = React.useState<"all" | "si" | "cn" | "non_sales" | "unresolved">("all");
+  const [subFilterTab, setSubFilterTab] = React.useState<"all" | "sales" | "si" | "cn" | "non_sales" | "diagnostic" | "unresolved">("all");
   const [searchTerm, setSearchTerm] = React.useState<string>("");
   const [channelFilter, setChannelFilter] = React.useState<string>("all");
   const [brandFilter, setBrandFilter] = React.useState<string>("all");
@@ -444,8 +468,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [savingInvoices, setSavingInvoices] = React.useState<boolean>(false);
   const [selectedInvoiceBreakdownRow, setSelectedInvoiceBreakdownRow] = React.useState<any | null>(null);
   const [activeAssignBuyerInvoiceIndex, setActiveAssignBuyerInvoiceIndex] = React.useState<number | null>(null);
-  const [togglingInvoiceIdx, setTogglingInvoiceIdx] = React.useState<number | null>(null);
-  const [togglingCnIdx, setTogglingCnIdx] = React.useState<number | null>(null);
   const [showMonthPickerModal, setShowMonthPickerModal] = React.useState<boolean>(false);
   const [monthPickerYear, setMonthPickerYear] = React.useState<number>(() => {
     const parts = (currentPeriod || "").split("-");
@@ -521,6 +543,30 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [isItemTypeDropdownOpen, setIsItemTypeDropdownOpen] = React.useState<boolean>(false);
   const [applyItemTypeToAllMatching, setApplyItemTypeToAllMatching] = React.useState<boolean>(true);
   const [savingAssignItemType, setSavingAssignItemType] = React.useState<boolean>(false);
+
+  // Bundle / Package Mapping Modal State
+  const [showBundleModal, setShowBundleModal] = React.useState<boolean>(false);
+  const [bundleTarget, setBundleTarget] = React.useState<any | null>(null);
+  const [loadingBundleInvoiceItems, setLoadingBundleInvoiceItems] = React.useState<boolean>(false);
+  const [bundleInvoiceGroups, setBundleInvoiceGroups] = React.useState<any[]>([]);
+  const [selectedBundleComponents, setSelectedBundleComponents] = React.useState<Set<string>>(new Set());
+  const [bundlePrimaryBrand, setBundlePrimaryBrand] = React.useState<string>("");
+  const [bundleCustomName, setBundleCustomName] = React.useState<string>("");
+  const [existingBundles, setExistingBundles] = React.useState<Array<{ product_name: string; brand: string }>>([]);
+  const [savingBundleMapping, setSavingBundleMapping] = React.useState<boolean>(false);
+  const [expandedBundleIds, setExpandedBundleIds] = React.useState<Set<string>>(new Set());
+
+  // Quick Rename Bundle Modal State
+  const [showRenameBundleModal, setShowRenameBundleModal] = React.useState<boolean>(false);
+  const [renameBundleTarget, setRenameBundleTarget] = React.useState<any | null>(null);
+  const [renameBundleInput, setRenameBundleInput] = React.useState<string>("");
+  const [renameBundleBrand, setRenameBundleBrand] = React.useState<string>("");
+  const [savingRenameBundle, setSavingRenameBundle] = React.useState<boolean>(false);
+  const [bundleMappedTempProduct, setBundleMappedTempProduct] = React.useState<any | null>(null);
+  const [selectedBundleTempProductId, setSelectedBundleTempProductId] = React.useState<string>("");
+  const selectedBundleTempProduct = React.useMemo(() => {
+    return tempProductsList.find((tp) => String(tp.id || tp.sku) === String(selectedBundleTempProductId)) || null;
+  }, [tempProductsList, selectedBundleTempProductId]);
 
   // Price Mismatch Modal State
   const [showPriceMismatchModal, setShowPriceMismatchModal] = React.useState<boolean>(false);
@@ -724,7 +770,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       new CustomEvent("set-topbar-tabs", {
         detail: {
           tabs: [
-            { id: "sellin", label: "Sell-In Demand" },
+            { id: "sellin", label: "Sell-In Data" },
             { id: "buyers", label: "Buyers & Channels" },
             { id: "products", label: "Product List" },
             { id: "reports", label: "Print Report" },
@@ -792,65 +838,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
     try {
       const [y, m] = p.split("-").map(Number);
       const d = new Date(y, m - 1, 1);
-      return d.toLocaleString("en-US", { month: "long", year: "numeric" });
+      return d.toLocaleString("en-US", { month: "long", year: "numeric" }).toUpperCase();
     } catch {
-      return p;
+      return p ? p.toUpperCase() : p;
     }
   };
-
-  // KPIs
-  const kpis = React.useMemo(() => {
-    let grossDemand = 0;
-    let demandQty = 0;
-    let cnAmount = 0;
-    let cnQty = 0;
-    let unresolvedCount = 0;
-    let nonSalesCount = 0;
-    let totalCost = 0;
-
-    records.forEach((r) => {
-      const isSettlement = r.item_type === "settlement";
-      const isNonProduct = r.item_type && r.item_type !== "product" && !isSettlement;
-      const dQty = (isNonProduct || isSettlement) ? 0 : Number(r.demand_qty ?? r.quantity ?? 0);
-      const cQty = (isNonProduct || isSettlement) ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
-      const netQty = dQty - cQty;
-      const cPrice = (isNonProduct || isSettlement) ? 0 : Number(r.cost_price || 0);
-      totalCost += Math.max(0, netQty) * cPrice;
-
-      grossDemand += Number(r.total_demand || 0);
-      demandQty += dQty;
-      cnAmount += Number(r.cn_amount || 0);
-      cnQty += cQty;
-
-      if (isSettlement) {
-        // Settlement counts towards sales demand revenue, 0 pcs, not a non-sales fee, valid
-      } else if (isNonProduct) {
-        nonSalesCount++;
-      } else {
-        const isDirectConsumer = 
-          String(r.channel || "").trim().toLowerCase() === "direct consumer" ||
-          String(r.buyer_name || "").toLowerCase().startsWith("cash sales");
-        const isRegisteredInDb = buyersList.some((b) => 
-          (r.buyer_code && (b.buyer_code === r.buyer_code || b.id === r.buyer_code)) ||
-          (b.buyer_name && r.buyer_name && (
-            b.buyer_name.trim().toLowerCase() === r.buyer_name.trim().toLowerCase() ||
-            normalizeBuyerName(b.buyer_name) === normalizeBuyerName(r.buyer_name)
-          ))
-        );
-        const isUnresolvedBuyer = !isDirectConsumer && (r.validation_status === "unregistered_buyer" || !isRegisteredInDb);
-        const isNoListing = !isDirectConsumer && !isUnresolvedBuyer && r.validation_status === "no_listing";
-        const isUnmappedSku = !isUnresolvedBuyer && r.validation_status === "unmapped_sku";
-        if (isUnresolvedBuyer || isNoListing || isUnmappedSku || r.has_price_mismatch) {
-          unresolvedCount++;
-        }
-      }
-    });
-
-    const netAmount = grossDemand - cnAmount;
-    const grossProfit = netAmount - totalCost;
-    const marginPercent = netAmount > 0 ? (grossProfit / netAmount) * 100 : 0;
-    return { grossDemand, demandQty, cnAmount, cnQty, netAmount, unresolvedCount, nonSalesCount, totalCost, grossProfit, marginPercent };
-  }, [records, buyersList]);
 
   // Distinct Brands from records (excluding unbranded)
   const availableBrands = React.useMemo(() => {
@@ -898,11 +890,23 @@ export function SellInModule({ profile }: SellInModuleProps) {
     return list;
   }, [records]);
 
-  // Filtered Records for Sell-In Tab
+  // Filtered Records for Sell-In Tab (filtered by subtabs, channel, brand, and search)
   const filteredRecords = React.useMemo(() => {
     return records.filter((r) => {
       const isSettlement = r.item_type === "settlement";
-      const isNonProduct = r.item_type && r.item_type !== "product" && !isSettlement;
+      const isProductOrBundle = !r.item_type || r.item_type === "product" || r.item_type === "bundle";
+      const isNonProduct = !isProductOrBundle && !isSettlement;
+
+      // Sales tab combines Demand Inflow and Returns / Credit Notes
+      if (subFilterTab === "sales") {
+        if (isNonProduct) return false;
+        const hasDemand = isSettlement
+          ? Number(r.total_demand || 0) > 0
+          : (Number(r.demand_qty ?? r.quantity ?? 0) > 0 || Number(r.total_demand || 0) > 0);
+        const hasReturn = Number(r.reject_qty ?? r.cn_quantity ?? 0) > 0 || Number(r.cn_amount || 0) > 0;
+        if (!hasDemand && !hasReturn) return false;
+      }
+
       if (subFilterTab === "si") {
         if (isNonProduct) return false;
         if (isSettlement) {
@@ -913,7 +917,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       }
       if (subFilterTab === "cn" && (isNonProduct || isSettlement || Number(r.cn_amount || 0) <= 0)) return false;
       if (subFilterTab === "non_sales" && (!isNonProduct || isSettlement)) return false;
-      if (subFilterTab === "unresolved") {
+      if (subFilterTab === "diagnostic" || subFilterTab === "unresolved") {
         if (isNonProduct || isSettlement) return false;
         const isDirectConsumer = 
           String(r.channel || "").trim().toLowerCase() === "direct consumer" ||
@@ -950,6 +954,66 @@ export function SellInModule({ profile }: SellInModuleProps) {
       return true;
     });
   }, [records, subFilterTab, channelFilter, brandFilter, searchTerm, buyersList]);
+
+  // KPIs computed dynamically from filteredRecords (reflects all active filters and captures all line values)
+  const kpis = React.useMemo(() => {
+    let grossDemand = 0;
+    let demandQty = 0;
+    let cnAmount = 0;
+    let cnQty = 0;
+    let unresolvedCount = 0;
+    let nonSalesCount = 0;
+    let totalCost = 0;
+
+    filteredRecords.forEach((r) => {
+      // Exclude bundle components to prevent double counting
+      if (r.is_bundle_component === true || r.is_bundle_component === "true") {
+        return;
+      }
+
+      const isSettlement = r.item_type === "settlement";
+      const isProductOrBundle = !r.item_type || r.item_type === "product" || r.item_type === "bundle";
+      const isNonProduct = !isProductOrBundle && !isSettlement;
+
+      const dQty = (isNonProduct || isSettlement) ? 0 : Number(r.demand_qty ?? r.quantity ?? 0);
+      const cQty = (isNonProduct || isSettlement) ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
+      const netQty = dQty - cQty;
+      const cPrice = (isNonProduct || isSettlement) ? 0 : Number(r.cost_price || 0);
+      totalCost += Math.max(0, netQty) * cPrice;
+
+      // Sum all values in the line (not looking for sales only, captures all value in the line)
+      grossDemand += Number(r.total_demand || 0);
+      demandQty += dQty;
+      cnAmount += Number(r.cn_amount || 0);
+      cnQty += cQty;
+
+      if (isProductOrBundle) {
+        const isDirectConsumer = 
+          String(r.channel || "").trim().toLowerCase() === "direct consumer" ||
+          String(r.buyer_name || "").toLowerCase().startsWith("cash sales");
+        const isRegisteredInDb = buyersList.some((b) => 
+          (r.buyer_code && (b.buyer_code === r.buyer_code || b.id === r.buyer_code)) ||
+          (b.buyer_name && r.buyer_name && (
+            b.buyer_name.trim().toLowerCase() === r.buyer_name.trim().toLowerCase() ||
+            normalizeBuyerName(b.buyer_name) === normalizeBuyerName(r.buyer_name)
+          ))
+        );
+        const isUnresolvedBuyer = !isDirectConsumer && (r.validation_status === "unregistered_buyer" || !isRegisteredInDb);
+        const isNoListing = !isDirectConsumer && !isUnresolvedBuyer && r.validation_status === "no_listing";
+        const isUnmappedSku = !isUnresolvedBuyer && r.validation_status === "unmapped_sku";
+        if (isUnresolvedBuyer || isNoListing || isUnmappedSku || r.has_price_mismatch) {
+          unresolvedCount++;
+        }
+      } else if (!isSettlement) {
+        nonSalesCount++;
+      }
+    });
+
+    const netAmount = grossDemand - cnAmount;
+    const grossProfit = netAmount - totalCost;
+    const marginPercent = netAmount > 0 ? (grossProfit / netAmount) * 100 : 0;
+    return { grossDemand, demandQty, cnAmount, cnQty, netAmount, unresolvedCount, nonSalesCount, totalCost, grossProfit, marginPercent };
+  }, [filteredRecords, buyersList]);
 
   // Compiled Summary Datamart: pre-aggregated figures, expected cash collection, buyers & SKUs
   const compiledSummaryData = React.useMemo(() => {
@@ -1000,27 +1064,33 @@ export function SellInModule({ profile }: SellInModuleProps) {
     let totalCostAmount = 0;
 
     (records || []).forEach((r: any) => {
+      // Exclude bundle components to prevent double counting
+      if (r.is_bundle_component === true || r.is_bundle_component === "true") {
+        return;
+      }
       const isSettlement = r.item_type === "settlement";
-      const isNonProduct = r.item_type && r.item_type !== "product" && !isSettlement;
+      const isProductOrBundle = !r.item_type || r.item_type === "product" || r.item_type === "bundle";
+      const isNonProduct = !isProductOrBundle && !isSettlement;
       const dQty = (isNonProduct || isSettlement) ? 0 : Number(r.demand_qty ?? r.quantity ?? 0);
       const cQty = (isNonProduct || isSettlement) ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
       const netQty = dQty - cQty;
       const up = Number(r.unit_price || 0);
-      const dAmt = (isNonProduct || isSettlement) ? Number(r.total_demand || 0) : dQty * up;
-      const cAmt = Number(r.cn_amount || 0);
+      const dAmt = isSettlement ? Number(r.total_demand || 0) : (isNonProduct ? Number(r.total_demand || 0) : dQty * up);
+      const cAmt = isNonProduct ? 0 : Number(r.cn_amount || 0);
       const nAmt = dAmt - cAmt;
       const cPrice = (isNonProduct || isSettlement) ? 0 : Number(r.cost_price || 0);
       const rowCost = (isNonProduct || isSettlement) ? 0 : (Math.max(0, netQty) * cPrice);
 
       if (isNonProduct) {
         totalNonSalesAmount += dAmt;
+        netAmount -= dAmt;
       } else {
         totalDemandQty += dQty;
         totalCnQty += cQty;
+        totalDemandAmount += dAmt;
+        totalCnAmount += cAmt;
+        netAmount += nAmt;
       }
-      totalDemandAmount += dAmt;
-      totalCnAmount += cAmt;
-      netAmount += nAmt;
       totalCostAmount += rowCost;
 
       const skuCode = String(r.product_sku || "").trim();
@@ -1681,14 +1751,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
     try {
       const validGroups = store_groups
         .filter((g) => g.group_name && g.group_name.trim().length > 0)
-        .map((g) => ({ group_name: g.group_name.trim(), store_count: Number(g.store_count) || 1 }));
+        .map((g) => ({ group_name: g.group_name.trim().toUpperCase(), store_count: Number(g.store_count) || 1 }));
 
       const res = await fetch(`${API_BASE}/api/sellin/quick-register-buyer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          buyer_code: code,
-          buyer_name: name || code,
+          buyer_code: code.trim().toUpperCase(),
+          buyer_name: (name || code).trim().toUpperCase(),
           channel: channel || "",
           payment_term: (payment_term || "3").replace(/[^0-9]/g, "") || "3",
           store_groups: validGroups,
@@ -2603,9 +2673,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: editingTempProduct?.id,
-          sku: tempProductSku.trim(),
-          product_name: tempProductName.trim(),
-          brand: tempProductBrand.trim() || "Unassigned Brand",
+          sku: tempProductSku.trim().toUpperCase(),
+          product_name: tempProductName.trim().toUpperCase(),
+          brand: (tempProductBrand.trim() || "UNASSIGNED BRAND").toUpperCase(),
           cost_price: parseFloat(tempProductCostPrice) || 0,
           remarks: tempProductRemarks.trim() || null
         })
@@ -2650,6 +2720,99 @@ export function SellInModule({ profile }: SellInModuleProps) {
         }
       }
     });
+  };
+
+  const handleSaveInlineLandingPrice = async (item: any) => {
+    const rawVal = inlineLandingPriceValue.trim();
+    const newPrice = parseFloat(rawVal);
+    if (isNaN(newPrice) || newPrice < 0) {
+      showToast("Please enter a valid landing price (0 or higher)", "error");
+      return;
+    }
+
+    try {
+      setSavingInlineLandingPrice(true);
+
+      if (item.is_temp) {
+        // Save to temporary products
+        const res = await fetch(`${API_BASE}/api/sellin/temp-products`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: item.id,
+            sku: String(item.sku).trim().toUpperCase(),
+            product_name: String(item.product_name).trim().toUpperCase(),
+            brand: String(item.brand || "UNASSIGNED BRAND").trim().toUpperCase(),
+            cost_price: newPrice,
+            remarks: item.remarks || null
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to update temporary product landing price");
+
+        setTempProductsList((prev) =>
+          prev.map((tp) => (tp.id === item.id || tp.sku === item.sku ? { ...tp, cost_price: newPrice } : tp))
+        );
+      } else {
+        // Save to Master Products catalog via dedicated /api/products
+        const res = await fetch(`${API_BASE}/api/products`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "update",
+            sku: item.sku,
+            data: {
+              cost: String(newPrice)
+            }
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to update master product landing price");
+
+        // Update in productsList state
+        setProductsList((prev) =>
+          prev.map((p) => {
+            const pSku = p.sku || p['SKU Number'] || p.sku_number || p.id;
+            if (pSku === item.sku || p.id === item.id) {
+              return {
+                ...p,
+                cost: newPrice,
+                Cost: newPrice,
+                cost_price: newPrice,
+                'Cost Price': newPrice
+              };
+            }
+            return p;
+          })
+        );
+
+        // Update localStorage if cached
+        try {
+          const stored = localStorage.getItem("products_data");
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed)) {
+              const updated = parsed.map((p: any) => {
+                if (p.sku === item.sku || p.id === item.id) {
+                  return { ...p, cost: String(newPrice), Cost: String(newPrice) };
+                }
+                return p;
+              });
+              localStorage.setItem("products_data", JSON.stringify(updated));
+            }
+          }
+        } catch (e) {}
+      }
+
+      showToast(`Landing price for ${item.product_name} updated to ${newPrice.toFixed(2)}`, "success");
+      setEditingLandingPriceKey(null);
+      // Background silent recalculation of batch totals
+      fetchBatchDetails(currentPeriod, true);
+    } catch (err: any) {
+      showToast(err.message || "Failed to save landing price", "error");
+    } finally {
+      setSavingInlineLandingPrice(false);
+    }
   };
 
   const productFilterBrands = React.useMemo(() => {
@@ -2708,8 +2871,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
       return {
         id: p.id || masterSku,
         sku: masterSku,
-        product_name: p['Display Name'] || p.display_name || p.name || p.product_name || "—",
-        brand: bName,
+        product_name: String(p['Display Name'] || p.display_name || p.name || p.product_name || "—").toUpperCase(),
+        brand: String(bName).toUpperCase(),
         cost_price: finalCost,
         remarks: null,
         is_temp: false
@@ -2720,8 +2883,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
     const tempItems = (tempProductsList || []).map((tp: any) => ({
       id: tp.id || tp.sku,
       sku: tp.sku,
-      product_name: tp.product_name,
-      brand: tp.brand || "Unassigned Brand",
+      product_name: String(tp.product_name || "").toUpperCase(),
+      brand: String(tp.brand || "UNASSIGNED BRAND").toUpperCase(),
       cost_price: Number(tp.cost_price || 0),
       remarks: tp.remarks || null,
       is_temp: true
@@ -2811,6 +2974,21 @@ export function SellInModule({ profile }: SellInModuleProps) {
   // Save Assign Item Type
   const handleSaveAssignItemType = async () => {
     if (!assignItemTypeTarget || !selectedItemType) return;
+
+    if (selectedItemType === "bundle") {
+      if (!selectedBundleTempProduct) {
+        showToast("Please select a Temporary Product for this bundle", "error");
+        return;
+      }
+      const target = assignItemTypeTarget;
+      const chosenTp = selectedBundleTempProduct;
+      setShowAssignItemTypeModal(false);
+      setAssignItemTypeTarget(null);
+      setBundleMappedTempProduct(chosenTp);
+      handleOpenBundleModal(target, chosenTp);
+      return;
+    }
+
     setSavingAssignItemType(true);
     try {
       const res = await fetch(`${API_BASE}/api/sellin/assign-item-type`, {
@@ -2847,7 +3025,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
             const isDescMatch = applyItemTypeToAllMatching && Boolean(targetDescLower && (rDesc === targetDescLower || (targetDescLower.length > 4 && rDesc.includes(targetDescLower))));
             const isSkuMatch = applyItemTypeToAllMatching && Boolean(targetSkuLower && rSku === targetSkuLower);
             if (isDirect || isDescMatch || isSkuMatch) {
-              const isNonProduct = selectedItemType !== "product";
+              const isNonProduct = selectedItemType !== "product" && selectedItemType !== "bundle";
               return {
                 ...r,
                 item_type: selectedItemType,
@@ -2872,6 +3050,346 @@ export function SellInModule({ profile }: SellInModuleProps) {
     } finally {
       setSavingAssignItemType(false);
     }
+  };
+
+  // Fetch existing bundles for dropdown
+  const fetchExistingBundles = React.useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/existing-bundles`);
+      const data = await res.json();
+      if (res.ok && data.success && Array.isArray(data.bundles)) {
+        const localBundles = (records || [])
+          .filter((r) => r.item_type === "bundle" && (r.bundle_name || r.product_name))
+          .map((r) => ({
+            product_name: (r.bundle_name || r.product_name || "").trim(),
+            brand: (r.brand || "").trim()
+          }));
+        const combined = [...data.bundles, ...localBundles];
+        const map = new Map<string, { product_name: string; brand: string }>();
+        combined.forEach((b) => {
+          if (b.product_name && !map.has(b.product_name.toLowerCase())) {
+            map.set(b.product_name.toLowerCase(), b);
+          }
+        });
+        setExistingBundles(Array.from(map.values()).sort((a, b) => a.product_name.localeCompare(b.product_name)));
+      }
+    } catch {
+      // Ignore background error
+    }
+  }, [records]);
+
+  // Open Bundle Mapping Modal
+  const handleOpenBundleModal = async (record: any, presetTempProduct?: any) => {
+    if (!record) return;
+
+    let mappedTp = presetTempProduct || bundleMappedTempProduct;
+    if (!mappedTp && tempProductsList && tempProductsList.length > 0) {
+      const rNameLower = String(record.bundle_name || record.product_name || "").trim().toLowerCase();
+      const rSkuLower = String(record.product_sku || "").trim().toLowerCase();
+      mappedTp = tempProductsList.find((tp) => 
+        (tp.sku && String(tp.sku).trim().toLowerCase() === rSkuLower) ||
+        (tp.product_name && String(tp.product_name).trim().toLowerCase() === rNameLower)
+      ) || null;
+    }
+
+    if (!mappedTp) {
+      // Must select a temporary product first before proceeding to map bundle items!
+      setAssignItemTypeTarget(record);
+      setSelectedItemType("bundle");
+      setSelectedBundleTempProductId("");
+      setShowAssignItemTypeModal(true);
+      return;
+    }
+
+    setBundleMappedTempProduct(mappedTp);
+    setBundleTarget(record);
+    setShowBundleModal(true);
+    setLoadingBundleInvoiceItems(true);
+    setBundleInvoiceGroups([]);
+    setSelectedBundleComponents(new Set());
+    setBundleCustomName(mappedTp.product_name || record.bundle_name || record.product_name || "");
+
+    let initBrand = mappedTp.brand || (record.brand && record.brand !== "Unassigned Brand" ? record.brand : "");
+    setBundlePrimaryBrand(initBrand);
+
+    try {
+      const q = new URLSearchParams({
+        period: currentPeriod,
+        record_id: record.id || "",
+        product_name: record.product_name || "",
+        product_sku: record.product_sku || "",
+        buyer_code: record.buyer_code || "",
+        buyer_name: record.buyer_name || ""
+      });
+
+      const res = await fetch(`${API_BASE}/api/sellin/bundle-invoice-items?${q.toString()}`);
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        const groups = Array.isArray(data.invoices_groups) ? data.invoices_groups : [];
+        setBundleInvoiceGroups(groups);
+
+        const selSet = new Set<string>();
+        const existingComponents = Array.isArray(data.target_item?.bundle_components) ? data.target_item.bundle_components : [];
+        
+        existingComponents.forEach((c: any) => {
+          const inv = String(c.invoice_no || "").trim().toLowerCase();
+          const recId = String(c.record_id || "").trim().toLowerCase();
+          const sku = String(c.component_sku || "").trim().toLowerCase();
+          const name = String(c.component_name || "").trim().toLowerCase();
+          if (recId) selSet.add(`${inv}:::${recId}`);
+          if (sku) selSet.add(`${inv}:::${sku}`);
+          if (name) selSet.add(`${inv}:::${name}`);
+        });
+
+        const detectedBrands: string[] = [];
+        groups.forEach((grp: any) => {
+          (grp.items || []).forEach((item: any) => {
+            const key = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+            if (item.is_selected || selSet.has(key)) {
+              selSet.add(key);
+            }
+            if (item.brand && item.brand !== "Unassigned Brand" && !detectedBrands.includes(item.brand)) {
+              detectedBrands.push(item.brand);
+            }
+          });
+        });
+
+        setSelectedBundleComponents(selSet);
+
+        if (!initBrand && detectedBrands.length > 0) {
+          setBundlePrimaryBrand(detectedBrands[0]);
+        }
+      } else {
+        showToast(data.error || "Failed to load bundle invoice items", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Failed to load bundle invoice items", "error");
+    } finally {
+      setLoadingBundleInvoiceItems(false);
+    }
+  };
+
+  // Toggle selection of a component item in a specific invoice
+  const handleToggleBundleComponent = (invoiceNo: string, item: any) => {
+    const key = `${String(invoiceNo || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+    setSelectedBundleComponents((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  // Quick Select matching items across all invoices
+  const handleQuickSelectMatchingAcrossInvoices = () => {
+    const selectedSkus = new Set<string>();
+    const selectedNames = new Set<string>();
+
+    bundleInvoiceGroups.forEach((grp) => {
+      (grp.items || []).forEach((item: any) => {
+        const key = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+        if (selectedBundleComponents.has(key)) {
+          if (item.product_sku) selectedSkus.add(String(item.product_sku).trim().toLowerCase());
+          if (item.product_name) selectedNames.add(String(item.product_name).trim().toLowerCase());
+        }
+      });
+    });
+
+    if (selectedSkus.size === 0 && selectedNames.size === 0) {
+      showToast("Please check at least one component item first to propagate.", "info");
+      return;
+    }
+
+    const next = new Set(selectedBundleComponents);
+    let newlySelectedCount = 0;
+
+    bundleInvoiceGroups.forEach((grp) => {
+      (grp.items || []).forEach((item: any) => {
+        const itemSku = String(item.product_sku || "").trim().toLowerCase();
+        const itemName = String(item.product_name || "").trim().toLowerCase();
+        const match = (itemSku && selectedSkus.has(itemSku)) || (itemName && selectedNames.has(itemName));
+        if (match) {
+          const key = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+          if (!next.has(key)) {
+            next.add(key);
+            newlySelectedCount++;
+          }
+        }
+      });
+    });
+
+    setSelectedBundleComponents(next);
+    showToast(`Propagated: ${newlySelectedCount} matching item(s) checked across all invoices!`, "success");
+  };
+
+  // Save Bundle Mapping
+  const handleSaveBundleMapping = async () => {
+    if (!bundleTarget) return;
+    setSavingBundleMapping(true);
+
+    try {
+      const components: any[] = [];
+      bundleInvoiceGroups.forEach((grp) => {
+        (grp.items || []).forEach((item: any) => {
+          const key = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+          if (selectedBundleComponents.has(key)) {
+            components.push({
+              record_id: item.record_id,
+              invoice_no: grp.number,
+              source_type: grp.type || item.source_type,
+              component_sku: item.product_sku || "",
+              component_name: item.product_name || "",
+              brand: item.brand || "",
+              qty: Number(item.qty || 0),
+              unit_price: Number(item.unit_price || 0),
+              amount: Number(item.amount || 0)
+            });
+          }
+        });
+      });
+
+      const finalBundleName = String(bundleMappedTempProduct?.product_name || bundleCustomName.trim() || bundleTarget.bundle_name || bundleTarget.product_name).toUpperCase();
+      const finalBrand = String(bundleMappedTempProduct?.brand || bundlePrimaryBrand || bundleTarget.brand || "UNASSIGNED BRAND").toUpperCase();
+      const finalSku = String(bundleMappedTempProduct?.sku || bundleTarget.product_sku || "");
+      const finalCostPrice = Number(bundleMappedTempProduct?.cost_price ?? bundleTarget.cost_price ?? 0);
+
+      const res = await fetch(`${API_BASE}/api/sellin/save-bundle-mapping`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parent_record_id: bundleTarget.id,
+          period: currentPeriod,
+          brand: finalBrand,
+          bundle_name: finalBundleName,
+          bundle_sku: finalSku,
+          cost_price: finalCostPrice,
+          temp_product_id: bundleMappedTempProduct?.id || null,
+          components
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(data.message || `Bundle "${finalBundleName}" saved (Landing: ${finalCostPrice.toFixed(2)})!`, "success");
+        setShowBundleModal(false);
+        setBundleTarget(null);
+        // Optimistically update
+        setRecords((prev) =>
+          prev.map((rec) =>
+            rec.id === bundleTarget.id
+              ? {
+                  ...rec,
+                  item_type: "bundle",
+                  product_name: finalBundleName,
+                  bundle_name: finalBundleName,
+                  product_sku: finalSku || rec.product_sku,
+                  brand: finalBrand,
+                  cost_price: finalCostPrice,
+                  bundle_components: components,
+                  total_demand: data.bundle_item?.total_demand ?? rec.total_demand,
+                  quantity: data.bundle_item?.quantity ?? rec.quantity
+                }
+              : rec
+          )
+        );
+        fetchBatchDetails(currentPeriod, true);
+      } else {
+        showToast(data.error || "Failed to save bundle mapping", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Failed to save bundle mapping", "error");
+    } finally {
+      setSavingBundleMapping(false);
+    }
+  };
+
+  // Open Change Bundle Temp Product Modal
+  const handleOpenRenameBundleModal = (record: any) => {
+    if (!record) return;
+    setRenameBundleTarget(record);
+    const match = (tempProductsList || []).find((tp) => 
+      (tp.sku && tp.sku === record.product_sku) ||
+      (tp.product_name && String(tp.product_name).toLowerCase().trim() === String(record.bundle_name || record.product_name || "").toLowerCase().trim())
+    );
+    setSelectedBundleTempProductId(match ? (match.id || match.sku) : "");
+    setShowRenameBundleModal(true);
+  };
+
+  // Save Change Bundle Temp Product
+  const handleSaveRenameBundle = async () => {
+    if (!renameBundleTarget || !selectedBundleTempProduct) {
+      showToast("Please select a Temporary Product for this bundle", "error");
+      return;
+    }
+
+    const tp = selectedBundleTempProduct;
+    const newName = String(tp.product_name).trim().toUpperCase();
+    const newBrand = String(tp.brand || "UNASSIGNED BRAND").trim().toUpperCase();
+    const newSku = String(tp.sku || "").trim();
+    const newCost = Number(tp.cost_price || 0);
+
+    setSavingRenameBundle(true);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/sellin/rename-bundle`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          record_id: renameBundleTarget.id,
+          period: currentPeriod,
+          bundle_name: newName,
+          bundle_sku: newSku,
+          brand: newBrand,
+          cost_price: newCost,
+          temp_product_id: tp.id
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast(`Bundle mapped to "${newName}" (Landing: ${newCost.toFixed(2)})!`, "success");
+        setShowRenameBundleModal(false);
+        setRenameBundleTarget(null);
+        setSelectedBundleTempProductId("");
+
+        setRecords((prev) =>
+          prev.map((rec) =>
+            rec.id === renameBundleTarget.id
+              ? {
+                  ...rec,
+                  product_name: newName,
+                  bundle_name: newName,
+                  product_sku: newSku || rec.product_sku,
+                  brand: newBrand,
+                  cost_price: newCost
+                }
+              : rec
+          )
+        );
+
+        fetchBatchDetails(currentPeriod, true);
+      } else {
+        showToast(data.error || "Failed to update bundle", "error");
+      }
+    } catch (e: any) {
+      showToast(e.message || "Failed to update bundle", "error");
+    } finally {
+      setSavingRenameBundle(false);
+    }
+  };
+
+  // Toggle expand/collapse bundle component outcomes
+  const handleToggleExpandBundle = (id: string) => {
+    setExpandedBundleIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   // Open Assign Product Modal
@@ -3009,7 +3527,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
     if (!costSnapshotTarget) return;
     const parsedCost = parseFloat(editingCostPrice);
     if (isNaN(parsedCost) || parsedCost < 0) {
-      showToast("Please enter a valid cost price (0 or higher)", "error");
+      showToast("Please enter a valid landing price (0 or higher)", "error");
       return;
     }
     setSavingCostSnapshot(true);
@@ -3024,17 +3542,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        showToast(`Cost price ($${parsedCost.toFixed(2)}) saved for this month!`, "success");
+        showToast(`Landing price ($${parsedCost.toFixed(2)}) saved for this month!`, "success");
         setShowCostSnapshotModal(false);
         setCostSnapshotTarget(null);
         // Optimistically update record in memory
         setRecords(prev => prev.map(r => r.id === costSnapshotTarget.id ? { ...r, cost_price: parsedCost } : r));
         fetchBatchDetails(currentPeriod, false);
       } else {
-        showToast(data.error || "Failed to update cost price", "error");
+        showToast(data.error || "Failed to update landing price", "error");
       }
     } catch (e: any) {
-      showToast(e.message || "Save cost price error", "error");
+      showToast(e.message || "Save landing price error", "error");
     } finally {
       setSavingCostSnapshot(false);
     }
@@ -3519,14 +4037,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
     try {
       const validGroups = editBuyerStoreGroups
         .filter((g) => g.group_name && g.group_name.trim().length > 0)
-        .map((g) => ({ group_name: g.group_name.trim(), store_count: Number(g.store_count) || 1 }));
+        .map((g) => ({ group_name: g.group_name.trim().toUpperCase(), store_count: Number(g.store_count) || 1 }));
 
       const res = await fetch(`${API_BASE}/api/sellin/buyers/${encodeURIComponent(editingBuyer.id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          buyer_code: editBuyerCode.trim(),
-          buyer_name: editBuyerName.trim(),
+          buyer_code: editBuyerCode.trim().toUpperCase(),
+          buyer_name: editBuyerName.trim().toUpperCase(),
           channel: editBuyerChannel || "",
           payment_term: editBuyerPaymentTerm.replace(/[^0-9]/g, "") || "90",
           store_groups: validGroups,
@@ -3534,7 +4052,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         })
       });
       if (res.ok) {
-        showToast(`Buyer "${editBuyerName.trim()}" updated successfully!`, "success");
+        showToast(`Buyer "${editBuyerName.trim().toUpperCase()}" updated successfully!`, "success");
         setShowEditBuyerModal(false);
         setEditingBuyer(null);
         await fetchBatchDetails(currentPeriod, true);
@@ -3572,8 +4090,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
     try {
       const items = Object.entries(buyerDrafts).map(([id, val]) => ({
         id,
-        buyer_code: val.buyer_code,
-        buyer_name: val.buyer_name,
+        buyer_code: String(val.buyer_code || "").trim().toUpperCase(),
+        buyer_name: String(val.buyer_name || "").trim().toUpperCase(),
         channel: val.channel
       }));
 
@@ -3615,18 +4133,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
   // Dropdown option sets
   const channelFilterOptions = React.useMemo(() => {
-    const list = [{ label: "All Channels", value: "all" }];
+    const list = [{ label: "ALL CHANNELS", value: "all" }];
     channelsList.forEach((ch) => {
       const name = ch.channel_name || ch.name;
-      if (name) list.push({ label: name, value: name });
+      if (name) list.push({ label: String(name).toUpperCase(), value: name });
     });
     return list;
   }, [channelsList]);
 
   const brandFilterOptions = React.useMemo(() => {
-    const list = [{ label: "All Brands", value: "all" }];
+    const list = [{ label: "ALL BRANDS", value: "all" }];
     availableBrands.forEach((b) => {
-      list.push({ label: b, value: b });
+      list.push({ label: String(b).toUpperCase(), value: b });
     });
     return list;
   }, [availableBrands]);
@@ -3689,7 +4207,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
           <>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-semibold text-zinc-900">Sell-In Demand</h1>
+                <h1 className="text-base font-semibold text-zinc-900">Sell-In Data</h1>
                 <span className="px-2 py-0.5 rounded text-[10px] font-medium tracking-wide bg-slate-100 text-zinc-600 border border-slate-200">
                   {batchData?.status === "published" ? "Published" : "Draft Inflow"}
                 </span>
@@ -3701,30 +4219,88 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
             {/* Action Controls: Clean Monochromatic Summary Pills + Month Selector */}
             <div className="flex items-center gap-1.5 flex-wrap">
-              {/* Gross Demand Pill */}
-              <div className="h-7 flex items-center gap-1 px-2 rounded-md bg-[#F8F9FA] border border-slate-200 text-[11px]">
-                <span className="text-zinc-500 font-normal">Demand:</span>
+              {/* Invoice (Gross Demand) Pill with integrated Upload / Download */}
+              <div className="h-7 flex items-center gap-1.5 px-2 rounded-md bg-[#F8F9FA] border border-slate-200 text-[11px]">
+                <span className="text-zinc-500 font-normal">Invoice:</span>
                 <span className="font-medium text-zinc-800">
                   ${kpis.grossDemand.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
-                <span className="text-[10px] text-zinc-400 font-normal">({kpis.demandQty.toLocaleString()} pcs)</span>
+                {(invoiceSourceUrl || (batchData?.status !== "published" && !isCurrentActiveMonth)) && (
+                  <div className="flex items-center pl-1 border-l border-slate-200">
+                    {invoiceSourceUrl ? (
+                      <a
+                        href={invoiceSourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-0.5 text-[#0B57D0] hover:text-[#0842A0] hover:bg-blue-50 rounded transition-colors cursor-pointer flex items-center"
+                        title="Download / View Source Invoice PDF"
+                      >
+                        <Download size={12} />
+                      </a>
+                    ) : (
+                      <label
+                        className="p-0.5 text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-200/60 rounded transition-colors cursor-pointer flex items-center"
+                        title={parsingInvoices ? "Parsing AI..." : "Upload Source Invoice PDF"}
+                      >
+                        {parsingInvoices ? (
+                          <RefreshCw size={12} className="animate-spin text-[#0B57D0]" />
+                        ) : (
+                          <Upload size={12} />
+                        )}
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          multiple={false}
+                          disabled={parsingInvoices}
+                          onChange={handleInvoicePdfUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {/* Reject (CN) Pill */}
-              <div className="h-7 flex items-center gap-1 px-2 rounded-md bg-[#F8F9FA] border border-slate-200 text-[11px]">
-                <span className="text-zinc-500 font-normal">Reject:</span>
+              {/* Credit Note (Reject) Pill with integrated Upload / Download */}
+              <div className="h-7 flex items-center gap-1.5 px-2 rounded-md bg-[#F8F9FA] border border-slate-200 text-[11px]">
+                <span className="text-zinc-500 font-normal">Credit Note:</span>
                 <span className="font-medium text-zinc-700">
                   ${kpis.cnAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </span>
-                <span className="text-[10px] text-zinc-400 font-normal">({kpis.cnQty.toLocaleString()} pcs)</span>
-              </div>
-
-              {/* Return Rate Pill */}
-              <div className="h-7 flex items-center gap-1 px-2 rounded-md bg-[#F8F9FA] border border-slate-200 text-[11px]">
-                <span className="text-zinc-500 font-normal">Return:</span>
-                <span className="font-medium text-zinc-700">
-                  {kpis.grossDemand > 0 ? ((kpis.cnAmount / kpis.grossDemand) * 100).toFixed(1) : "0.0"}%
-                </span>
+                {(cnSourceUrl || (batchData?.status !== "published" && !isCurrentActiveMonth)) && (
+                  <div className="flex items-center pl-1 border-l border-slate-200">
+                    {cnSourceUrl ? (
+                      <a
+                        href={cnSourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="p-0.5 text-[#0B57D0] hover:text-[#0842A0] hover:bg-blue-50 rounded transition-colors cursor-pointer flex items-center"
+                        title="Download / View Source Credit Note PDF"
+                      >
+                        <Download size={12} />
+                      </a>
+                    ) : (
+                      <label
+                        className="p-0.5 text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-200/60 rounded transition-colors cursor-pointer flex items-center"
+                        title={parsingCreditNotes ? "Parsing CN..." : "Upload Source Credit Note PDF"}
+                      >
+                        {parsingCreditNotes ? (
+                          <RefreshCw size={12} className="animate-spin text-[#0B57D0]" />
+                        ) : (
+                          <Upload size={12} />
+                        )}
+                        <input
+                          type="file"
+                          accept=".pdf"
+                          multiple={false}
+                          disabled={parsingCreditNotes}
+                          onChange={handleCreditNotePdfUpload}
+                          className="hidden"
+                        />
+                      </label>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Profit / Revenue Margin Pill */}
@@ -3739,27 +4315,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <span className="text-[10px] text-zinc-400 font-normal">({kpis.marginPercent.toFixed(1)}%)</span>
               </div>
 
-              {/* Diagnostics Alert / Validation Status Pill (Draft mode only) */}
-              {batchData?.status !== "published" && (
-                kpis.unresolvedCount > 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveMainTab("sellin");
-                      setSubFilterTab("unresolved");
-                    }}
-                    className="h-7 px-2 rounded-md bg-slate-50 hover:bg-slate-100 text-zinc-700 text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer border border-slate-200"
-                  >
-                    <AlertTriangle size={11} className="text-amber-600 shrink-0" />
-                    <span>{kpis.unresolvedCount} Diagnostics</span>
-                  </button>
-                ) : (
-                  <div className="h-7 flex items-center gap-1 text-zinc-600 text-[11px] font-medium px-2 rounded-md bg-slate-50 border border-slate-200">
-                    <CheckCircle2 size={11} className="shrink-0 text-emerald-600" />
-                    <span>Validated</span>
-                  </div>
-                )
-              )}
+
 
               {/* Action Buttons in Top Container */}
               {records.length > 0 && !isCurrentActiveMonth && batchData?.status !== "published" && (
@@ -3897,7 +4453,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
             <div>
               <h1 className="text-base font-semibold text-zinc-900">Product List</h1>
               <p className="text-xs text-zinc-500 mt-0.5">
-                Unified product registry for Sell-In demand. Temporary products registered here are stored separately and do not alter the Master Catalog.
+                Unified product registry for Sell-In data. Temporary products registered here are stored separately and do not alter the Master Catalog.
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -3973,33 +4529,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   <span>{revokingBatch ? "Revoking..." : "Revoke Publish"}</span>
                 </button>
 
-                {/* Source Invoice & Credit Note Download / View Buttons (Historical months only) */}
-                {!isCurrentActiveMonth && invoiceSourceUrl && (
-                  <a
-                    href={invoiceSourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                    title="Download / View Source Invoice PDF"
-                  >
-                    <FileText size={13} className="text-[#0B57D0]" />
-                    <span>Source Invoice</span>
-                  </a>
-                )}
-
-                {!isCurrentActiveMonth && cnSourceUrl && (
-                  <a
-                    href={cnSourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                    title="Download / View Source Credit Note PDF"
-                  >
-                    <FileText size={13} className="text-zinc-600" />
-                    <span>Source Credit Note</span>
-                  </a>
-                )}
-
                 {/* Month Selector Capsule with Fixed Width */}
                 <div className="h-8 w-[185px] min-w-[185px] shrink-0 flex items-center justify-between px-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 transition-all shadow-2xs">
                   <button
@@ -4018,7 +4547,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     title="Click to select month & year directly"
                   >
                     <Calendar size={13} className="text-[#0B57D0] shrink-0" />
-                    <span className="text-xs font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center">
+                    <span className="text-xs font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center uppercase">
                       {formatPeriodLabel(currentPeriod)}
                     </span>
                   </button>
@@ -4039,71 +4568,64 @@ export function SellInModule({ profile }: SellInModuleProps) {
           {/* Filter & Action Toolbar (Only shown in Draft OR when viewing Detailed Sell-In) */}
           {(batchData?.status !== "published" || sellinViewMode === "details") && (
             <div className="px-4 py-2 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
-              {/* Left Sub-filters & Custom Dropdowns */}
-              <div className="flex items-center gap-2 flex-wrap flex-1 min-w-[280px]">
-                {/* Sub-filter tabs */}
-                <div className="flex items-center p-0.5 bg-white rounded-lg border border-slate-200 shadow-2xs">
+              {/* Left Side: Channel Filter Dropdown + Sub-filters (All, Sales, Non-Sales, Diagnostic) */}
+              <div className="flex items-center gap-2.5 flex-wrap">
+                {/* Custom Channel Filter Dropdown */}
+                <CustomSelect
+                  value={channelFilter}
+                  onChange={setChannelFilter}
+                  options={channelFilterOptions}
+                  placeholder="ALL CHANNELS"
+                  width="w-[160px]"
+                />
+
+                {/* Sub-filters: All, Sales, Non-Sales, Diagnostic (No Qty Display) */}
+                <div className="flex items-center p-0.5 bg-white rounded-lg border border-slate-200 shadow-2xs shrink-0">
                   <button
                     type="button"
                     onClick={() => setSubFilterTab("all")}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
                       subFilterTab === "all" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
                     }`}
                   >
-                    All ({records.length})
+                    All
                   </button>
                   <button
                     type="button"
-                    onClick={() => setSubFilterTab("si")}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
-                      subFilterTab === "si" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
+                    onClick={() => setSubFilterTab("sales")}
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                      subFilterTab === "sales" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
                     }`}
                   >
-                    Demand Inflow
+                    Sales
                   </button>
                   <button
                     type="button"
                     onClick={() => setSubFilterTab("non_sales")}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                    className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
                       subFilterTab === "non_sales" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
                     }`}
                   >
-                    <span>Non-Sales</span>
-                    {kpis.nonSalesCount > 0 && (
-                      <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-medium ${subFilterTab === "non_sales" ? "bg-white/20 text-white" : "bg-slate-100 text-zinc-600 border border-slate-200"}`}>
-                        {kpis.nonSalesCount}
-                      </span>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSubFilterTab("cn")}
-                    className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
-                      subFilterTab === "cn" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
-                    }`}
-                  >
-                    Returns & Rejects
+                    Non-Sales
                   </button>
                   {batchData?.status !== "published" && (
                     <button
                       type="button"
-                      onClick={() => setSubFilterTab("unresolved")}
-                      className={`px-2.5 py-1 text-xs font-medium rounded-md transition-all cursor-pointer flex items-center gap-1 ${
-                        subFilterTab === "unresolved" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
+                      onClick={() => setSubFilterTab("diagnostic")}
+                      className={`px-3 py-1 text-xs font-medium rounded-md transition-all cursor-pointer ${
+                        subFilterTab === "diagnostic" || subFilterTab === "unresolved" ? "bg-[#0B57D0] text-white" : "text-zinc-600 hover:text-zinc-900"
                       }`}
                     >
-                      <span>Diagnostics</span>
-                      {kpis.unresolvedCount > 0 && (
-                        <span className="w-4 h-4 rounded-full bg-amber-500 text-white text-[10px] font-medium flex items-center justify-center">
-                          {kpis.unresolvedCount}
-                        </span>
-                      )}
+                      Diagnostic
                     </button>
                   )}
                 </div>
+              </div>
 
+              {/* Right Aligned Area: Search Bar, Brand Dropdown, and File Actions */}
+              <div className="flex items-center gap-2 flex-wrap justify-end ml-auto">
                 {/* Search Bar */}
-                <div className="relative max-w-[200px] flex-1">
+                <div className="relative w-[190px]">
                   <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
                   <input
                     type="text"
@@ -4114,120 +4636,48 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   />
                 </div>
 
-                {/* Custom Channel Filter Dropdown */}
-                <CustomSelect
-                  value={channelFilter}
-                  onChange={setChannelFilter}
-                  options={channelFilterOptions}
-                  placeholder="All Channels"
-                  minWidth="min-w-[120px]"
-                />
-
                 {/* Custom Brand Filter Dropdown */}
                 <CustomSelect
                   value={brandFilter}
                   onChange={setBrandFilter}
                   options={brandFilterOptions}
-                  placeholder="All Brands"
-                  minWidth="min-w-[110px]"
+                  placeholder="ALL BRANDS"
+                  width="w-[140px]"
                 />
-              </div>
 
-              {/* Right Action Area (Draft Mode Only): Source Files & Month Selector */}
-              {batchData?.status !== "published" && (
-                <div className="flex items-center gap-2 shrink-0">
-                  {/* Source Invoice & Credit Note Download / View Buttons (Historical months only) */}
-                  {!isCurrentActiveMonth && invoiceSourceUrl && (
-                    <a
-                      href={invoiceSourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                      title="Download / View Source Invoice PDF"
-                    >
-                      <FileText size={13} className="text-[#0B57D0]" />
-                      <span>Source Invoice</span>
-                    </a>
-                  )}
-
-                  {!isCurrentActiveMonth && cnSourceUrl && (
-                    <a
-                      href={cnSourceUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="h-8 px-2.5 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs"
-                      title="Download / View Source Credit Note PDF"
-                    >
-                      <FileText size={13} className="text-zinc-600" />
-                      <span>Source Credit Note</span>
-                    </a>
-                  )}
-
-                  {/* Import Buttons when no source file yet (Historical months only) */}
-                  {!isCurrentActiveMonth && !invoiceSourceUrl && (
-                    <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
-                      {parsingInvoices ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
-                      <span>{parsingInvoices ? "Parsing AI..." : "Upload Invoice"}</span>
-                      <input
-                        type="file"
-                        accept=".pdf"
-                        multiple={false}
-                        disabled={parsingInvoices}
-                        onChange={handleInvoicePdfUpload}
-                        className="hidden"
-                      />
-                    </label>
-                  )}
-
-                  {!isCurrentActiveMonth && !cnSourceUrl && (
-                    <label className="h-8 px-3 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs">
-                      {parsingCreditNotes ? <RefreshCw size={13} className="animate-spin text-zinc-500" /> : <FileText size={13} className="text-zinc-500" />}
-                      <span>{parsingCreditNotes ? "Parsing CN..." : "Upload Credit Note"}</span>
-                      <input
-                        type="file"
-                        accept=".pdf"
-                        multiple={false}
-                        disabled={parsingCreditNotes}
-                        onChange={handleCreditNotePdfUpload}
-                        className="hidden"
-                      />
-                    </label>
-                  )}
-
-                  {/* Month Selector Capsule with Fixed Width */}
-                  <div className="h-8 w-[185px] min-w-[185px] shrink-0 flex items-center justify-between px-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 transition-all shadow-2xs">
-                    <button
-                      type="button"
-                      onClick={handlePrevMonth}
-                      disabled={loading}
-                      className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
-                      title="Previous Month"
-                    >
-                      ‹
-                    </button>
-                    <button
-                      type="button"
-                      onClick={openMonthPicker}
-                      className="relative flex-1 flex items-center justify-center gap-1.5 px-1 py-1 rounded hover:bg-slate-100/70 transition-colors cursor-pointer"
-                      title="Click to select month & year directly"
-                    >
-                      <Calendar size={13} className="text-[#0B57D0] shrink-0" />
-                      <span className="text-xs font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center">
-                        {formatPeriodLabel(currentPeriod)}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleNextMonth}
-                      disabled={loading}
-                      className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
-                      title="Next Month"
-                    >
-                      ›
-                    </button>
-                  </div>
+                {/* Month Selector Capsule with Fixed Width */}
+                <div className="h-8 w-[185px] min-w-[185px] shrink-0 flex items-center justify-between px-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 transition-all shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={handlePrevMonth}
+                    disabled={loading}
+                    className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
+                    title="Previous Month"
+                  >
+                    ‹
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openMonthPicker}
+                    className="relative flex-1 flex items-center justify-center gap-1.5 px-1 py-1 rounded hover:bg-slate-100/70 transition-colors cursor-pointer"
+                    title="Click to select month & year directly"
+                  >
+                    <Calendar size={13} className="text-[#0B57D0] shrink-0" />
+                    <span className="text-xs font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center uppercase">
+                      {formatPeriodLabel(currentPeriod)}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNextMonth}
+                    disabled={loading}
+                    className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
+                    title="Next Month"
+                  >
+                    ›
+                  </button>
                 </div>
-              )}
+              </div>
             </div>
           )}
 
@@ -4239,11 +4689,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <span className="text-xs text-zinc-500 font-medium">Loading Sell-In records...</span>
               </div>
             ) : records.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center px-4">
+              <div className="h-full flex flex-col items-center justify-center p-4 text-center">
                 {isCurrentActiveMonth ? (
-                  <>
-                    <div className="w-12 h-12 rounded-xl bg-blue-50 text-[#0B57D0] flex items-center justify-center mb-3">
-                      <FileText size={24} />
+                  <div className="flex flex-col items-center max-w-md mx-auto text-center">
+                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#0B57D0] flex items-center justify-center mb-2.5">
+                      <FileText size={20} />
                     </div>
                     <div>
                       <h3 className="text-sm font-bold text-zinc-900">
@@ -4253,65 +4703,47 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         Sales figures are actively synced from Track Orders. As invoices are attached to orders in Track Order, live demand will appear here automatically.
                       </p>
                     </div>
-                  </>
+                  </div>
                 ) : (
-                  <div className="flex flex-col items-center max-w-lg mx-auto py-6 text-center px-4 w-full">
-                    <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mb-3 shadow-2xs">
-                      <AlertTriangle size={24} />
+                  <div className="flex flex-col items-center max-w-lg mx-auto text-center w-full my-auto">
+                    <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center mb-2.5 shadow-2xs">
+                      <AlertTriangle size={20} />
                     </div>
                     <div>
-                      <h3 className="text-base font-bold text-zinc-900">
+                      <h3 className="text-sm font-bold text-zinc-900">
                         {formatPeriodLabel(currentPeriod)} has ended — Master Tax Invoice Required
                       </h3>
-                      <p className="text-xs text-zinc-500 mt-1">
-                        Follow the instructions below to export and upload official sales data from Million System.
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        Export official monthly sales data from Million System and upload above.
                       </p>
                     </div>
 
                     {/* Step-by-Step Instructions Card */}
-                    <div className="mt-4 w-full text-left bg-white rounded-xl border border-slate-200 overflow-hidden shadow-2xs">
+                    <div className="mt-3.5 w-full text-left bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
                       {/* Notice Header Banner */}
-                      <div className="p-3.5 bg-amber-50/80 border-b border-amber-200/80 flex items-start gap-2.5">
-                        <AlertCircle size={15} className="text-amber-600 shrink-0 mt-0.5" />
-                        <p className="text-xs text-amber-950 font-medium leading-relaxed">
-                          <span className="font-bold">Important:</span> Ensure all Sales Invoices and Credit Notes for <span className="font-bold">{formatPeriodLabel(currentPeriod)}</span> are fully recorded in <strong>Million System</strong> before exporting to PDF.
-                        </p>
+                      <div className="px-3.5 py-2 bg-amber-50/70 border-b border-amber-200/70 flex items-center justify-between text-xs text-amber-900">
+                        <div className="flex items-center gap-1.5 font-medium">
+                          <AlertCircle size={14} className="text-amber-600 shrink-0" />
+                          <span>Ensure all monthly invoices &amp; credit notes are finalized in Million System.</span>
+                        </div>
+                        <span className="font-mono font-semibold bg-white px-2 py-0.5 rounded border border-amber-200 text-zinc-800 text-[11px] shrink-0">
+                          {periodDateRange.start} – {periodDateRange.end}
+                        </span>
                       </div>
 
-                      {/* Steps list */}
-                      <div className="p-4 space-y-3 divide-y divide-slate-100">
-                        <div className="flex items-start gap-3">
-                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
-                          <div className="text-xs text-zinc-700 leading-relaxed">
-                            Log in to <strong>Million System</strong> and go to the <strong>Sales</strong> page.
+                      {/* Combined Steps */}
+                      <div className="p-3.5 space-y-2.5 divide-y divide-slate-100 text-xs text-zinc-700">
+                        <div className="flex items-start gap-2.5">
+                          <span className="w-4 h-4 rounded-full bg-slate-100 text-zinc-700 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">1</span>
+                          <div className="leading-relaxed">
+                            In <strong>Million System</strong>, go to <strong>Sales &gt; Print Bill</strong>. Select <strong>Sales Invoice</strong> (and <strong>Credit Note</strong> if any) with the date range above, then print/export to PDF.
                           </div>
                         </div>
 
-                        <div className="pt-3 flex items-start gap-3">
-                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
-                          <div className="text-xs text-zinc-700 leading-relaxed">
-                            At the bottom footer menu, locate and click <strong>Print Bill</strong>.
-                          </div>
-                        </div>
-
-                        <div className="pt-3 flex items-start gap-3">
-                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">3</span>
-                          <div className="text-xs text-zinc-700 leading-relaxed">
-                            Select <strong className="text-zinc-900">Sales Invoice</strong>, set the Date Range from <strong className="font-mono bg-slate-100 px-1 py-0.5 rounded text-zinc-800">{periodDateRange.start}</strong> to <strong className="font-mono bg-slate-100 px-1 py-0.5 rounded text-zinc-800">{periodDateRange.end}</strong>, then click <strong>Print</strong>.
-                          </div>
-                        </div>
-
-                        <div className="pt-3 flex items-start gap-3">
-                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">4</span>
-                          <div className="text-xs text-zinc-700 leading-relaxed">
-                            Choose <strong>Print to PDF</strong>, rename the exported file to <strong className="font-mono text-[#0B57D0]">{currentPeriod}.pdf</strong>, and upload it via <strong className="text-[#0B57D0]">Upload Invoice</strong> in the toolbar above.
-                          </div>
-                        </div>
-
-                        <div className="pt-3 flex items-start gap-3">
-                          <span className="w-5 h-5 rounded-full bg-slate-100 text-zinc-700 text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">5</span>
-                          <div className="text-xs text-zinc-700 leading-relaxed">
-                            Repeat the same steps for <strong className="text-zinc-900">Credit Note</strong> (if any) with the same date range, and upload it via <strong className="text-[#0B57D0]">Upload Credit Note</strong>.
+                        <div className="pt-2.5 flex items-start gap-2.5">
+                          <span className="w-4 h-4 rounded-full bg-slate-100 text-zinc-700 text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">2</span>
+                          <div className="leading-relaxed">
+                            Upload the exported files using the <strong className="text-[#0B57D0]">Invoice</strong> and <strong className="text-[#0B57D0]">Credit Note</strong> upload buttons in the header above.
                           </div>
                         </div>
                       </div>
@@ -4719,6 +5151,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <th className="py-2.5 px-3 min-w-[105px] text-right bg-emerald-50/80 text-emerald-900 border-r border-emerald-100 whitespace-nowrap">Total $</th>
                     <th className="py-2.5 px-3 min-w-[105px] text-right bg-red-50/80 text-red-900 border-r border-red-100 whitespace-nowrap">Reject Qty</th>
                     <th className="py-2.5 px-3 min-w-[105px] text-right bg-red-50/80 text-red-900 border-r border-red-100 whitespace-nowrap">Total $</th>
+                    <th className="py-2.5 px-3 min-w-[110px] text-right bg-blue-50/80 text-[#0B57D0] border-r border-blue-100 whitespace-nowrap">Nett Amount ($)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -4742,11 +5175,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     const isUnmappedSku = !isUnregistered && r.validation_status === "unmapped_sku";
                     const isValid = r.validation_status === "valid" && !isUnregistered && !isNoListing && !isUnmappedSku;
 
+                    const isExpandedBundle = expandedBundleIds.has(String(r.id || idx));
+
                     return (
-                      <tr 
-                        key={r.id || idx} 
-                        className="hover:bg-slate-50/80 transition-colors"
-                      >
+                      <React.Fragment key={r.id || idx}>
+                        <tr 
+                          className={cn("hover:bg-slate-50/80 transition-colors", isExpandedBundle && "bg-indigo-50/20")}
+                        >
                         {/* Index */}
                         <td className="py-2 px-3 text-center text-zinc-400 text-[11px] font-mono">
                           {idx + 1}
@@ -4782,11 +5217,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               title={
                                 batchData?.status === "published"
                                   ? (Number(r.cost_price || 0) > 0 
-                                      ? `Cost Price: $${Number(r.cost_price).toFixed(2)} (Published)` 
-                                      : "Cost Price: $0.00 (Published)")
+                                      ? `Landing Price: $${Number(r.cost_price).toFixed(2)} (Published)` 
+                                      : "Landing Price: $0.00 (Published)")
                                   : (Number(r.cost_price || 0) > 0 
-                                      ? `Cost Price: $${Number(r.cost_price).toFixed(2)} (Click to edit)` 
-                                      : "Set Cost Price for this month")
+                                      ? `Landing Price: $${Number(r.cost_price).toFixed(2)} (Click to edit)` 
+                                      : "Set Landing Price for this month")
                               }
                             >
                               <DollarSign size={13} />
@@ -4958,10 +5393,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
                             return (
                               <button
                                 type="button"
-                                onClick={() => handleOpenAssignItemTypeModal(r)}
+                                onClick={() => {
+                                  if (r.item_type === "bundle") {
+                                    handleOpenBundleModal(r);
+                                  } else {
+                                    handleOpenAssignItemTypeModal(r);
+                                  }
+                                }}
                                 className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer inline-flex items-center gap-1 group ${config.badgeClass}`}
-                                title={`Type: ${config.label}. Click to assign or edit.`}
+                                title={r.item_type === "bundle" ? "Bundle item. Click to manage/remap component items." : `Type: ${config.label}. Click to assign or edit.`}
                               >
+                                {r.item_type === "bundle" && <Layers size={10} className="shrink-0 text-indigo-600" />}
                                 <span>{config.shortLabel}</span>
                                 <Edit2 size={9} className="opacity-60 group-hover:opacity-100" />
                               </button>
@@ -4979,7 +5421,30 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               {r.product_name || r.product_sku || "(No Description)"}
                             </span>
                             <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
-                              {r.item_type === "settlement" ? (
+                              {r.item_type === "bundle" ? (
+                                <div className="flex items-center gap-1.5 w-full">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleToggleExpandBundle(String(r.id || idx))}
+                                    className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/90 px-1.5 py-0.5 rounded font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                                    title="Click to view/hide component outcome quantities"
+                                  >
+                                    <Layers size={10} className="shrink-0 text-indigo-600" />
+                                    <span>Bundle ({Array.isArray(r.bundle_components) ? r.bundle_components.length : 0})</span>
+                                    {expandedBundleIds.has(String(r.id || idx)) ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                                  </button>
+                                  {batchData?.status !== "published" && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenBundleModal(r)}
+                                      className="text-[10px] text-zinc-500 hover:text-indigo-600 hover:underline font-medium ml-auto shrink-0 cursor-pointer"
+                                      title="Remap bundle items"
+                                    >
+                                      Remap
+                                    </button>
+                                  )}
+                                </div>
+                              ) : r.item_type === "settlement" ? (
                                 <div className="flex items-center gap-1.5 w-full">
                                   <button
                                     type="button"
@@ -5046,7 +5511,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         {/* Brand */}
                         <td className="py-2 px-3 text-zinc-600">
                           {(() => {
-                            if (r.item_type && r.item_type !== "product") {
+                            if (r.item_type && r.item_type !== "product" && r.item_type !== "bundle") {
                               return <span className="text-zinc-300">-</span>;
                             }
                             return r.brand || "Unassigned";
@@ -5098,8 +5563,103 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         <td className="py-2 px-3 text-right text-red-950 font-mono bg-red-50/50 border-r border-red-100/50 whitespace-nowrap">
                           {Number(r.cn_amount || 0) > 0 ? `-$${Number(r.cn_amount).toFixed(2)}` : "-"}
                         </td>
+
+                        {/* Nett Amount ($) - Light Blue */}
+                        <td className="py-2 px-3 text-right font-mono font-bold bg-blue-50/30 border-r border-blue-100/50 whitespace-nowrap text-zinc-900">
+                          ${Number(r.nett_amount ?? ((r.total_demand || 0) - (r.cn_amount || 0))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
                       </tr>
-                    );
+                      {isExpandedBundle && r.item_type === "bundle" && (
+                        <tr className="bg-indigo-50/20 border-b border-indigo-100">
+                          <td colSpan={18} className="py-2.5 px-4 bg-gradient-to-r from-indigo-50/40 via-white to-indigo-50/20">
+                            <div className="flex flex-col gap-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[11px] font-bold text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
+                                    <Layers size={12} className="text-indigo-600" />
+                                    Bundle Component Outcomes (Items & Quantities Inside This Package)
+                                  </span>
+                                  <span className="text-[10px] text-indigo-700 bg-indigo-100/70 border border-indigo-200/60 px-1.5 py-0.2 rounded font-semibold">
+                                    {Array.isArray(r.bundle_components) ? r.bundle_components.length : 0} component lines
+                                  </span>
+                                </div>
+                                {batchData?.status !== "published" && (
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenRenameBundleModal(r)}
+                                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer transition-colors"
+                                      title="Rename this bundle package"
+                                    >
+                                      <Tag size={11} />
+                                      <span>Rename Bundle</span>
+                                    </button>
+                                    <span className="text-slate-300">|</span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenBundleModal(r)}
+                                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer transition-colors"
+                                    >
+                                      <Edit2 size={11} />
+                                      <span>Edit Components</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Component Outcome Chips Summary */}
+                              <div className="flex flex-wrap items-center gap-2 pt-0.5">
+                                {Array.isArray(r.component_outcome_summary) && r.component_outcome_summary.length > 0 ? (
+                                  r.component_outcome_summary.map((c: any, cIdx: number) => (
+                                    <div
+                                      key={cIdx}
+                                      className="flex items-center gap-2 px-2.5 py-1 bg-white border border-indigo-200 rounded-lg shadow-2xs text-xs"
+                                    >
+                                      <div className="flex flex-col">
+                                        <span className="font-semibold text-zinc-900 leading-tight">
+                                          {c.component_sku ? `${c.component_sku} - ` : ""}{c.component_name}
+                                        </span>
+                                        <span className="text-[10px] text-zinc-500">{c.brand || "Unassigned Brand"}</span>
+                                      </div>
+                                      <div className="ml-2 pl-2 border-l border-slate-200 flex items-center gap-1.5">
+                                        <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-[11px]">
+                                          {Number(c.total_qty || 0).toLocaleString()} pcs
+                                        </span>
+                                        {Number(c.total_amount || 0) > 0 && (
+                                          <span className="font-mono text-zinc-600 text-[11px]">
+                                            (${Number(c.total_amount).toFixed(2)})
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))
+                                ) : Array.isArray(r.bundle_components) && r.bundle_components.length > 0 ? (
+                                  r.bundle_components.map((c: any, cIdx: number) => (
+                                    <div
+                                      key={cIdx}
+                                      className="flex items-center gap-2 px-2.5 py-1 bg-white border border-indigo-200 rounded-lg shadow-2xs text-xs"
+                                    >
+                                      <span className="font-semibold text-zinc-900">
+                                        {c.component_sku ? `${c.component_sku} - ` : ""}{c.component_name}
+                                      </span>
+                                      <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-[11px]">
+                                        {Number(c.qty || 0).toLocaleString()} pcs
+                                        {Number(c.amount || 0) > 0 && ` • $${Number(c.amount).toFixed(2)}`}
+                                      </span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <span className="text-xs text-zinc-400 italic">
+                                    No component items linked to this bundle yet. Click "Remap" to select components.
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
                   })}
                 </tbody>
               </table>
@@ -5161,11 +5721,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   <tr className="text-[11px] font-semibold text-zinc-600">
                     <th className="py-2.5 px-3 w-10 text-center">#</th>
                     <th className="py-2.5 px-3 w-32">Buyer Code</th>
-                    <th className="py-2.5 px-3 min-w-[180px]">Buyer / Retailer Name</th>
-                    <th className="py-2.5 px-3 w-36">Assigned Sales Channel</th>
+                    <th className="py-2.5 px-3 min-w-[220px]">Buyer Name (Registered in Million System)</th>
+                    <th className="py-2.5 px-3 w-36">Buyer Channel</th>
                     <th className="py-2.5 px-3 min-w-[200px]">Store Name</th>
                     <th className="py-2.5 px-3 w-24 text-center">Total Stores</th>
-                    <th className="py-2.5 px-3 w-28 text-center">Registered Date</th>
                     <th className="py-2.5 px-3 w-20 text-center">Action</th>
                   </tr>
                 </thead>
@@ -5189,7 +5748,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                   [b.id]: { ...draft, buyer_code: e.target.value }
                                 }));
                               }}
-                              className="w-full h-7 px-2 bg-white border border-[#0B57D0] rounded text-xs font-mono font-medium text-zinc-900 focus:outline-none"
+                              className="w-full h-7 px-2 bg-white border border-[#0B57D0] rounded text-xs font-mono font-medium text-zinc-900 focus:outline-none uppercase"
                             />
                           ) : (
                             <span className="font-mono font-medium text-[#0B57D0]">{b.buyer_code}</span>
@@ -5208,10 +5767,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                   [b.id]: { ...draft, buyer_name: e.target.value }
                                 }));
                               }}
-                              className="w-full h-7 px-2 bg-white border border-[#0B57D0] rounded text-xs font-medium text-zinc-900 focus:outline-none"
+                              className="w-full h-7 px-2 bg-white border border-[#0B57D0] rounded text-xs font-medium text-zinc-900 focus:outline-none uppercase"
                             />
                           ) : (
-                            <span className="font-medium text-zinc-800">{b.buyer_name}</span>
+                            <span className="font-medium text-zinc-800 uppercase">{b.buyer_name}</span>
                           )}
                         </td>
 
@@ -5240,32 +5799,42 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           )}
                         </td>
 
-                        {/* Store Name / Groups with (qty) */}
+                        {/* Store Name / Groups */}
                         <td className="py-2 px-3">
                           {(() => {
                             const groups = (Array.isArray(b.store_groups) ? b.store_groups : [])
-                              .filter((g: any) => g.group_name && g.group_name.trim().length > 0);
+                              .filter((g: any) => g.group_name && String(g.group_name).trim().length > 0);
 
                             if (groups.length === 0) {
                               return (
-                                <span className="text-zinc-400 italic text-[11px]">
-                                  {b.buyer_name || "Main Store"} (1)
+                                <span className="text-zinc-700 text-xs uppercase font-medium">
+                                  {b.buyer_name || "MAIN STORE"}
                                 </span>
                               );
                             }
 
+                            // If only 1 store name: display name only without qty
+                            if (groups.length === 1) {
+                              return (
+                                <span className="text-zinc-700 text-xs uppercase font-medium">
+                                  {String(groups[0].group_name).trim().toUpperCase()}
+                                </span>
+                              );
+                            }
+
+                            // If multiple store groups (> 1): show each group with its breakdown quantity, comma-separated
+                            const formatted = groups
+                              .map((g: any) => {
+                                const name = String(g.group_name).trim().toUpperCase();
+                                const count = Number(g.store_count) || 1;
+                                return `${name} (${count})`;
+                              })
+                              .join(", ");
+
                             return (
-                              <div className="flex flex-wrap items-center gap-1.5 max-w-md">
-                                {groups.map((g: any, gIdx: number) => (
-                                  <span
-                                    key={gIdx}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-zinc-700 border border-slate-200/80 text-[11px]"
-                                  >
-                                    <span className="font-medium text-zinc-800">{g.group_name}</span>
-                                    <span className="font-mono text-zinc-500 font-semibold">({g.store_count || 1})</span>
-                                  </span>
-                                ))}
-                              </div>
+                              <span className="text-zinc-700 text-xs uppercase font-medium">
+                                {formatted}
+                              </span>
                             );
                           })()}
                         </td>
@@ -5276,26 +5845,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
                             const groups = Array.isArray(b.store_groups) ? b.store_groups : [];
                             const computedCount = groups.reduce((acc: number, curr: any) => acc + (Number(curr.store_count) || 0), 0);
                             const storeCount = computedCount > 0 ? computedCount : 1;
-                            const validGroupsCount = groups.filter((g: any) => g.group_name && g.group_name.trim().length > 0).length;
 
                             return (
-                              <div className="flex flex-col items-center justify-center">
-                                <span className="font-mono font-semibold text-zinc-900">
-                                  {storeCount.toLocaleString()}
-                                </span>
-                                {validGroupsCount > 1 && (
-                                  <span className="text-[10px] text-zinc-400" title={`${validGroupsCount} store groups configured`}>
-                                    ({validGroupsCount} groups)
-                                  </span>
-                                )}
-                              </div>
+                              <span className="font-mono font-semibold text-zinc-900">
+                                {storeCount.toLocaleString()}
+                              </span>
                             );
                           })()}
-                        </td>
-
-                        {/* Registered Date */}
-                        <td className="py-2 px-3 text-center text-zinc-400 font-mono text-[11px]">
-                          {b.created_at ? new Date(Number(b.created_at)).toLocaleDateString() : "-"}
                         </td>
 
                         {/* Action Buttons: Edit Pen & Trash */}
@@ -5361,11 +5917,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
               <select
                 value={productBrandFilter}
                 onChange={(e) => setProductBrandFilter(e.target.value)}
-                className="h-8 px-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-700 focus:outline-none focus:border-[#0B57D0] cursor-pointer"
+                className="h-8 px-2.5 bg-white border border-slate-200 rounded-lg text-xs font-semibold text-zinc-700 focus:outline-none focus:border-[#0B57D0] cursor-pointer uppercase"
               >
-                <option value="all">All Brands ({productFilterBrands.length})</option>
+                <option value="all">ALL BRANDS</option>
                 {productFilterBrands.map((b) => (
-                  <option key={b} value={b}>{b}</option>
+                  <option key={b} value={b} className="uppercase">{String(b).toUpperCase()}</option>
                 ))}
               </select>
 
@@ -5375,33 +5931,33 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   type="button"
                   onClick={() => setProductTypeFilter("all")}
                   className={cn(
-                    "px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors cursor-pointer",
-                    productTypeFilter === "all" ? "bg-slate-100 text-zinc-900 font-semibold" : "text-zinc-500 hover:text-zinc-900"
+                    "px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer uppercase",
+                    productTypeFilter === "all" ? "bg-slate-100 text-zinc-900 font-bold" : "text-zinc-500 hover:text-zinc-900"
                   )}
                 >
-                  All ({productsList.length + tempProductsList.length})
+                  ALL
                 </button>
                 <button
                   type="button"
                   onClick={() => setProductTypeFilter("master")}
                   className={cn(
-                    "px-2.5 py-1 rounded-md text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer",
-                    productTypeFilter === "master" ? "bg-slate-100 text-zinc-900 font-semibold" : "text-zinc-500 hover:text-zinc-900"
+                    "px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer uppercase",
+                    productTypeFilter === "master" ? "bg-slate-100 text-zinc-900 font-bold" : "text-zinc-500 hover:text-zinc-900"
                   )}
                 >
                   <CheckCircle2 size={13} className="text-emerald-500" />
-                  <span>Master ({productsList.length})</span>
+                  <span>MASTER</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setProductTypeFilter("temp")}
                   className={cn(
-                    "px-2.5 py-1 rounded-md text-[11px] font-medium flex items-center gap-1 transition-colors cursor-pointer",
-                    productTypeFilter === "temp" ? "bg-slate-100 text-zinc-900 font-semibold" : "text-zinc-500 hover:text-zinc-900"
+                    "px-2.5 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer uppercase",
+                    productTypeFilter === "temp" ? "bg-slate-100 text-zinc-900 font-bold" : "text-zinc-500 hover:text-zinc-900"
                   )}
                 >
                   <CheckCircle2 size={13} className="text-zinc-400" />
-                  <span>Temp ({tempProductsList.length})</span>
+                  <span>TEMP</span>
                 </button>
               </div>
 
@@ -5433,68 +5989,131 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <th className="py-2.5 px-3 w-40">SKU Number</th>
                     <th className="py-2.5 px-4">Product Name</th>
                     <th className="py-2.5 px-4 w-44">Brand</th>
-                    <th className="py-2.5 px-4 text-right w-28">Cost Price</th>
-                    <th className="py-2.5 px-4 w-48">Remarks</th>
+                    <th className="py-2.5 px-4 text-right w-32">Landing Price</th>
                     <th className="py-2.5 px-3 text-center w-20">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {unifiedProductList.map((item, idx) => (
-                    <tr key={`${item.is_temp ? 'temp' : 'master'}_${item.id || item.sku || idx}`} className="hover:bg-slate-50/80 transition-colors">
-                      <td className="py-2.5 px-3 text-center">
-                        <div className="flex items-center justify-center">
-                          {item.is_temp ? (
-                            <span title="Temporary Product (Sell-In only)">
-                              <CheckCircle2 size={16} className="text-zinc-400" />
-                            </span>
-                          ) : (
-                            <span title="Master Product (Official catalog)">
-                              <CheckCircle2 size={16} className="text-emerald-500" />
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 font-mono font-semibold text-zinc-900">
-                        {item.sku}
-                      </td>
-                      <td className="py-2.5 px-4 font-medium text-zinc-900">
-                        {item.product_name}
-                      </td>
-                      <td className="py-2.5 px-4 text-zinc-600">
-                        {item.brand}
-                      </td>
-                      <td className="py-2.5 px-4 text-right font-mono text-zinc-800">
-                        ${item.cost_price ? item.cost_price.toFixed(2) : "0.00"}
-                      </td>
-                      <td className="py-2.5 px-4 text-zinc-500 text-[11px] truncate max-w-xs">
-                        {item.remarks || "—"}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        {item.is_temp ? (
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleOpenEditTempProduct(item)}
-                              className="p-1 text-zinc-400 hover:text-[#0B57D0] rounded transition-colors cursor-pointer"
-                              title="Edit Temporary Product"
-                            >
-                              <Edit2 size={13} />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteTempProduct(item)}
-                              className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
-                              title="Delete Temporary Product"
-                            >
-                              <Trash2 size={13} />
-                            </button>
+                  {unifiedProductList.map((item, idx) => {
+                    const rowKey = `${item.is_temp ? 'temp' : 'master'}_${item.id || item.sku || idx}`;
+                    const isEditingPrice = editingLandingPriceKey === rowKey;
+                    return (
+                      <tr key={rowKey} className="hover:bg-slate-50/80 transition-colors">
+                        <td className="py-2.5 px-3 text-center">
+                          <div className="flex items-center justify-center">
+                            {item.is_temp ? (
+                              <span title="Temporary Product (Sell-In only)">
+                                <CheckCircle2 size={16} className="text-zinc-400" />
+                              </span>
+                            ) : (
+                              <span title="Master Product (Official catalog)">
+                                <CheckCircle2 size={16} className="text-emerald-500" />
+                              </span>
+                            )}
                           </div>
-                        ) : (
-                          <span className="text-zinc-300 font-mono text-xs">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                        <td className="py-2.5 px-3 font-mono font-semibold text-zinc-900">
+                          {item.sku}
+                        </td>
+                        <td className="py-2.5 px-4">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-medium text-zinc-900 uppercase">
+                              {item.product_name}
+                            </span>
+                            {item.remarks && (
+                              <span className="text-[11px] text-zinc-400 font-normal normal-case">
+                                ({item.remarks})
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="py-2.5 px-4 text-zinc-600 uppercase">
+                          {item.brand}
+                        </td>
+                        <td className="py-2.5 px-4 text-right">
+                          {isEditingPrice ? (
+                            <div className="flex items-center justify-end gap-1">
+                              <span className="text-zinc-400 font-mono text-xs">$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                autoFocus
+                                disabled={savingInlineLandingPrice}
+                                value={inlineLandingPriceValue}
+                                onChange={(e) => setInlineLandingPriceValue(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleSaveInlineLandingPrice(item);
+                                  if (e.key === "Escape") setEditingLandingPriceKey(null);
+                                }}
+                                className="w-20 h-6 px-1.5 text-right font-mono text-xs font-semibold text-zinc-900 bg-white border border-[#0B57D0] rounded focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                              />
+                              <button
+                                type="button"
+                                disabled={savingInlineLandingPrice}
+                                onClick={() => handleSaveInlineLandingPrice(item)}
+                                className="p-1 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 rounded cursor-pointer transition-colors"
+                                title="Save Landing Price"
+                              >
+                                {savingInlineLandingPrice ? <RefreshCw size={11} className="animate-spin" /> : <Check size={12} />}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={savingInlineLandingPrice}
+                                onClick={() => setEditingLandingPriceKey(null)}
+                                className="p-1 text-zinc-400 hover:text-zinc-700 hover:bg-slate-100 rounded cursor-pointer transition-colors"
+                                title="Cancel"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-1.5 group/price">
+                              <span className="font-mono text-zinc-900 font-medium">
+                                ${item.cost_price ? item.cost_price.toFixed(2) : "0.00"}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingLandingPriceKey(rowKey);
+                                  setInlineLandingPriceValue(item.cost_price ? String(item.cost_price) : "0");
+                                }}
+                                className="p-1 text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 rounded cursor-pointer transition-colors"
+                                title="Edit Landing Price"
+                              >
+                                <Edit2 size={11} />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+
+                        <td className="py-2.5 px-3 text-center">
+                          {item.is_temp ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditTempProduct(item)}
+                                className="p-1 text-zinc-400 hover:text-[#0B57D0] rounded transition-colors cursor-pointer"
+                                title="Edit Temporary Product"
+                              >
+                                <Edit2 size={13} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteTempProduct(item)}
+                                className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                                title="Delete Temporary Product"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-zinc-300 font-mono text-xs">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
@@ -6029,7 +6648,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   placeholder="e.g. Special Clearance Bundle 500g"
                   value={tempProductName}
                   onChange={(e) => setTempProductName(e.target.value)}
-                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs text-zinc-900 bg-white focus:outline-none focus:border-[#0B57D0]"
+                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs text-zinc-900 bg-white focus:outline-none focus:border-[#0B57D0] uppercase"
                 />
               </div>
 
@@ -6044,7 +6663,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     placeholder="Select or enter brand"
                     value={tempProductBrand}
                     onChange={(e) => setTempProductBrand(e.target.value)}
-                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs text-zinc-900 bg-white focus:outline-none focus:border-[#0B57D0]"
+                    className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs text-zinc-900 bg-white focus:outline-none focus:border-[#0B57D0] uppercase"
                   />
                   <datalist id="temp-brand-options">
                     {brandsList.map((b: any) => {
@@ -6056,7 +6675,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                 <div>
                   <label className="block text-[11px] font-semibold text-zinc-700 mb-1">
-                    Cost / Unit Price ($)
+                    Landing Price ($)
                   </label>
                   <input
                     type="number"
@@ -6668,7 +7287,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <th className="py-1.5 px-2 text-right">Qty</th>
                     <th className="py-1.5 px-2 text-right">Unit Price</th>
                     <th className="py-1.5 px-2 text-right">Amount</th>
-                    <th className="py-1.5 px-2 text-center w-12">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-mono">
@@ -6691,123 +7309,32 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     if (invs.length === 0) {
                       return (
                         <tr>
-                          <td colSpan={6} className="py-3 text-center text-zinc-400 text-xs">
+                          <td colSpan={5} className="py-3 text-center text-zinc-400 text-xs">
                             No invoice breakdown details available.
                           </td>
                         </tr>
                       );
                     }
 
-                    const handleToggleExclusion = async (invIdx: number, inv: any) => {
-                      if (!selectedInvoiceBreakdownRow?.id || togglingInvoiceIdx !== null) return;
-                      setTogglingInvoiceIdx(invIdx);
-                      try {
-                        const nextExcluded = !inv.is_excluded;
-                        const targetRecordId = inv.parent_record_id || selectedInvoiceBreakdownRow.id;
-                        const res = await fetch(`${API_BASE}/api/sellin/toggle-invoice-exclusion`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            record_id: targetRecordId,
-                            invoice_index: invIdx,
-                            invoice_no: inv.invoice_no,
-                            is_excluded: nextExcluded
-                          })
-                        });
-                        const data = await res.json();
-                        if (res.ok && data.success) {
-                          // Update local modal state immediately without truncating consolidated invoices
-                          const updatedInvs = Array.isArray(selectedInvoiceBreakdownRow.invoices) ? [...selectedInvoiceBreakdownRow.invoices] : [];
-                          if (updatedInvs[invIdx]) {
-                            updatedInvs[invIdx] = { ...updatedInvs[invIdx], is_excluded: nextExcluded };
-                          }
-
-                          const invQty = Number(inv.qty || 0);
-                          const invAmt = Number(inv.amount || (invQty * Number(inv.unit_price || 0)) || 0);
-                          const deltaQty = nextExcluded ? -invQty : invQty;
-                          const deltaAmt = nextExcluded ? -invAmt : invAmt;
-                          const nextDemandQty = Math.max(0, Number(selectedInvoiceBreakdownRow.demand_qty ?? selectedInvoiceBreakdownRow.quantity ?? 0) + deltaQty);
-                          const nextTotalDemand = Math.max(0, Number(selectedInvoiceBreakdownRow.total_demand || 0) + deltaAmt);
-
-                          setSelectedInvoiceBreakdownRow((prev: any) => ({
-                            ...prev,
-                            invoices: updatedInvs,
-                            quantity: nextDemandQty,
-                            demand_qty: nextDemandQty,
-                            total_demand: nextTotalDemand
-                          }));
-                          showToast(nextExcluded ? `Excluded invoice ${inv.invoice_no} from demand` : `Restored invoice ${inv.invoice_no} to demand`, "success");
-                          // Optimistically update main table records immediately
-                          setRecords((prevRecs) =>
-                            prevRecs.map((rec) =>
-                              rec.id === selectedInvoiceBreakdownRow.id
-                                ? {
-                                    ...rec,
-                                    invoices: updatedInvs,
-                                    quantity: nextDemandQty,
-                                    demand_qty: nextDemandQty,
-                                    total_demand: nextTotalDemand
-                                  }
-                                : rec
-                            )
-                          );
-                          // Refresh batch details in background silently
-                          fetchBatchDetails(currentPeriod, true);
-                        } else {
-                          showToast(data.error || "Failed to update invoice exclusion", "error");
-                        }
-                      } catch (err: any) {
-                        showToast(err.message || "Failed to toggle invoice exclusion", "error");
-                      } finally {
-                        setTogglingInvoiceIdx(null);
-                      }
-                    };
-
                     return invs.map((inv: any, idx: number) => {
-                      const isExcluded = Boolean(inv.is_excluded);
                       return (
-                        <tr key={idx} className={isExcluded ? "bg-slate-50/70 opacity-60 text-zinc-400" : ""}>
+                        <tr key={idx}>
                           <td className="py-2 px-2">
-                            <span className={cn("font-semibold", isExcluded ? "line-through text-zinc-400" : "text-[#0B57D0]")}>
+                            <span className="font-semibold text-[#0B57D0]">
                               {inv.invoice_no}
                             </span>
-                            {isExcluded && (
-                              <span className="ml-1.5 text-[9px] font-sans px-1 py-0.2 rounded bg-zinc-200 text-zinc-600 uppercase font-medium">
-                                Excluded
-                              </span>
-                            )}
                           </td>
-                          <td className={cn("py-2 px-2", isExcluded ? "line-through text-zinc-400" : "text-zinc-600")}>
+                          <td className="py-2 px-2 text-zinc-600">
                             {inv.invoice_date || "-"}
                           </td>
-                          <td className={cn("py-2 px-2 text-right font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-800")}>
+                          <td className="py-2 px-2 text-right font-semibold text-zinc-800">
                             {inv.qty}
                           </td>
-                          <td className={cn("py-2 px-2 text-right", isExcluded ? "line-through text-zinc-400" : "text-zinc-600")}>
+                          <td className="py-2 px-2 text-right text-zinc-600">
                             ${Number(inv.unit_price || 0).toFixed(2)}
                           </td>
-                          <td className={cn("py-2 px-2 text-right font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-900")}>
+                          <td className="py-2 px-2 text-right font-semibold text-zinc-900">
                             ${Number(inv.amount || 0).toFixed(2)}
-                          </td>
-                          <td className="py-2 px-2 text-center">
-                            {Array.isArray(selectedInvoiceBreakdownRow.invoices) && selectedInvoiceBreakdownRow.invoices.length > 0 ? (
-                              <button
-                                type="button"
-                                disabled={togglingInvoiceIdx !== null}
-                                onClick={() => handleToggleExclusion(idx, inv)}
-                                className={cn(
-                                  "p-1 rounded cursor-pointer transition-colors inline-flex items-center justify-center",
-                                  isExcluded 
-                                    ? "text-zinc-400 hover:text-zinc-700 hover:bg-zinc-200/60" 
-                                    : "text-zinc-500 hover:text-[#0B57D0] hover:bg-blue-50"
-                                )}
-                                title={isExcluded ? "Include back in calculation" : "Exclude from calculation"}
-                              >
-                                {isExcluded ? <EyeOff size={13} className="text-zinc-500" /> : <Eye size={13} />}
-                              </button>
-                            ) : (
-                              <span className="text-zinc-300">-</span>
-                            )}
                           </td>
                         </tr>
                       );
@@ -6831,74 +7358,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                 if (cns.length === 0) return null;
 
-                const handleToggleCnExclusion = async (cnIdx: number, cnItem: any) => {
-                  if (!selectedInvoiceBreakdownRow?.id || togglingCnIdx !== null) return;
-                  setTogglingCnIdx(cnIdx);
-                  try {
-                    const nextExcluded = !cnItem.is_excluded;
-                    const targetRecordId = cnItem.parent_record_id || selectedInvoiceBreakdownRow.id;
-                    const res = await fetch(`${API_BASE}/api/sellin/toggle-credit-note-exclusion`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        record_id: targetRecordId,
-                        cn_index: cnIdx,
-                        cn_no: cnItem.cn_no,
-                        is_excluded: nextExcluded
-                      })
-                    });
-                    const data = await res.json();
-                    if (res.ok && data.success) {
-                      // Update local modal state immediately without truncating consolidated credit notes
-                      const updatedCns = Array.isArray(selectedInvoiceBreakdownRow.credit_notes) ? [...selectedInvoiceBreakdownRow.credit_notes] : [];
-                      if (updatedCns[cnIdx]) {
-                        updatedCns[cnIdx] = { ...updatedCns[cnIdx], is_excluded: nextExcluded };
-                      }
-
-                      const cnQty = Number(cnItem.qty || 0);
-                      const cnAmt = Number(cnItem.amount || (cnQty * Number(cnItem.unit_price || 0)) || 0);
-                      const deltaQty = nextExcluded ? -cnQty : cnQty;
-                      const deltaAmt = nextExcluded ? -cnAmt : cnAmt;
-                      const nextRejectQty = Math.max(0, Number(selectedInvoiceBreakdownRow.reject_qty ?? selectedInvoiceBreakdownRow.cn_quantity ?? 0) + deltaQty);
-                      const nextCnAmount = Math.max(0, Number(selectedInvoiceBreakdownRow.cn_amount || 0) + deltaAmt);
-                      const nextNettAmount = Number(selectedInvoiceBreakdownRow.total_demand || 0) - nextCnAmount;
-
-                      setSelectedInvoiceBreakdownRow((prev: any) => ({
-                        ...prev,
-                        credit_notes: updatedCns,
-                        cn_quantity: nextRejectQty,
-                        reject_qty: nextRejectQty,
-                        cn_amount: nextCnAmount,
-                        nett_amount: nextNettAmount
-                      }));
-                      showToast(nextExcluded ? `Excluded credit note ${cnItem.cn_no} from reject` : `Restored credit note ${cnItem.cn_no} to reject`, "success");
-                      // Optimistically update main table records immediately
-                      setRecords((prevRecs) =>
-                        prevRecs.map((rec) =>
-                          rec.id === selectedInvoiceBreakdownRow.id
-                            ? {
-                                ...rec,
-                                credit_notes: updatedCns,
-                                cn_quantity: nextRejectQty,
-                                reject_qty: nextRejectQty,
-                                cn_amount: nextCnAmount,
-                                nett_amount: nextNettAmount
-                              }
-                            : rec
-                        )
-                      );
-                      // Refresh batch details in background silently
-                      fetchBatchDetails(currentPeriod, true);
-                    } else {
-                      showToast(data.error || "Failed to update credit note exclusion", "error");
-                    }
-                  } catch (err: any) {
-                    showToast(err.message || "Failed to toggle credit note exclusion", "error");
-                  } finally {
-                    setTogglingCnIdx(null);
-                  }
-                };
-
                 return (
                   <div className="mt-4 pt-3 border-t border-slate-200">
                     <div className="text-xs font-semibold text-zinc-900 mb-2 flex items-center gap-1.5">
@@ -6915,55 +7374,28 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           <th className="py-1.5 px-2 text-right">Reject Qty</th>
                           <th className="py-1.5 px-2 text-right">Unit Price</th>
                           <th className="py-1.5 px-2 text-right">CN Amount</th>
-                          <th className="py-1.5 px-2 text-center w-12">Action</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 font-mono">
                         {cns.map((cnItem: any, idx: number) => {
-                          const isExcluded = Boolean(cnItem.is_excluded);
                           return (
-                            <tr key={idx} className={isExcluded ? "bg-slate-50/70 opacity-60 text-zinc-400" : ""}>
+                            <tr key={idx}>
                               <td className="py-2 px-2">
-                                <span className={cn("font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-900")}>
+                                <span className="font-semibold text-zinc-900">
                                   {cnItem.cn_no}
                                 </span>
-                                {isExcluded && (
-                                  <span className="ml-1.5 text-[9px] font-sans px-1 py-0.2 rounded bg-zinc-200 text-zinc-600 uppercase font-medium">
-                                    Excluded
-                                  </span>
-                                )}
                               </td>
-                              <td className={cn("py-2 px-2", isExcluded ? "line-through text-zinc-400" : "text-zinc-600")}>
+                              <td className="py-2 px-2 text-zinc-600">
                                 {cnItem.cn_date || "-"}
                               </td>
-                              <td className={cn("py-2 px-2 text-right font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-800")}>
+                              <td className="py-2 px-2 text-right font-semibold text-zinc-800">
                                 {cnItem.qty}
                               </td>
-                              <td className={cn("py-2 px-2 text-right", isExcluded ? "line-through text-zinc-400" : "text-zinc-600")}>
+                              <td className="py-2 px-2 text-right text-zinc-600">
                                 ${Number(cnItem.unit_price || 0).toFixed(2)}
                               </td>
-                              <td className={cn("py-2 px-2 text-right font-semibold", isExcluded ? "line-through text-zinc-400" : "text-zinc-900")}>
+                              <td className="py-2 px-2 text-right font-semibold text-zinc-900">
                                 -${Number(cnItem.amount || 0).toFixed(2)}
-                              </td>
-                              <td className="py-2 px-2 text-center">
-                                {Array.isArray(selectedInvoiceBreakdownRow.credit_notes) && selectedInvoiceBreakdownRow.credit_notes.length > 0 ? (
-                                  <button
-                                    type="button"
-                                    disabled={togglingCnIdx !== null}
-                                    onClick={() => handleToggleCnExclusion(idx, cnItem)}
-                                    className={cn(
-                                      "p-1 rounded cursor-pointer transition-colors inline-flex items-center justify-center",
-                                      isExcluded 
-                                        ? "text-zinc-400 hover:text-zinc-700 hover:bg-zinc-200/60" 
-                                        : "text-zinc-500 hover:text-[#0B57D0] hover:bg-blue-50"
-                                    )}
-                                    title={isExcluded ? "Include back in calculation" : "Exclude from calculation"}
-                                  >
-                                    {isExcluded ? <EyeOff size={13} className="text-zinc-500" /> : <Eye size={13} />}
-                                  </button>
-                                ) : (
-                                  <span className="text-zinc-300">-</span>
-                                )}
                               </td>
                             </tr>
                           );
@@ -7034,18 +7466,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
             {/* 12 Months Grid (3 x 4) */}
             <div className="grid grid-cols-3 gap-2 pt-3">
               {[
-                { name: "Jan", num: "01" },
-                { name: "Feb", num: "02" },
-                { name: "Mar", num: "03" },
-                { name: "Apr", num: "04" },
-                { name: "May", num: "05" },
-                { name: "Jun", num: "06" },
-                { name: "Jul", num: "07" },
-                { name: "Aug", num: "08" },
-                { name: "Sep", num: "09" },
-                { name: "Oct", num: "10" },
-                { name: "Nov", num: "11" },
-                { name: "Dec", num: "12" },
+                { name: "JAN", num: "01" },
+                { name: "FEB", num: "02" },
+                { name: "MAR", num: "03" },
+                { name: "APR", num: "04" },
+                { name: "MAY", num: "05" },
+                { name: "JUN", num: "06" },
+                { name: "JUL", num: "07" },
+                { name: "AUG", num: "08" },
+                { name: "SEP", num: "09" },
+                { name: "OCT", num: "10" },
+                { name: "NOV", num: "11" },
+                { name: "DEC", num: "12" },
               ].map((m) => {
                 const targetPeriod = `${monthPickerYear}-${m.num}`;
                 const isSelected = targetPeriod === currentPeriod;
@@ -7125,13 +7557,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </div>
 
               <div>
-                <label className="font-medium text-zinc-700 block mb-1">Buyer / Company Name</label>
+                <label className="font-medium text-zinc-700 block mb-1">Buyer Name (Registered in Million System) <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={newBuyerName}
                   onChange={(e) => setNewBuyerName(e.target.value)}
                   placeholder="e.g. FairPrice Supermarket"
-                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0] uppercase"
                 />
               </div>
 
@@ -7294,13 +7726,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </div>
 
               <div>
-                <label className="font-medium text-zinc-700 block mb-1">Buyer / Company Name <span className="text-red-500">*</span></label>
+                <label className="font-medium text-zinc-700 block mb-1">Buyer Name (Registered in Million System) <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={editBuyerName}
                   onChange={(e) => setEditBuyerName(e.target.value)}
                   placeholder="e.g. FairPrice Supermarket"
-                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                  className="w-full h-8 px-2.5 border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0] uppercase"
                 />
               </div>
 
@@ -7555,6 +7987,93 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         {selectedConfig.description}
                       </p>
                     </div>
+
+                    {selectedItemType === "bundle" && (
+                      <div className="flex flex-col gap-2 p-3 bg-indigo-50/70 border border-indigo-200 rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-zinc-900 flex items-center gap-1.5">
+                            <Layers size={14} className="text-indigo-600" />
+                            <span>Map to Bundle Temporary Product <span className="text-red-500">*</span></span>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowTempProductModal(true);
+                              setEditingTempProduct(null);
+                              setTempProductSku("");
+                              setTempProductName(assignItemTypeTarget?.product_name || "");
+                              setTempProductBrand(assignItemTypeTarget?.brand || "");
+                              setTempProductCostPrice("0");
+                              setTempProductRemarks("");
+                            }}
+                            className="text-[11px] font-semibold text-[#0B57D0] hover:underline flex items-center gap-1 cursor-pointer"
+                          >
+                            <Plus size={12} />
+                            <span>+ Add New Temp Product</span>
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-zinc-500">
+                          Map this bundle to a Temporary Product to lock its official standardized name, brand, and Landing Price (no guessing).
+                        </p>
+
+                        {tempProductsList.length === 0 ? (
+                          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center justify-between">
+                            <span>No temporary products registered yet.</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setShowTempProductModal(true);
+                                setEditingTempProduct(null);
+                                setTempProductSku("");
+                                setTempProductName(assignItemTypeTarget?.product_name || "");
+                                setTempProductBrand(assignItemTypeTarget?.brand || "");
+                                setTempProductCostPrice("0");
+                                setTempProductRemarks("");
+                              }}
+                              className="px-2 py-1 bg-amber-600 text-white rounded text-[11px] font-semibold cursor-pointer"
+                            >
+                              + Create Temp Product
+                            </button>
+                          </div>
+                        ) : (
+                          <select
+                            value={selectedBundleTempProductId}
+                            onChange={(e) => setSelectedBundleTempProductId(e.target.value)}
+                            className="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                          >
+                            <option value="">-- Choose Bundle Temporary Product --</option>
+                            {tempProductsList.map((tp) => (
+                              <option key={tp.id || tp.sku} value={tp.id || tp.sku}>
+                                {String(tp.product_name).toUpperCase()} · {String(tp.brand).toUpperCase()} · Landing: ${Number(tp.cost_price || 0).toFixed(2)} {tp.sku ? `[${tp.sku}]` : ""}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+
+                        {selectedBundleTempProduct && (
+                          <div className="mt-1 p-2.5 bg-white rounded-md border border-indigo-100 flex items-center justify-between text-xs">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-zinc-900 uppercase">{selectedBundleTempProduct.product_name}</span>
+                              <div className="flex items-center gap-2 text-[11px] text-zinc-500 mt-0.5">
+                                <span className="text-[#0B57D0] font-semibold uppercase">{selectedBundleTempProduct.brand}</span>
+                                {selectedBundleTempProduct.sku && (
+                                  <>
+                                    <span>·</span>
+                                    <span className="font-mono">{selectedBundleTempProduct.sku}</span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex flex-col items-end">
+                              <span className="text-[10px] text-zinc-400 font-medium uppercase">Landing Price</span>
+                              <span className="font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-xs mt-0.5">
+                                ${Number(selectedBundleTempProduct.cost_price || 0).toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -7593,12 +8112,453 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </button>
               <button
                 type="button"
-                disabled={savingAssignItemType}
+                disabled={savingAssignItemType || (selectedItemType === "bundle" && !selectedBundleTempProduct)}
                 onClick={handleSaveAssignItemType}
-                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-medium flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer"
               >
                 {savingAssignItemType ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
-                <span>Save Item Type</span>
+                <span>{selectedItemType === "bundle" ? "Proceed to Select Bundle Items →" : "Save Item Type"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Bundle & Component Remapping */}
+      {showBundleModal && bundleTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-4xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col max-h-[92vh]">
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700">
+                  <Layers size={17} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-zinc-950">Bundle & Component Remapping</h2>
+                  <p className="text-xs text-zinc-500">Group and link invoice component lines to this bundle package.</p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowBundleModal(false);
+                  setBundleTarget(null);
+                }} 
+                className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Target Bundle Context Bar */}
+            <div className="px-5 py-3 bg-[#F8F9FA] border-b border-slate-200 flex flex-col gap-2 shrink-0">
+              <div className="flex flex-wrap items-center justify-between gap-4 text-xs">
+                <div className="flex items-center gap-5 flex-wrap">
+                  <div>
+                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Bundle Package (Temp Product)</span>
+                    <span className="font-bold text-zinc-950 text-xs uppercase">
+                      {bundleMappedTempProduct?.product_name || bundleTarget.bundle_name || bundleTarget.product_name}
+                    </span>
+                  </div>
+                  <div className="h-6 w-px bg-slate-200" />
+                  <div>
+                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Brand</span>
+                    <span className="font-semibold text-zinc-800 uppercase">
+                      {bundleMappedTempProduct?.brand || bundleTarget.brand || "UNASSIGNED"}
+                    </span>
+                  </div>
+                  <div className="h-6 w-px bg-slate-200" />
+                  <div>
+                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Landing Price</span>
+                    <span className="font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px] inline-flex items-center gap-1">
+                      ${Number(bundleMappedTempProduct?.cost_price ?? bundleTarget.cost_price ?? 0).toFixed(2)}
+                      <span className="text-[9px] font-medium text-emerald-600 bg-white/70 px-1 rounded uppercase">From Temp</span>
+                    </span>
+                  </div>
+                  <div className="h-6 w-px bg-slate-200" />
+                  <div>
+                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Buyer</span>
+                    <span className="font-medium text-zinc-700 uppercase">
+                      {bundleTarget.buyer_name || bundleTarget.buyer_code || "-"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const tgt = bundleTarget;
+                      setShowBundleModal(false);
+                      setAssignItemTypeTarget(tgt);
+                      setSelectedItemType("bundle");
+                      setSelectedBundleTempProductId(bundleMappedTempProduct?.id || bundleMappedTempProduct?.sku || "");
+                      setShowAssignItemTypeModal(true);
+                    }}
+                    className="h-7 px-2.5 rounded-lg border border-slate-200 text-indigo-700 hover:bg-indigo-50 text-[11px] font-semibold cursor-pointer transition-colors flex items-center gap-1"
+                  >
+                    <Edit2 size={11} />
+                    <span>Change Temp Product</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedBundleComponents(new Set())}
+                    className="h-7 px-3 rounded-lg border border-slate-200 text-zinc-600 hover:bg-slate-100 text-xs font-medium cursor-pointer transition-colors"
+                  >
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              <div className="text-[11px] text-zinc-500 pt-1 border-t border-slate-200/80">
+                Select component items on invoices or credit notes belonging to this bundle package:
+              </div>
+            </div>
+
+            {/* Modal Body: Grouped Invoices */}
+            <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-4 text-xs">
+              {loadingBundleInvoiceItems ? (
+                <div className="py-16 flex flex-col items-center justify-center gap-2 text-zinc-500">
+                  <RefreshCw size={22} className="animate-spin text-[#0B57D0]" />
+                  <span className="text-xs font-medium">Scanning matching invoices and line items...</span>
+                </div>
+              ) : bundleInvoiceGroups.length === 0 ? (
+                <div className="py-16 flex flex-col items-center justify-center gap-2 text-zinc-400">
+                  <FileText size={24} className="stroke-[1.5]" />
+                  <span className="text-xs">No matching invoices or credit notes found for this item in {formatPeriodLabel(currentPeriod)}.</span>
+                </div>
+              ) : (
+                bundleInvoiceGroups.map((grp: any) => {
+                  const isInvoice = grp.type === "invoice";
+                  const allGroupKeys = (grp.items || []).map((it: any) => 
+                    `${String(grp.number || "").toLowerCase()}:::${String(it.record_id || it.product_sku || it.product_name || "").toLowerCase()}`
+                  );
+                  const allChecked = allGroupKeys.length > 0 && allGroupKeys.every((k: string) => selectedBundleComponents.has(k));
+
+                  return (
+                    <div key={`${grp.type}_${grp.number}`} className="bg-white border border-slate-200 rounded-lg shadow-2xs overflow-hidden">
+                      {/* Group Header */}
+                      <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <span className={cn(
+                            "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border",
+                            isInvoice ? "bg-blue-50 text-[#0B57D0] border-blue-200" : "bg-red-50 text-red-700 border-red-200"
+                          )}>
+                            {isInvoice ? "Tax Invoice" : "Credit Note"}
+                          </span>
+                          <span className="font-mono font-bold text-xs text-zinc-900">
+                            #{grp.number}
+                          </span>
+                          {grp.date && (
+                            <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1">
+                              <Calendar size={11} className="text-zinc-400" />
+                              {grp.date}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-[11px] text-zinc-500">
+                            {(grp.items || []).length + (grp.bundle_parent_item ? 1 : 0)} line item(s)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = new Set(selectedBundleComponents);
+                              if (allChecked) {
+                                allGroupKeys.forEach((k: string) => next.delete(k));
+                              } else {
+                                allGroupKeys.forEach((k: string) => next.add(k));
+                              }
+                              setSelectedBundleComponents(next);
+                            }}
+                            className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer underline"
+                          >
+                            {allChecked ? (isInvoice ? "Deselect All in Invoice" : "Deselect All in Credit Note") : (isInvoice ? "Select All in Invoice" : "Select All in Credit Note")}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Line Items Table */}
+                      <table className="w-full text-left text-xs divide-y divide-slate-100">
+                        <thead className="bg-[#F8F9FA] text-zinc-500 text-[10.5px] uppercase font-semibold">
+                          <tr>
+                            <th className="py-2 px-3 w-12 text-center">Bundle</th>
+                            <th className="py-2 px-3 w-28">SKU</th>
+                            <th className="py-2 px-3">Description</th>
+                            <th className="py-2 px-3 w-28">Brand</th>
+                            <th className="py-2 px-3 w-20 text-right">Qty</th>
+                            <th className="py-2 px-3 w-24 text-right">Unit Price</th>
+                            <th className="py-2 px-3 w-28 text-right">Amount ($)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {/* Parent Bundle Item */}
+                          {grp.bundle_parent_item && (
+                            <tr className="bg-indigo-50/30 text-indigo-950 font-medium border-b border-indigo-100/60">
+                              <td className="py-2 px-3 text-center">
+                                <span className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-indigo-100 text-indigo-700 border border-indigo-200">
+                                  Package
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 font-mono text-[11px] text-indigo-800 font-semibold">
+                                {grp.bundle_parent_item.product_sku || "(No SKU)"}
+                              </td>
+                              <td className="py-2 px-3 font-bold text-zinc-950">
+                                {grp.bundle_parent_item.product_name}
+                              </td>
+                              <td className="py-2 px-3 text-zinc-600">
+                                {bundleTarget.brand || grp.bundle_parent_item.brand || "Unassigned"}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono font-bold text-indigo-900">
+                                {Number(grp.bundle_parent_item.qty || 0).toLocaleString()}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono text-zinc-700">
+                                ${Number(grp.bundle_parent_item.unit_price || 0).toFixed(2)}
+                              </td>
+                              <td className="py-2 px-3 text-right font-mono font-bold text-indigo-950">
+                                ${Number(grp.bundle_parent_item.amount || 0).toFixed(2)}
+                              </td>
+                            </tr>
+                          )}
+
+                          {/* Sibling Items */}
+                          {(grp.items || []).map((item: any) => {
+                            const itemKey = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+                            const isChecked = selectedBundleComponents.has(itemKey);
+
+                            return (
+                              <tr
+                                key={itemKey}
+                                onClick={() => handleToggleBundleComponent(grp.number, item)}
+                                className={cn(
+                                  "cursor-pointer transition-colors select-none",
+                                  isChecked ? "bg-blue-50/60 hover:bg-blue-50" : "hover:bg-slate-50"
+                                )}
+                              >
+                                <td className="py-2 px-3 text-center">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={() => handleToggleBundleComponent(grp.number, item)}
+                                    className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
+                                  />
+                                </td>
+                                <td className="py-2 px-3 font-mono text-[11px] text-zinc-700">
+                                  {item.product_sku || "—"}
+                                </td>
+                                <td className="py-2 px-3 text-zinc-800 font-medium">
+                                  {item.product_name}
+                                </td>
+                                <td className="py-2 px-3 text-zinc-600">
+                                  {item.brand || "Unassigned"}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono text-zinc-800">
+                                  {Number(item.qty || 0).toLocaleString()}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono text-zinc-600">
+                                  ${Number(item.unit_price || 0).toFixed(2)}
+                                </td>
+                                <td className="py-2 px-3 text-right font-mono font-semibold text-zinc-900">
+                                  ${Number(item.amount || 0).toFixed(2)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2 text-xs text-zinc-600">
+                <span className="font-semibold text-zinc-900">{selectedBundleComponents.size}</span>
+                <span>component item(s) selected across</span>
+                <span className="font-semibold text-zinc-900">{bundleInvoiceGroups.length}</span>
+                <span>invoice/CN group(s)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowBundleModal(false);
+                    setBundleTarget(null);
+                  }}
+                  className="h-8 px-3.5 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={savingBundleMapping || loadingBundleInvoiceItems}
+                  onClick={handleSaveBundleMapping}
+                  className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer transition-all active:scale-98"
+                >
+                  {savingBundleMapping ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                  <span>Save Bundle Mapping</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Map Bundle to Temporary Product */}
+      {showRenameBundleModal && renameBundleTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-lg bg-white rounded-xl border border-slate-200 shadow-2xl overflow-visible animate-in zoom-in-95 duration-100 flex flex-col font-primary">
+            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white rounded-t-xl">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700">
+                  <Layers size={16} />
+                </div>
+                <div>
+                  <h2 className="text-sm font-bold text-zinc-950">Map Bundle to Temporary Product</h2>
+                  <p className="text-xs text-zinc-500">Select which Temporary Product defines this bundle package and its Landing Price.</p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowRenameBundleModal(false);
+                  setRenameBundleTarget(null);
+                  setSelectedBundleTempProductId("");
+                }} 
+                className="p-1.5 text-zinc-400 hover:text-zinc-700 rounded-lg hover:bg-slate-100 cursor-pointer transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="p-5 flex flex-col gap-4 text-xs">
+              {/* Context Summary */}
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-lg flex flex-col gap-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-[11px] text-zinc-500 font-medium shrink-0">Raw Invoice Item:</span>
+                  <span className="font-semibold text-zinc-900 text-right font-mono break-words">
+                    {renameBundleTarget.product_name || renameBundleTarget.product_sku || "(No Description)"}
+                  </span>
+                </div>
+                {renameBundleTarget.product_sku && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-zinc-500 font-medium">SKU / Code:</span>
+                    <span className="font-mono text-zinc-700">{renameBundleTarget.product_sku}</span>
+                  </div>
+                )}
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-zinc-500 font-medium">Buyer:</span>
+                  <span className="text-zinc-800 font-medium">{renameBundleTarget.buyer_name || renameBundleTarget.buyer_code || "-"}</span>
+                </div>
+              </div>
+
+              {/* Temporary Product Dropdown Picker */}
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-semibold text-zinc-700">
+                    Select Bundle from Temporary Products <span className="text-red-500">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowTempProductModal(true);
+                      setEditingTempProduct(null);
+                      setTempProductSku("");
+                      setTempProductName(renameBundleTarget?.product_name || "");
+                      setTempProductBrand(renameBundleTarget?.brand || "");
+                      setTempProductCostPrice("0");
+                      setTempProductRemarks("");
+                    }}
+                    className="text-[11px] font-semibold text-[#0B57D0] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus size={12} />
+                    <span>+ Add New Temp Product</span>
+                  </button>
+                </div>
+
+                {tempProductsList.length === 0 ? (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center justify-between">
+                    <span>No temporary products registered yet.</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowTempProductModal(true);
+                        setEditingTempProduct(null);
+                        setTempProductSku("");
+                        setTempProductName(renameBundleTarget?.product_name || "");
+                        setTempProductBrand(renameBundleTarget?.brand || "");
+                        setTempProductCostPrice("0");
+                        setTempProductRemarks("");
+                      }}
+                      className="px-2 py-1 bg-amber-600 text-white rounded text-[11px] font-semibold cursor-pointer"
+                    >
+                      + Create Temp Product
+                    </button>
+                  </div>
+                ) : (
+                  <select
+                    value={selectedBundleTempProductId}
+                    onChange={(e) => setSelectedBundleTempProductId(e.target.value)}
+                    className="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                  >
+                    <option value="">-- Choose Bundle Temporary Product --</option>
+                    {tempProductsList.map((tp) => (
+                      <option key={tp.id || tp.sku} value={tp.id || tp.sku}>
+                        {String(tp.product_name).toUpperCase()} · {String(tp.brand).toUpperCase()} · Landing: ${Number(tp.cost_price || 0).toFixed(2)} {tp.sku ? `[${tp.sku}]` : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+
+                {selectedBundleTempProduct && (
+                  <div className="mt-1 p-3 bg-indigo-50/60 rounded-lg border border-indigo-200 flex items-center justify-between text-xs">
+                    <div className="flex flex-col">
+                      <span className="font-bold text-zinc-950 uppercase text-xs">{selectedBundleTempProduct.product_name}</span>
+                      <div className="flex items-center gap-2 text-[11px] text-zinc-500 mt-0.5">
+                        <span className="text-[#0B57D0] font-semibold uppercase">{selectedBundleTempProduct.brand}</span>
+                        {selectedBundleTempProduct.sku && (
+                          <>
+                            <span>·</span>
+                            <span className="font-mono">{selectedBundleTempProduct.sku}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-col items-end">
+                      <span className="text-[10px] text-zinc-400 font-medium uppercase">Landing Price</span>
+                      <span className="font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-xs mt-0.5">
+                        ${Number(selectedBundleTempProduct.cost_price || 0).toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0 rounded-b-xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRenameBundleModal(false);
+                  setRenameBundleTarget(null);
+                  setSelectedBundleTempProductId("");
+                }}
+                className="h-8 px-3.5 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={savingRenameBundle || !selectedBundleTempProduct}
+                onClick={handleSaveRenameBundle}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs disabled:opacity-50 cursor-pointer transition-all active:scale-98"
+              >
+                {savingRenameBundle ? <RefreshCw size={13} className="animate-spin" /> : <Check size={13} />}
+                <span>Save Bundle Mapping</span>
               </button>
             </div>
           </div>
@@ -8299,14 +9259,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-semibold text-zinc-950">Cost Price</h2>
+                    <h2 className="text-sm font-semibold text-zinc-950">Landing Price</h2>
                     {batchData?.status === "published" && (
                       <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
                         Published
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px] text-zinc-500">Internal cost price for {currentPeriod}.</p>
+                  <p className="text-[11px] text-zinc-500">Internal landing price for {currentPeriod}.</p>
                 </div>
               </div>
               <button 
@@ -8355,7 +9315,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
                 {batchData?.status === "published" ? (
                   <div className="p-3 rounded-lg border border-slate-200 bg-slate-50 flex flex-col items-center text-center">
-                    <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Cost Price ($)</span>
+                    <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Landing Price ($)</span>
                     <span className="text-base font-bold text-zinc-900 font-mono mt-1">
                       ${(parseFloat(editingCostPrice) || 0).toFixed(2)}
                     </span>
@@ -8365,10 +9325,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   <div
                     onClick={() => setIsEditingCostPrice(true)}
                     className="p-3 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100/60 hover:border-slate-300 transition-colors flex flex-col items-center text-center relative cursor-pointer group"
-                    title="Click to edit Cost Price"
+                    title="Click to edit Landing Price"
                   >
                     <div className="w-full flex items-center justify-center relative">
-                      <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Cost Price ($)</span>
+                      <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-wider">Landing Price ($)</span>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -8389,7 +9349,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 ) : (
                   <div className="p-3 rounded-lg border border-[#0B57D0]/40 bg-white flex flex-col justify-center">
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider">Cost Price ($)</label>
+                      <label className="text-[10px] font-medium text-zinc-600 uppercase tracking-wider">Landing Price ($)</label>
                       <button
                         type="button"
                         onClick={() => setIsEditingCostPrice(false)}
@@ -8728,7 +9688,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                       <th className="py-2 px-3 min-w-[120px]">SKU</th>
                       <th className="py-2 px-3 min-w-[180px]">Description</th>
                       <th className="py-2 px-3 text-right min-w-[80px]">Qty Out</th>
-                      <th className="py-2 px-3 text-right min-w-[100px]" title="Cost price based on Master Products catalog">Master Unit Cost</th>
+                      <th className="py-2 px-3 text-right min-w-[100px]" title="Landing price based on Master Products catalog">Master Unit Cost</th>
                       <th className="py-2 px-3 text-right min-w-[100px]">Total Cost</th>
                     </tr>
                   </thead>
