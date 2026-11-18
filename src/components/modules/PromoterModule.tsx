@@ -853,6 +853,56 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [isPayoutSaving, setIsPayoutSaving] = React.useState<boolean>(false);
 
   // Paid modal states
+  const [payoutStatusTab, setPayoutStatusTab] = React.useState<"pending" | "paid" | "all">("pending");
+  const [promoterSearchQuery, setPromoterSearchQuery] = React.useState<string>("");
+  const [isPromoterDropdownOpen, setIsPromoterDropdownOpen] = React.useState<boolean>(false);
+  const promoterDropdownRef = React.useRef<HTMLDivElement>(null);
+  const [jobHoverTooltip, setJobHoverTooltip] = React.useState<{
+    x: number;
+    y: number;
+    promoterName: string;
+    payout: any;
+    jobs: any[];
+  } | null>(null);
+
+  React.useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (promoterDropdownRef.current && !promoterDropdownRef.current.contains(event.target as Node)) {
+        setIsPromoterDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const payoutMetrics = React.useMemo(() => {
+    let pendingCount = 0;
+    let pendingTotal = 0;
+    let paidCount = 0;
+    let paidTotal = 0;
+
+    payouts.forEach(p => {
+      const isPaid = p.status === "Paid";
+      const amt = Number(p["total_payout"] || 0) || 0;
+      if (isPaid) {
+        paidCount++;
+        paidTotal += amt;
+      } else {
+        pendingCount++;
+        pendingTotal += amt;
+      }
+    });
+
+    return {
+      pendingCount,
+      pendingTotal,
+      paidCount,
+      paidTotal,
+      grandTotal: pendingTotal + paidTotal,
+      allCount: payouts.length
+    };
+  }, [payouts]);
+
   const [paymentModalPayout, setPaymentModalPayout] = React.useState<any | null>(null);
   const [paymentRef, setPaymentRef] = React.useState<string>("");
   const [paymentDate, setPaymentDate] = React.useState<string>("");
@@ -860,6 +910,27 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [isPaymentSaving, setIsPaymentSaving] = React.useState<boolean>(false);
   const [viewingJobsPayout, setViewingJobsPayout] = React.useState<any | null>(null);
   const [imagePreviewModalUrl, setImagePreviewModalUrl] = React.useState<string | null>(null);
+
+  // Helper: Format hours to 60-min time base (e.g. 5h 30m)
+  const formatTimeBase = (start?: string, end?: string, decHours?: number): string => {
+    let totalMinutes = 0;
+    if (start && end) {
+      const [sh, sm] = start.split(":").map(Number);
+      const [eh, em] = end.split(":").map(Number);
+      if (!isNaN(sh) && !isNaN(sm) && !isNaN(eh) && !isNaN(em)) {
+        const startM = sh * 60 + sm;
+        let endM = eh * 60 + em;
+        if (endM < startM) endM += 24 * 60;
+        totalMinutes = endM - startM;
+      }
+    } else if (decHours !== undefined && decHours !== null) {
+      totalMinutes = Math.round(Number(decHours) * 60);
+    }
+    if (totalMinutes <= 0) return "0h 00m";
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return `${h}h ${String(m).padStart(2, "0")}m`;
+  };
 
   // Helper: Format date or timestamp to YYYY-MM-DD
   const formatDateToYYYYMMDD = React.useCallback((ts: any): string => {
@@ -1148,35 +1219,38 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       showToast("Please select the payment date.", "warning");
       return;
     }
-    if (!paymentReceiptFile) {
+    if (!paymentReceiptFile && !paymentModalPayout?.receipt_photo_url) {
       showToast("Please upload the receipt photo.", "warning");
       return;
     }
 
     setIsPaymentSaving(true);
     try {
-      // 1. Upload receipt to R2
-      const extension = paymentReceiptFile.name.split(".").pop() || "jpg";
-      const filename = `Promoters/Payout_Receipts/${paymentModalPayout.id}_${Date.now()}.${extension}`;
-      
-      const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
-        method: "POST",
-        headers: { "Content-Type": paymentReceiptFile.type || "image/jpeg" },
-        body: paymentReceiptFile
-      });
+      let receiptUrl = paymentModalPayout?.receipt_photo_url || "";
+      if (paymentReceiptFile) {
+        // Upload receipt to R2
+        const extension = paymentReceiptFile.name.split(".").pop() || "jpg";
+        const filename = `Promoters/Payout_Receipts/${paymentModalPayout.id}_${Date.now()}.${extension}`;
+        
+        const uploadRes = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/upload?filename=${encodeURIComponent(filename)}`, {
+          method: "POST",
+          headers: { "Content-Type": paymentReceiptFile.type || "image/jpeg" },
+          body: paymentReceiptFile
+        });
 
-      if (!uploadRes.ok) throw new Error("Receipt upload failed");
-      const uploadData = await uploadRes.json() as any;
-      if (!uploadData.success) throw new Error(uploadData.error || "Upload failed");
-      
-      const receiptUrl = uploadData.url;
+        if (!uploadRes.ok) throw new Error("Receipt upload failed");
+        const uploadData = await uploadRes.json() as any;
+        if (!uploadData.success) throw new Error(uploadData.error || "Upload failed");
+        
+        receiptUrl = uploadData.url;
+      }
 
       // 2. Update payout record
       const updatedPayout = {
         ...paymentModalPayout,
         status: "Paid",
         receipt_photo_url: receiptUrl,
-        payment_reference: paymentRef,
+        payment_reference: paymentRef.trim(),
         payment_date: new Date(paymentDate + "T12:00:00").getTime()
       };
 
@@ -1194,14 +1268,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       const data = await res.json() as any;
       if (!data.success) throw new Error(data.error || "Payment save failed");
 
-      showToast("Payment recorded and payout locked.", "success");
+      showToast(paymentModalPayout.status === "Paid" ? "Payment details updated." : "Payment recorded and payout locked.", "success");
       setPaymentModalPayout(null);
       setPaymentRef("");
       setPaymentDate("");
       setPaymentReceiptFile(null);
       loadPayouts(true);
     } catch (err: any) {
-      showToast("Failed to record payment: " + err.message, "error");
+      showToast("Failed to save payment: " + err.message, "error");
     } finally {
       setIsPaymentSaving(false);
     }
@@ -1293,55 +1367,70 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     // Right Column Info
     doc.setFont("helvetica", "bold");
     doc.setTextColor(113, 113, 122);
-    doc.text("Date Range:", 110, 43);
-    doc.text("Total Hours:", 110, 49);
-    doc.text("Hourly Rate:", 110, 55);
-    doc.text("Total Payout:", 110, 61);
+    doc.text("Date Range:", 105, 43);
+    doc.text("Total Hours:", 105, 49);
+    doc.text("Hourly Rate:", 105, 55);
+    doc.text("Total Payout:", 105, 61);
 
-    doc.setFont("helvetica", "semibold");
+    doc.setFont("helvetica", "normal");
     doc.setTextColor(24, 24, 27);
-    doc.text(String(`${formatTimestamp(payout["start_date"])} - ${formatTimestamp(payout["end_date"])}`), 135, 43);
-    doc.text(String(`${totalHours.toFixed(2)} hrs`), 135, 49);
-    doc.text(String(`$${Number(payout["hourly_rate"])?.toFixed(2)}/hr`), 135, 55);
+    doc.text(String(`${formatTimestamp(payout["start_date"])} - ${formatTimestamp(payout["end_date"])}`), 126, 43);
+    doc.text(String(`${formatTimeBase("", "", totalHours)}`), 126, 49);
+    doc.text(String(`$${Number(payout["hourly_rate"])?.toFixed(2)}/hr`), 126, 55);
 
     doc.setFont("helvetica", "bold");
     doc.setTextColor(11, 87, 208); // blue
-    doc.text(String(`$${Number(payout["total_payout"])?.toFixed(2)}`), 135, 61);
+    doc.text(String(`$${Number(payout["total_payout"])?.toFixed(2)}`), 126, 61);
 
-    // PAID Rubber Stamp (red color, angled by -15 degrees)
+    // PAID Rubber Stamp (synchronized rotation in upper-right clear area)
     if (payout.status === "Paid") {
       doc.saveGraphicsState();
       
+      const cx = 176, cy = 53;
+      const angleDeg = 10;
+      const rad = (angleDeg * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+
+      const rotatePoint = (dx: number, dy: number) => ({
+        x: cx + dx * cos - dy * sin,
+        y: cy + dx * sin + dy * cos
+      });
+
+      // Outer border box (w=17mm, h=9mm)
+      const drawStampBox = (hw: number, hh: number, lineWidth: number) => {
+        const p1 = rotatePoint(-hw, -hh);
+        const p2 = rotatePoint(hw, -hh);
+        const p3 = rotatePoint(hw, hh);
+        const p4 = rotatePoint(-hw, hh);
+        doc.setLineWidth(lineWidth);
+        doc.line(p1.x, p1.y, p2.x, p2.y);
+        doc.line(p2.x, p2.y, p3.x, p3.y);
+        doc.line(p3.x, p3.y, p4.x, p4.y);
+        doc.line(p4.x, p4.y, p1.x, p1.y);
+      };
+
+      doc.setDrawColor(197, 27, 27);
+      drawStampBox(17, 9, 0.7);
+      drawStampBox(15.5, 7.5, 0.25);
+
+      // Centered Text lines rotated with jsPDF angle
       doc.setFont("helvetica", "bold");
       doc.setFontSize(14);
       doc.setTextColor(197, 27, 27);
-      doc.text("PAID", 155, 50, { angle: -15 });
-      
-      doc.setFontSize(6.5);
+      const ptPaid = rotatePoint(0, -2);
+      doc.text("PAID", ptPaid.x, ptPaid.y, { align: "center", angle: angleDeg });
+
+      doc.setFontSize(6);
       const paidDateStr = formatTimestamp(payout["payment_date"]);
       const paidRefStr = payout["payment_reference"] || "";
-      doc.text(`date: ${paidDateStr}`, 153, 54, { angle: -15 });
-      doc.text(`REF: ${paidRefStr}`, 152, 57, { angle: -15 });
-      
-      // Draw rotated stamp border box centered at (170, 51)
-      const cx = 170, cy = 51;
-      const w = 19, h = 8;
-      const rad = -15 * Math.PI / 180;
-      const cos = Math.cos(rad);
-      const sin = Math.sin(rad);
-      
-      const x1 = cx - w * cos + h * sin, y1 = cy - w * sin - h * cos;
-      const x2 = cx + w * cos + h * sin, y2 = cy + w * sin - h * cos;
-      const x3 = cx + w * cos - h * sin, y3 = cy + w * sin + h * cos;
-      const x4 = cx - w * cos - h * sin, y4 = cy - w * sin + h * cos;
-      
-      doc.setDrawColor(197, 27, 27);
-      doc.setLineWidth(0.6);
-      doc.line(x1, y1, x2, y2);
-      doc.line(x2, y2, x3, y3);
-      doc.line(x3, y3, x4, y4);
-      doc.line(x4, y4, x1, y1);
-      
+      const ptDate = rotatePoint(0, 3);
+      const ptRef = rotatePoint(0, 6.5);
+      doc.text(`DATE: ${paidDateStr}`, ptDate.x, ptDate.y, { align: "center", angle: angleDeg });
+      if (paidRefStr) {
+        doc.text(`REF: ${paidRefStr}`, ptRef.x, ptRef.y, { align: "center", angle: angleDeg });
+      }
+
       doc.restoreGraphicsState();
     }
 
@@ -4919,17 +5008,39 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   }, [promoters, promoterSubTab]);
 
   const payoutColumns = React.useMemo(() => [
-    { id: "actions", header: "", accessor: "actions" },
-    { id: "PromoterName", header: "Promoter Name", accessor: "PromoterName" },
-    { id: "JobDetails", header: "Job Details", accessor: "JobDetails" },
-    { id: "TotalPayout", header: "Total Payout", accessor: "TotalPayout" },
-    { id: "Status", header: "Status", accessor: "Status" },
-    { id: "DatePayout", header: "Date Payout", accessor: "DatePayout" },
-    { id: "Reference", header: "Reference", accessor: "Reference" }
+    { id: "actions", header: "", accessor: "actions", width: "w-[165px] min-w-[165px] max-w-[165px]" },
+    { id: "CreatedDate", header: "Created Date", accessor: "CreatedDate", width: "w-[115px] min-w-[115px]" },
+    { id: "PromoterName", header: "Promoter Name", accessor: "PromoterName", width: "w-[155px] min-w-[155px]" },
+    { id: "JobDetails", header: "Job Details", accessor: "JobDetails", width: "w-[140px] min-w-[140px]" },
+    { id: "TotalPayout", header: "Total Payout", accessor: "TotalPayout", width: "w-[125px] min-w-[125px]" },
+    { id: "Status", header: "Status", accessor: "Status", width: "w-[145px] min-w-[145px]" },
+    { id: "DatePayout", header: "Date Payout", accessor: "DatePayout", width: "w-[115px] min-w-[115px]" },
+    { id: "Reference", header: "Reference", accessor: "Reference", width: "w-[135px] min-w-[135px]" }
   ], []);
 
   const mappedPayouts = React.useMemo(() => {
-    return payouts.map((p) => {
+    // 1. Filter payouts by status tab
+    const filtered = payouts.filter((p) => {
+      const isPaid = p.status === "Paid";
+      if (payoutStatusTab === "pending") return !isPaid;
+      if (payoutStatusTab === "paid") return isPaid;
+      return true;
+    });
+
+    // 2. Sort payouts by created date descending (latest first)
+    const sorted = [...filtered].sort((a, b) => {
+      const getCreated = (item: any) => {
+        if (item.created_at) return Number(item.created_at);
+        if (typeof item.id === "string" && item.id.startsWith("payout_")) {
+          const num = Number(item.id.replace("payout_", ""));
+          if (!isNaN(num)) return num;
+        }
+        return 0;
+      };
+      return getCreated(b) - getCreated(a);
+    });
+
+    return sorted.map((p) => {
       const isPaid = p.status === "Paid";
       const formatTimestamp = (ts: any): string => {
         if (!ts) return "-";
@@ -4941,46 +5052,80 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         return `${day}/${month}/${year}`;
       };
 
+      const createdTs = p.created_at || (typeof p.id === "string" && p.id.startsWith("payout_") ? p.id.replace("payout_", "") : null);
+
+      let parsedDetails: any[] = [];
+      try {
+        const raw = JSON.parse(p["payout_details"] || "[]");
+        parsedDetails = Array.isArray(raw) ? raw : [];
+      } catch {
+        parsedDetails = [];
+      }
+
       return {
         id: p.id,
-        PromoterName: <span className="font-medium text-zinc-850">{p["promoter_name"]}</span>,
+        CreatedDate: (
+          <span className="text-xs text-zinc-650 font-mono font-normal">
+            {createdTs ? formatTimestamp(createdTs) : "—"}
+          </span>
+        ),
+        CreatedDate_raw: createdTs ? Number(createdTs) : 0,
+        PromoterName: (
+          <span className="text-xs text-zinc-800 font-normal">
+            {p["promoter_name"] || "—"}
+          </span>
+        ),
         PromoterName_raw: p["promoter_name"] || "",
         JobDetails: (
           <button
             type="button"
             onClick={() => setViewingJobsPayout(p)}
-            className="px-2 py-0.5 bg-zinc-50 hover:bg-zinc-100 border border-zinc-250 text-zinc-650 hover:text-zinc-900 font-medium rounded text-[11px] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+            onMouseEnter={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              setJobHoverTooltip({
+                x: rect.left,
+                y: rect.bottom + 6,
+                promoterName: p["promoter_name"] || "Promoter",
+                payout: p,
+                jobs: parsedDetails
+              });
+            }}
+            onMouseLeave={() => setJobHoverTooltip(null)}
+            className="h-7 px-2.5 bg-white hover:bg-zinc-50 border border-zinc-200/90 hover:border-zinc-300 text-zinc-700 font-normal rounded text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-2xs"
           >
-            <Eye size={11} className="text-zinc-500" />
-            View Jobs ({(() => {
-              try {
-                const details = JSON.parse(p["payout_details"] || "[]");
-                return details.length;
-              } catch {
-                return 0;
-              }
-            })()})
+            <Eye size={12} className="text-zinc-400 shrink-0" />
+            <span>View Jobs ({parsedDetails.length})</span>
           </button>
         ),
-        JobDetails_raw: p["payout_details"] || "",
-        TotalPayout: <span className="font-semibold text-zinc-900 font-mono">${Number(p["total_payout"])?.toFixed(2)}</span>,
-        TotalPayout_raw: `$${Number(p["total_payout"])?.toFixed(2)}`,
+        JobDetails_raw: `${parsedDetails.length} Shifts`,
+        JobDetails_noTitle: true,
+        TotalPayout: (
+          <span className="text-xs text-zinc-800 font-mono font-normal">
+            ${Number(p["total_payout"] || 0).toFixed(2)}
+          </span>
+        ),
+        TotalPayout_raw: `$${Number(p["total_payout"] || 0).toFixed(2)}`,
         Status: (
-          <span className={cn(
-            "px-2 py-0.5 rounded text-[10.5px] font-medium uppercase tracking-wide",
-            isPaid ? "bg-emerald-50 text-emerald-700 border border-emerald-200/80" : "bg-amber-50 text-amber-700 border border-amber-200/80"
-          )}>
+          <span className="text-xs text-zinc-700 font-normal">
             {p.status || "Pending Payout"}
           </span>
         ),
         Status_raw: p.status || "Pending Payout",
-        DatePayout: <span className="text-zinc-600 font-normal">{p["payment_date"] ? formatTimestamp(p["payment_date"]) : "-"}</span>,
-        DatePayout_raw: p["payment_date"] ? formatTimestamp(p["payment_date"]) : "-",
-        Reference: <span className="font-mono text-zinc-650 text-[11px]">{p["payment_reference"] || "-"}</span>,
-        Reference_raw: p["payment_reference"] || "-",
+        DatePayout: (
+          <span className="text-xs text-zinc-700 font-mono font-normal">
+            {p["payment_date"] ? formatTimestamp(p["payment_date"]) : "—"}
+          </span>
+        ),
+        DatePayout_raw: p["payment_date"] ? formatTimestamp(p["payment_date"]) : "—",
+        Reference: (
+          <span className="text-xs text-zinc-700 font-mono font-normal truncate inline-block max-w-[130px]" title={p["payment_reference"] || undefined}>
+            {p["payment_reference"] || "—"}
+          </span>
+        ),
+        Reference_raw: p["payment_reference"] || "—",
         actions: (
           <div className="flex items-center gap-1.5 shrink-0 select-none">
-            {!isPaid && (
+            {!isPaid ? (
               <>
                 <button
                   type="button"
@@ -4998,7 +5143,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     setPayoutFetchError(null);
                     setIsCreatePayoutOpen(true);
                   }}
-                  className="p-1 rounded hover:bg-zinc-100 border border-zinc-200 text-zinc-550 hover:text-zinc-800 transition-colors cursor-pointer flex items-center justify-center"
+                  className="w-7 h-7 rounded bg-white hover:bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-2xs"
                   title="Edit Payout"
                 >
                   <Pencil size={12} />
@@ -5006,21 +5151,35 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 <button
                   type="button"
                   onClick={() => handleDeletePayout(p.id)}
-                  className="p-1 rounded hover:bg-red-50 border border-zinc-200 text-zinc-450 hover:text-red-600 transition-colors cursor-pointer flex items-center justify-center"
+                  className="w-7 h-7 rounded bg-white hover:bg-red-50 border border-zinc-200 text-zinc-400 hover:text-red-600 transition-colors cursor-pointer flex items-center justify-center shadow-2xs"
                   title="Delete Payout"
                 >
                   <Trash2 size={12} />
                 </button>
               </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setPaymentModalPayout(p);
+                  setPaymentRef(p["payment_reference"] || "");
+                  setPaymentDate(p["payment_date"] ? formatDateToYYYYMMDD(p["payment_date"]) : new Date().toISOString().split("T")[0]);
+                  setPaymentReceiptFile(null);
+                }}
+                className="w-7 h-7 rounded bg-white hover:bg-zinc-100 border border-zinc-200 text-zinc-600 hover:text-zinc-950 transition-colors cursor-pointer flex items-center justify-center shadow-2xs"
+                title="Edit Payment Details (Date, Reference, Photo)"
+              >
+                <Pencil size={12} />
+              </button>
             )}
 
             <button
               type="button"
               onClick={() => handlePrintPayoutPDF(p)}
-              className="px-2 py-0.5 rounded hover:bg-zinc-100 border border-zinc-250 text-zinc-650 hover:text-zinc-900 font-medium text-[11px] transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-2xs"
+              className="h-7 px-2.5 rounded bg-white hover:bg-zinc-100 border border-zinc-200 text-zinc-700 hover:text-zinc-950 font-medium text-xs transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-2xs"
               title="Print Supporting Document"
             >
-              <Printer size={11} className="text-zinc-500" />
+              <Printer size={12} className="text-zinc-500" />
               Print
             </button>
 
@@ -5033,10 +5192,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   setPaymentDate(new Date().toISOString().split("T")[0]);
                   setPaymentReceiptFile(null);
                 }}
-                className="px-2.5 py-0.5 bg-white hover:bg-emerald-50 border border-zinc-250 hover:border-emerald-400 text-zinc-700 hover:text-emerald-700 font-medium rounded text-[11px] transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                className="h-7 px-2.5 bg-white hover:bg-emerald-50 border border-emerald-300 hover:border-emerald-400 text-emerald-700 hover:text-emerald-800 font-medium rounded text-xs transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
                 title="Record Payment"
               >
-                <CreditCard size={11} className="text-emerald-600" />
+                <CreditCard size={12} className="text-emerald-600" />
                 Paid
               </button>
             )}
@@ -5044,7 +5203,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         )
       };
     });
-  }, [payouts, promoters]);
+  }, [payouts, promoters, payoutStatusTab]);
 
   return (
     <div className="flex flex-col gap-4 font-primary text-zinc-900 h-full overflow-hidden relative min-w-0">
@@ -7718,35 +7877,122 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         )}
 
         {activeTab === "payout" && (
-          <div className="w-full h-full flex flex-col gap-4 overflow-hidden relative">
+          <div className="w-full h-full flex flex-col gap-3 overflow-hidden relative select-none">
             {!isCreatePayoutOpen ? (
               <>
-                {/* Header section */}
-                <div className="flex justify-between items-center select-none pb-1">
-                  <div className="flex flex-col gap-0.5">
-                    <h2 className="text-base font-semibold text-zinc-900">Promoter Payout Management</h2>
-                    <p className="text-xs text-zinc-500 font-normal">Create, review, and mark payments for promoter shifts</p>
+                {/* Top Filter and Controls Bar with Integrated Metric Pills */}
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-zinc-200 rounded-lg px-3.5 py-2 shadow-xs shrink-0 select-none">
+                  {/* Left: Status Filter and Minimal Summary Pills */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider whitespace-nowrap">Status:</span>
+                      <div className="p-0.5 bg-zinc-100 border border-zinc-200 rounded-lg inline-flex items-center gap-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setPayoutStatusTab("all")}
+                          className={cn(
+                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1.5",
+                            payoutStatusTab === "all"
+                              ? "bg-white text-zinc-900 font-semibold shadow-2xs border border-zinc-200"
+                              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 font-normal"
+                          )}
+                        >
+                          All
+                          <span className={cn(
+                            "px-1.5 py-0.2 rounded-full text-[10.5px] font-medium",
+                            payoutStatusTab === "all" ? "bg-blue-100 text-[#0B57D0]" : "bg-zinc-200 text-zinc-600"
+                          )}>
+                            {payoutMetrics.allCount}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setPayoutStatusTab("pending")}
+                          className={cn(
+                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1.5",
+                            payoutStatusTab === "pending"
+                              ? "bg-white text-zinc-900 font-semibold shadow-2xs border border-zinc-200"
+                              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 font-normal"
+                          )}
+                        >
+                          Pending
+                          <span className={cn(
+                            "px-1.5 py-0.2 rounded-full text-[10.5px] font-medium",
+                            payoutStatusTab === "pending" ? "bg-amber-100 text-amber-900" : "bg-zinc-200 text-zinc-600"
+                          )}>
+                            {payoutMetrics.pendingCount}
+                          </span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setPayoutStatusTab("paid")}
+                          className={cn(
+                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1.5",
+                            payoutStatusTab === "paid"
+                              ? "bg-white text-zinc-900 font-semibold shadow-2xs border border-zinc-200"
+                              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 font-normal"
+                          )}
+                        >
+                          Paid
+                          <span className={cn(
+                            "px-1.5 py-0.2 rounded-full text-[10.5px] font-medium",
+                            payoutStatusTab === "paid" ? "bg-emerald-100 text-emerald-900" : "bg-zinc-200 text-zinc-600"
+                          )}>
+                            {payoutMetrics.paidCount}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="h-5 w-px bg-zinc-200 hidden md:block" />
+
+                    {/* Minimal Summary Metric Pills */}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50/80 border border-amber-200 text-xs shadow-2xs">
+                        <span className="text-[10.5px] font-medium text-amber-800">Pending:</span>
+                        <span className="font-semibold text-amber-900 font-mono">${payoutMetrics.pendingTotal.toFixed(2)}</span>
+                      </div>
+
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50/80 border border-emerald-200 text-xs shadow-2xs">
+                        <span className="text-[10.5px] font-medium text-emerald-800">Paid:</span>
+                        <span className="font-semibold text-emerald-900 font-mono">${payoutMetrics.paidTotal.toFixed(2)}</span>
+                      </div>
+
+                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50/80 border border-blue-200 text-xs shadow-2xs">
+                        <span className="text-[10.5px] font-medium text-[#0B57D0]">Total:</span>
+                        <span className="font-semibold text-[#0B57D0] font-mono">${payoutMetrics.grandTotal.toFixed(2)}</span>
+                      </div>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingPayoutId(null);
-                      setSelectedPayoutPromoterId("");
-                      setPayoutStartDate("");
-                      setPayoutEndDate("");
-                      setPayoutHourlyRate("");
-                      setEditedPayoutRows([]);
-                      setPayoutFetchError(null);
-                      setIsCreatePayoutOpen(true);
-                    }}
-                    className="px-3.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Plus size={14} className="stroke-[2.5]" />
-                    Create Payout
-                  </button>
+
+                  {/* Right Action: Create Payout Button */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingPayoutId(null);
+                        setSelectedPayoutPromoterId("");
+                        setPayoutStartDate("");
+                        setPayoutEndDate("");
+                        setPayoutHourlyRate("");
+                        setEditedPayoutRows([]);
+                        setPayoutFetchError(null);
+                        setIsPromoterDropdownOpen(false);
+                        setPromoterSearchQuery("");
+                        setIsCreatePayoutOpen(true);
+                      }}
+                      className="h-[28px] px-3.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus size={13} className="stroke-[2.5]" />
+                      Create Payout
+                    </button>
+                  </div>
                 </div>
 
-                <div className="flex-1 min-h-0 w-full">
+                {/* Main Table Area with full crisp border */}
+                <div className="flex-1 min-h-0 w-full bg-white border border-zinc-200 rounded-lg overflow-hidden flex flex-col shadow-xs">
                   <DataTable
                     columns={payoutColumns}
                     data={mappedPayouts}
@@ -7758,92 +8004,127 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 </div>
               </>
             ) : (
-              <div className="flex-1 min-h-0 flex flex-col gap-4">
-                {/* Form Header */}
-                <div className="flex justify-between items-center pb-1 select-none">
-                  <div className="flex flex-col gap-0.5">
-                    <h3 className="text-sm font-semibold text-zinc-900">
-                      {editingPayoutId ? "Edit Promoter Payout" : "Create Promoter Payout"}
-                    </h3>
-                    <p className="text-[11px] text-zinc-500 font-normal">
-                      Configure Date Range and Hourly Wage Rate to fetch scheduler shifts
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCreatePayoutOpen(false);
-                      setEditingPayoutId(null);
-                    }}
-                    className="p-1 rounded hover:bg-zinc-200 text-zinc-400 hover:text-zinc-700 transition-colors cursor-pointer"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
+              <div className="flex-1 min-h-0 flex flex-col gap-3">
+                {/* Compact Top Header & Payout Configurations Bar */}
+                <div className="bg-white px-3.5 py-2.5 rounded border border-zinc-200 shadow-2xs flex flex-wrap items-center justify-between gap-3 shrink-0 select-none">
+                  <div className="flex items-center gap-3.5 flex-wrap">
+                    <div className="flex flex-col">
+                      <h3 className="text-sm font-semibold text-zinc-900 leading-tight">
+                        {editingPayoutId ? "Edit Promoter Payout" : "Create Promoter Payout"}
+                      </h3>
+                      <p className="text-[10px] text-zinc-500 font-normal">
+                        Configure Date Range & Rate
+                      </p>
+                    </div>
 
-                {/* Form Content */}
-                <div className="flex-1 min-h-0 overflow-auto flex flex-col gap-4">
-                  {/* Setup Card */}
-                  <div className="bg-white p-4 rounded border border-zinc-200 shadow-2xs flex flex-col gap-3">
-                    <h4 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Payout Configurations</h4>
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Select Promoter</label>
-                        <select
-                          value={selectedPayoutPromoterId}
-                          onChange={(e) => setSelectedPayoutPromoterId(e.target.value)}
+                    <div className="h-5 w-px bg-zinc-200 hidden sm:block" />
+
+                    {/* Inline Compact Configurations Form */}
+                    <div className="flex items-center gap-2.5 flex-wrap">
+                      {/* Searchable Promoter Select */}
+                      <div className="flex items-center gap-1.5 relative" ref={promoterDropdownRef}>
+                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider">Promoter</label>
+                        <button
+                          type="button"
                           disabled={!!editingPayoutId}
-                          className="px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer disabled:bg-zinc-50 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                          onClick={() => {
+                            if (!editingPayoutId) {
+                              setIsPromoterDropdownOpen(prev => !prev);
+                              setPromoterSearchQuery("");
+                            }
+                          }}
+                          className={cn(
+                            "h-8 px-2.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none flex items-center justify-between gap-1.5 w-44 shadow-2xs text-left cursor-pointer transition-colors",
+                            isPromoterDropdownOpen ? "border-[#0B57D0] ring-1 ring-[#0B57D0]" : "hover:border-zinc-300",
+                            editingPayoutId && "bg-zinc-50 text-zinc-500 cursor-not-allowed"
+                          )}
                         >
-                          <option value="">-- Choose Promoter --</option>
-                          {promoters.filter(p => !(p.archived && (String(p.archived) === "1" || String(p.archived) === "true"))).map(p => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                          ))}
-                        </select>
+                          <span className="truncate">
+                            {promoters.find(p => String(p.id) === String(selectedPayoutPromoterId))?.name || "-- Choose --"}
+                          </span>
+                          <ChevronDown size={12} className={cn("text-zinc-400 shrink-0 transition-transform", isPromoterDropdownOpen && "rotate-180 text-[#0B57D0]")} />
+                        </button>
+
+                        {/* Search Dropdown Popover */}
+                        {isPromoterDropdownOpen && !editingPayoutId && (
+                          <div className="absolute top-9 left-0 w-64 bg-white border border-zinc-200 rounded-lg shadow-xl z-50 p-2 flex flex-col gap-1.5 animate-in fade-in zoom-in-95 duration-100">
+                            <div className="relative">
+                              <Search size={12} className="absolute left-2 top-2 text-zinc-400" />
+                              <input
+                                type="text"
+                                autoFocus
+                                value={promoterSearchQuery}
+                                onChange={(e) => setPromoterSearchQuery(e.target.value)}
+                                placeholder="Search promoter name..."
+                                className="w-full pl-6 pr-2 py-1 text-xs bg-zinc-50 border border-zinc-200 rounded outline-none focus:bg-white focus:border-[#0B57D0]"
+                              />
+                            </div>
+                            <div className="max-h-48 overflow-auto flex flex-col divide-y divide-zinc-100">
+                              {promoters
+                                .filter(p => !(p.archived && (String(p.archived) === "1" || String(p.archived) === "true")))
+                                .filter(p => !promoterSearchQuery.trim() || p.name.toLowerCase().includes(promoterSearchQuery.toLowerCase()))
+                                .map(p => (
+                                  <button
+                                    key={p.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedPayoutPromoterId(p.id);
+                                      setIsPromoterDropdownOpen(false);
+                                    }}
+                                    className="px-2 py-1.5 text-xs text-left text-zinc-800 hover:bg-blue-50 hover:text-[#0B57D0] transition-colors rounded cursor-pointer flex items-center justify-between"
+                                  >
+                                    <span className="font-medium">{p.name}</span>
+                                    {p.phone && <span className="text-[10px] text-zinc-400 font-mono">{p.phone}</span>}
+                                  </button>
+                                ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Start Date</label>
+
+                      <div className="flex items-center gap-1.5">
+                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider">Start</label>
                         <input
                           type="date"
                           value={payoutStartDate}
                           onChange={(e) => setPayoutStartDate(e.target.value)}
                           disabled={!!editingPayoutId}
-                          className="px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50 disabled:text-zinc-500"
+                          className="h-8 px-2 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50"
                         />
                       </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">End Date</label>
+
+                      <div className="flex items-center gap-1.5">
+                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider">End</label>
                         <input
                           type="date"
                           value={payoutEndDate}
                           onChange={(e) => setPayoutEndDate(e.target.value)}
                           disabled={!!editingPayoutId}
-                          className="px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50 disabled:text-zinc-500"
+                          className="h-8 px-2 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50"
                         />
                       </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Hour Rate ($)</label>
+
+                      <div className="flex items-center gap-1.5">
+                        <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider">Rate</label>
                         <div className="relative">
-                          <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs font-normal text-zinc-400">$</span>
+                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400">$</span>
                           <input
                             type="number"
                             value={payoutHourlyRate}
                             onChange={(e) => setPayoutHourlyRate(e.target.value)}
                             disabled={!!editingPayoutId}
-                            placeholder="e.g. 15.00"
-                            className="w-full pl-6 pr-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50 disabled:text-zinc-500"
+                            placeholder="15.00"
+                            className="h-8 w-20 pl-5 pr-2 bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs disabled:bg-zinc-50"
                           />
                         </div>
                       </div>
-                    </div>
-                    
-                    {!editingPayoutId && (
-                      <div className="flex justify-end pt-1">
+
+                      {!editingPayoutId && (
                         <button
                           type="button"
                           onClick={fetchPayoutSchedules}
                           disabled={isPayoutFetching}
-                          className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-900 text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                          className="h-8 px-3 bg-zinc-800 hover:bg-zinc-900 text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
                         >
                           {isPayoutFetching ? (
                             <>
@@ -7853,13 +8134,25 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           ) : (
                             <>
                               <RefreshCw size={12} />
-                              Fetch Schedules
+                              Fetch Shifts
                             </>
                           )}
                         </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCreatePayoutOpen(false);
+                      setEditingPayoutId(null);
+                    }}
+                    className="p-1 rounded hover:bg-zinc-200 text-zinc-400 hover:text-zinc-700 transition-colors cursor-pointer"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
 
                   {/* Validation Error Message */}
                   {payoutFetchError && (
@@ -8026,7 +8319,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                           className="px-2 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
                                         />
                                       </td>
-                                      <td className="py-2.5 px-3 font-medium text-zinc-800">{row.totalTime.toFixed(2)} hrs</td>
+                                      <td className="py-2.5 px-3 font-medium text-zinc-800">{formatTimeBase(row.startTime, row.endTime, row.totalTime)}</td>
                                       <td className="py-2.5 px-3 text-center">
                                         <div className="relative inline-block">
                                           <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-normal">$</span>
@@ -8059,7 +8352,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       </div>
                     </div>
                   )}
-                </div>
 
                 {/* Form Footer */}
                 <div className="flex justify-between items-center pt-2 select-none">
@@ -8100,7 +8392,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               <div className="fixed inset-0 bg-black/45 backdrop-blur-xs flex items-center justify-center z-50 animate-in fade-in duration-200">
                 <div className="w-[450px] bg-white rounded border border-zinc-200 shadow-2xl flex flex-col font-primary animate-in zoom-in-95 duration-150">
                   <div className="bg-zinc-50 px-4 py-3 border-b border-zinc-150 rounded-t flex justify-between items-center">
-                    <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-700">Record Payout Payment</h3>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-700">
+                    {paymentModalPayout.status === "Paid" ? "Edit Payment Details" : "Record Payout Payment"}
+                  </h3>
                     <button
                       type="button"
                       onClick={() => setPaymentModalPayout(null)}
@@ -8144,11 +8438,32 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     </div>
 
                     <div className="flex flex-col gap-1.5">
-                      <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">Upload Receipt Photo</label>
+                      <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider pl-0.5">
+                        {paymentModalPayout["receipt_photo_url"] ? "Receipt Photo" : "Upload Receipt Photo"}
+                      </label>
+                      {paymentModalPayout["receipt_photo_url"] && (
+                        <div className="flex items-center justify-between p-2 bg-zinc-50 border border-zinc-200 rounded mb-1">
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={paymentModalPayout["receipt_photo_url"]}
+                              alt="Receipt thumbnail"
+                              className="w-8 h-8 rounded object-cover border border-zinc-200"
+                            />
+                            <span className="text-[11px] text-zinc-600 font-medium">Existing Receipt</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setImagePreviewModalUrl(paymentModalPayout["receipt_photo_url"])}
+                            className="text-xs text-[#0B57D0] hover:underline font-medium cursor-pointer"
+                          >
+                            Preview
+                          </button>
+                        </div>
+                      )}
                       <div className="flex items-center gap-2">
                         <label className="h-8 px-3 rounded border border-zinc-300 bg-zinc-100 text-zinc-700 hover:text-zinc-900 hover:bg-zinc-200 transition-all select-none cursor-pointer flex items-center justify-center gap-1.5 font-medium text-[11px]">
                           <Upload size={12} />
-                          {paymentReceiptFile ? "Change Receipt" : "Choose File"}
+                          {paymentReceiptFile ? "Change Receipt" : (paymentModalPayout["receipt_photo_url"] ? "Replace Photo" : "Choose File")}
                           <input
                             type="file"
                             accept="image/*"
@@ -8162,7 +8477,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           />
                         </label>
                         <span className="text-[10.5px] text-zinc-500 font-normal truncate max-w-[200px]">
-                          {paymentReceiptFile ? paymentReceiptFile.name : "No file chosen"}
+                          {paymentReceiptFile ? paymentReceiptFile.name : (paymentModalPayout["receipt_photo_url"] ? "Keep current photo" : "No file chosen")}
                         </span>
                       </div>
                     </div>
@@ -8179,7 +8494,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     <button
                       type="button"
                       onClick={handleSavePayment}
-                      disabled={isPaymentSaving || !paymentRef.trim() || !paymentDate || !paymentReceiptFile}
+                      disabled={isPaymentSaving || !paymentRef.trim() || !paymentDate || (!paymentReceiptFile && !paymentModalPayout["receipt_photo_url"])}
                       className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       {isPaymentSaving ? (
@@ -8190,7 +8505,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       ) : (
                         <>
                           <Check size={14} className="stroke-[2.5]" />
-                          Save Payment
+                          {paymentModalPayout.status === "Paid" ? "Update Payment" : "Save Payment"}
                         </>
                       )}
                     </button>
@@ -8309,7 +8624,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     {job.absent ? (
                                       <span className="text-red-600 font-medium">Absent</span>
                                     ) : (
-                                      `${job.startTime} - ${job.endTime} (${job.totalTime?.toFixed(2)} hrs)`
+                                      `${job.startTime} - ${job.endTime} (${formatTimeBase(job.startTime, job.endTime, job.totalTime)})`
                                     )}
                                   </td>
                                   <td className="py-2 px-3 text-zinc-600 font-mono">${Number(job.hourlyRate || 0).toFixed(2)}</td>
@@ -8365,6 +8680,48 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   <div className="p-3 bg-zinc-950 flex items-center justify-center overflow-auto max-h-[80vh]">
                     <img src={imagePreviewModalUrl} alt="Attendance Preview" className="max-w-full max-h-[75vh] object-contain rounded" />
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* Floating Job Details Hover Tooltip */}
+            {jobHoverTooltip && (
+              <div
+                className="fixed z-50 pointer-events-none bg-white rounded-lg border border-zinc-200 shadow-xl p-3 w-80 text-xs font-primary animate-in fade-in duration-150"
+                style={{
+                  left: `${Math.min(typeof window !== "undefined" ? window.innerWidth - 340 : 800, Math.max(16, jobHoverTooltip.x + 12))}px`,
+                  top: `${Math.min(typeof window !== "undefined" ? window.innerHeight - 260 : 600, Math.max(16, jobHoverTooltip.y + 12))}px`,
+                }}
+              >
+                <div className="flex items-center justify-between border-b border-zinc-100 pb-2 mb-2">
+                  <span className="font-semibold text-zinc-900 truncate">{jobHoverTooltip.promoterName}</span>
+                  <span className="text-[10.5px] font-medium text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                    {jobHoverTooltip.jobs.length} {jobHoverTooltip.jobs.length === 1 ? 'Shift' : 'Shifts'}
+                  </span>
+                </div>
+                <div className="max-h-56 overflow-auto flex flex-col divide-y divide-zinc-100">
+                  {jobHoverTooltip.jobs.map((job, i) => {
+                    const d = new Date(Number(job.date));
+                    const dateStr = !isNaN(d.getTime()) ? `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}` : '-';
+                    return (
+                      <div key={i} className="py-1.5 flex flex-col gap-0.5">
+                        <div className="flex items-center justify-between text-zinc-700">
+                          <span className="font-medium text-zinc-800">{dateStr} &bull; {job.startTime || '00:00'}-{job.endTime || '00:00'}</span>
+                          <span className="font-semibold text-zinc-900 font-mono">${Number(job.totalPayout || 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                          <span className="truncate max-w-[180px]">{job.taskDetails || 'Regular Shift'}</span>
+                          <span>{formatTimeBase(job.startTime, job.endTime, job.totalTime)}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 pt-2 border-t border-zinc-100 flex items-center justify-between text-[11px] font-medium text-zinc-600">
+                  <span>Total Wage</span>
+                  <span className="text-xs font-bold text-zinc-900 font-mono">
+                    ${jobHoverTooltip.jobs.reduce((acc, curr) => acc + (Number(curr.totalPayout) || 0), 0).toFixed(2)}
+                  </span>
                 </div>
               </div>
             )}

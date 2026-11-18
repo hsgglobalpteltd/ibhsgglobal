@@ -29,7 +29,17 @@ import {
   RotateCcw,
   ChevronUp,
   BarChart3,
-  Tag
+  Tag,
+  TrendingUp,
+  TrendingDown,
+  PieChart,
+  Users,
+  ArrowUpRight,
+  ArrowDownRight,
+  Filter,
+  Eye,
+  EyeOff,
+  ShoppingBag
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -306,6 +316,218 @@ const ITEM_TYPES = [
     badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200/90 hover:bg-indigo-100"
   }
 ];
+
+const EXECUTIVE_CHART_COLORS = [
+  "#0B57D0", // Google Blue Primary
+  "#1A73E8", // Blue Secondary
+  "#34A853", // Google Green
+  "#FBBC04", // Google Amber
+  "#EA4335", // Google Red
+  "#9334E6", // Purple
+  "#00897B", // Teal
+  "#F97316", // Orange
+  "#64748B", // Slate
+  "#EC4899", // Pink
+];
+
+interface DonutSliceItem {
+  label: string;
+  value: number;
+  sublabel?: string;
+  color?: string;
+}
+
+interface DonutPieChartProps {
+  title: string;
+  subtitle?: string;
+  data: DonutSliceItem[];
+  formatValue?: (val: number) => string;
+  unitLabel?: string;
+  hoveredKey?: string | null;
+  onHoverKey?: (key: string | null) => void;
+  emptyMessage?: string;
+}
+
+function DonutPieChart({
+  title,
+  subtitle,
+  data,
+  formatValue = (v) => `$${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+  unitLabel = "Total Net",
+  hoveredKey,
+  onHoverKey,
+  emptyMessage = "No sales distribution"
+}: DonutPieChartProps) {
+  const [internalHover, setInternalHover] = React.useState<string | null>(null);
+  const activeHover = hoveredKey !== undefined ? hoveredKey : internalHover;
+  const setHover = onHoverKey || setInternalHover;
+
+  const validData = React.useMemo(() => {
+    return (data || []).filter((d) => Number(d.value) > 0);
+  }, [data]);
+
+  const total = React.useMemo(() => {
+    return validData.reduce((acc, d) => acc + Number(d.value), 0);
+  }, [validData]);
+
+  // Slices: top 5 + "Other" if > 6
+  const processedSlices = React.useMemo(() => {
+    if (validData.length <= 6) {
+      return validData.map((d, idx) => ({
+        ...d,
+        color: d.color || EXECUTIVE_CHART_COLORS[idx % EXECUTIVE_CHART_COLORS.length],
+        percentage: total > 0 ? (d.value / total) * 100 : 0
+      }));
+    }
+    const sorted = [...validData].sort((a, b) => b.value - a.value);
+    const top5 = sorted.slice(0, 5);
+    const rest = sorted.slice(5);
+    const restVal = rest.reduce((sum, r) => sum + r.value, 0);
+    const list = top5.map((d, idx) => ({
+      ...d,
+      color: d.color || EXECUTIVE_CHART_COLORS[idx % EXECUTIVE_CHART_COLORS.length],
+      percentage: total > 0 ? (d.value / total) * 100 : 0
+    }));
+    if (restVal > 0) {
+      list.push({
+        label: "Other",
+        value: restVal,
+        sublabel: `${rest.length} other items`,
+        color: "#94A3B8",
+        percentage: (restVal / total) * 100
+      });
+    }
+    return list;
+  }, [validData, total]);
+
+  const activeSlice = React.useMemo(() => {
+    if (!activeHover) return null;
+    return processedSlices.find((s) => s.label.toLowerCase() === activeHover.toLowerCase()) || null;
+  }, [activeHover, processedSlices]);
+
+  // Radius 36 -> circumference = 2 * PI * 36 = 226.19467
+  const C = 226.19467;
+
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-4 shadow-2xs flex flex-col justify-between">
+      <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
+        <div>
+          <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider flex items-center gap-1.5">
+            <PieChart size={13} className="text-[#0B57D0]" />
+            <span>{title}</span>
+          </h3>
+          {subtitle && <p className="text-[11px] text-zinc-500 mt-0.5">{subtitle}</p>}
+        </div>
+        <span className="text-[11px] font-mono text-zinc-500">
+          {processedSlices.length} {processedSlices.length === 1 ? "slice" : "slices"}
+        </span>
+      </div>
+
+      {total === 0 || processedSlices.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-10 text-center">
+          <div className="w-14 h-14 rounded-full border-2 border-dashed border-slate-200 flex items-center justify-center text-zinc-400 mb-2">
+            <PieChart size={20} />
+          </div>
+          <span className="text-xs text-zinc-400">{emptyMessage}</span>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+          {/* SVG Donut */}
+          <div className="md:col-span-5 flex items-center justify-center relative py-1">
+            <svg viewBox="0 0 100 100" className="w-36 h-36 transform -rotate-90">
+              {/* Background ring */}
+              <circle
+                cx="50"
+                cy="50"
+                r="36"
+                fill="none"
+                stroke="#F1F5F9"
+                strokeWidth="13"
+              />
+              {/* Data rings */}
+              {(() => {
+                let accumulated = 0;
+                return processedSlices.map((slice, idx) => {
+                  const strokeDash = (slice.percentage / 100) * C;
+                  const strokeOffset = -accumulated;
+                  accumulated += strokeDash;
+                  const isHovered = activeSlice?.label.toLowerCase() === slice.label.toLowerCase();
+
+                  return (
+                    <circle
+                      key={idx}
+                      cx="50"
+                      cy="50"
+                      r="36"
+                      fill="none"
+                      stroke={slice.color}
+                      strokeWidth={isHovered ? 16 : 13}
+                      strokeDasharray={`${strokeDash} ${C}`}
+                      strokeDashoffset={strokeOffset}
+                      className="transition-all duration-200 cursor-pointer"
+                      style={{ opacity: activeSlice && !isHovered ? 0.35 : 1 }}
+                      onMouseEnter={() => setHover(slice.label)}
+                      onMouseLeave={() => setHover(null)}
+                    />
+                  );
+                });
+              })()}
+            </svg>
+
+            {/* Donut Center Display */}
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-center pointer-events-none px-2">
+              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-tight truncate max-w-[85px]">
+                {activeSlice ? activeSlice.label : unitLabel}
+              </span>
+              <span className="text-xs font-bold text-zinc-900 font-mono mt-0.5 truncate max-w-[100px]">
+                {activeSlice ? formatValue(activeSlice.value) : formatValue(total)}
+              </span>
+              <span className="text-[9.5px] font-semibold text-[#0B57D0] font-mono">
+                {activeSlice ? `${activeSlice.percentage.toFixed(1)}%` : "100%"}
+              </span>
+            </div>
+          </div>
+
+          {/* Legend Items */}
+          <div className="md:col-span-7 space-y-1.5 max-h-44 overflow-y-auto pr-1">
+            {processedSlices.map((slice, idx) => {
+              const isHovered = activeSlice?.label.toLowerCase() === slice.label.toLowerCase();
+              return (
+                <div
+                  key={idx}
+                  onMouseEnter={() => setHover(slice.label)}
+                  onMouseLeave={() => setHover(null)}
+                  className={cn(
+                    "flex items-center justify-between p-1.5 rounded-md text-xs cursor-pointer transition-all",
+                    isHovered ? "bg-blue-50/80 border border-blue-100" : "hover:bg-slate-50 border border-transparent"
+                  )}
+                >
+                  <div className="flex items-center gap-2 min-w-0 pr-2">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full shrink-0 shadow-2xs"
+                      style={{ backgroundColor: slice.color }}
+                    />
+                    <span className="font-medium text-zinc-800 truncate text-[11px]" title={slice.label}>
+                      {slice.label}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 text-right">
+                    <span className="text-[11px] font-mono text-zinc-700 font-semibold">
+                      {formatValue(slice.value)}
+                    </span>
+                    <span className="px-1.5 py-0.2 rounded text-[9.5px] font-semibold font-mono bg-slate-100 text-zinc-600 border border-slate-200">
+                      {slice.percentage.toFixed(1)}%
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface SellInModuleProps {
   profile?: any;
@@ -587,30 +809,31 @@ export function SellInModule({ profile }: SellInModuleProps) {
     sku: string;
     description: string;
     qty: number;
-    unit_cost: number;
+    unit_cost: number | string;
     total_cost: number;
   }>>([]);
   const [settlementFileName, setSettlementFileName] = React.useState<string>("");
   const [savingSettlementItems, setSavingSettlementItems] = React.useState<boolean>(false);
   const settlementFileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [editingSettlementCostIdx, setEditingSettlementCostIdx] = React.useState<number | null>(null);
+  const [editingSettlementCostVal, setEditingSettlementCostVal] = React.useState<string>("");
 
-  // TikTok Settlement Sync State
-  const [tiktokShops, setTiktokShops] = React.useState<Array<{ id: string; name: string }>>([]);
-  const [selectedTiktokShopId, setSelectedTiktokShopId] = React.useState<string>("all");
-  const [loadingTiktokSync, setLoadingTiktokSync] = React.useState<boolean>(false);
-  const [tiktokSyncStatus, setTiktokSyncStatus] = React.useState<{
-    checked: boolean;
-    compiled: boolean;
-    can_sync: boolean;
-    unassigned_skus: Array<{ seller_sku: string; product_name: string; count: number }>;
-    message?: string;
-  } | null>(null);
 
   // View Mode: "summary" (Default when Published) vs "details" (Line-by-line items)
   const [sellinViewMode, setSellinViewMode] = React.useState<"summary" | "details">("details");
   const [summaryBuyerSearch, setSummaryBuyerSearch] = React.useState<string>("");
   const [summarySkuSearch, setSummarySkuSearch] = React.useState<string>("");
   const [expandedBuyerKeys, setExpandedBuyerKeys] = React.useState<Record<string, boolean>>({});
+
+  // Summary View Executive Filters & Comparison States
+  const [allBatches, setAllBatches] = React.useState<any[]>([]);
+  const [summaryBenchmark, setSummaryBenchmark] = React.useState<"mom" | "yoy" | "ytd">("mom");
+  const [summaryChannelFilter, setSummaryChannelFilter] = React.useState<string>("all");
+  const [summaryBuyerFilter, setSummaryBuyerFilter] = React.useState<string>("all");
+  const [summaryBrandFilter, setSummaryBrandFilter] = React.useState<string>("all");
+  const [showDetailedTables, setShowDetailedTables] = React.useState<boolean>(false);
+  const [hoveredChannelSlice, setHoveredChannelSlice] = React.useState<string | null>(null);
+  const [hoveredBrandSlice, setHoveredBrandSlice] = React.useState<string | null>(null);
 
   // Confirmation dialog
   const [confirmConfig, setConfirmConfig] = React.useState<{
@@ -633,7 +856,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const fetchBatchDetails = React.useCallback(async (period: string, silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/api/sellin/batch-details?period=${encodeURIComponent(period)}`);
+      const [res, batchesRes] = await Promise.all([
+        fetch(`${API_BASE}/api/sellin/batch-details?period=${encodeURIComponent(period)}`),
+        fetch(`${API_BASE}/api/sellin/batches`)
+      ]);
+      if (batchesRes.ok) {
+        const bList = await batchesRes.json();
+        if (Array.isArray(bList)) setAllBatches(bList);
+      }
       if (res.ok) {
         const data = await res.json();
         const batch = data.batch || null;
@@ -717,6 +947,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       if (bRes.ok) {
         const batches = await bRes.json();
         if (Array.isArray(batches)) {
+          setAllBatches(batches);
           const distinctYears = Array.from(
             new Set(
               batches
@@ -979,7 +1210,21 @@ export function SellInModule({ profile }: SellInModuleProps) {
       const cQty = (isNonProduct || isSettlement) ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
       const netQty = dQty - cQty;
       const cPrice = (isNonProduct || isSettlement) ? 0 : Number(r.cost_price || 0);
-      totalCost += Math.max(0, netQty) * cPrice;
+
+      let rowCost = 0;
+      if (isSettlement) {
+        rowCost = Number(r.total_cost || 0);
+        const sItems = Array.isArray(r.settlement_items) && r.settlement_items.length > 0
+          ? r.settlement_items
+          : (Array.isArray(r.raw_data?.settlement_items) ? r.raw_data.settlement_items : []);
+        if (sItems.length > 0) {
+          const sSum = sItems.reduce((acc: number, it: any) => acc + Number(it.total_cost || (Number(it.qty || 0) * Number(it.unit_cost || 0))), 0);
+          if (sSum > 0) rowCost = sSum;
+        }
+      } else if (!isNonProduct) {
+        rowCost = Math.max(0, netQty) * cPrice;
+      }
+      totalCost += rowCost;
 
       // Sum all values in the line (not looking for sales only, captures all value in the line)
       grossDemand += Number(r.total_demand || 0);
@@ -1079,7 +1324,19 @@ export function SellInModule({ profile }: SellInModuleProps) {
       const cAmt = isNonProduct ? 0 : Number(r.cn_amount || 0);
       const nAmt = dAmt - cAmt;
       const cPrice = (isNonProduct || isSettlement) ? 0 : Number(r.cost_price || 0);
-      const rowCost = (isNonProduct || isSettlement) ? 0 : (Math.max(0, netQty) * cPrice);
+      let rowCost = 0;
+      if (isSettlement) {
+        rowCost = Number(r.total_cost || 0);
+        const sItems = Array.isArray(r.settlement_items) && r.settlement_items.length > 0
+          ? r.settlement_items
+          : (Array.isArray(r.raw_data?.settlement_items) ? r.raw_data.settlement_items : []);
+        if (sItems.length > 0) {
+          const sSum = sItems.reduce((acc: number, it: any) => acc + Number(it.total_cost || (Number(it.qty || 0) * Number(it.unit_cost || 0))), 0);
+          if (sSum > 0) rowCost = sSum;
+        }
+      } else if (!isNonProduct) {
+        rowCost = Math.max(0, netQty) * cPrice;
+      }
 
       if (isNonProduct) {
         totalNonSalesAmount += dAmt;
@@ -1278,6 +1535,617 @@ export function SellInModule({ profile }: SellInModuleProps) {
       [key]: !prev[key]
     }));
   };
+
+  // =========================================================================
+  // EXECUTIVE SUMMARY VIEW: OPTIONS, FILTERS, BENCHMARKS & FREQUENT PURCHASE
+  // =========================================================================
+
+  // Dynamic filter options for Summary View
+  const summaryChannelOptions = React.useMemo(() => {
+    const set = new Set<string>();
+    channelsList.forEach((c) => {
+      const name = c.channel_name || c.name;
+      if (name) set.add(name);
+    });
+    records.forEach((r) => {
+      if (r.channel) set.add(r.channel);
+    });
+    return [
+      { label: "ALL CHANNELS", value: "all" },
+      ...Array.from(set).sort().map((ch) => ({ label: ch.toUpperCase(), value: ch }))
+    ];
+  }, [channelsList, records]);
+
+  const summaryBuyerOptions = React.useMemo(() => {
+    const map = new Map<string, string>();
+    records.forEach((r) => {
+      const name = String(r.buyer_name || r.buyer_code || "").trim();
+      if (name) map.set(name, name);
+    });
+    buyersList.forEach((b) => {
+      const name = String(b.buyer_name || b.buyer_code || "").trim();
+      if (name) map.set(name, name);
+    });
+    return [
+      { label: "ALL BUYERS", value: "all" },
+      ...Array.from(map.keys()).sort().map((b) => ({ label: b.toUpperCase(), value: b }))
+    ];
+  }, [records, buyersList]);
+
+  const summaryBrandOptions = React.useMemo(() => {
+    const set = new Set<string>();
+    availableBrands.forEach((b) => set.add(b));
+    records.forEach((r) => {
+      if (r.brand && !set.has(r.brand)) {
+        const bLower = r.brand.toLowerCase();
+        if (!bLower.includes("unassigned") && !bLower.includes("unbrand")) {
+          set.add(r.brand);
+        }
+      }
+    });
+    return [
+      { label: "ALL BRANDS", value: "all" },
+      ...Array.from(set).sort().map((br) => ({ label: br.toUpperCase(), value: br }))
+    ];
+  }, [availableBrands, records]);
+
+  // Resolve brand for any SKU or product description
+  const resolveSkuBrand = React.useCallback((sku: string, description?: string): string => {
+    const sLower = String(sku || "").trim().toLowerCase();
+    const dLower = String(description || "").trim().toLowerCase();
+
+    if (sLower) {
+      const prod = productsList.find((p: any) =>
+        String(p.sku || p['SKU Number'] || p.sku_number || p.id || "").trim().toLowerCase() === sLower
+      );
+      if (prod) {
+        const bKey = String(prod.brands_id || prod['Brands ID'] || prod.brand_id || prod.brand || "").trim().toLowerCase();
+        const matchedB = brandsList.find((b: any) =>
+          String(b.id || "").trim().toLowerCase() === bKey ||
+          String(b.name || "").trim().toLowerCase() === bKey ||
+          String(b.display_name || "").trim().toLowerCase() === bKey
+        );
+        if (matchedB) return matchedB.display_name || matchedB.name || matchedB.brand_name || prod.brand;
+        if (prod.brand) return prod.brand;
+      }
+      const tempP = tempProductsList.find((tp: any) => String(tp.sku || tp.id || "").trim().toLowerCase() === sLower);
+      if (tempP?.brand) return tempP.brand;
+    }
+
+    if (dLower) {
+      const matchedB = brandsList.find((b: any) => {
+        const bName = String(b.display_name || b.name || b.brand_name || "").trim().toLowerCase();
+        return bName && dLower.includes(bName);
+      });
+      if (matchedB) return matchedB.display_name || matchedB.name || matchedB.brand_name;
+    }
+
+    return "Unassigned Brand";
+  }, [productsList, brandsList, tempProductsList]);
+
+  // Filter current period records by executive summary filters (Channel, Buyer, Brand)
+  const summaryFilteredRecords = React.useMemo(() => {
+    return records.filter((r) => {
+      if (r.is_bundle_component === true || r.is_bundle_component === "true") return false;
+
+      // Channel filter
+      if (summaryChannelFilter !== "all") {
+        const ch = String(r.channel || "").trim().toLowerCase();
+        if (ch !== summaryChannelFilter.toLowerCase()) return false;
+      }
+
+      // Buyer filter
+      if (summaryBuyerFilter !== "all") {
+        const bCode = String(r.buyer_code || "").trim().toLowerCase();
+        const bName = String(r.buyer_name || "").trim().toLowerCase();
+        const target = summaryBuyerFilter.toLowerCase();
+        if (bCode !== target && bName !== target) return false;
+      }
+
+      // Brand filter
+      if (summaryBrandFilter !== "all") {
+        const isSettlement = r.item_type === "settlement";
+        if (isSettlement) {
+          const batchS = batchData?.sellin_summary?.settlement_map?.[r.id] || batchData?.sellin_summary?.settlement_map?.[r.product_name];
+          const sItems: any[] = batchS?.items || batchS?.settlement_items || (Array.isArray(r.settlement_items) && r.settlement_items.length > 0
+            ? r.settlement_items
+            : (Array.isArray(r.raw_data?.settlement_items) ? r.raw_data.settlement_items : []));
+          if (sItems.length > 0) {
+            const hasBrandMatch = sItems.some((si: any) => {
+              const br = resolveSkuBrand(si.sku, si.description);
+              return br.toLowerCase() === summaryBrandFilter.toLowerCase();
+            });
+            if (!hasBrandMatch) return false;
+          } else {
+            const bBrand = String(r.brand || "Unassigned Brand").trim().toLowerCase();
+            if (bBrand !== summaryBrandFilter.toLowerCase()) return false;
+          }
+        } else {
+          const bBrand = String(r.brand || "").trim().toLowerCase();
+          if (bBrand !== summaryBrandFilter.toLowerCase()) return false;
+        }
+      }
+
+      return true;
+    });
+  }, [records, summaryChannelFilter, summaryBuyerFilter, summaryBrandFilter, batchData, resolveSkuBrand]);
+
+  // Computed metrics for current period under active summary filters
+  const currentSummaryMetrics = React.useMemo(() => {
+    let demandQty = 0;
+    let demandAmount = 0;
+    let cnQty = 0;
+    let cnAmount = 0;
+    let nonSalesAmount = 0;
+    let totalCost = 0;
+    let netAmount = 0;
+
+    const buyerAggMap = new Map<string, any>();
+    const brandAggMap = new Map<string, any>();
+    const channelAggMap = new Map<string, any>();
+    const skuAggMap = new Map<string, any>();
+
+    summaryFilteredRecords.forEach((r) => {
+      const isSettlement = r.item_type === "settlement";
+      const isProductOrBundle = !r.item_type || r.item_type === "product" || r.item_type === "bundle";
+      const isNonProduct = !isProductOrBundle && !isSettlement;
+
+      // Settlement items lookup
+      const batchS = batchData?.sellin_summary?.settlement_map?.[r.id] || batchData?.sellin_summary?.settlement_map?.[r.product_name];
+      const sItems: any[] = isSettlement
+        ? (batchS?.items || batchS?.settlement_items || (Array.isArray(r.settlement_items) && r.settlement_items.length > 0
+            ? r.settlement_items
+            : (Array.isArray(r.raw_data?.settlement_items) ? r.raw_data.settlement_items : [])))
+        : [];
+
+      const settlementQty = isSettlement ? sItems.reduce((acc, it) => acc + Number(it.qty || 0), 0) : 0;
+      const dQty = isNonProduct ? 0 : (isSettlement ? settlementQty : Number(r.demand_qty ?? r.quantity ?? 0));
+      const cQty = (isNonProduct || isSettlement) ? 0 : Number(r.reject_qty ?? r.cn_quantity ?? 0);
+      const netQty = dQty - cQty;
+      const up = Number(r.unit_price || 0);
+      const dAmt = isSettlement ? Number(r.total_demand || 0) : (isNonProduct ? Number(r.total_demand || 0) : dQty * up);
+      const cAmt = isNonProduct ? 0 : Number(r.cn_amount || 0);
+      const nAmt = dAmt - cAmt;
+      const cPrice = (isNonProduct || isSettlement) ? 0 : Number(r.cost_price || 0);
+
+      let rowCost = 0;
+      if (isSettlement) {
+        rowCost = Number(r.total_cost || 0);
+        if (sItems.length > 0) {
+          const sSum = sItems.reduce((acc, it) => acc + Number(it.total_cost || (Number(it.qty || 0) * Number(it.unit_cost || 0))), 0);
+          if (sSum > 0) rowCost = sSum;
+        }
+      } else if (!isNonProduct) {
+        rowCost = Math.max(0, netQty) * cPrice;
+      }
+
+      if (isNonProduct) {
+        nonSalesAmount += dAmt;
+        netAmount -= dAmt;
+      } else {
+        demandQty += dQty;
+        demandAmount += dAmt;
+        cnQty += cQty;
+        cnAmount += cAmt;
+        netAmount += nAmt;
+      }
+      totalCost += rowCost;
+
+      // Buyer aggregation
+      const bName = String(r.buyer_name || r.buyer_code || "Unknown").trim();
+      const bKey = (r.buyer_code || bName).toLowerCase();
+      const bExisting = buyerAggMap.get(bKey) || {
+        buyer_code: r.buyer_code || "",
+        buyer_name: bName,
+        channel: r.channel || "",
+        demand_qty: 0,
+        demand_amount: 0,
+        reject_qty: 0,
+        reject_amount: 0,
+        non_sales_amount: 0,
+        net_amount: 0,
+        itemsCount: 0
+      };
+      bExisting.demand_qty += dQty;
+      bExisting.demand_amount += dAmt;
+      bExisting.reject_qty += cQty;
+      bExisting.reject_amount += cAmt;
+      if (isNonProduct) bExisting.non_sales_amount += dAmt;
+      bExisting.net_amount += nAmt;
+      bExisting.itemsCount += 1;
+      buyerAggMap.set(bKey, bExisting);
+
+      // Channel aggregation
+      const ch = String(r.channel || "Not Set").trim() || "Not Set";
+      const chExisting = channelAggMap.get(ch) || { channel: ch, amount: 0, qty: 0 };
+      chExisting.amount += nAmt;
+      chExisting.qty += netQty;
+      channelAggMap.set(ch, chExisting);
+
+      // Brand & SKU aggregation (following settlement breakdown items for settlements)
+      if (isSettlement) {
+        if (sItems.length > 0) {
+          const totalCostSum = sItems.reduce((acc, it) => acc + Number(it.total_cost || (Number(it.qty || 0) * Number(it.unit_cost || 0))), 0);
+          const totalQtySum = sItems.reduce((acc, it) => acc + Number(it.qty || 0), 0);
+
+          sItems.forEach((si: any) => {
+            const siQty = Number(si.qty || 0);
+            const siCost = Number(si.total_cost || (siQty * Number(si.unit_cost || 0)));
+            const itemRev = totalCostSum > 0 ? (siCost / totalCostSum) * nAmt : (totalQtySum > 0 ? (siQty / totalQtySum) * nAmt : 0);
+            const itemBrand = resolveSkuBrand(si.sku, si.description);
+
+            // Filter by brand if active
+            if (summaryBrandFilter !== "all" && itemBrand.toLowerCase() !== summaryBrandFilter.toLowerCase()) {
+              return;
+            }
+
+            // Brand aggregation
+            const brExisting = brandAggMap.get(itemBrand) || { brand: itemBrand, amount: 0, qty: 0 };
+            brExisting.amount += itemRev;
+            brExisting.qty += siQty;
+            brandAggMap.set(itemBrand, brExisting);
+
+            // SKU aggregation
+            const siSku = String(si.sku || "").trim();
+            if (siSku) {
+              const sExisting = skuAggMap.get(siSku) || {
+                sku: siSku,
+                name: si.description || siSku,
+                brand: itemBrand,
+                demand_qty: 0,
+                net_qty: 0,
+                net_amount: 0,
+                total_cost: 0,
+                gross_profit: 0
+              };
+              sExisting.demand_qty += siQty;
+              sExisting.net_qty += siQty;
+              sExisting.net_amount += itemRev;
+              sExisting.total_cost += siCost;
+              sExisting.gross_profit = sExisting.net_amount - sExisting.total_cost;
+              skuAggMap.set(siSku, sExisting);
+            }
+          });
+        } else {
+          // Consignment / settlement without uploaded breakdown file
+          const br = "Consignment Settlement";
+          const brExisting = brandAggMap.get(br) || { brand: br, amount: 0, qty: 0 };
+          brExisting.amount += nAmt;
+          brExisting.qty += netQty;
+          brandAggMap.set(br, brExisting);
+        }
+      } else if (!isNonProduct) {
+        const br = String(r.brand || "Unassigned Brand").trim() || "Unassigned Brand";
+        const brExisting = brandAggMap.get(br) || { brand: br, amount: 0, qty: 0 };
+        brExisting.amount += nAmt;
+        brExisting.qty += netQty;
+        brandAggMap.set(br, brExisting);
+
+        // SKU aggregation
+        const sku = String(r.product_sku || "").trim();
+        if (sku) {
+          const sExisting = skuAggMap.get(sku) || {
+            sku,
+            name: r.product_name || sku,
+            brand: br,
+            demand_qty: 0,
+            net_qty: 0,
+            net_amount: 0,
+            total_cost: 0,
+            gross_profit: 0
+          };
+          sExisting.demand_qty += dQty;
+          sExisting.net_qty += netQty;
+          sExisting.net_amount += nAmt;
+          sExisting.total_cost += rowCost;
+          sExisting.gross_profit = sExisting.net_amount - sExisting.total_cost;
+          skuAggMap.set(sku, sExisting);
+        }
+      }
+    });
+
+    const grossProfit = netAmount - totalCost;
+    const marginPercent = netAmount > 0 ? (grossProfit / netAmount) * 100 : 0;
+    const cnRatePercent = demandAmount > 0 ? (cnAmount / demandAmount) * 100 : 0;
+
+    return {
+      netRevenue: netAmount,
+      demandQty,
+      demandAmount,
+      cnQty,
+      cnAmount,
+      nonSalesAmount,
+      totalCost,
+      grossProfit,
+      marginPercent,
+      cnRatePercent,
+      buyers: Array.from(buyerAggMap.values()).sort((a, b) => b.net_amount - a.net_amount),
+      channels: Array.from(channelAggMap.values()).filter((x) => x.amount > 0).sort((a, b) => b.amount - a.amount),
+      brands: Array.from(brandAggMap.values()).filter((x) => x.amount > 0).sort((a, b) => b.amount - a.amount),
+      topSkus: Array.from(skuAggMap.values()).sort((a, b) => b.demand_qty - a.demand_qty).slice(0, 5)
+    };
+  }, [summaryFilteredRecords]);
+
+  // Benchmark target periods (MoM, YoY Same Month, YTD vs LYTD)
+  const benchmarkPeriods = React.useMemo(() => {
+    const [yStr, mStr] = (currentPeriod || "2026-01").split("-");
+    const y = parseInt(yStr, 10) || 2026;
+    const m = parseInt(mStr, 10) || 1;
+
+    // MoM: Prior month
+    const dPrev = new Date(y, m - 2, 1);
+    const momPeriod = `${dPrev.getFullYear()}-${String(dPrev.getMonth() + 1).padStart(2, "0")}`;
+
+    // YoY: Same month prior year
+    const yoyPeriod = `${y - 1}-${String(m).padStart(2, "0")}`;
+
+    // YTD periods (current year Jan through active month)
+    const ytdPeriods: string[] = [];
+    for (let i = 1; i <= m; i++) {
+      ytdPeriods.push(`${y}-${String(i).padStart(2, "0")}`);
+    }
+
+    // LYTD periods (prior year Jan through active month)
+    const lytdPeriods: string[] = [];
+    for (let i = 1; i <= m; i++) {
+      lytdPeriods.push(`${y - 1}-${String(i).padStart(2, "0")}`);
+    }
+
+    return { momPeriod, yoyPeriod, ytdPeriods, lytdPeriods, y, m };
+  }, [currentPeriod]);
+
+  // Compute filtered metrics for any historical batch or list of batches
+  const computeBatchFilteredMetrics = React.useCallback((batchOrList: any | any[]) => {
+    const batchList = Array.isArray(batchOrList) ? batchOrList : (batchOrList ? [batchOrList] : []);
+    let netRevenue = 0;
+    let demandQty = 0;
+    let demandAmount = 0;
+    let cnAmount = 0;
+    let grossProfit = 0;
+    let hasData = false;
+
+    const buyersMap = new Map<string, any>();
+
+    batchList.forEach((b: any) => {
+      if (!b) return;
+      const summary = b.sellin_summary;
+      if (!summary && b.net_amount !== undefined) {
+        if (summaryChannelFilter === "all" && summaryBuyerFilter === "all" && summaryBrandFilter === "all") {
+          netRevenue += Number(b.net_amount || 0);
+          demandQty += Number(b.total_demand_qty || 0);
+          demandAmount += Number(b.total_demand_amount || 0);
+          cnAmount += Number(b.total_cn_amount || 0);
+          grossProfit += Number(b.gross_profit || 0);
+          hasData = true;
+        }
+        return;
+      }
+
+      if (!summary?.buyers_summary) return;
+      hasData = true;
+
+      summary.buyers_summary.forEach((buyer: any) => {
+        // Channel filter
+        if (summaryChannelFilter !== "all") {
+          const ch = String(buyer.channel || "").toLowerCase();
+          if (ch !== summaryChannelFilter.toLowerCase()) return;
+        }
+        // Buyer filter
+        if (summaryBuyerFilter !== "all") {
+          const bCode = String(buyer.buyer_code || "").toLowerCase();
+          const bName = String(buyer.buyer_name || "").toLowerCase();
+          const target = summaryBuyerFilter.toLowerCase();
+          if (bCode !== target && bName !== target) return;
+        }
+
+        // Brand filter
+        if (summaryBrandFilter !== "all") {
+          const brandTarget = summaryBrandFilter.toLowerCase();
+          const matchingItems = (buyer.items || []).filter((it: any) =>
+            String(it.brand || "").toLowerCase() === brandTarget
+          );
+          if (matchingItems.length === 0) return;
+
+          matchingItems.forEach((it: any) => {
+            const itNet = Number(it.nett_amount ?? it.net_amount ?? (Number(it.total_demand || 0) - Number(it.cn_amount || 0)));
+            const itQty = Number(it.qty ?? it.demand_qty ?? 0);
+            netRevenue += itNet;
+            demandQty += itQty;
+            demandAmount += Number(it.total_demand || 0);
+            cnAmount += Number(it.cn_amount || 0);
+
+            const bKey = (buyer.buyer_code || buyer.buyer_name).toLowerCase();
+            const prevB = buyersMap.get(bKey) || {
+              buyer_name: buyer.buyer_name,
+              buyer_code: buyer.buyer_code,
+              channel: buyer.channel,
+              net_amount: 0,
+              demand_qty: 0
+            };
+            prevB.net_amount += itNet;
+            prevB.demand_qty += itQty;
+            buyersMap.set(bKey, prevB);
+          });
+        } else {
+          // All brands
+          const bNet = Number(buyer.net_amount ?? buyer.net_receivable ?? 0);
+          const bQty = Number(buyer.demand_qty ?? 0);
+          netRevenue += bNet;
+          demandQty += bQty;
+          demandAmount += Number(buyer.demand_amount ?? 0);
+          cnAmount += Number(buyer.cn_amount ?? 0);
+
+          const bKey = (buyer.buyer_code || buyer.buyer_name).toLowerCase();
+          const prevB = buyersMap.get(bKey) || {
+            buyer_name: buyer.buyer_name,
+            buyer_code: buyer.buyer_code,
+            channel: buyer.channel,
+            net_amount: 0,
+            demand_qty: 0
+          };
+          prevB.net_amount += bNet;
+          prevB.demand_qty += bQty;
+          buyersMap.set(bKey, prevB);
+        }
+      });
+
+      if (summary.gross_profit !== undefined && summaryBrandFilter === "all" && summaryChannelFilter === "all" && summaryBuyerFilter === "all") {
+        grossProfit += Number(summary.gross_profit || 0);
+      }
+    });
+
+    return {
+      netRevenue,
+      demandQty,
+      demandAmount,
+      cnAmount,
+      grossProfit,
+      hasData,
+      buyersMap
+    };
+  }, [summaryChannelFilter, summaryBuyerFilter, summaryBrandFilter]);
+
+  // Executive Benchmark Comparison calculations
+  const benchmarkComparison = React.useMemo(() => {
+    const cur = currentSummaryMetrics;
+    let baseline: {
+      netRevenue: number;
+      demandQty: number;
+      demandAmount: number;
+      grossProfit: number;
+      hasData: boolean;
+      label: string;
+      sublabel: string;
+      buyersMap?: Map<string, any>;
+    } = { netRevenue: 0, demandQty: 0, demandAmount: 0, grossProfit: 0, hasData: false, label: "", sublabel: "" };
+
+    let currentCompNet = cur.netRevenue;
+    let currentCompDemand = cur.demandQty;
+    let currentCompProfit = cur.grossProfit;
+
+    if (summaryBenchmark === "mom") {
+      const momBatch = allBatches.find((b) => b.period === benchmarkPeriods.momPeriod);
+      const m = computeBatchFilteredMetrics(momBatch);
+      const labelParts = formatPeriodLabel(benchmarkPeriods.momPeriod);
+      baseline = { ...m, label: `vs ${labelParts}`, sublabel: `Last Month (${labelParts})` };
+    } else if (summaryBenchmark === "yoy") {
+      const yoyBatch = allBatches.find((b) => b.period === benchmarkPeriods.yoyPeriod);
+      const m = computeBatchFilteredMetrics(yoyBatch);
+      const labelParts = formatPeriodLabel(benchmarkPeriods.yoyPeriod);
+      baseline = { ...m, label: `vs ${labelParts}`, sublabel: `Same Mo. Last Year (${labelParts})` };
+    } else {
+      // YTD vs LYTD
+      const priorYtdBatches = allBatches.filter(
+        (b) => b.period !== currentPeriod && benchmarkPeriods.ytdPeriods.includes(b.period)
+      );
+      const priorYtd = computeBatchFilteredMetrics(priorYtdBatches);
+      currentCompNet = cur.netRevenue + priorYtd.netRevenue;
+      currentCompDemand = cur.demandQty + priorYtd.demandQty;
+      currentCompProfit = cur.grossProfit + priorYtd.grossProfit;
+
+      const lytdBatches = allBatches.filter((b) => benchmarkPeriods.lytdPeriods.includes(b.period));
+      const lytd = computeBatchFilteredMetrics(lytdBatches);
+      baseline = {
+        ...lytd,
+        label: `vs LYTD (${benchmarkPeriods.y - 1})`,
+        sublabel: `Last Year-to-Date (Jan–${formatPeriodLabel(currentPeriod).split(" ")[0]} ${benchmarkPeriods.y - 1})`
+      };
+    }
+
+    const calcDelta = (currVal: number, baseVal: number) => {
+      if (!baseline.hasData || baseVal === 0) {
+        if (currVal > 0) return { percent: null, diff: currVal, isNew: true, text: "No Prior Data" };
+        return { percent: 0, diff: 0, isNew: false, text: "0.0%" };
+      }
+      const diff = currVal - baseVal;
+      const percent = (diff / Math.abs(baseVal)) * 100;
+      const prefix = percent > 0 ? "+" : "";
+      return {
+        percent,
+        diff,
+        isNew: false,
+        text: `${prefix}${percent.toFixed(1)}%`
+      };
+    };
+
+    const netDelta = calcDelta(currentCompNet, baseline.netRevenue);
+    const demandDelta = calcDelta(currentCompDemand, baseline.demandQty);
+    const profitDelta = calcDelta(currentCompProfit, baseline.grossProfit);
+
+    return {
+      baseline,
+      currentCompNet,
+      currentCompDemand,
+      currentCompProfit,
+      netDelta,
+      demandDelta,
+      profitDelta
+    };
+  }, [currentSummaryMetrics, summaryBenchmark, allBatches, benchmarkPeriods, computeBatchFilteredMetrics, currentPeriod]);
+
+  // Frequent Purchase & Loyalty Matrix (Current vs MoM Prior Month)
+  const frequentPurchaseAnalysis = React.useMemo(() => {
+    const momBatch = allBatches.find((b) => b.period === benchmarkPeriods.momPeriod);
+    const momMetrics = computeBatchFilteredMetrics(momBatch);
+    const prevBuyerMap = momMetrics.buyersMap || new Map<string, any>();
+
+    const currentBuyers = currentSummaryMetrics.buyers;
+    const currentBuyerKeys = new Set(currentBuyers.map((b) => (b.buyer_code || b.buyer_name).toLowerCase()));
+
+    const repeatCore: any[] = [];
+    const newBuyers: any[] = [];
+    const dormantBuyers: any[] = [];
+
+    let repeatSpend = 0;
+    let newSpend = 0;
+    let dormantSpend = 0;
+
+    currentBuyers.forEach((b) => {
+      const key = (b.buyer_code || b.buyer_name).toLowerCase();
+      const prev = prevBuyerMap.get(key);
+      if (prev && prev.net_amount > 0) {
+        const diff = b.net_amount - prev.net_amount;
+        const pct = prev.net_amount > 0 ? (diff / prev.net_amount) * 100 : 0;
+        repeatCore.push({
+          ...b,
+          prev_amount: prev.net_amount,
+          diff,
+          pct
+        });
+        repeatSpend += b.net_amount;
+      } else {
+        newBuyers.push(b);
+        newSpend += b.net_amount;
+      }
+    });
+
+    prevBuyerMap.forEach((prevB, key) => {
+      if (!currentBuyerKeys.has(key) && prevB.net_amount > 0) {
+        dormantBuyers.push(prevB);
+        dormantSpend += prevB.net_amount;
+      }
+    });
+
+    repeatCore.sort((a, b) => b.net_amount - a.net_amount);
+    newBuyers.sort((a, b) => b.net_amount - a.net_amount);
+    dormantBuyers.sort((a, b) => b.net_amount - a.net_amount);
+
+    const totalActive = currentBuyers.length;
+    const totalBenchmarkBase = repeatCore.length + dormantBuyers.length;
+    const retentionRate = totalBenchmarkBase > 0 ? (repeatCore.length / totalBenchmarkBase) * 100 : 100;
+
+    return {
+      repeatCore,
+      newBuyers,
+      dormantBuyers,
+      repeatSpend,
+      newSpend,
+      dormantSpend,
+      totalActive,
+      retentionRate,
+      momLabel: formatPeriodLabel(benchmarkPeriods.momPeriod)
+    };
+  }, [currentSummaryMetrics.buyers, allBatches, benchmarkPeriods, computeBatchFilteredMetrics]);
 
   // Handle Tax Invoice PDF/Image Upload and AI Parsing with 8-page batching
   const handleInvoicePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3564,101 +4432,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
     const existingItems = Array.isArray(record.settlement_items) ? record.settlement_items : [];
     setSettlementItemsList(existingItems);
     setSettlementFileName(record.settlement_file_name || "");
-    setTiktokSyncStatus(null);
-
-    // If buyer / channel is TikTok, fetch registered TikTok shops and resolve Shop ID directly
-    const bCode = String(record.buyer_code || "").toLowerCase();
-    const bName = String(record.buyer_name || "").toLowerCase();
-    const ch = String(record.channel || "").toLowerCase();
-    const isTikTok = bCode.includes("tiktok") || bName.includes("tiktok") || ch.includes("tiktok");
-    if (isTikTok) {
-      fetch(`${API_BASE}/api/tiktok/shops`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (data && data.success && Array.isArray(data.shops) && data.shops.length > 0) {
-            setTiktokShops(data.shops);
-
-            // Read Shop ID directly from record or bound settlement data
-            const boundShopId = String(
-              record.settlement_shop_id ||
-              record.shop_id ||
-              record.tiktok_shop_id ||
-              record.raw_data?.shop_id ||
-              record.raw_data?.tiktok_shop_id ||
-              ""
-            ).trim();
-
-            if (boundShopId && data.shops.some((s: any) => String(s.id).trim() === boundShopId)) {
-              setSelectedTiktokShopId(boundShopId);
-            } else if (data.shops.length === 1) {
-              setSelectedTiktokShopId(data.shops[0].id);
-            } else {
-              setSelectedTiktokShopId("");
-            }
-          }
-        })
-        .catch(() => {});
-    }
-
+    setEditingSettlementCostIdx(null);
+    setEditingSettlementCostVal("");
     setShowSettlementModal(true);
-  };
-
-  // Sync TikTok Settlement Breakdown from Compiled Sales Data
-  const handleSyncTiktokSettlement = async () => {
-    if (!settlementTarget) return;
-    setLoadingTiktokSync(true);
-    try {
-      const selectedShopObj = tiktokShops.find((s) => s.id === selectedTiktokShopId);
-      const res = await fetch(`${API_BASE}/api/sellin/tiktok-settlement-sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          period: currentPeriod,
-          shop_id: selectedTiktokShopId,
-          shop_name: selectedShopObj?.name || ""
-        })
-      });
-      const data = await res.json();
-      if (!res.ok || (!data.success && !data.compiled)) {
-        setTiktokSyncStatus({
-          checked: true,
-          compiled: false,
-          can_sync: false,
-          unassigned_skus: [],
-          message: data.error || "TikTok Sales Report for this period has not been compiled yet."
-        });
-        showToast(data.error || "Compilation required in TikTok Sales Report", "warning");
-        return;
-      }
-
-      if (!data.can_sync) {
-        setTiktokSyncStatus({
-          checked: true,
-          compiled: true,
-          can_sync: false,
-          unassigned_skus: data.unassigned_skus || [],
-          message: data.message || `Found ${data.unassigned_skus?.length || 0} unassigned TikTok SKUs.`
-        });
-        showToast(data.message || "Cannot sync: Unassigned SKUs must be mapped first", "warning");
-        return;
-      }
-
-      // 100% assigned and ready!
-      setTiktokSyncStatus({
-        checked: true,
-        compiled: true,
-        can_sync: true,
-        unassigned_skus: [],
-        message: data.message
-      });
-      setSettlementItemsList(data.items || []);
-      setSettlementFileName(data.file_name || `TikTok_Compile_${currentPeriod}.sync`);
-      showToast(`Loaded ${data.items?.length || 0} product items from compiled TikTok sales!`, "success");
-    } catch (err: any) {
-      showToast("Failed to sync TikTok settlement: " + err.message, "error");
-    } finally {
-      setLoadingTiktokSync(false);
-    }
   };
 
   // Download Sample Excel Template for Settlement Breakdown
@@ -3675,8 +4451,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
   };
 
   // Download Existing Settlement Items or Template
-  const handleDownloadSettlementExcel = (record: any) => {
-    const items = Array.isArray(record.settlement_items) ? record.settlement_items : [];
+  const handleDownloadSettlementExcel = (record?: any) => {
+    const items = settlementItemsList.length > 0 
+      ? settlementItemsList 
+      : (Array.isArray(record?.settlement_items) ? record.settlement_items : []);
     if (items.length === 0) {
       handleDownloadSettlementTemplate();
       return;
@@ -3686,13 +4464,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
       SKU: it.sku || "",
       Description: it.description || "",
       Qty: Number(it.qty || 0),
-      "Unit Cost ($)": Number(it.unit_cost || 0),
+      "Landing Cost ($)": parseFloat(String(it.unit_cost)) || 0,
       "Total Cost ($)": Number(it.total_cost || 0)
     }));
-    const ws = XLSX.utils.json_to_sheet(rows, { header: ["SKU", "Description", "Qty", "Unit Cost ($)", "Total Cost ($)"] });
-    ws["!cols"] = [{ wch: 18 }, { wch: 45 }, { wch: 12 }, { wch: 15 }, { wch: 15 }];
-    XLSX.utils.book_append_sheet(wb, ws, "Settlement_Items");
-    const safeName = String(record.product_name || record.buyer_name || "Settlement").replace(/[^a-zA-Z0-9_-]/g, "_");
+    const ws = XLSX.utils.json_to_sheet(rows, { header: ["SKU", "Description", "Qty", "Landing Cost ($)", "Total Cost ($)"] });
+    ws["!cols"] = [{ wch: 18 }, { wch: 45 }, { wch: 12 }, { wch: 16 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, ws, "Settlement_Breakdown");
+    const safeName = String(record?.product_name || record?.buyer_name || settlementTarget?.product_name || "Settlement").replace(/[^a-zA-Z0-9_-]/g, "_");
     XLSX.writeFile(wb, `${safeName}_Breakdown_${currentPeriod}.xlsx`);
   };
 
@@ -3723,7 +4501,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
           sku: string;
           description: string;
           qty: number;
-          unit_cost: number;
+          unit_cost: number | string;
           total_cost: number;
         }> = [];
 
@@ -3775,30 +4553,39 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
     setSavingSettlementItems(true);
     try {
+      const sanitizedItems = settlementItemsList.map((it) => {
+        const uCost = parseFloat(String(it.unit_cost)) || 0;
+        const q = Number(it.qty || 0);
+        return {
+          ...it,
+          qty: q,
+          unit_cost: uCost,
+          total_cost: Math.round(q * uCost * 100) / 100
+        };
+      });
+
       const res = await fetch(`${API_BASE}/api/sellin/save-settlement-items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: settlementTarget.id,
           period: currentPeriod,
-          items: settlementItemsList,
+          items: sanitizedItems,
           file_name: settlementFileName,
-          shop_id: selectedTiktokShopId || null
+          shop_id: settlementTarget.shop_id || null
         })
       });
       const data = await res.json();
       if (res.ok && data.success) {
         showToast(data.message || "Settlement breakdown saved successfully!", "success");
-        const newTotalCost = settlementItemsList.reduce((acc, it) => acc + Number(it.total_cost || 0), 0);
+        const newTotalCost = sanitizedItems.reduce((acc, it) => acc + Number(it.total_cost || 0), 0);
         setRecords((prev) =>
           prev.map((r) =>
             r.id === settlementTarget.id
               ? {
                   ...r,
-                  settlement_items: data.settlement_items || settlementItemsList,
+                  settlement_items: data.settlement_items || sanitizedItems,
                   settlement_file_name: settlementFileName,
-                  settlement_shop_id: selectedTiktokShopId || r.settlement_shop_id,
-                  shop_id: selectedTiktokShopId || r.shop_id,
                   total_cost: newTotalCost,
                   gross_profit: Number(r.nett_amount || r.total_demand || 0) - newTotalCost,
                   validation_status: "valid"
@@ -4205,16 +4992,50 @@ export function SellInModule({ profile }: SellInModuleProps) {
       <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-white">
         {activeMainTab === "sellin" ? (
           <>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-base font-semibold text-zinc-900">Sell-In Data</h1>
-                <span className="px-2 py-0.5 rounded text-[10px] font-medium tracking-wide bg-slate-100 text-zinc-600 border border-slate-200">
-                  {batchData?.status === "published" ? "Published" : "Draft Inflow"}
-                </span>
+            <div className="flex items-center gap-5 flex-wrap">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-base font-semibold text-zinc-900">Sell-In Data</h1>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-medium tracking-wide bg-slate-100 text-zinc-600 border border-slate-200">
+                    {batchData?.status === "published" ? "Published" : "Draft Inflow"}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  Pure sales demand for stock, marketing, and manpower planning.
+                </p>
               </div>
-              <p className="text-xs text-zinc-500 mt-0.5">
-                Pure sales demand for stock, marketing, and manpower planning.
-              </p>
+
+              {/* View Mode Tabs: Summary View vs Detailed Sell-In (Topside, No Qty) */}
+              {batchData?.status === "published" && (
+                <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setSellinViewMode("summary")}
+                    className={cn(
+                      "px-3 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer",
+                      sellinViewMode === "summary"
+                        ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                        : "text-zinc-600 hover:text-zinc-900"
+                    )}
+                  >
+                    <BarChart3 size={13} />
+                    <span>Summary View</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSellinViewMode("details")}
+                    className={cn(
+                      "px-3 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer",
+                      sellinViewMode === "details"
+                        ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                        : "text-zinc-600 hover:text-zinc-900"
+                    )}
+                  >
+                    <FileText size={13} />
+                    <span>Detailed Sell-In</span>
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Action Controls: Clean Monochromatic Summary Pills + Month Selector */}
@@ -4339,6 +5160,19 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 <Download size={11} className="text-zinc-500" />
                 <span>Export</span>
               </button>
+
+              {/* Revoke Publish (Small icon only, no text, placed at end of Export) */}
+              {batchData?.status === "published" && (
+                <button
+                  type="button"
+                  onClick={handleRevokePublish}
+                  disabled={revokingBatch}
+                  className="h-7 w-7 rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-zinc-600 hover:text-red-600 flex items-center justify-center transition-all cursor-pointer shadow-2xs active:scale-98 disabled:opacity-50"
+                  title="Revoke published status back to Draft Inflow"
+                >
+                  <RotateCcw size={12} className={revokingBatch ? "animate-spin text-zinc-500" : "text-zinc-500"} />
+                </button>
+              )}
 
               {batchData?.status !== "published" && (
                 <button
@@ -4482,88 +5316,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
       {/* ========================================================================= */}
       {activeMainTab === "sellin" && (
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-          {/* Published View Mode Navigation Bar (Dedicated Level: ONLY appears when Published) */}
-          {batchData?.status === "published" && (
-            <div className="px-4 bg-white border-b border-slate-200 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-6">
-                <button
-                  type="button"
-                  onClick={() => setSellinViewMode("summary")}
-                  className={`py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-                    sellinViewMode === "summary"
-                      ? "border-[#0B57D0] text-[#0B57D0]"
-                      : "border-transparent text-zinc-500 hover:text-zinc-800 hover:border-slate-300"
-                  }`}
-                >
-                  <BarChart3 size={14} />
-                  <span>Summary View</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSellinViewMode("details")}
-                  className={`py-2.5 text-xs font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-1.5 ${
-                    sellinViewMode === "details"
-                      ? "border-[#0B57D0] text-[#0B57D0]"
-                      : "border-transparent text-zinc-500 hover:text-zinc-800 hover:border-slate-300"
-                  }`}
-                >
-                  <FileText size={14} />
-                  <span>Detailed Sell-In ({records.length})</span>
-                </button>
-              </div>
 
-              {/* Right side indicators, Source Files, & Month Selector */}
-              <div className="flex items-center gap-2 py-1.5 shrink-0">
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
-                  <CheckCircle2 size={12} className="text-emerald-600" />
-                  <span>Published Snapshot</span>
-                </span>
-                <button
-                  type="button"
-                  onClick={handleRevokePublish}
-                  disabled={revokingBatch}
-                  className="h-7 px-2.5 rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-2xs active:scale-98 disabled:opacity-50"
-                  title="Revoke published status back to Draft Inflow"
-                >
-                  <RotateCcw size={12} className={revokingBatch ? "animate-spin text-zinc-500" : "text-zinc-500"} />
-                  <span>{revokingBatch ? "Revoking..." : "Revoke Publish"}</span>
-                </button>
-
-                {/* Month Selector Capsule with Fixed Width */}
-                <div className="h-8 w-[185px] min-w-[185px] shrink-0 flex items-center justify-between px-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 transition-all shadow-2xs">
-                  <button
-                    type="button"
-                    onClick={handlePrevMonth}
-                    disabled={loading}
-                    className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
-                    title="Previous Month"
-                  >
-                    ‹
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openMonthPicker}
-                    className="relative flex-1 flex items-center justify-center gap-1.5 px-1 py-1 rounded hover:bg-slate-100/70 transition-colors cursor-pointer"
-                    title="Click to select month & year directly"
-                  >
-                    <Calendar size={13} className="text-[#0B57D0] shrink-0" />
-                    <span className="text-xs font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center uppercase">
-                      {formatPeriodLabel(currentPeriod)}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleNextMonth}
-                    disabled={loading}
-                    className="w-5 h-5 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
-                    title="Next Month"
-                  >
-                    ›
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Filter & Action Toolbar (Only shown in Draft OR when viewing Detailed Sell-In) */}
           {(batchData?.status !== "published" || sellinViewMode === "details") && (
@@ -4752,51 +5505,530 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 )}
               </div>
             ) : sellinViewMode === "summary" ? (
-              <div className="p-4 space-y-5 bg-[#F8F9FA]/60 min-h-full">
-                {/* 1. FINANCIAL SUMMARY METRIC CARDS */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs">
-                    <span className="text-[11px] font-medium text-zinc-500">Gross Sales Demand</span>
-                    <div className="text-lg font-bold text-zinc-900 mt-0.5 font-mono">
-                      ${(compiledSummaryData?.total_demand_amount ?? kpis.grossDemand).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <span className="text-[11px] text-zinc-400">
-                      {(compiledSummaryData?.total_demand_qty ?? kpis.demandQty).toLocaleString()} units demanded
+              <div className="p-4 space-y-4 bg-[#F8F9FA]/60 min-h-full">
+                {/* ========================================================================= */}
+                {/* 1. EXECUTIVE FILTER & COMPARISON TOOLBAR                                  */}
+                {/* ========================================================================= */}
+                <div className="bg-white rounded-lg border border-slate-200 p-2.5 shadow-2xs flex flex-wrap items-center justify-between gap-2.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider flex items-center gap-1.5 pl-1">
+                      <Filter size={12} className="text-[#0B57D0]" />
+                      <span>Filter:</span>
                     </span>
+
+                    {/* Channel Filter */}
+                    <div className="relative">
+                      <select
+                        value={summaryChannelFilter}
+                        onChange={(e) => setSummaryChannelFilter(e.target.value)}
+                        className="h-7 pl-2.5 pr-7 bg-white border border-slate-200 rounded-md text-xs font-medium text-zinc-800 hover:border-[#0B57D0]/40 focus:outline-none focus:border-[#0B57D0] cursor-pointer appearance-none shadow-2xs"
+                      >
+                        {summaryChannelOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                    </div>
+
+                    {/* Buyer Filter */}
+                    <div className="relative max-w-[200px]">
+                      <select
+                        value={summaryBuyerFilter}
+                        onChange={(e) => setSummaryBuyerFilter(e.target.value)}
+                        className="w-full h-7 pl-2.5 pr-7 bg-white border border-slate-200 rounded-md text-xs font-medium text-zinc-800 hover:border-[#0B57D0]/40 focus:outline-none focus:border-[#0B57D0] cursor-pointer appearance-none truncate shadow-2xs"
+                      >
+                        {summaryBuyerOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                    </div>
+
+                    {/* Brand Filter */}
+                    <div className="relative max-w-[170px]">
+                      <select
+                        value={summaryBrandFilter}
+                        onChange={(e) => setSummaryBrandFilter(e.target.value)}
+                        className="w-full h-7 pl-2.5 pr-7 bg-white border border-slate-200 rounded-md text-xs font-medium text-zinc-800 hover:border-[#0B57D0]/40 focus:outline-none focus:border-[#0B57D0] cursor-pointer appearance-none truncate shadow-2xs"
+                      >
+                        {summaryBrandOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                    </div>
+
+                    {/* Reset Filters Pill */}
+                    {(summaryChannelFilter !== "all" || summaryBuyerFilter !== "all" || summaryBrandFilter !== "all") && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSummaryChannelFilter("all");
+                          setSummaryBuyerFilter("all");
+                          setSummaryBrandFilter("all");
+                        }}
+                        className="h-7 px-2 rounded-md bg-slate-100 hover:bg-slate-200 text-zinc-600 text-[11px] font-medium inline-flex items-center gap-1 transition-all cursor-pointer border border-slate-200"
+                        title="Clear all active filters"
+                      >
+                        <X size={11} />
+                        <span>Reset Filters</span>
+                      </button>
+                    )}
                   </div>
 
-                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs">
-                    <span className="text-[11px] font-medium text-zinc-500">Returns & Non-Sales Deductions</span>
-                    <div className="text-lg font-bold text-zinc-700 mt-0.5 font-mono">
-                      -${((compiledSummaryData?.total_cn_amount ?? kpis.cnAmount) + (compiledSummaryData?.total_non_sales_amount ?? 0)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {/* Benchmark Comparison Selector + Month Capsule */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center p-0.5 bg-slate-100 rounded-md border border-slate-200 shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={() => setSummaryBenchmark("mom")}
+                        className={cn(
+                          "px-2.5 py-1 rounded text-[11px] font-medium transition-all cursor-pointer",
+                          summaryBenchmark === "mom"
+                            ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                            : "text-zinc-600 hover:text-zinc-900"
+                        )}
+                        title={`Compare against prior calendar month (${formatPeriodLabel(benchmarkPeriods.momPeriod)})`}
+                      >
+                        MoM
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSummaryBenchmark("yoy")}
+                        className={cn(
+                          "px-2.5 py-1 rounded text-[11px] font-medium transition-all cursor-pointer",
+                          summaryBenchmark === "yoy"
+                            ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                            : "text-zinc-600 hover:text-zinc-900"
+                        )}
+                        title={`Compare against same month last year (${formatPeriodLabel(benchmarkPeriods.yoyPeriod)})`}
+                      >
+                        YoY Same Mo.
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSummaryBenchmark("ytd")}
+                        className={cn(
+                          "px-2.5 py-1 rounded text-[11px] font-medium transition-all cursor-pointer",
+                          summaryBenchmark === "ytd"
+                            ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                            : "text-zinc-600 hover:text-zinc-900"
+                        )}
+                        title={`Cumulative Year-to-Date vs Last Year-to-Date (${benchmarkPeriods.y} vs ${benchmarkPeriods.y - 1})`}
+                      >
+                        YTD vs LYTD
+                      </button>
                     </div>
-                    <span className="text-[11px] text-zinc-400">
-                      {(compiledSummaryData?.total_cn_qty ?? kpis.cnQty).toLocaleString()} returned units
-                    </span>
-                  </div>
 
-                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs">
-                    <span className="text-[11px] font-medium text-zinc-500">Net Receivable Revenue</span>
-                    <div className="text-lg font-bold text-[#0B57D0] mt-0.5 font-mono">
-                      ${(compiledSummaryData?.net_revenue ?? compiledSummaryData?.net_amount ?? kpis.netAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {/* Month Selector Capsule */}
+                    <div className="h-7 w-[160px] min-w-[160px] shrink-0 flex items-center justify-between px-1 rounded-md bg-white border border-slate-300 hover:bg-slate-50 transition-all shadow-2xs">
+                      <button
+                        type="button"
+                        onClick={handlePrevMonth}
+                        disabled={loading}
+                        className="w-4 h-4 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
+                        title="Previous Month"
+                      >
+                        ‹
+                      </button>
+                      <button
+                        type="button"
+                        onClick={openMonthPicker}
+                        className="relative flex-1 flex items-center justify-center gap-1 px-1 py-0.5 rounded hover:bg-slate-100/70 transition-colors cursor-pointer"
+                        title="Click to select month & year directly"
+                      >
+                        <Calendar size={11} className="text-[#0B57D0] shrink-0" />
+                        <span className="text-[11px] font-medium text-zinc-800 tracking-tight whitespace-nowrap text-center uppercase">
+                          {formatPeriodLabel(currentPeriod)}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleNextMonth}
+                        disabled={loading}
+                        className="w-4 h-4 shrink-0 rounded flex items-center justify-center text-zinc-500 hover:text-[#0B57D0] hover:bg-slate-100 transition-all cursor-pointer disabled:opacity-40 text-xs font-medium"
+                        title="Next Month"
+                      >
+                        ›
+                      </button>
                     </div>
-                    <span className="text-[11px] text-zinc-400">
-                      {(compiledSummaryData?.total_net_qty ?? (kpis.demandQty - kpis.cnQty)).toLocaleString()} net deliverable units
-                    </span>
-                  </div>
-
-                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs">
-                    <span className="text-[11px] font-medium text-zinc-500">Gross Profit & Margin</span>
-                    <div className={`text-lg font-bold mt-0.5 font-mono ${(compiledSummaryData?.gross_profit ?? kpis.grossProfit) >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                      ${(compiledSummaryData?.gross_profit ?? kpis.grossProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </div>
-                    <span className="text-[11px] text-zinc-400">
-                      {(compiledSummaryData?.margin_percent ?? kpis.marginPercent).toFixed(1)}% margin (COGS: ${(compiledSummaryData?.total_cost_amount ?? kpis.totalCost).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                    </span>
                   </div>
                 </div>
 
-                {/* 2. EXPECTED CASH COLLECTION TIMELINE */}
+                {/* ========================================================================= */}
+                {/* 2. EXECUTIVE COMPARATIVE SCOREBOARD (4 CARDS)                             */}
+                {/* ========================================================================= */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                  {/* Metric 1: Net Receivable Revenue */}
+                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-zinc-500">
+                          {summaryBenchmark === "ytd" ? "Net Revenue (YTD)" : "Net Receivable Revenue"}
+                        </span>
+                        {/* Comparison delta badge */}
+                        {benchmarkComparison.netDelta.isNew ? (
+                          <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
+                            {benchmarkComparison.netDelta.text}
+                          </span>
+                        ) : benchmarkComparison.netDelta.diff >= 0 ? (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <TrendingUp size={10} />
+                            <span>{benchmarkComparison.netDelta.text}</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">
+                            <TrendingDown size={10} />
+                            <span>{benchmarkComparison.netDelta.text}</span>
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold text-[#0B57D0] mt-1 font-mono">
+                        ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompNet : currentSummaryMetrics.netRevenue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span className="truncate" title={benchmarkComparison.baseline.sublabel}>
+                        {benchmarkComparison.baseline.label || "Benchmark"}
+                      </span>
+                      <span className="font-mono text-zinc-600 font-medium shrink-0 ml-1">
+                        ${benchmarkComparison.baseline.netRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Metric 2: Gross Profit & Margin */}
+                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-zinc-500">
+                          {summaryBenchmark === "ytd" ? "Gross Profit (YTD)" : "Gross Profit & Margin"}
+                        </span>
+                        {benchmarkComparison.profitDelta.isNew ? (
+                          <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
+                            {benchmarkComparison.profitDelta.text}
+                          </span>
+                        ) : benchmarkComparison.profitDelta.diff >= 0 ? (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <TrendingUp size={10} />
+                            <span>{benchmarkComparison.profitDelta.text}</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">
+                            <TrendingDown size={10} />
+                            <span>{benchmarkComparison.profitDelta.text}</span>
+                          </span>
+                        )}
+                      </div>
+                      <div className={`text-xl font-bold mt-1 font-mono ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompProfit : currentSummaryMetrics.grossProfit) >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                        ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompProfit : currentSummaryMetrics.grossProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                    <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span>Margin: <strong className="text-zinc-700 font-mono">{currentSummaryMetrics.marginPercent.toFixed(1)}%</strong></span>
+                      <span className="text-zinc-500">COGS: ${currentSummaryMetrics.totalCost.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                    </div>
+                  </div>
+
+                  {/* Metric 3: Demand Volume & Returns */}
+                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-zinc-500">
+                          {summaryBenchmark === "ytd" ? "Demand Units (YTD)" : "Deliverable Demand Qty"}
+                        </span>
+                        {benchmarkComparison.demandDelta.isNew ? (
+                          <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
+                            {benchmarkComparison.demandDelta.text}
+                          </span>
+                        ) : benchmarkComparison.demandDelta.diff >= 0 ? (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <TrendingUp size={10} />
+                            <span>{benchmarkComparison.demandDelta.text}</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">
+                            <TrendingDown size={10} />
+                            <span>{benchmarkComparison.demandDelta.text}</span>
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xl font-bold text-zinc-900 mt-1 font-mono">
+                        {(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompDemand : currentSummaryMetrics.demandQty).toLocaleString()} <span className="text-xs font-normal text-zinc-500">units</span>
+                      </div>
+                    </div>
+                    <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span>Returns: {currentSummaryMetrics.cnQty.toLocaleString()} pcs</span>
+                      <span className="text-zinc-500 font-mono">{currentSummaryMetrics.cnRatePercent.toFixed(2)}% return rate</span>
+                    </div>
+                  </div>
+
+                  {/* Metric 4: Frequent & Active Buyers */}
+                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-zinc-500">Active Purchasing Buyers</span>
+                        <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-50 text-[#0B57D0] border border-blue-100">
+                          {frequentPurchaseAnalysis.retentionRate.toFixed(0)}% Retention
+                        </span>
+                      </div>
+                      <div className="text-xl font-bold text-zinc-900 mt-1 font-mono flex items-baseline gap-2">
+                        <span>{currentSummaryMetrics.buyers.length}</span>
+                        <span className="text-xs font-normal text-zinc-500">buyers this period</span>
+                      </div>
+                    </div>
+                    <div className="text-[10.5px] text-zinc-500 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-emerald-700 font-semibold">{frequentPurchaseAnalysis.repeatCore.length} Repeat Core</span>
+                      <span className="text-zinc-300">•</span>
+                      <span className="text-[#0B57D0] font-semibold">{frequentPurchaseAnalysis.newBuyers.length} New Inflow</span>
+                      <span className="text-zinc-300">•</span>
+                      <span className="text-amber-700 font-medium">{frequentPurchaseAnalysis.dormantBuyers.length} Dormant</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ========================================================================= */}
+                {/* 3. VISUAL CHARTS GRID (ROW 1: TWO SVG DONUT / PIE CHARTS)                */}
+                {/* ========================================================================= */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Chart 1: Channel Revenue Share Pie / Donut */}
+                  <DonutPieChart
+                    title="Channel Revenue Distribution"
+                    subtitle="Net sales breakdown across retail, supermarket, pharmacy, and wholesale channels."
+                    data={currentSummaryMetrics.channels.map((c) => ({
+                      label: c.channel,
+                      value: c.amount,
+                      sublabel: `${c.qty.toLocaleString()} pcs`
+                    }))}
+                    hoveredKey={hoveredChannelSlice}
+                    onHoverKey={setHoveredChannelSlice}
+                    unitLabel="Total Net"
+                    emptyMessage="No channel sales in this period"
+                  />
+
+                  {/* Chart 2: Brand Revenue Share Pie / Donut */}
+                  <DonutPieChart
+                    title="Brand Portfolio Share"
+                    subtitle="Net sales contribution across brand lines."
+                    data={currentSummaryMetrics.brands.map((b) => ({
+                      label: b.brand,
+                      value: b.amount,
+                      sublabel: `${b.qty.toLocaleString()} pcs`
+                    }))}
+                    hoveredKey={hoveredBrandSlice}
+                    onHoverKey={setHoveredBrandSlice}
+                    unitLabel="Total Brand"
+                    emptyMessage="No brand sales in this period"
+                  />
+                </div>
+
+                {/* ========================================================================= */}
+                {/* 4. VISUAL GRAPHS GRID (ROW 2: FREQUENT PURCHASE & FAST MOVING SKUS)       */}
+                {/* ========================================================================= */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {/* Card A: Frequent Purchase & Buyer Loyalty Matrix */}
+                  <div className="bg-white rounded-lg border border-slate-200 p-4 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
+                        <div>
+                          <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider flex items-center gap-1.5">
+                            <Users size={13} className="text-[#0B57D0]" />
+                            <span>Frequent Buyer Retention & MoM Velocity</span>
+                          </h3>
+                          <p className="text-[11px] text-zinc-500 mt-0.5">
+                            Core repeat reorders, newly onboarded buyers, and dormant accounts vs {frequentPurchaseAnalysis.momLabel}.
+                          </p>
+                        </div>
+                        <span className="text-[11px] font-mono font-semibold text-[#0B57D0]">
+                          {frequentPurchaseAnalysis.totalActive} active buyers
+                        </span>
+                      </div>
+
+                      {/* 3 Status Capsules across top */}
+                      <div className="grid grid-cols-3 gap-2 mb-3">
+                        <div className="p-2 rounded-lg bg-emerald-50/70 border border-emerald-100 flex flex-col">
+                          <span className="text-[10px] font-semibold text-emerald-800 uppercase tracking-wide">Repeat Core</span>
+                          <span className="text-sm font-bold text-emerald-900 font-mono mt-0.5">
+                            {frequentPurchaseAnalysis.repeatCore.length} <span className="text-[10px] font-normal text-emerald-700">buyers</span>
+                          </span>
+                          <span className="text-[10px] font-mono text-emerald-700 mt-0.5">
+                            ${frequentPurchaseAnalysis.repeatSpend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          </span>
+                        </div>
+
+                        <div className="p-2 rounded-lg bg-blue-50/70 border border-blue-100 flex flex-col">
+                          <span className="text-[10px] font-semibold text-[#0B57D0] uppercase tracking-wide">New Inflow</span>
+                          <span className="text-sm font-bold text-zinc-900 font-mono mt-0.5">
+                            {frequentPurchaseAnalysis.newBuyers.length} <span className="text-[10px] font-normal text-zinc-500">buyers</span>
+                          </span>
+                          <span className="text-[10px] font-mono text-zinc-600 mt-0.5">
+                            ${frequentPurchaseAnalysis.newSpend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          </span>
+                        </div>
+
+                        <div className="p-2 rounded-lg bg-amber-50/70 border border-amber-100 flex flex-col">
+                          <span className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide">Dormant</span>
+                          <span className="text-sm font-bold text-amber-900 font-mono mt-0.5">
+                            {frequentPurchaseAnalysis.dormantBuyers.length} <span className="text-[10px] font-normal text-amber-700">drop-off</span>
+                          </span>
+                          <span className="text-[10px] font-mono text-amber-700 mt-0.5">
+                            ${frequentPurchaseAnalysis.dormantSpend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Ranked Repeat / Active Buyers List */}
+                      <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                        {currentSummaryMetrics.buyers.slice(0, 6).map((b: any, idx: number) => {
+                          const isRepeat = frequentPurchaseAnalysis.repeatCore.find(
+                            (rc) => (rc.buyer_code && rc.buyer_code === b.buyer_code) || rc.buyer_name === b.buyer_name
+                          );
+                          const totalSpend = currentSummaryMetrics.netRevenue;
+                          const spendPct = totalSpend > 0 ? (b.net_amount / totalSpend) * 100 : 0;
+
+                          return (
+                            <div key={idx} className="p-2 rounded-lg bg-slate-50/70 border border-slate-200/80 hover:bg-white hover:border-[#0B57D0]/40 transition-all text-xs">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="text-[10px] font-mono font-bold text-zinc-400 w-4">#{idx + 1}</span>
+                                  <span className="font-semibold text-zinc-900 truncate text-[11px]" title={b.buyer_name}>
+                                    {b.buyer_name}
+                                  </span>
+                                  {b.channel && (
+                                    <span className="px-1 py-0.2 rounded text-[9px] font-medium bg-white text-zinc-600 border border-slate-200 shrink-0">
+                                      {b.channel}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 shrink-0">
+                                  {isRepeat ? (
+                                    <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-bold font-mono inline-flex items-center gap-0.5 ${
+                                      isRepeat.pct >= 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"
+                                    }`}>
+                                      {isRepeat.pct >= 0 ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
+                                      <span>{isRepeat.pct >= 0 ? "+" : ""}{isRepeat.pct.toFixed(0)}% MoM</span>
+                                    </span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-100">
+                                      New Customer
+                                    </span>
+                                  )}
+                                  <span className="font-bold text-zinc-900 font-mono text-[11px]">
+                                    ${Number(b.net_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                              </div>
+                              {/* Horizontal progress bar */}
+                              <div className="w-full bg-slate-200/70 h-1 rounded-full mt-1.5 overflow-hidden">
+                                <div
+                                  className="h-full bg-[#0B57D0] rounded-full transition-all duration-300"
+                                  style={{ width: `${Math.min(100, Math.max(4, spendPct))}%` }}
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span>Showing top {Math.min(6, currentSummaryMetrics.buyers.length)} buyers by spend</span>
+                      <span>{frequentPurchaseAnalysis.repeatCore.length} repeat buyers vs {frequentPurchaseAnalysis.momLabel}</span>
+                    </div>
+                  </div>
+
+                  {/* Card B: High-Velocity Fast-Moving SKUs */}
+                  <div className="bg-white rounded-lg border border-slate-200 p-4 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
+                        <div>
+                          <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider flex items-center gap-1.5">
+                            <ShoppingBag size={13} className="text-[#0B57D0]" />
+                            <span>Top Fast-Moving SKUs</span>
+                          </h3>
+                          <p className="text-[11px] text-zinc-500 mt-0.5">
+                            Highest deliverable unit volumes and profit contribution.
+                          </p>
+                        </div>
+                        <span className="text-[11px] font-mono text-zinc-500">
+                          Top 5 products
+                        </span>
+                      </div>
+
+                      {currentSummaryMetrics.topSkus.length === 0 ? (
+                        <div className="py-10 text-center text-xs text-zinc-400">
+                          No product deliveries recorded for this period.
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {currentSummaryMetrics.topSkus.map((sku: any, idx: number) => {
+                            const topQty = currentSummaryMetrics.topSkus[0]?.demand_qty || 1;
+                            const barPct = topQty > 0 ? (sku.demand_qty / topQty) * 100 : 0;
+                            const marginPct = sku.net_amount > 0 ? (sku.gross_profit / sku.net_amount) * 100 : 0;
+
+                            return (
+                              <div key={idx} className="p-2 rounded-lg bg-slate-50/70 border border-slate-200/80 hover:bg-white hover:border-[#0B57D0]/40 transition-all text-xs">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-[10px] font-mono font-bold text-zinc-400 w-4">#{idx + 1}</span>
+                                      <span className="font-semibold text-zinc-900 truncate text-[11px]" title={sku.name}>
+                                        {sku.name}
+                                      </span>
+                                    </div>
+                                    <div className="flex items-center gap-2 mt-0.5 pl-5 text-[10px] text-zinc-500">
+                                      <span className="font-mono">{sku.sku}</span>
+                                      {sku.brand && <span>• {sku.brand}</span>}
+                                    </div>
+                                  </div>
+
+                                  <div className="flex flex-col items-end shrink-0">
+                                    <span className="font-bold text-zinc-900 font-mono text-xs">
+                                      {sku.demand_qty.toLocaleString()} <span className="text-[10px] font-normal text-zinc-500">pcs</span>
+                                    </span>
+                                    <div className="flex items-center gap-1.5 mt-0.5 text-[10.5px]">
+                                      <span className="font-mono text-[#0B57D0] font-semibold">
+                                        ${sku.net_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </span>
+                                      <span className={`px-1 py-0.2 rounded text-[9px] font-mono font-semibold ${
+                                        marginPct >= 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"
+                                      }`}>
+                                        {marginPct.toFixed(0)}% margin
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Volume visual bar */}
+                                <div className="w-full bg-slate-200/70 h-1.5 rounded-full mt-2 overflow-hidden">
+                                  <div
+                                    className="h-full bg-gradient-to-r from-blue-500 to-[#0B57D0] rounded-full transition-all duration-300"
+                                    style={{ width: `${Math.min(100, Math.max(5, barPct))}%` }}
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span>Volume bars scaled relative to #1 product</span>
+                      <span>Ranked by deliverable demand qty</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ========================================================================= */}
+                {/* 5. EXPECTED CASH COLLECTION SCHEDULE                                      */}
+                {/* ========================================================================= */}
                 <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
                   <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex items-center justify-between">
                     <div>
@@ -4804,14 +6036,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         Expected Cash Collection Schedule
                       </h3>
                       <p className="text-[11px] text-zinc-500 mt-0.5">
-                        Forecasted cash inflow month calculated from individual buyer payment terms (e.g. 30, 60, 90 days from mid-month).
+                        Forecasted collection periods calculated from customer payment terms (30, 60, 90 days from mid-month).
                       </p>
                     </div>
-                    <span className="text-[11px] text-zinc-500 font-medium">
+                    <span className="text-[11px] text-zinc-500 font-medium font-mono">
                       {(compiledSummaryData?.cash_collection_timeline || []).length} scheduled collection periods
                     </span>
                   </div>
-                  
+
                   {(!compiledSummaryData?.cash_collection_timeline || compiledSummaryData.cash_collection_timeline.length === 0) ? (
                     <div className="p-6 text-center text-xs text-zinc-400">
                       No payment terms configured for buyers in this period.
@@ -4819,8 +6051,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 p-4">
                       {compiledSummaryData.cash_collection_timeline.map((item: any) => (
-                        <div 
-                          key={item.period} 
+                        <div
+                          key={item.period}
                           className="p-3.5 rounded-lg border border-slate-200 bg-[#F8F9FA]/40 hover:bg-white hover:border-[#0B57D0]/40 transition-all flex flex-col justify-between"
                         >
                           <div>
@@ -4837,8 +6069,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               ${(item.expected_amount ?? item.amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </div>
                           </div>
-                          <div 
-                            className="text-[10px] text-zinc-500 mt-2 truncate pt-2 border-t border-slate-100" 
+                          <div
+                            className="text-[10px] text-zinc-500 mt-2 truncate pt-2 border-t border-slate-100"
                             title={Array.isArray(item.buyers) ? item.buyers.join(", ") : ""}
                           >
                             {Array.isArray(item.buyers) ? item.buyers.join(", ") : ""}
@@ -4849,276 +6081,313 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   )}
                 </div>
 
-                {/* 3. BUYER BREAKDOWN & ORDERS */}
-                <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
-                  <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                        Buyer Breakdown & Orders ({filteredSummaryBuyers.length})
-                      </h3>
-                      <p className="text-[11px] text-zinc-500 mt-0.5">
-                        Itemized demand, return deductions, credit notes, payment terms, and net receivable per customer.
-                      </p>
-                    </div>
+                {/* ========================================================================= */}
+                {/* 6. COLLAPSIBLE ITEMIZE TABLES (ON-DEMAND AUDIT TRAIL)                     */}
+                {/* ========================================================================= */}
+                <div className="pt-1 flex flex-col items-center">
+                  <button
+                    type="button"
+                    onClick={() => setShowDetailedTables((prev) => !prev)}
+                    className="px-4 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 hover:border-[#0B57D0]/50 text-xs font-semibold text-zinc-800 inline-flex items-center gap-2 transition-all cursor-pointer shadow-2xs"
+                  >
+                    {showDetailedTables ? <EyeOff size={13} className="text-[#0B57D0]" /> : <Eye size={13} className="text-[#0B57D0]" />}
+                    <span>
+                      {showDetailedTables
+                        ? "Hide Itemized Data Tables"
+                        : `Show Itemized Data Tables (${filteredSummaryBuyers.length} Buyers, ${filteredSummarySkus.length} SKUs)`}
+                    </span>
+                    {showDetailedTables ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                  </button>
+                </div>
 
-                    <div className="relative w-64">
-                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                      <input
-                        type="text"
-                        placeholder="Search buyer, code, channel..."
-                        value={summaryBuyerSearch}
-                        onChange={(e) => setSummaryBuyerSearch(e.target.value)}
-                        className="w-full h-7 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
-                      />
-                    </div>
-                  </div>
+                {/* Detailed Buyer & SKU Output Tables (Only when expanded) */}
+                {showDetailedTables && (
+                  <div className="space-y-4 animate-in fade-in duration-200">
+                    {/* Buyer Breakdown Table */}
+                    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
+                      <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                            Buyer Breakdown & Orders ({filteredSummaryBuyers.length})
+                          </h3>
+                          <p className="text-[11px] text-zinc-500 mt-0.5">
+                            Itemized demand, return deductions, credit notes, payment terms, and net receivable per customer.
+                          </p>
+                        </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead className="bg-[#F8F9FA] border-b border-slate-200 text-[11px] font-medium text-zinc-500">
-                        <tr>
-                          <th className="py-2.5 px-3 w-10 text-center">#</th>
-                          <th className="py-2.5 px-3 min-w-[200px]">Buyer Name & Code</th>
-                          <th className="py-2.5 px-3 w-28">Channel</th>
-                          <th className="py-2.5 px-3 w-24 text-center">Payment Term</th>
-                          <th className="py-2.5 px-3 w-32 text-center">Expected Month</th>
-                          <th className="py-2.5 px-3 w-24 text-right">Demand (pcs)</th>
-                          <th className="py-2.5 px-3 w-28 text-right">Gross Demand ($)</th>
-                          <th className="py-2.5 px-3 w-24 text-right">CN Deduct ($)</th>
-                          <th className="py-2.5 px-3 w-24 text-right">Non-Sales ($)</th>
-                          <th className="py-2.5 px-3 w-28 text-right">Net Receivable ($)</th>
-                          <th className="py-2.5 px-3 w-20 text-center">Items</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {filteredSummaryBuyers.map((b: any, bIdx: number) => {
-                          const isExpanded = Boolean(expandedBuyerKeys[b.buyer_code || b.buyer_name]);
-                          const buyerNetAmt = b.net_receivable ?? b.net_amount ?? 0;
-                          const buyerCnAmt = b.cn_amount ?? b.reject_amount ?? 0;
-                          const itemsCount = Array.isArray(b.items) ? b.items.length : 0;
-                          const nonSalesCount = Array.isArray(b.non_sales_items) ? b.non_sales_items.length : 0;
+                        <div className="relative w-64">
+                          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                          <input
+                            type="text"
+                            placeholder="Search buyer, code, channel..."
+                            value={summaryBuyerSearch}
+                            onChange={(e) => setSummaryBuyerSearch(e.target.value)}
+                            className="w-full h-7 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
+                          />
+                        </div>
+                      </div>
 
-                          return (
-                            <React.Fragment key={b.buyer_code || b.buyer_name || bIdx}>
-                              <tr className="hover:bg-slate-50/80 transition-colors">
-                                <td className="py-2.5 px-3 text-center text-zinc-400 font-mono text-[11px]">{bIdx + 1}</td>
-                                <td className="py-2.5 px-3">
-                                  <div className="font-semibold text-zinc-900">{b.buyer_name || "—"}</div>
-                                  <div className="text-[11px] text-zinc-400 font-mono">{b.buyer_code}</div>
-                                </td>
-                                <td className="py-2.5 px-3">
-                                  <span className={`px-2 py-0.5 rounded text-[10.5px] font-medium border ${
-                                    !b.channel || b.channel === "Not Set"
-                                      ? "bg-amber-50 text-amber-700 border-amber-200 italic"
-                                      : "bg-slate-100 text-zinc-600 border-slate-200"
-                                  }`}>
-                                    {b.channel || "Not Set"}
-                                  </span>
-                                </td>
-                                <td className="py-2.5 px-3 text-center text-zinc-700 font-mono">
-                                  {b.payment_term || "90"} Days
-                                </td>
-                                <td className="py-2.5 px-3 text-center">
-                                  <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-[#0B57D0] border border-blue-100">
-                                    {b.expected_collection_label || b.expected_collection_period || "—"}
-                                  </span>
-                                </td>
-                                <td className="py-2.5 px-3 text-right text-zinc-800 font-mono font-medium">
-                                  {Number(b.demand_qty || 0).toLocaleString()}
-                                </td>
-                                <td className="py-2.5 px-3 text-right text-zinc-800 font-mono">
-                                  ${Number(b.demand_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </td>
-                                <td className="py-2.5 px-3 text-right text-zinc-600 font-mono">
-                                  {buyerCnAmt > 0 ? `-$${Number(buyerCnAmt).toFixed(2)}` : "-"}
-                                </td>
-                                <td className="py-2.5 px-3 text-right text-zinc-500 font-mono">
-                                  {Number(b.non_sales_amount || 0) > 0 ? `-$${Number(b.non_sales_amount).toFixed(2)}` : "-"}
-                                </td>
-                                <td className="py-2.5 px-3 text-right text-[#0B57D0] font-mono font-bold">
-                                  ${Number(buyerNetAmt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </td>
-                                <td className="py-2.5 px-3 text-center">
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleBuyerExpand(b.buyer_code || b.buyer_name)}
-                                    className="px-2 py-1 rounded bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 text-[10.5px] font-medium inline-flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
-                                    title="View itemized products purchased"
-                                  >
-                                    <span>{itemsCount} {itemsCount === 1 ? "SKU" : "SKUs"}</span>
-                                    {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-                                  </button>
-                                </td>
-                              </tr>
+                      <div className="overflow-x-auto max-h-96">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 text-[11px] font-medium text-zinc-500">
+                            <tr>
+                              <th className="py-2.5 px-3 w-10 text-center">#</th>
+                              <th className="py-2.5 px-3 min-w-[200px]">Buyer</th>
+                              <th className="py-2.5 px-3 w-24 text-center">Payment Term</th>
+                              <th className="py-2.5 px-3 w-32 text-center">Expected Month</th>
+                              <th className="py-2.5 px-3 w-24 text-right">Demand (pcs)</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Gross Demand ($)</th>
+                              <th className="py-2.5 px-3 w-24 text-right">CN Deduct ($)</th>
+                              <th className="py-2.5 px-3 w-24 text-right">Non-Sales ($)</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Net Receivable ($)</th>
+                              <th className="py-2.5 px-3 w-20 text-center">Items</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {filteredSummaryBuyers.map((b: any, bIdx: number) => {
+                              const isExpanded = Boolean(expandedBuyerKeys[b.buyer_code || b.buyer_name]);
+                              const buyerNetAmt = b.net_receivable ?? b.net_amount ?? 0;
+                              const buyerCnAmt = b.cn_amount ?? b.reject_amount ?? 0;
+                              const itemsCount = Array.isArray(b.items) ? b.items.length : 0;
+                              const nonSalesCount = Array.isArray(b.non_sales_items) ? b.non_sales_items.length : 0;
 
-                              {/* Expanded Itemized Order Details */}
-                              {isExpanded && (
-                                <tr className="bg-slate-50/50">
-                                  <td colSpan={11} className="py-3 px-6 border-y border-slate-200/80">
-                                    <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-2xs">
-                                      <div className="text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-2 flex items-center justify-between">
-                                        <span>Product Deliveries for {b.buyer_name}</span>
-                                        <span className="text-zinc-400 font-normal">
-                                          {itemsCount} line items {nonSalesCount > 0 ? `+ ${nonSalesCount} deductions` : ""}
+                              return (
+                                <React.Fragment key={b.buyer_code || b.buyer_name || bIdx}>
+                                  <tr className="hover:bg-slate-50/80 transition-colors">
+                                    <td className="py-2.5 px-3 text-center text-zinc-400 font-mono text-[11px]">{bIdx + 1}</td>
+                                    <td className="py-2.5 px-3">
+                                      <div className="font-semibold text-zinc-900">{b.buyer_name || "—"}</div>
+                                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                        <span className="text-[11px] text-zinc-400 font-mono">{b.buyer_code}</span>
+                                        <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-medium border inline-flex items-center leading-none ${
+                                          !b.channel || b.channel === "Not Set"
+                                            ? "bg-amber-50 text-amber-700 border-amber-200 italic"
+                                            : "bg-slate-100 text-zinc-600 border-slate-200"
+                                        }`}>
+                                          {b.channel || "Not Set"}
                                         </span>
                                       </div>
-                                      <table className="w-full text-left border-collapse text-xs">
-                                        <thead className="border-b border-slate-100 text-[10.5px] font-medium text-zinc-400 bg-slate-50/60">
-                                          <tr>
-                                            <th className="py-1.5 px-2.5">Product SKU & Name</th>
-                                            <th className="py-1.5 px-2.5 w-28">Brand</th>
-                                            <th className="py-1.5 px-2.5 w-20 text-right">Demand Qty</th>
-                                            <th className="py-1.5 px-2.5 w-24 text-right">Unit Price</th>
-                                            <th className="py-1.5 px-2.5 w-24 text-right">Total Demand</th>
-                                            <th className="py-1.5 px-2.5 w-24 text-right">CN Rejects</th>
-                                            <th className="py-1.5 px-2.5 w-24 text-right">Net Amount</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                          {(b.items || []).map((it: any, itIdx: number) => {
-                                            const itNetAmt = it.nett_amount ?? it.net_receivable ?? (Number(it.total_demand || 0) - Number(it.cn_amount || 0));
-                                            return (
-                                              <tr key={it.sku || itIdx} className="hover:bg-slate-50/60 text-[11px]">
-                                                <td className="py-1.5 px-2.5">
-                                                  <span className="font-semibold text-zinc-900">{it.sku || "—"}</span>
-                                                  <span className="text-zinc-600 ml-2">{it.name || "—"}</span>
-                                                </td>
-                                                <td className="py-1.5 px-2.5 text-zinc-600">{it.brand || "—"}</td>
-                                                <td className="py-1.5 px-2.5 text-right font-mono text-zinc-800">
-                                                  {Number(it.qty ?? it.demand_qty ?? 0).toLocaleString()}
-                                                </td>
-                                                <td className="py-1.5 px-2.5 text-right font-mono text-zinc-600">
-                                                  ${Number(it.unit_price || 0).toFixed(2)}
-                                                </td>
-                                                <td className="py-1.5 px-2.5 text-right font-mono text-zinc-800">
-                                                  ${Number(it.total_demand ?? it.demand_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                </td>
-                                                <td className="py-1.5 px-2.5 text-right font-mono text-zinc-500">
-                                                  {Number(it.cn_amount || 0) > 0 ? `-$${Number(it.cn_amount).toFixed(2)}` : "-"}
-                                                </td>
-                                                <td className="py-1.5 px-2.5 text-right font-mono font-semibold text-zinc-900">
-                                                  ${Number(itNetAmt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                </td>
-                                              </tr>
-                                            );
-                                          })}
-                                        </tbody>
-                                      </table>
+                                    </td>
+                                    <td className="py-2.5 px-3 text-center text-zinc-700 font-mono">
+                                      {b.payment_term || "90"} Days
+                                    </td>
+                                    <td className="py-2.5 px-3 text-center">
+                                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-[#0B57D0] border border-blue-100">
+                                        {b.expected_collection_label || b.expected_collection_period || "—"}
+                                      </span>
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right text-zinc-800 font-mono font-medium">
+                                      {Number(b.demand_qty || 0).toLocaleString()}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right text-zinc-800 font-mono">
+                                      ${Number(b.demand_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right text-zinc-600 font-mono">
+                                      {buyerCnAmt > 0 ? `-$${Number(buyerCnAmt).toFixed(2)}` : "-"}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right text-zinc-500 font-mono">
+                                      {Number(b.non_sales_amount || 0) > 0 ? `-$${Number(b.non_sales_amount).toFixed(2)}` : "-"}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-right text-[#0B57D0] font-mono font-bold">
+                                      ${Number(buyerNetAmt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </td>
+                                    <td className="py-2.5 px-3 text-center">
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleBuyerExpand(b.buyer_code || b.buyer_name)}
+                                        className="px-2 py-1 rounded bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 text-[10.5px] font-medium inline-flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
+                                        title="View itemized products purchased"
+                                      >
+                                        <span>{itemsCount} {itemsCount === 1 ? "SKU" : "SKUs"}</span>
+                                        {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                                      </button>
+                                    </td>
+                                  </tr>
 
-                                      {/* Non sales items for this buyer */}
-                                      {Array.isArray(b.non_sales_items) && b.non_sales_items.length > 0 && (
-                                        <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2">
-                                          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Non-Sales Deductions:</span>
-                                          {b.non_sales_items.map((ns: any, nsIdx: number) => (
-                                            <span key={nsIdx} className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-red-50 text-red-700 border border-red-200">
-                                              {ns.description}: -${Number(ns.amount || 0).toFixed(2)}
+                                  {/* Expanded Itemized Order Details */}
+                                  {isExpanded && (
+                                    <tr className="bg-slate-50/50">
+                                      <td colSpan={10} className="py-3 px-6 border-y border-slate-200/80">
+                                        <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-2xs">
+                                          <div className="text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-2 flex items-center justify-between">
+                                            <span>Product Deliveries for {b.buyer_name}</span>
+                                            <span className="text-zinc-400 font-normal">
+                                              {itemsCount} line items {nonSalesCount > 0 ? `+ ${nonSalesCount} deductions` : ""}
                                             </span>
-                                          ))}
+                                          </div>
+                                          <table className="w-full text-left border-collapse text-xs">
+                                            <thead className="border-b border-slate-100 text-[10.5px] font-medium text-zinc-400 bg-slate-50/60">
+                                              <tr>
+                                                <th className="py-1.5 px-2.5">Product SKU & Name</th>
+                                                <th className="py-1.5 px-2.5 w-20 text-right">Demand Qty</th>
+                                                <th className="py-1.5 px-2.5 w-24 text-right">Unit Price</th>
+                                                <th className="py-1.5 px-2.5 w-24 text-right">Total Demand</th>
+                                                <th className="py-1.5 px-2.5 w-24 text-right">CN Rejects</th>
+                                                <th className="py-1.5 px-2.5 w-24 text-right">Net Amount</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                              {(b.items || []).map((it: any, itIdx: number) => {
+                                                const itNetAmt = it.nett_amount ?? it.net_receivable ?? (Number(it.total_demand || 0) - Number(it.cn_amount || 0));
+                                                return (
+                                                  <tr key={it.sku || itIdx} className="hover:bg-slate-50/60 text-[11px]">
+                                                    <td className="py-1.5 px-2.5">
+                                                      <span className="font-semibold text-zinc-900">{it.sku || "—"}</span>
+                                                      <span className="text-zinc-600 ml-2">{it.name || "—"}</span>
+                                                      {it.brand && it.brand !== "—" && it.brand !== "Unassigned" && (
+                                                        <span className="text-zinc-400 ml-1.5 text-[10px]">({it.brand})</span>
+                                                      )}
+                                                    </td>
+                                                    <td className="py-1.5 px-2.5 text-right font-mono text-zinc-800">
+                                                      {Number(it.qty ?? it.demand_qty ?? 0).toLocaleString()}
+                                                    </td>
+                                                    <td className="py-1.5 px-2.5 text-right font-mono text-zinc-600">
+                                                      ${Number(it.unit_price || 0).toFixed(2)}
+                                                    </td>
+                                                    <td className="py-1.5 px-2.5 text-right font-mono text-zinc-800">
+                                                      ${Number(it.total_demand ?? it.demand_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </td>
+                                                    <td className="py-1.5 px-2.5 text-right font-mono text-zinc-500">
+                                                      {Number(it.cn_amount || 0) > 0 ? `-$${Number(it.cn_amount).toFixed(2)}` : "-"}
+                                                    </td>
+                                                    <td className="py-1.5 px-2.5 text-right font-mono font-semibold text-zinc-900">
+                                                      ${Number(itNetAmt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                    </td>
+                                                  </tr>
+                                                );
+                                              })}
+                                            </tbody>
+                                          </table>
+
+                                          {/* Non sales items for this buyer */}
+                                          {Array.isArray(b.non_sales_items) && b.non_sales_items.length > 0 && (
+                                            <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2">
+                                              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Non-Sales Deductions:</span>
+                                              {b.non_sales_items.map((ns: any, nsIdx: number) => (
+                                                <span key={nsIdx} className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-red-50 text-red-700 border border-red-200">
+                                                  {ns.description}: -${Number(ns.amount || 0).toFixed(2)}
+                                                </span>
+                                              ))}
+                                            </div>
+                                          )}
                                         </div>
-                                      )}
+                                      </td>
+                                    </tr>
+                                  )}
+                                </React.Fragment>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* SKU Output Summary Table */}
+                    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
+                      <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
+                            SKU Output Summary ({filteredSummarySkus.length})
+                          </h3>
+                          <p className="text-[11px] text-zinc-500 mt-0.5">
+                            Compiled physical product volumes, net shipments, revenue, inventory COGS, and gross profit margins.
+                          </p>
+                        </div>
+
+                        <div className="relative w-64">
+                          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
+                          <input
+                            type="text"
+                            placeholder="Search SKU, name, brand..."
+                            value={summarySkuSearch}
+                            onChange={(e) => setSummarySkuSearch(e.target.value)}
+                            className="w-full h-7 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="overflow-x-auto max-h-96">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 text-[11px] font-medium text-zinc-500">
+                            <tr>
+                              <th className="py-2.5 px-3 w-10 text-center">#</th>
+                              <th className="py-2.5 px-3 min-w-[220px]">Product SKU & Description</th>
+                              <th className="py-2.5 px-3 w-24 text-right">Demand (pcs)</th>
+                              <th className="py-2.5 px-3 w-24 text-right">Reject (pcs)</th>
+                              <th className="py-2.5 px-3 w-24 text-right">Net Qty (pcs)</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Demand ($)</th>
+                              <th className="py-2.5 px-3 w-24 text-right">CN ($)</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Net Revenue ($)</th>
+                              <th className="py-2.5 px-3 w-24 text-right">Unit Cost ($)</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Total COGS ($)</th>
+                              <th className="py-2.5 px-3 w-28 text-right">Gross Profit ($)</th>
+                              <th className="py-2.5 px-3 w-20 text-right">Margin (%)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {filteredSummarySkus.map((s: any, sIdx: number) => {
+                              const sNetRev = s.net_revenue ?? s.net_amount ?? (Number(s.demand_amount || 0) - Number(s.cn_amount || 0));
+                              const sProfit = s.gross_profit ?? (sNetRev - Number(s.total_cost || 0));
+                              const sMargin = s.margin_percent ?? (sNetRev > 0 ? (sProfit / sNetRev) * 100 : 0);
+
+                              return (
+                                <tr key={s.sku || sIdx} className="hover:bg-slate-50/80 transition-colors">
+                                  <td className="py-2.5 px-3 text-center text-zinc-400 font-mono text-[11px]">{sIdx + 1}</td>
+                                  <td className="py-2.5 px-3">
+                                    <div className="flex flex-col min-w-0">
+                                      <span className="font-semibold text-zinc-900 truncate block" title={s.product_name}>
+                                        {s.product_name || "—"}
+                                      </span>
+                                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] min-w-0">
+                                        <span className="font-mono font-medium text-zinc-600 shrink-0">{s.sku}</span>
+                                        {s.brand && s.brand !== "—" && s.brand !== "Unassigned" && (
+                                          <>
+                                            <span className="text-zinc-300 shrink-0">•</span>
+                                            <span className="text-zinc-500 font-medium truncate" title={`Brand: ${s.brand}`}>
+                                              {s.brand}
+                                            </span>
+                                          </>
+                                        )}
+                                      </div>
                                     </div>
                                   </td>
+                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-800">{Number(s.demand_qty || 0).toLocaleString()}</td>
+                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-500">
+                                    {Number(s.reject_qty || 0) > 0 ? Number(s.reject_qty).toLocaleString() : "-"}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono font-semibold text-zinc-900">
+                                    {Number(s.net_qty || (Number(s.demand_qty || 0) - Number(s.reject_qty || 0))).toLocaleString()}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-800">
+                                    ${Number(s.demand_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-500">
+                                    {Number(s.cn_amount || 0) > 0 ? `-$${Number(s.cn_amount).toFixed(2)}` : "-"}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono font-semibold text-[#0B57D0]">
+                                    ${Number(sNetRev).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-600">
+                                    ${Number(s.cost_price || 0).toFixed(2)}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-600">
+                                    ${Number(s.total_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </td>
+                                  <td className={`py-2.5 px-3 text-right font-mono font-semibold ${sProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                                    ${Number(sProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </td>
+                                  <td className={`py-2.5 px-3 text-right font-mono font-semibold ${sMargin >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                                    {Number(sMargin).toFixed(1)}%
+                                  </td>
                                 </tr>
-                              )}
-                            </React.Fragment>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                {/* 4. SKU OUTPUT SUMMARY (Product Catalog Only) */}
-                <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
-                  <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                        SKU Output Summary ({filteredSummarySkus.length})
-                      </h3>
-                      <p className="text-[11px] text-zinc-500 mt-0.5">
-                        Compiled physical product volumes, net shipments, revenue, inventory COGS, and gross profit margins.
-                      </p>
-                    </div>
-
-                    <div className="relative w-64">
-                      <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                      <input
-                        type="text"
-                        placeholder="Search SKU, name, brand..."
-                        value={summarySkuSearch}
-                        onChange={(e) => setSummarySkuSearch(e.target.value)}
-                        className="w-full h-7 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
-                      />
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
                   </div>
-
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead className="bg-[#F8F9FA] border-b border-slate-200 text-[11px] font-medium text-zinc-500">
-                        <tr>
-                          <th className="py-2.5 px-3 w-10 text-center">#</th>
-                          <th className="py-2.5 px-3 w-32">Product SKU</th>
-                          <th className="py-2.5 px-3 min-w-[200px]">Product Description</th>
-                          <th className="py-2.5 px-3 w-28">Brand</th>
-                          <th className="py-2.5 px-3 w-24 text-right">Demand (pcs)</th>
-                          <th className="py-2.5 px-3 w-24 text-right">Reject (pcs)</th>
-                          <th className="py-2.5 px-3 w-24 text-right">Net Qty (pcs)</th>
-                          <th className="py-2.5 px-3 w-28 text-right">Demand ($)</th>
-                          <th className="py-2.5 px-3 w-24 text-right">CN ($)</th>
-                          <th className="py-2.5 px-3 w-28 text-right">Net Revenue ($)</th>
-                          <th className="py-2.5 px-3 w-24 text-right">Unit Cost ($)</th>
-                          <th className="py-2.5 px-3 w-28 text-right">Total COGS ($)</th>
-                          <th className="py-2.5 px-3 w-28 text-right">Gross Profit ($)</th>
-                          <th className="py-2.5 px-3 w-20 text-right">Margin (%)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {filteredSummarySkus.map((s: any, sIdx: number) => {
-                          const sNetRev = s.net_revenue ?? s.net_amount ?? (Number(s.demand_amount || 0) - Number(s.cn_amount || 0));
-                          const sProfit = s.gross_profit ?? (sNetRev - Number(s.total_cost || 0));
-                          const sMargin = s.margin_percent ?? (sNetRev > 0 ? (sProfit / sNetRev) * 100 : 0);
-
-                          return (
-                            <tr key={s.sku || sIdx} className="hover:bg-slate-50/80 transition-colors">
-                              <td className="py-2.5 px-3 text-center text-zinc-400 font-mono text-[11px]">{sIdx + 1}</td>
-                              <td className="py-2.5 px-3 font-semibold text-zinc-900 font-mono">{s.sku}</td>
-                              <td className="py-2.5 px-3 text-zinc-700">{s.product_name || "—"}</td>
-                              <td className="py-2.5 px-3 text-zinc-600">{s.brand || "—"}</td>
-                              <td className="py-2.5 px-3 text-right font-mono text-zinc-800">{Number(s.demand_qty || 0).toLocaleString()}</td>
-                              <td className="py-2.5 px-3 text-right font-mono text-zinc-500">
-                                {Number(s.reject_qty || 0) > 0 ? Number(s.reject_qty).toLocaleString() : "-"}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono font-semibold text-zinc-900">
-                                {Number(s.net_qty || (Number(s.demand_qty || 0) - Number(s.reject_qty || 0))).toLocaleString()}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-zinc-800">
-                                ${Number(s.demand_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-zinc-500">
-                                {Number(s.cn_amount || 0) > 0 ? `-$${Number(s.cn_amount).toFixed(2)}` : "-"}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono font-semibold text-[#0B57D0]">
-                                ${Number(sNetRev).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-zinc-600">
-                                ${Number(s.cost_price || 0).toFixed(2)}
-                              </td>
-                              <td className="py-2.5 px-3 text-right font-mono text-zinc-600">
-                                ${Number(s.total_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </td>
-                              <td className={`py-2.5 px-3 text-right font-mono font-semibold ${sProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                                ${Number(sProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </td>
-                              <td className={`py-2.5 px-3 text-right font-mono font-semibold ${sMargin >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                                {Number(sMargin).toFixed(1)}%
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                )}
               </div>
             ) : filteredRecords.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center px-4">
@@ -5141,11 +6410,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     {batchData?.status !== "published" && (
                       <th className="py-2.5 px-3 min-w-[150px] text-center whitespace-nowrap">Diagnostic Status</th>
                     )}
-                    <th className="py-2.5 px-3 w-[150px] max-w-[150px] whitespace-nowrap">Buyer</th>
-                    <th className="py-2.5 px-3 min-w-[120px] whitespace-nowrap">Channel</th>
+                    <th className="py-2.5 px-3 min-w-[170px] max-w-[220px] whitespace-nowrap">Buyer</th>
                     <th className="py-2.5 px-3 min-w-[110px] whitespace-nowrap">Type</th>
-                    <th className="py-2.5 px-3 w-[160px] max-w-[170px] whitespace-nowrap">Product SKU & Description</th>
-                    <th className="py-2.5 px-3 min-w-[110px] whitespace-nowrap">Brand</th>
+                    <th className="py-2.5 px-3 min-w-[200px] max-w-[280px] whitespace-nowrap">Product SKU & Description</th>
                     <th className="py-2.5 px-3 min-w-[105px] text-right whitespace-nowrap">Unit Price ($)</th>
                     <th className="py-2.5 px-3 min-w-[105px] text-right bg-emerald-50/80 text-emerald-900 border-x border-emerald-100 whitespace-nowrap">Demand Qty</th>
                     <th className="py-2.5 px-3 min-w-[105px] text-right bg-emerald-50/80 text-emerald-900 border-r border-emerald-100 whitespace-nowrap">Total $</th>
@@ -5319,8 +6586,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         </td>
                       )}
 
-                        {/* Buyer Code & Name */}
-                        <td className="py-2 px-3 w-[150px] max-w-[150px] overflow-hidden">
+                        {/* Buyer Code, Name & Channel Badge */}
+                        <td className="py-2 px-3 min-w-[170px] max-w-[220px]">
                           {(() => {
                             const matchedBuyer = buyersList.find((b) => 
                               (r.buyer_code && (b.buyer_code === r.buyer_code || b.id === r.buyer_code)) ||
@@ -5330,52 +6597,52 @@ export function SellInModule({ profile }: SellInModuleProps) {
                             const displayName = r.buyer_name || matchedBuyer?.buyer_name || displayCode || "Unknown Buyer";
 
                             return (
-                              <div className="flex flex-col min-w-0 max-w-[140px]">
+                              <div className="flex flex-col min-w-0">
                                 <span className="text-zinc-800 font-medium truncate block" title={displayName}>
                                   {displayName}
                                 </span>
-                                {displayCode ? (
-                                  <span className="text-[10px] text-zinc-500 font-mono font-medium truncate block" title={displayCode}>{displayCode}</span>
-                                ) : isDirectConsumer ? (
-                                  <span className="text-[10px] text-zinc-400 font-medium truncate block">Direct Consumer</span>
-                                ) : (
-                                  <span className="text-[10px] text-amber-600 font-medium italic truncate block">Unregistered Buyer</span>
-                                )}
+                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                  {displayCode ? (
+                                    <span className="text-[10px] text-zinc-500 font-mono font-medium truncate" title={displayCode}>{displayCode}</span>
+                                  ) : isDirectConsumer ? (
+                                    <span className="text-[10px] text-zinc-400 font-medium truncate">Direct Consumer</span>
+                                  ) : (
+                                    <span className="text-[10px] text-amber-600 font-medium italic truncate">Unregistered Buyer</span>
+                                  )}
+
+                                  {/* Small Channel Badge */}
+                                  {batchData?.status === "published" ? (
+                                    <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-medium border inline-flex items-center leading-none ${
+                                      !r.channel || r.channel === "Not Set"
+                                        ? "bg-amber-50 text-amber-700 border-amber-200 italic"
+                                        : "bg-slate-100 text-slate-700 border-slate-200/80"
+                                    }`}>
+                                      {r.channel || "Not Set"}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setAssignChannelTarget(r);
+                                        setSelectedAssignChannel(r.channel || "Not Set");
+                                        setApplyChannelToAllBuyerRows(true);
+                                        setShowAssignChannelModal(true);
+                                      }}
+                                      className={`px-1.5 py-0.5 rounded text-[9.5px] font-medium border transition-colors cursor-pointer inline-flex items-center gap-1 group shrink-0 leading-none ${
+                                        !r.channel || r.channel === "Not Set"
+                                          ? "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200 italic"
+                                          : "bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0B57D0] border-slate-200/80 hover:border-blue-200"
+                                      }`}
+                                      title="Click to assign sales channel"
+                                    >
+                                      <span>{r.channel || "Not Set"}</span>
+                                      <Edit2 size={8} className="text-zinc-400 group-hover:text-[#0B57D0] opacity-60 group-hover:opacity-100" />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
                             );
                           })()}
-                        </td>
-
-                        {/* Channel */}
-                        <td className="py-2 px-3">
-                          {batchData?.status === "published" ? (
-                            <span className={`px-2 py-0.5 rounded text-[11px] font-medium border inline-flex items-center ${
-                              !r.channel || r.channel === "Not Set"
-                                ? "bg-amber-50 text-amber-700 border-amber-200 italic"
-                                : "bg-slate-100 text-slate-700 border-slate-200/80"
-                            }`}>
-                              {r.channel || "Not Set"}
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setAssignChannelTarget(r);
-                                setSelectedAssignChannel(r.channel || "Not Set");
-                                setApplyChannelToAllBuyerRows(true);
-                                setShowAssignChannelModal(true);
-                              }}
-                              className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer inline-flex items-center gap-1 group ${
-                                !r.channel || r.channel === "Not Set"
-                                  ? "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200 italic"
-                                  : "bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0B57D0] border-slate-200/80 hover:border-blue-200"
-                              }`}
-                              title="Click to assign sales channel"
-                            >
-                              <span>{r.channel || "Not Set"}</span>
-                              <Edit2 size={9} className="text-zinc-400 group-hover:text-[#0B57D0] opacity-60 group-hover:opacity-100" />
-                            </button>
-                          )}
                         </td>
 
                         {/* Type */}
@@ -5385,7 +6652,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
                             const config = ITEM_TYPES.find((t) => t.value === itType) || ITEM_TYPES[0];
                             if (batchData?.status === "published") {
                               return (
-                                <span className={`px-2 py-0.5 rounded text-[11px] font-medium border inline-flex items-center ${config.badgeClass}`}>
+                                <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-medium border inline-flex items-center leading-none ${
+                                  r.item_type === "bundle"
+                                    ? "bg-indigo-50 text-indigo-700 border-indigo-200/90"
+                                    : "bg-slate-100 text-slate-700 border-slate-200/80"
+                                }`}>
                                   {config.shortLabel}
                                 </span>
                               );
@@ -5400,20 +6671,24 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                     handleOpenAssignItemTypeModal(r);
                                   }
                                 }}
-                                className={`px-2 py-0.5 rounded text-[11px] font-medium border transition-colors cursor-pointer inline-flex items-center gap-1 group ${config.badgeClass}`}
+                                className={`px-1.5 py-0.5 rounded text-[9.5px] font-medium border transition-colors cursor-pointer inline-flex items-center gap-1 group shrink-0 leading-none ${
+                                  r.item_type === "bundle"
+                                    ? "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 hover:text-indigo-800 border-indigo-200/90 hover:border-indigo-300"
+                                    : "bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0B57D0] border-slate-200/80 hover:border-blue-200"
+                                }`}
                                 title={r.item_type === "bundle" ? "Bundle item. Click to manage/remap component items." : `Type: ${config.label}. Click to assign or edit.`}
                               >
-                                {r.item_type === "bundle" && <Layers size={10} className="shrink-0 text-indigo-600" />}
+                                {r.item_type === "bundle" && <Layers size={9} className="shrink-0 text-indigo-600" />}
                                 <span>{config.shortLabel}</span>
-                                <Edit2 size={9} className="opacity-60 group-hover:opacity-100" />
+                                <Edit2 size={8} className="text-zinc-400 group-hover:text-[#0B57D0] opacity-60 group-hover:opacity-100" />
                               </button>
                             );
                           })()}
                         </td>
 
-                        {/* Product SKU & Name */}
-                        <td className="py-2 px-3 w-[160px] max-w-[170px] overflow-hidden">
-                          <div className="flex flex-col min-w-0 max-w-[160px]">
+                        {/* Product SKU & Description (With Brand Combined) */}
+                        <td className="py-2 px-3 min-w-[200px] max-w-[280px] overflow-hidden">
+                          <div className="flex flex-col min-w-0 max-w-[280px]">
                             <span 
                               className="text-zinc-800 truncate block font-medium" 
                               title={r.product_name || r.product_sku || ""}
@@ -5422,11 +6697,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
                             </span>
                             <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
                               {r.item_type === "bundle" ? (
-                                <div className="flex items-center gap-1.5 w-full">
+                                <div className="flex items-center gap-1.5 w-full min-w-0">
                                   <button
                                     type="button"
                                     onClick={() => handleToggleExpandBundle(String(r.id || idx))}
-                                    className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/90 px-1.5 py-0.5 rounded font-medium flex items-center gap-1 cursor-pointer transition-colors"
+                                    className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/90 px-1.5 py-0.5 rounded font-medium flex items-center gap-1 cursor-pointer transition-colors shrink-0"
                                     title="Click to view/hide component outcome quantities"
                                   >
                                     <Layers size={10} className="shrink-0 text-indigo-600" />
@@ -5437,11 +6712,19 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                     <button
                                       type="button"
                                       onClick={() => handleOpenBundleModal(r)}
-                                      className="text-[10px] text-zinc-500 hover:text-indigo-600 hover:underline font-medium ml-auto shrink-0 cursor-pointer"
+                                      className="text-[10px] text-zinc-500 hover:text-indigo-600 hover:underline font-medium shrink-0 cursor-pointer"
                                       title="Remap bundle items"
                                     >
                                       Remap
                                     </button>
+                                  )}
+                                  {r.brand && r.brand !== "Unassigned" && (
+                                    <>
+                                      <span className="text-zinc-300 text-[10px] shrink-0">•</span>
+                                      <span className="text-[10px] text-zinc-600 font-medium truncate" title={`Brand: ${r.brand}`}>
+                                        {r.brand}
+                                      </span>
+                                    </>
                                   )}
                                 </div>
                               ) : r.item_type === "settlement" ? (
@@ -5460,24 +6743,27 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                     )}
                                   </button>
                                   <div className="flex items-center gap-0.5 ml-auto shrink-0">
-                                    {batchData?.status !== "published" && (
+                                    {(!Array.isArray(r.settlement_items) || r.settlement_items.length === 0) ? (
+                                      batchData?.status !== "published" && (
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenSettlementModal(r)}
+                                          className="p-1 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer"
+                                          title="Upload Excel breakdown (SKU, Description, Qty)"
+                                        >
+                                          <Upload size={11} />
+                                        </button>
+                                      )
+                                    ) : (
                                       <button
                                         type="button"
-                                        onClick={() => handleOpenSettlementModal(r)}
+                                        onClick={() => handleDownloadSettlementExcel(r)}
                                         className="p-1 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer"
-                                        title="Upload Excel breakdown (SKU, Description, Qty)"
+                                        title="Download settlement breakdown Excel"
                                       >
-                                        <Upload size={11} />
+                                        <Download size={11} />
                                       </button>
                                     )}
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDownloadSettlementExcel(r)}
-                                      className="p-1 rounded text-zinc-400 hover:text-emerald-600 hover:bg-emerald-50 transition-colors cursor-pointer"
-                                      title={Array.isArray(r.settlement_items) && r.settlement_items.length > 0 ? "Download settlement breakdown Excel" : "Download sample template Excel"}
-                                    >
-                                      <Download size={11} />
-                                    </button>
                                   </div>
                                 </div>
                               ) : (r.item_type && r.item_type !== "product") ? (
@@ -5485,37 +6771,48 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                   — (Non-Inventory Item)
                                 </span>
                               ) : (
-                                <>
-                                  <span 
-                                    className={`text-[10px] font-mono truncate shrink min-w-0 max-w-[130px] ${!r.product_sku ? "text-amber-600 font-semibold" : "text-zinc-500"}`}
-                                    title={r.product_sku || "(Blank SKU)"}
-                                  >
-                                    {r.product_sku || "(Blank SKU)"}
-                                  </span>
-                                  {batchData?.status !== "published" && (
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  {batchData?.status === "published" ? (
+                                    <span 
+                                      className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-medium border inline-flex items-center leading-none truncate max-w-[130px] shrink-0 ${
+                                        !r.product_sku
+                                          ? "bg-amber-50 text-amber-700 border-amber-200 italic"
+                                          : "bg-slate-100 text-slate-700 border-slate-200/80"
+                                      }`}
+                                      title={r.product_sku || "(Blank SKU)"}
+                                    >
+                                      {r.product_sku || "(Blank SKU)"}
+                                    </span>
+                                  ) : (
                                     <button
                                       type="button"
                                       onClick={() => handleOpenAssignProductModal(r)}
-                                      className="p-0.5 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 transition-colors cursor-pointer inline-flex items-center justify-center group shrink-0"
+                                      className={`px-1.5 py-0.5 rounded text-[9.5px] font-mono font-medium border transition-colors cursor-pointer inline-flex items-center gap-1 group shrink-0 leading-none max-w-[130px] ${
+                                        !r.product_sku
+                                          ? "bg-amber-50 hover:bg-amber-100 text-amber-700 border-amber-200 italic"
+                                          : "bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-[#0B57D0] border-slate-200/80 hover:border-blue-200"
+                                      }`}
                                       title="Click to assign master product SKU"
                                     >
-                                      <Edit2 size={10} className="group-hover:scale-110 transition-transform" />
+                                      <span className="truncate">{r.product_sku || "(Blank SKU)"}</span>
+                                      <Edit2 size={8} className="text-zinc-400 group-hover:text-[#0B57D0] opacity-60 group-hover:opacity-100 shrink-0" />
                                     </button>
                                   )}
-                                </>
+                                  {r.brand && r.brand !== "Unassigned" && (
+                                    <>
+                                      <span className="text-zinc-300 text-[10px] shrink-0">•</span>
+                                      <span 
+                                        className="text-[10px] text-zinc-600 font-medium truncate" 
+                                        title={`Brand: ${r.brand}`}
+                                      >
+                                        {r.brand}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
                               )}
                             </div>
                           </div>
-                        </td>
-
-                        {/* Brand */}
-                        <td className="py-2 px-3 text-zinc-600">
-                          {(() => {
-                            if (r.item_type && r.item_type !== "product" && r.item_type !== "bundle") {
-                              return <span className="text-zinc-300">-</span>;
-                            }
-                            return r.brand || "Unassigned";
-                          })()}
                         </td>
 
                         {/* Unit Price ($/pcs) - 100% from Invoice, non-editable */}
@@ -9448,239 +10745,86 @@ export function SellInModule({ profile }: SellInModuleProps) {
       )}
 
       {/* Modal: Settlement Breakdown Output Items */}
-      {showSettlementModal && settlementTarget && (() => {
-        const bCode = String(settlementTarget.buyer_code || "").toLowerCase();
-        const bName = String(settlementTarget.buyer_name || "").toLowerCase();
-        const ch = String(settlementTarget.channel || "").toLowerCase();
-        const isTikTokSettlement = bCode.includes("tiktok") || bName.includes("tiktok") || ch.includes("tiktok");
-
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-            <div className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col max-h-[85vh]">
-              {/* Modal Header */}
-              <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-[#0B57D0] shrink-0">
-                    <FileSpreadsheet size={16} />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="text-sm font-semibold text-zinc-950">Settlement Breakdown Output</h2>
-                      {batchData?.status === "published" ? (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          Published (Read-Only)
-                        </span>
-                      ) : (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200">
-                          {settlementItemsList.length > 0 ? `${settlementItemsList.length} SKUs` : "Data Required"}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-zinc-500 mt-0.5">
-                      {settlementTarget.product_name || "Settlement Line"} • {settlementTarget.buyer_name || "Platform"} ({formatPeriodLabel(currentPeriod)})
-                    </p>
-                  </div>
+      {/* Modal: Settlement Breakdown Output Items */}
+      {showSettlementModal && settlementTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col max-h-[85vh]">
+            {/* Modal Header */}
+            <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-[#0B57D0] shrink-0">
+                  <FileSpreadsheet size={16} />
                 </div>
-                <button 
-                  type="button" 
-                  onClick={() => {
-                    setShowSettlementModal(false);
-                    setSettlementTarget(null);
-                  }} 
-                  className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer rounded-lg hover:bg-slate-100 transition-colors"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-
-              {/* Hidden File Input & Upload Bar */}
-              <input 
-                type="file" 
-                ref={settlementFileInputRef}
-                accept=".xlsx,.xls,.csv"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) handleParseSettlementExcel(f);
-                  e.target.value = "";
-                }}
-                className="hidden" 
-              />
-
-              {/* TikTok Sync Action Bar - Conditional: Only when Buyer/Channel is TikTok */}
-              {isTikTokSettlement && batchData?.status !== "published" && (
-                <div className="px-4 py-2.5 bg-blue-50/70 border-b border-blue-200/80 flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+                <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-zinc-800 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-[#0B57D0]" />
-                      TikTok Shop:
-                    </span>
-                    <select
-                      value={selectedTiktokShopId}
-                      onChange={(e) => {
-                        setSelectedTiktokShopId(e.target.value);
-                        setTiktokSyncStatus(null);
-                      }}
-                      className="h-8 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
-                    >
-                      <option value="">-- Select TikTok Shop --</option>
-                      {tiktokShops.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name} ({s.id})
-                        </option>
-                      ))}
-                    </select>
-
-                    <button
-                      type="button"
-                      disabled={!selectedTiktokShopId || loadingTiktokSync || (tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync)}
-                      onClick={handleSyncTiktokSettlement}
-                      className={cn(
-                        "h-8 px-3 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-2xs cursor-pointer",
-                        !selectedTiktokShopId || (tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync)
-                          ? "bg-slate-200 text-zinc-400 cursor-not-allowed border border-slate-300"
-                          : "bg-[#0B57D0] hover:bg-[#0842A0] text-white"
-                      )}
-                      title={
-                        !selectedTiktokShopId
-                          ? "Please select a TikTok Shop first"
-                          : tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync
-                          ? "Sync disabled: unassigned SKUs must be mapped in TikTok Products first"
-                          : "Load and aggregate physical items from compiled TikTok sales"
-                      }
-                    >
-                      <RefreshCw size={12} className={cn(loadingTiktokSync && "animate-spin")} />
-                      <span>{loadingTiktokSync ? "Loading..." : "Sync from TikTok Orders"}</span>
-                    </button>
-                  </div>
-
-                  {tiktokSyncStatus?.checked && tiktokSyncStatus.can_sync && (
-                    <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded flex items-center gap-1">
-                      <CheckCircle2 size={12} />
-                      100% SKUs Assigned
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Warning Banner: Unassigned SKUs or Compilation Required */}
-              {isTikTokSettlement && tiktokSyncStatus?.checked && !tiktokSyncStatus.can_sync && (
-                <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 text-xs text-amber-900 shrink-0">
-                  <div className="flex items-start gap-2">
-                    <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
-                    <div className="flex-1">
-                      <p className="font-semibold text-amber-950">
-                        {!tiktokSyncStatus.compiled
-                          ? "TikTok Sales Report Not Compiled"
-                          : `Sync Disabled: ${tiktokSyncStatus.unassigned_skus.length} Unassigned TikTok SKU(s) Found`}
-                      </p>
-                      <p className="text-[11px] text-amber-800 mt-0.5">
-                        {tiktokSyncStatus.message}
-                      </p>
-                      {tiktokSyncStatus.unassigned_skus && tiktokSyncStatus.unassigned_skus.length > 0 && (
-                        <div className="mt-2 max-h-24 overflow-y-auto bg-white/90 rounded border border-amber-200/80 p-1.5 divide-y divide-amber-100">
-                          {tiktokSyncStatus.unassigned_skus.map((u, i) => (
-                            <div key={i} className="py-0.5 flex items-center justify-between text-[11px] font-mono">
-                              <span className="font-semibold text-amber-950 truncate max-w-[200px]" title={u.seller_sku}>
-                                {u.seller_sku}
-                              </span>
-                              <span className="text-zinc-500 font-sans truncate max-w-[240px]" title={u.product_name}>
-                                {u.product_name}
-                              </span>
-                              <span className="text-amber-800 font-semibold px-1 bg-amber-100 rounded text-[10px]">
-                                {u.count} orders
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0">
-                <div className="flex items-center gap-2">
-                  {batchData?.status !== "published" && (
-                    <button
-                      type="button"
-                      onClick={() => settlementFileInputRef.current?.click()}
-                      className="h-8 px-3 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-xs font-semibold text-zinc-800 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
-                    >
-                      <Upload size={13} className="text-[#0B57D0]" />
-                      <span>Upload Excel</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleDownloadSettlementTemplate}
-                    className="h-8 px-2.5 rounded-lg text-xs font-medium text-[#0B57D0] hover:bg-blue-50/80 transition-colors cursor-pointer flex items-center gap-1"
-                    title="Download Excel format template with columns: SKU, Description, Qty"
-                  >
-                    <Download size={13} />
-                    <span>Download Sample Template</span>
-                  </button>
-                </div>
-
-                {settlementFileName && (
-                  <div className="flex items-center gap-1.5 text-xs text-zinc-600 bg-white px-2.5 py-1 rounded-md border border-slate-200">
-                    <FileSpreadsheet size={13} className="text-emerald-600" />
-                    <span className="font-mono font-medium max-w-[200px] truncate" title={settlementFileName}>
-                      {settlementFileName}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Modal Body / Table Preview */}
-              <div className="flex-1 min-h-[220px] max-h-[380px] overflow-y-auto">
-                {settlementItemsList.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center p-8 text-center text-zinc-500">
-                    <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-zinc-400 mb-3">
-                      <FileSpreadsheet size={24} />
-                    </div>
-                    <h3 className="text-sm font-semibold text-zinc-800">
-                      {isTikTokSettlement ? "No settlement items loaded" : "No settlement summary uploaded"}
-                    </h3>
-                    <p className="text-xs text-zinc-500 mt-1 max-w-sm">
-                      {isTikTokSettlement
-                        ? "Select your TikTok Shop and click 'Sync from TikTok Orders' to load physical quantities and landed costs from compiled sales."
-                        : "Upload an Excel file with format SKU, Description, Qty to track physical restock units and landed costs."}
-                    </p>
-                    {batchData?.status !== "published" && (
-                      <div className="mt-4 flex items-center gap-2">
-                        {isTikTokSettlement && (
-                          <button
-                            type="button"
-                            disabled={loadingTiktokSync || (tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync)}
-                            onClick={handleSyncTiktokSettlement}
-                            className={cn(
-                              "h-8 px-4 rounded-lg text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer",
-                              tiktokSyncStatus?.checked && !tiktokSyncStatus?.can_sync
-                                ? "bg-slate-200 text-zinc-400 cursor-not-allowed border border-slate-300"
-                                : "bg-[#0B57D0] hover:bg-[#0842A0]"
-                            )}
-                          >
-                            <RefreshCw size={13} className={cn(loadingTiktokSync && "animate-spin")} />
-                            <span>Sync from TikTok Orders</span>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => settlementFileInputRef.current?.click()}
-                          className={cn(
-                            "h-8 px-4 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer",
-                            isTikTokSettlement
-                              ? "bg-white hover:bg-slate-100 border border-slate-300 text-zinc-700"
-                              : "bg-[#0B57D0] hover:bg-[#0842A0] text-white"
-                          )}
-                        >
-                          <Upload size={13} />
-                          <span>Upload Excel File</span>
-                        </button>
-                      </div>
+                    <h2 className="text-sm font-semibold text-zinc-950">Settlement Breakdown Output</h2>
+                    {batchData?.status === "published" ? (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Published (Read-Only)
+                      </span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-200">
+                        {settlementItemsList.length > 0 ? `${settlementItemsList.length} SKUs` : "Data Required"}
+                      </span>
                     )}
                   </div>
-                ) : (
+                  <p className="text-[11px] text-zinc-500 mt-0.5">
+                    {settlementTarget.product_name || "Settlement Line"} • {settlementTarget.buyer_name || "Platform"} ({formatPeriodLabel(currentPeriod)})
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                onClick={() => {
+                  setShowSettlementModal(false);
+                  setSettlementTarget(null);
+                }} 
+                className="p-1 text-zinc-400 hover:text-zinc-700 cursor-pointer rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* Hidden File Input & Upload Bar */}
+            <input 
+              type="file" 
+              ref={settlementFileInputRef}
+              accept=".xlsx,.xls,.csv"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleParseSettlementExcel(f);
+                e.target.value = "";
+              }}
+              className="hidden" 
+            />
+
+            {/* Modal Body / Table Preview */}
+            <div className="flex-1 min-h-[260px] max-h-[460px] overflow-y-auto">
+              {settlementItemsList.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-8 text-center text-zinc-500">
+                  <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-zinc-400 mb-3">
+                    <FileSpreadsheet size={24} />
+                  </div>
+                  <h3 className="text-sm font-semibold text-zinc-800">
+                    No settlement summary uploaded
+                  </h3>
+                  <p className="text-xs text-zinc-500 mt-1 max-w-sm">
+                    Upload an Excel file with format SKU, Description, Qty to track physical restock units and landed costs.
+                  </p>
+                  {batchData?.status !== "published" && (
+                    <div className="mt-4 flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => settlementFileInputRef.current?.click()}
+                        className="h-8 px-4 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer bg-[#0B57D0] hover:bg-[#0842A0] text-white"
+                      >
+                        <Upload size={13} />
+                        <span>Upload Excel File</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ) : (
                 <table className="w-full text-left border-collapse text-xs">
                   <thead className="bg-slate-50 sticky top-0 border-b border-slate-200 text-zinc-600 font-semibold z-10">
                     <tr>
@@ -9688,7 +10832,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                       <th className="py-2 px-3 min-w-[120px]">SKU</th>
                       <th className="py-2 px-3 min-w-[180px]">Description</th>
                       <th className="py-2 px-3 text-right min-w-[80px]">Qty Out</th>
-                      <th className="py-2 px-3 text-right min-w-[100px]" title="Landing price based on Master Products catalog">Master Unit Cost</th>
+                      <th className="py-2 px-3 text-right min-w-[110px]">Landing Cost</th>
                       <th className="py-2 px-3 text-right min-w-[100px]">Total Cost</th>
                     </tr>
                   </thead>
@@ -9703,8 +10847,100 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         <td className="py-2 px-3 text-right font-mono font-semibold text-zinc-900">
                           {Number(it.qty || 0).toLocaleString()}
                         </td>
-                        <td className="py-2 px-3 text-right font-mono text-zinc-600">
-                          ${Number(it.unit_cost || 0).toFixed(2)}
+                        <td className="py-1.5 px-3 text-right font-mono">
+                          {batchData?.status === "published" ? (
+                            <span className="text-zinc-700 font-medium">${Number(it.unit_cost || 0).toFixed(2)}</span>
+                          ) : editingSettlementCostIdx === i ? (
+                            <div className="inline-flex items-center justify-end gap-1">
+                              <span className="text-zinc-400 text-xs">$</span>
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                autoFocus
+                                value={editingSettlementCostVal}
+                                placeholder="0.00"
+                                onChange={(e) => setEditingSettlementCostVal(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    const val = parseFloat(editingSettlementCostVal);
+                                    const newCost = isNaN(val) ? 0 : Math.max(0, val);
+                                    setSettlementItemsList((prev) =>
+                                      prev.map((item, idx) => {
+                                        if (idx !== i) return item;
+                                        const qty = Number(item.qty || 0);
+                                        return {
+                                          ...item,
+                                          unit_cost: newCost,
+                                          total_cost: Math.round(qty * newCost * 100) / 100
+                                        };
+                                      })
+                                    );
+                                    setEditingSettlementCostIdx(null);
+                                  } else if (e.key === "Escape") {
+                                    setEditingSettlementCostIdx(null);
+                                  }
+                                }}
+                                onBlur={() => {
+                                  const val = parseFloat(editingSettlementCostVal);
+                                  const newCost = isNaN(val) ? 0 : Math.max(0, val);
+                                  setSettlementItemsList((prev) =>
+                                    prev.map((item, idx) => {
+                                      if (idx !== i) return item;
+                                      const qty = Number(item.qty || 0);
+                                      return {
+                                        ...item,
+                                        unit_cost: newCost,
+                                        total_cost: Math.round(qty * newCost * 100) / 100
+                                      };
+                                    })
+                                  );
+                                  setEditingSettlementCostIdx(null);
+                                }}
+                                className="w-20 h-7 px-2 text-right font-mono text-xs font-semibold text-zinc-900 bg-white border border-[#0B57D0] rounded-md focus:outline-none focus:ring-1 focus:ring-[#0B57D0]"
+                              />
+                              <button
+                                type="button"
+                                onMouseDown={(e) => {
+                                  e.preventDefault();
+                                  const val = parseFloat(editingSettlementCostVal);
+                                  const newCost = isNaN(val) ? 0 : Math.max(0, val);
+                                  setSettlementItemsList((prev) =>
+                                    prev.map((item, idx) => {
+                                      if (idx !== i) return item;
+                                      const qty = Number(item.qty || 0);
+                                      return {
+                                        ...item,
+                                        unit_cost: newCost,
+                                        total_cost: Math.round(qty * newCost * 100) / 100
+                                      };
+                                    })
+                                  );
+                                  setEditingSettlementCostIdx(null);
+                                }}
+                                className="p-1 rounded bg-[#0B57D0] hover:bg-[#0842A0] text-white cursor-pointer transition-colors"
+                                title="Save landing cost"
+                              >
+                                <Check size={11} />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="inline-flex items-center justify-end gap-1.5 group/cost">
+                              <span className="text-zinc-800 font-semibold">${Number(it.unit_cost || 0).toFixed(2)}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingSettlementCostIdx(i);
+                                  setEditingSettlementCostVal(String(it.unit_cost ?? "0"));
+                                }}
+                                className="p-1 rounded text-zinc-400 hover:text-[#0B57D0] hover:bg-blue-50 opacity-70 group-hover/cost:opacity-100 transition-all cursor-pointer"
+                                title="Edit landing cost"
+                              >
+                                <Edit2 size={11} />
+                              </button>
+                            </div>
+                          )}
                         </td>
                         <td className="py-2 px-3 text-right font-mono font-bold text-zinc-900">
                           ${Number(it.total_cost || 0).toFixed(2)}
@@ -9739,19 +10975,61 @@ export function SellInModule({ profile }: SellInModuleProps) {
             })()}
 
             {/* Modal Footer */}
-            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2 shrink-0 rounded-b-xl">
-              <div>
-                {settlementItemsList.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => handleDownloadSettlementExcel(settlementTarget)}
-                    className="h-8 px-3 rounded-lg border border-slate-300 bg-white hover:bg-slate-100 text-xs font-medium text-zinc-700 flex items-center gap-1.5 cursor-pointer shadow-2xs transition-colors"
-                  >
-                    <Download size={13} className="text-zinc-500" />
-                    <span>Download Excel</span>
-                  </button>
+            <div className="px-4 py-3 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 shrink-0 rounded-b-xl">
+              <div className="flex items-center gap-2">
+                {settlementItemsList.length > 0 ? (
+                  <>
+                    {batchData?.status !== "published" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSettlementItemsList([]);
+                          setSettlementFileName("");
+                          setEditingSettlementCostIdx(null);
+                          showToast("Breakdown reset. You can now upload a new file.", "info");
+                        }}
+                        className="h-8 px-3 rounded-lg bg-white hover:bg-red-50 border border-slate-300 hover:border-red-300 text-xs font-semibold text-zinc-700 hover:text-red-600 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                        title="Reset breakdown to upload another file"
+                      >
+                        <RotateCcw size={13} />
+                        <span>Reset</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleDownloadSettlementExcel(settlementTarget)}
+                      className="h-8 px-3 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-xs font-semibold text-zinc-800 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                      title="Download settlement breakdown Excel"
+                    >
+                      <Download size={13} className="text-[#0B57D0]" />
+                      <span>Download Breakdown</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {batchData?.status !== "published" && (
+                      <button
+                        type="button"
+                        onClick={() => settlementFileInputRef.current?.click()}
+                        className="h-8 px-3 rounded-lg bg-white hover:bg-slate-100 border border-slate-300 text-xs font-semibold text-zinc-800 flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                      >
+                        <Upload size={13} className="text-[#0B57D0]" />
+                        <span>Upload Excel</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleDownloadSettlementTemplate}
+                      className="h-8 px-2.5 rounded-lg text-xs font-medium text-[#0B57D0] hover:bg-blue-50/80 transition-colors cursor-pointer flex items-center gap-1"
+                      title="Download Excel format template with columns: SKU, Description, Qty"
+                    >
+                      <Download size={13} />
+                      <span>Download Sample Template</span>
+                    </button>
+                  </>
                 )}
               </div>
+
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -9759,6 +11037,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   onClick={() => {
                     setShowSettlementModal(false);
                     setSettlementTarget(null);
+                    setEditingSettlementCostIdx(null);
                   }}
                   className="h-8 px-4 rounded-lg border border-slate-300 text-xs font-medium text-zinc-700 hover:bg-slate-100 cursor-pointer"
                 >
@@ -9779,8 +11058,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
             </div>
           </div>
         </div>
-      );
-    })()}
+      )}
 
       {/* Confirmation Dialog */}
       <ConfirmDialog

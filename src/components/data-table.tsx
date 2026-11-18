@@ -867,7 +867,7 @@ export function DataTable({
                                 ? "w-[170px] min-w-[170px] max-w-[170px]" 
                                 : "truncate max-w-[240px]"
                           } ${col?.className || ""}`}
-                          title={colId === "actions" ? undefined : getFormattedTextValue(row, col.accessor)}
+                          title={colId === "actions" || (row as any)[`${col.accessor}_noTitle`] ? undefined : getFormattedTextValue(row, col.accessor)}
                         >
                           {isCellEditable ? (
                             <input
