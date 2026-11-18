@@ -22,12 +22,27 @@ interface FrontlinePageProps {
 import { ConfirmDialog } from "../confirm-dialog";
 
 export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
-  const [activeSubModule, setActiveSubModule] = React.useState<string | null>(null);
+  const [activeSubModule, setActiveSubModule] = React.useState<string | null>(() => {
+    if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Frontline") {
+      return breadcrumbPath[1];
+    }
+    if (typeof window !== "undefined" && localStorage.getItem("ib_promoter_schedules_draft")) {
+      return "Promoter";
+    }
+    return null;
+  });
   const { settings } = useMaintenanceSettings();
 
   React.useEffect(() => {
     if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Frontline") {
-      setActiveSubModule(breadcrumbPath[1]);
+      const targetSub = breadcrumbPath[1];
+      setActiveSubModule(prev => prev === targetSub ? prev : targetSub);
+    } else if (breadcrumbPath && breadcrumbPath.length === 1 && breadcrumbPath[0] === "Frontline") {
+      if (typeof window !== "undefined" && localStorage.getItem("ib_promoter_schedules_draft")) {
+        setActiveSubModule(prev => prev === "Promoter" ? prev : "Promoter");
+      } else {
+        setActiveSubModule(prev => prev === null ? prev : null);
+      }
     }
   }, [breadcrumbPath]);
   
@@ -44,16 +59,21 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
     (mod) => canViewModule(profile, mod.title)
   );
 
-  // Set initial breadcrumb on mount
+  // Set initial breadcrumb on mount only
   React.useEffect(() => {
-    if (!activeSubModule) {
+    if (breadcrumbPath && breadcrumbPath.length > 1 && breadcrumbPath[0] === "Frontline") {
+      window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: breadcrumbPath }));
+    } else if (typeof window !== "undefined" && localStorage.getItem("ib_promoter_schedules_draft")) {
+      window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline", "Promoter"] }));
+    } else {
       window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline"] }));
     }
-  }, [activeSubModule]);
+  }, []);
 
   const handlePendingConfirm = () => {
     localStorage.removeItem("ib_promoter_schedules_draft");
     localStorage.removeItem("ib_promoter_schedules_backup");
+    localStorage.removeItem("ib_promoter_selected_campaign");
     window.dispatchEvent(new CustomEvent("ib-clear-edit-mode"));
 
     if (pendingSubModule) {
@@ -73,6 +93,13 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
     setPendingSubModule(null);
     setPendingBack(false);
     setConfirmOpen(false);
+
+    // If canceling navigation while a draft exists, maintain Promoter as active submodule
+    const draft = localStorage.getItem("ib_promoter_schedules_draft");
+    if (draft) {
+      setActiveSubModule("Promoter");
+      window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline", "Promoter"] }));
+    }
   };
 
   // Listen to window breadcrumb-back event to reset views
@@ -98,7 +125,7 @@ export function FrontlinePage({ profile, breadcrumbPath }: FrontlinePageProps) {
 
   const handleSubModuleSelect = (title: string) => {
     const draft = localStorage.getItem("ib_promoter_schedules_draft");
-    if (draft) {
+    if (draft && title !== "Promoter") {
       setPendingSubModule(title);
       setConfirmOpen(true);
     } else {

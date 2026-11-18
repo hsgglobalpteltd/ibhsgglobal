@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { 
+  ArrowLeft,
   ChevronLeft, 
   ChevronRight, 
   ChevronDown,
@@ -33,6 +35,7 @@ import {
   Download,
   CreditCard,
   Receipt,
+  Ban,
   Image as ImageIcon
 } from "lucide-react";
 import { NavigationTabs } from "../navigation-tabs";
@@ -42,6 +45,7 @@ import { showToast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import XLSX from "xlsx-js-style";
 
 interface UserProfile {
   role: string;
@@ -110,6 +114,13 @@ const isGroupRetailer = (r: any): boolean => {
 
 export function PromoterModule({ profile }: PromoterModuleProps) {
   const [activeTab, setActiveTab] = React.useState<string>("calendar");
+  const [mounted, setMounted] = React.useState(false);
+  const [topbarSlot, setTopbarSlot] = React.useState<HTMLElement | null>(null);
+
+  React.useEffect(() => {
+    setMounted(true);
+    setTopbarSlot(document.getElementById("topbar-center-slot"));
+  }, []);
   
   const [promoters, setPromoters] = React.useState<any[]>([]);
   const [loadingPromoters, setLoadingPromoters] = React.useState<boolean>(false);
@@ -171,8 +182,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   // Monthly Calendar states
   const [currentDate, setCurrentDate] = React.useState<Date>(new Date());
   const [selectedDay, setSelectedDay] = React.useState<number>(new Date().getDate());
-  const [selectedCampaignId, setSelectedCampaignId] = React.useState<string>("all");
+  const [selectedCampaignId, setSelectedCampaignId] = React.useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const savedCamp = localStorage.getItem("ib_promoter_selected_campaign");
+      if (savedCamp) return savedCamp;
+    }
+    return "";
+  });
   const [campaignSubTab, setCampaignSubTab] = React.useState<"active" | "archive">("active");
+
+  React.useEffect(() => {
+    if (selectedCampaignId && selectedCampaignId !== "" && selectedCampaignId !== "all") {
+      localStorage.setItem("ib_promoter_selected_campaign", String(selectedCampaignId));
+    }
+  }, [selectedCampaignId]);
 
   // Campaign Mode view states
   const [selectedWeekStart, setSelectedWeekStart] = React.useState<Date>(getMonday(new Date()));
@@ -249,6 +272,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [printRetailerSearch, setPrintRetailerSearch] = React.useState<string>("");
   const [isPrintRetailerOpen, setIsPrintRetailerOpen] = React.useState<boolean>(false);
   const retailerDropdownRef = React.useRef<HTMLDivElement | null>(null);
+  const scheduleImportFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -826,6 +850,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     if (!shiftId) return false;
 
     return payouts.some(p => {
+      if (p.status === "Voided") return false;
       if (p["payout_details"]) {
         try {
           const details = JSON.parse(p["payout_details"]);
@@ -852,8 +877,86 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [isPayoutFetching, setIsPayoutFetching] = React.useState<boolean>(false);
   const [isPayoutSaving, setIsPayoutSaving] = React.useState<boolean>(false);
 
-  // Paid modal states
-  const [payoutStatusTab, setPayoutStatusTab] = React.useState<"pending" | "paid" | "all">("pending");
+  // Phase 1 Payout States: Adjustments, Voiding, Date Presets, Snapshotting
+  const [payoutStatusTab, setPayoutStatusTab] = React.useState<"pending" | "paid" | "voided" | "all">("pending");
+  const [payoutAdjustments, setPayoutAdjustments] = React.useState<Array<{
+    id: string;
+    type: "addition" | "deduction";
+    description: string;
+    amount: number;
+  }>>([]);
+  const [voidModalPayout, setVoidModalPayout] = React.useState<any | null>(null);
+  const [voidReasonInput, setVoidReasonInput] = React.useState<string>("");
+  const [isVoidSaving, setIsVoidSaving] = React.useState<boolean>(false);
+
+  // Helper: Apply 1-click Quick Date Presets
+  const handleApplyDatePreset = (preset: "today" | "this_week" | "last_week" | "this_month" | "last_month") => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+    if (preset === "today") {
+      const todayStr = fmt(now);
+      setPayoutStartDate(todayStr);
+      setPayoutEndDate(todayStr);
+      return;
+    }
+
+    if (preset === "this_week") {
+      const day = now.getDay();
+      const diffToMon = (day === 0 ? -6 : 1) - day;
+      const mon = new Date(now);
+      mon.setDate(now.getDate() + diffToMon);
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      setPayoutStartDate(fmt(mon));
+      setPayoutEndDate(fmt(sun));
+      return;
+    }
+
+    if (preset === "last_week") {
+      const day = now.getDay();
+      const diffToMon = (day === 0 ? -6 : 1) - day - 7;
+      const mon = new Date(now);
+      mon.setDate(now.getDate() + diffToMon);
+      const sun = new Date(mon);
+      sun.setDate(mon.getDate() + 6);
+      setPayoutStartDate(fmt(mon));
+      setPayoutEndDate(fmt(sun));
+      return;
+    }
+
+    if (preset === "this_month") {
+      const start = new Date(now.getFullYear(), now.getMonth(), 1);
+      const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      setPayoutStartDate(fmt(start));
+      setPayoutEndDate(fmt(end));
+      return;
+    }
+
+    if (preset === "last_month") {
+      const start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const end = new Date(now.getFullYear(), now.getMonth(), 0);
+      setPayoutStartDate(fmt(start));
+      setPayoutEndDate(fmt(end));
+      return;
+    }
+  };
+
+  // Helper: Calculate net working hours deducting Break 1 and Break 2
+  const calcNetHours = React.useCallback((start?: string, end?: string, b1: number = 0, b2: number = 0): number => {
+    if (!start || !end) return 0;
+    const [sh, sm] = start.split(":").map(Number);
+    const [eh, em] = end.split(":").map(Number);
+    if (isNaN(sh) || isNaN(sm) || isNaN(eh) || isNaN(em)) return 0;
+    const startMins = sh * 60 + sm;
+    let endMins = eh * 60 + em;
+    if (endMins < startMins) endMins += 24 * 60;
+    const diffMins = endMins - startMins;
+    const totalBreak = (Number(b1) || 0) + (Number(b2) || 0);
+    const netMins = Math.max(0, diffMins - totalBreak);
+    return Number((netMins / 60).toFixed(2));
+  }, []);
   const [promoterSearchQuery, setPromoterSearchQuery] = React.useState<string>("");
   const [isPromoterDropdownOpen, setIsPromoterDropdownOpen] = React.useState<boolean>(false);
   const promoterDropdownRef = React.useRef<HTMLDivElement>(null);
@@ -880,11 +983,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     let pendingTotal = 0;
     let paidCount = 0;
     let paidTotal = 0;
+    let voidedCount = 0;
 
     payouts.forEach(p => {
-      const isPaid = p.status === "Paid";
       const amt = Number(p["total_payout"] || 0) || 0;
-      if (isPaid) {
+      if (p.status === "Voided") {
+        voidedCount++;
+      } else if (p.status === "Paid") {
         paidCount++;
         paidTotal += amt;
       } else {
@@ -898,6 +1003,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       pendingTotal,
       paidCount,
       paidTotal,
+      voidedCount,
       grandTotal: pendingTotal + paidTotal,
       allCount: payouts.length
     };
@@ -911,10 +1017,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [viewingJobsPayout, setViewingJobsPayout] = React.useState<any | null>(null);
   const [imagePreviewModalUrl, setImagePreviewModalUrl] = React.useState<string | null>(null);
 
-  // Helper: Format hours to 60-min time base (e.g. 5h 30m)
+  // Helper: Format hours to 60-min time base (e.g. 5h 30m) - decHours (net hours) takes precedence
   const formatTimeBase = (start?: string, end?: string, decHours?: number): string => {
     let totalMinutes = 0;
-    if (start && end) {
+    if (decHours !== undefined && decHours !== null && !isNaN(Number(decHours))) {
+      totalMinutes = Math.max(0, Math.round(Number(decHours) * 60));
+    } else if (start && end) {
       const [sh, sm] = start.split(":").map(Number);
       const [eh, em] = end.split(":").map(Number);
       if (!isNaN(sh) && !isNaN(sm) && !isNaN(eh) && !isNaN(em)) {
@@ -923,8 +1031,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         if (endM < startM) endM += 24 * 60;
         totalMinutes = endM - startM;
       }
-    } else if (decHours !== undefined && decHours !== null) {
-      totalMinutes = Math.round(Number(decHours) * 60);
     }
     if (totalMinutes <= 0) return "0h 00m";
     const h = Math.floor(totalMinutes / 60);
@@ -958,6 +1064,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const paidScheduleIds = React.useMemo(() => {
     const ids = new Set<string>();
     payouts.forEach(p => {
+      if (p.status === "Voided") return;
       if (editingPayoutId && p.id === editingPayoutId) return;
       if (p["payout_details"]) {
         try {
@@ -1030,6 +1137,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         date: s.date,
         startTime: displayStart,
         endTime: displayEnd,
+        break1Minutes: 0,
+        break2Minutes: 0,
         totalTime,
         hourlyRate: rate,
         totalPayout,
@@ -1063,18 +1172,31 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return;
     }
 
-    const promoterName = promoters.find(p => String(p.id) === String(selectedPayoutPromoterId))?.name || "";
-    const totalSum = Number(selectedRows.reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2));
+    const promoterObj = promoters.find(p => String(p.id) === String(selectedPayoutPromoterId));
+    const promoterName = promoterObj?.name || "";
+    const promoterFullName = promoterObj?.full_name || promoterObj?.name || "";
+    const promoterPayNow = promoterObj?.paynow_account || promoterObj?.phone || "";
+    const promoterBankName = promoterObj?.rawEmployee?.bank_name || promoterObj?.rawEmployee?.Bank || "";
+    const promoterBankAccount = promoterObj?.rawEmployee?.bank_account || promoterObj?.rawEmployee?.["Bank Account"] || "";
+
+    const shiftsSubtotal = Number(selectedRows.reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2));
+    const adjustmentsTotal = Number(payoutAdjustments.reduce((acc, curr) => acc + (curr.type === 'deduction' ? -1 : 1) * (Number(curr.amount) || 0), 0).toFixed(2));
+    const finalTotalPayout = Math.max(0, Number((shiftsSubtotal + adjustmentsTotal).toFixed(2)));
     
     const payload = {
       id: editingPayoutId || `payout_${Date.now()}`,
       promoter_id: selectedPayoutPromoterId,
       promoter_name: promoterName,
+      promoter_full_name: promoterFullName,
+      promoter_paynow: promoterPayNow,
+      promoter_bank_name: promoterBankName,
+      promoter_bank_account: promoterBankAccount,
       start_date: new Date(payoutStartDate + "T00:00:00").getTime(),
       end_date: new Date(payoutEndDate + "T23:59:59").getTime(),
       hourly_rate: Number(payoutHourlyRate),
-      total_payout: totalSum,
+      total_payout: finalTotalPayout,
       payout_details: JSON.stringify(selectedRows),
+      adjustments: JSON.stringify(payoutAdjustments),
       status: editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.status || "Pending Payout") : "Pending Payout",
       receipt_photo_url: editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.receipt_photo_url || "") : "",
       payment_reference: editingPayoutId ? (payouts.find(p => p.id === editingPayoutId)?.payment_reference || "") : "",
@@ -1111,9 +1233,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     });
     setSchedules(nextSchedules);
 
+    const isEditMode = !!editingPayoutId;
     // Close form instantly
     setIsCreatePayoutOpen(false);
     setEditingPayoutId(null);
+    showToast(isEditMode ? "Payout paper updated successfully." : "Payout paper created successfully.", "success");
 
     // Silent background sync
     (async () => {
@@ -1166,6 +1290,53 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         localStorage.setItem("ib_promoter_payouts_cache", JSON.stringify(payoutsBeforeSave));
       }
     })();
+  };
+
+  // Confirm Void Payout Paper
+  const handleConfirmVoidPayout = async () => {
+    if (!voidModalPayout || !voidReasonInput.trim()) {
+      showToast("Please enter a reason for voiding this payout.", "warning");
+      return;
+    }
+    setIsVoidSaving(true);
+    const payoutId = voidModalPayout.id;
+    const updatedPayload = {
+      ...voidModalPayout,
+      status: "Voided",
+      void_reason: voidReasonInput.trim(),
+      voided_at: Date.now(),
+      voided_by: profile?.name || profile?.email || "Admin"
+    };
+
+    // Optimistic update
+    const payoutsBefore = [...payouts];
+    setPayouts(prev => prev.map(p => p.id === payoutId ? updatedPayload : p));
+    localStorage.setItem("ib_promoter_payouts_cache", JSON.stringify(
+      payouts.map(p => p.id === payoutId ? updatedPayload : p)
+    ));
+
+    setVoidModalPayout(null);
+    setVoidReasonInput("");
+    showToast("Payout paper voided successfully. Associated shifts are now reopened.", "success");
+
+    try {
+      const res = await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          table: "Promoter_Payout",
+          action: "update",
+          data: updatedPayload
+        })
+      });
+      if (!res.ok) throw new Error("Server error");
+      await fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=Promoter_Payout", { method: "POST" });
+    } catch (err: any) {
+      showToast("Failed to sync void status. Rolling back.", "error");
+      setPayouts(payoutsBefore);
+    } finally {
+      setIsVoidSaving(false);
+    }
   };
 
   // Delete Payout record
@@ -1305,14 +1476,16 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return isNaN(d.getTime()) ? "" : days[d.getDay()];
     };
 
-    // Lookup Promoter details
+    // Lookup Promoter details (snapshot priority)
     const promoterId = payout["promoter_id"];
     const promoterObj = promoters.find(p => String(p.id) === String(promoterId));
     const nickname = payout["promoter_name"] || (promoterObj ? promoterObj.name : "-");
-    const fullname = promoterObj ? (promoterObj["full_name"] || promoterObj.full_name || "~") : "~";
-    const paynowAccount = promoterObj ? (promoterObj["paynow_account"] || promoterObj.paynow_account || "~") : "~";
-    const phone = promoterObj ? (promoterObj.phone || "~") : "~";
-    const email = promoterObj ? (promoterObj.email || "~") : "~";
+    const fullname = payout["promoter_full_name"] || (promoterObj ? (promoterObj["full_name"] || promoterObj.full_name || "-") : "-");
+    const paynowAccount = payout["promoter_paynow"] || (promoterObj ? (promoterObj["paynow_account"] || promoterObj.paynow_account || "-") : "-");
+    const bankName = payout["promoter_bank_name"] || promoterObj?.rawEmployee?.bank_name || promoterObj?.rawEmployee?.Bank || "";
+    const bankAccount = payout["promoter_bank_account"] || promoterObj?.rawEmployee?.bank_account || promoterObj?.rawEmployee?.["Bank Account"] || "";
+    const phone = promoterObj ? (promoterObj.phone || "-") : "-";
+    const email = promoterObj ? (promoterObj.email || "-") : "-";
 
     // Calculate total hours
     let totalHours = 0;
@@ -1381,6 +1554,52 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.setFont("helvetica", "bold");
     doc.setTextColor(11, 87, 208); // blue
     doc.text(String(`$${Number(payout["total_payout"])?.toFixed(2)}`), 126, 61);
+
+    // VOIDED Rubber Stamp
+    if (payout.status === "Voided") {
+      doc.saveGraphicsState();
+      const cx = 176, cy = 53;
+      const angleDeg = -10;
+      const rad = (angleDeg * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
+      const rotatePoint = (dx: number, dy: number) => ({
+        x: cx + dx * cos - dy * sin,
+        y: cy + dx * sin + dy * cos
+      });
+
+      const drawVoidBox = (hw: number, hh: number, lineWidth: number) => {
+        const p1 = rotatePoint(-hw, -hh);
+        const p2 = rotatePoint(hw, -hh);
+        const p3 = rotatePoint(hw, hh);
+        const p4 = rotatePoint(-hw, hh);
+        doc.setLineWidth(lineWidth);
+        doc.line(p1.x, p1.y, p2.x, p2.y);
+        doc.line(p2.x, p2.y, p3.x, p3.y);
+        doc.line(p3.x, p3.y, p4.x, p4.y);
+        doc.line(p4.x, p4.y, p1.x, p1.y);
+      };
+
+      doc.setDrawColor(220, 38, 38);
+      drawVoidBox(18, 9, 0.7);
+      drawVoidBox(16.5, 7.5, 0.25);
+
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(13);
+      doc.setTextColor(220, 38, 38);
+      const ptVoid = rotatePoint(0, -2);
+      doc.text("VOIDED", ptVoid.x, ptVoid.y, { align: "center", angle: angleDeg });
+
+      doc.setFontSize(5.5);
+      const voidDateStr = formatTimestamp(payout["voided_at"]);
+      const ptDate = rotatePoint(0, 3);
+      doc.text(`DATE: ${voidDateStr}`, ptDate.x, ptDate.y, { align: "center", angle: angleDeg });
+      if (payout["void_reason"]) {
+        const ptR = rotatePoint(0, 6.5);
+        doc.text(`REASON: ${String(payout["void_reason"]).substring(0, 25)}`, ptR.x, ptR.y, { align: "center", angle: angleDeg });
+      }
+      doc.restoreGraphicsState();
+    }
 
     // PAID Rubber Stamp (synchronized rotation in upper-right clear area)
     if (payout.status === "Paid") {
@@ -1510,11 +1729,42 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       yPos += 8;
     });
 
+    // Adjustments rows in PDF if present
+    let pdfAdjustments: any[] = [];
+    try {
+      pdfAdjustments = JSON.parse(payout["adjustments"] || "[]");
+    } catch {
+      pdfAdjustments = [];
+    }
+
+    if (Array.isArray(pdfAdjustments) && pdfAdjustments.length > 0) {
+      yPos += 3;
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(7.5);
+      doc.setTextColor(113, 113, 122);
+      doc.text("ADJUSTMENTS & ALLOWANCES", 17, yPos);
+      yPos += 4;
+
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(8);
+      pdfAdjustments.forEach((adj: any) => {
+        const isDed = adj.type === "deduction";
+        const sign = isDed ? "-" : "+";
+        const amtStr = `${sign}${Number(adj.amount || 0).toFixed(2)}`;
+        doc.setTextColor(isDed ? 185 : 22, isDed ? 28 : 101, isDed ? 28 : 52);
+        doc.text(`${sign} ${adj.description || "Adjustment"}`, 20, yPos);
+        doc.text(amtStr, 143, yPos, { align: "right" });
+        yPos += 5;
+      });
+      doc.setTextColor(24, 24, 27);
+      doc.setFontSize(8.5);
+    }
+
     // Add spacing and total row at end of table
     yPos += 4;
     doc.setFont("helvetica", "bold");
     doc.text("Net Total Payout:", 118, yPos, { align: "right" });
-    doc.text(`$${Number(payout["total_payout"])?.toFixed(2)}`, 143, yPos, { align: "right" });
+    doc.text(`${Number(payout["total_payout"])?.toFixed(2)}`, 143, yPos, { align: "right" });
 
     // Signatures block - pinned at the bottom of the final page
     const sigY = 265;
@@ -1588,6 +1838,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   React.useEffect(() => {
     const draft = localStorage.getItem("ib_promoter_schedules_draft");
     const backup = localStorage.getItem("ib_promoter_schedules_backup");
+    const savedCamp = localStorage.getItem("ib_promoter_selected_campaign");
+    if (savedCamp) {
+      setSelectedCampaignId(savedCamp);
+    }
     if (draft && backup) {
       try {
         const parsedDraft = JSON.parse(draft);
@@ -1607,6 +1861,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       setIsEditMode(false);
       setHistory([]);
       setHistoryIndex(-1);
+      localStorage.removeItem("ib_promoter_selected_campaign");
     };
     window.addEventListener("ib-clear-edit-mode", handleClearEditMode);
     return () => {
@@ -1723,7 +1978,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         brand: campBrand,
         products: campProducts.join(","),
         start_date: startMs,
-        end_date: endMs
+        end_date: endMs,
+        updated_at: Date.now().toString()
       }
     };
 
@@ -1736,7 +1992,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       brand: payload.data.brand,
       products: payload.data.products,
       start_date: payload.data.start_date,
-      end_date: payload.data.end_date
+      end_date: payload.data.end_date,
+      updated_at: payload.data.updated_at
     };
 
     setCampaigns(prev => {
@@ -2732,6 +2989,38 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     window.open(url, "_blank");
   };
 
+  // Sorted active campaigns for schedule planner grid view (sorted by latest edit on top)
+  const sortedCampaignsForGrid = React.useMemo(() => {
+    const list = campaigns.filter(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"));
+
+    const getLatestActivity = (c: any) => {
+      let latest = 0;
+      if (c.updated_at) latest = Math.max(latest, Number(c.updated_at) || 0);
+      if (c.created_at) latest = Math.max(latest, Number(c.created_at) || 0);
+
+      const numMatch = String(c.id).match(/\d+/);
+      if (numMatch) {
+        const idTs = Number(numMatch[0]);
+        if (idTs > 1000000000000) latest = Math.max(latest, idTs);
+      }
+
+      const campSchedules = schedules.filter(s => String(s.campaign_id) === String(c.id));
+      for (const s of campSchedules) {
+        const schMatch = String(s.id).match(/\d+/);
+        if (schMatch) {
+          const schTs = Number(schMatch[0]);
+          if (schTs > 1000000000000) latest = Math.max(latest, schTs);
+        }
+        if (s.date && Number(s.date) > 1000000000000) {
+          latest = Math.max(latest, Number(s.date));
+        }
+      }
+      return latest;
+    };
+
+    return [...list].sort((a, b) => getLatestActivity(b) - getLatestActivity(a));
+  }, [campaigns, schedules]);
+
   // Campaigns Table columns mapping
   const campaignsColumns = React.useMemo(() => [
     { id: "actions", header: "", accessor: "actions" },
@@ -3378,6 +3667,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       setHistoryIndex(-1);
       localStorage.removeItem("ib_promoter_schedules_draft");
       localStorage.removeItem("ib_promoter_schedules_backup");
+      localStorage.removeItem("ib_promoter_selected_campaign");
       showToast("No changes to deploy.", "info");
       return;
     }
@@ -3393,6 +3683,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     setHistoryIndex(-1);
     localStorage.removeItem("ib_promoter_schedules_draft");
     localStorage.removeItem("ib_promoter_schedules_backup");
+    localStorage.removeItem("ib_promoter_selected_campaign");
 
     // Silent background sync
     (async () => {
@@ -3432,10 +3723,24 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           );
         }
 
+        // Also update campaign latest edit timestamp
+        if (selectedCampaignId && selectedCampaignId !== "all" && selectedCampaignId !== "") {
+          const nowTs = Date.now().toString();
+          setCampaigns(prev => prev.map(c => String(c.id) === String(selectedCampaignId) ? { ...c, updated_at: nowTs } : c));
+          promises.push(
+            fetch("https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ table: "Promoter_Campaign", action: "update", data: { id: selectedCampaignId, updated_at: nowTs } })
+            })
+          );
+        }
+
         const results = await Promise.all(promises);
         const allOk = results.every(r => r.ok);
         if (allOk) {
           loadSchedules(); // Reload database data
+          loadCampaigns();
         } else {
           throw new Error("One or more update requests failed.");
         }
@@ -3835,6 +4140,697 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
     const newSchedules = schedules.map(s => s.id === schId ? { ...s, remarks: value } : s);
     pushHistory(newSchedules);
+  };
+
+  // Export Schedule / Template (.xlsx)
+  const handleExportSchedule = () => {
+    if (!selectedCampaignId || selectedCampaignId === "" || selectedCampaignId === "all") {
+      showToast("Please select a campaign from the top bar before exporting schedule.", "warning");
+      return;
+    }
+
+    const selectedCamp = campaigns.find(c => String(c.id) === String(selectedCampaignId));
+    const campTitle = selectedCamp ? selectedCamp["campaign_title"] : "Campaign";
+
+    const formatDDMMYYYY = (d: Date) => {
+      const day = String(d.getDate()).padStart(2, "0");
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const year = d.getFullYear();
+      return `${day}/${month}/${year}`;
+    };
+
+    const formatTimeToNumber = (timeStr: any): number => {
+      if (typeof timeStr === "number") return timeStr;
+      if (!timeStr) return 900;
+      const str = String(timeStr).trim();
+      if (str.includes(":")) {
+        const [h, m] = str.split(":").map(Number);
+        if (!isNaN(h)) {
+          return h * 100 + (isNaN(m) ? 0 : m);
+        }
+      }
+      const num = parseInt(str, 10);
+      return isNaN(num) ? 900 : num;
+    };
+
+    // Row 1: Instructions focused per column (comprehensive guidance)
+    const instructionsRow = [
+      "PROMOTER NAME (MANDATORY):\n• Must match an active registered promoter name in the system database.\n• Case-insensitive matching is supported (e.g. 'Syazwi', 'syazwi', or 'SYAZWI' all match).\n• If the promoter name is unregistered, misspelled, or left empty, the ENTIRE spreadsheet import will be REJECTED.\n• Check the Promoter Directory tab in the admin console to see all valid registered promoter names.",
+      "SHIFT DATE (MANDATORY):\n• Date must be formatted strictly as dd/mm/yyyy (e.g. 04/11/2026).\n• The shift date MUST fall within this campaign's active date range.\n• Any shift scheduled before campaign start date or after campaign end date will be rejected immediately.\n• Ensure the Excel cell format is standard Date or plain Text (dd/mm/yyyy).",
+      "TIME START (MANDATORY):\n• 24-hour military time format without leading zeros (e.g. 900 for 09:00, 1400 for 14:00, 830 for 08:30) or standard colon format (09:00, 14:00).\n• Must be strictly earlier than Time End.\n• A 15-minute buffer rule applies between shifts for the same promoter.\n• Shifts with missing or invalid start times will cause import rejection.",
+      "TIME END (MANDATORY):\n• 24-hour military time format without leading zeros (e.g. 1700 for 17:00, 2200 for 22:00, 1730 for 17:30) or standard colon format (17:00, 22:00).\n• Must be strictly later than Time Start.\n• STRICT SHIFT OVERLAP RULE: No overlapping shifts are allowed for the same promoter on the same date.\n• Validation checks across all campaigns AND rows within this spreadsheet: If a promoter has another shift with less than 15 minutes gap, the entire import will be REJECTED with a detailed conflict toast notification.",
+      "STORE ID / LOCATION (MANDATORY & CASE-SENSITIVE):\n• FOR REGISTERED STORES: Enter the exact Store ID (e.g. 3303 or SH50).\n• STRICTLY CASE-SENSITIVE: Store ID matching is 100% case-sensitive. 'SH50' will NOT match 'sh50'. If the Store ID does not exist in the database, the import will be REJECTED.\n• COLON RULE (':'): You can write the Store ID with or without details (e.g. '3303: 7 ELEVEN 3303 PIONEER MALL' or just '3303'). The system ONLY reads the Store ID before the colon (':'). Any description after the colon is ignored and not read by the system.\n• FOR CUSTOM LOCATIONS: Type 'custom: [Location Name]' (e.g. 'custom: Marina Bay Event Hall' or 'custom: Takashimaya Atrium B2'). The text after 'custom:' will become the custom address.\n• Missing or invalid Store IDs will reject the import.",
+      "REMARK / NOTES (OPTIONAL):\n• Optional shift notes, booth assignment, briefing instructions, or supervisor remarks.\n• Maximum character limit: 200 words per shift row. Exceeding 200 words will reject the row.\n• LOCKED SHIFTS (Red Background): Rows marked with a soft red background and '[LOCKED BY PAYOUT]' are linked to an active payout paper. These shifts are locked by accounting—do NOT edit them in Excel.\n• OVERWRITE BEHAVIOR: Uploading this spreadsheet will OVERWRITE all unlocked shifts in this campaign. Any shifts locked by payout papers are safely preserved and cannot be overwritten.\n• After uploading, review shifts in the calendar draft and click 'Save & Deploy' to apply changes."
+    ];
+
+    // Row 2: Campaign Title
+    const campaignTitleRow = [campTitle, "", "", "", "", ""];
+
+    // Row 3: Header Row
+    const headerRow = ["Promoter Name", "Date", "Time Start", "Time End", "Store ID", "Remark"];
+
+    // Row 4 onwards: Actual schedule shifts or dummy data if empty
+    const campaignShifts = schedules
+      .filter(s => String(s.campaign_id) === String(selectedCampaignId))
+      .sort((a, b) => {
+        const tA = typeof a.date === "number" ? a.date : new Date(a.date).getTime();
+        const tB = typeof b.date === "number" ? b.date : new Date(b.date).getTime();
+        return tA - tB;
+      });
+
+    let dataRows: any[][] = [];
+    const lockedRowIndices = new Set<number>();
+
+    const formatStoreExportDetail = (storeIdOrObj: any, fallbackName?: string) => {
+      let storeObj = typeof storeIdOrObj === "object" && storeIdOrObj !== null ? storeIdOrObj : null;
+      const storeIdStr = typeof storeIdOrObj === "string" || typeof storeIdOrObj === "number" ? String(storeIdOrObj).trim() : (storeObj ? String(storeObj.id) : "");
+      
+      if (!storeObj && storeIdStr) {
+        storeObj = stores.find(st => String(st.id) === storeIdStr || String(st.store_id) === storeIdStr);
+      }
+
+      if (storeIdStr.startsWith("OTHER_") || (!storeObj && fallbackName)) {
+        return fallbackName ? `custom: ${fallbackName}` : (storeIdStr || "custom: Location");
+      }
+
+      if (!storeObj) {
+        return fallbackName ? `${storeIdStr}: ${fallbackName}` : storeIdStr;
+      }
+
+      const cleanId = String(storeObj.id);
+      const retId = storeObj.retailers_id || storeObj.retailer_id || storeObj["Retailers ID"] || storeObj["Retailer ID"];
+      const retailerObj = retId ? retailers.find(r => String(r.id) === String(retId)) : null;
+      const retailerName = (retailerObj ? (retailerObj["display_name"] || retailerObj.name || "") : (storeObj.retailer_name || storeObj.retailer || "")).trim();
+      const baseStoreName = (storeObj.name || storeObj["display_name"] || fallbackName || "").trim();
+
+      let storeDetail = baseStoreName;
+      if (retailerName && baseStoreName) {
+        if (baseStoreName.toLowerCase().startsWith(retailerName.toLowerCase())) {
+          storeDetail = baseStoreName;
+        } else {
+          storeDetail = `${retailerName} ${baseStoreName}`;
+        }
+      } else if (retailerName) {
+        storeDetail = retailerName;
+      }
+
+      return storeDetail ? `${cleanId}: ${storeDetail}` : cleanId;
+    };
+
+    if (campaignShifts.length > 0) {
+      dataRows = campaignShifts.map((s, idx) => {
+        const matchedPromoter = promoters.find(p => String(p.id) === String(s.promoter_id));
+        const pName = matchedPromoter?.name || s.promoter_name || "";
+        
+        const shiftDate = typeof s.date === "number" || !isNaN(Number(s.date)) ? new Date(Number(s.date)) : new Date(s.date);
+        const dateStr = !isNaN(shiftDate.getTime()) ? formatDDMMYYYY(shiftDate) : String(s.date || "");
+
+        const startNum = formatTimeToNumber(s.shift_start);
+        const endNum = formatTimeToNumber(s.shift_end);
+
+        const storeIdVal = formatStoreExportDetail(s.store_id, s.store_name);
+
+        const isLocked = isShiftLocked(s.id);
+        if (isLocked) {
+          lockedRowIndices.add(idx);
+        }
+
+        let remarkVal = s.remarks || "";
+        if (isLocked && !remarkVal.includes("[LOCKED BY PAYOUT]")) {
+          remarkVal = remarkVal ? `[LOCKED BY PAYOUT] ${remarkVal}` : "[LOCKED BY PAYOUT]";
+        }
+
+        return [pName, dateStr, startNum, endNum, storeIdVal, remarkVal];
+      });
+    } else {
+      // Dummy data for new campaign
+      let baseDate = new Date();
+      if (selectedCamp?.start_date) {
+        const campDate = new Date(Number(selectedCamp.start_date));
+        if (!isNaN(campDate.getTime())) baseDate = campDate;
+      }
+      const sampleDate1 = formatDDMMYYYY(baseDate);
+      const d2 = new Date(baseDate); d2.setDate(d2.getDate() + 1);
+      const sampleDate2 = formatDDMMYYYY(d2);
+      const d3 = new Date(baseDate); d3.setDate(d3.getDate() + 2);
+      const sampleDate3 = formatDDMMYYYY(d3);
+
+      const activePromoters = promoters.filter(p => !(p.archived && (String(p.archived) === "1" || String(p.archived) === "true")));
+      const p1 = activePromoters[0]?.name || "Syazwi";
+      const p2 = activePromoters[1]?.name || "Jidan";
+      const p3 = activePromoters[2]?.name || activePromoters[0]?.name || "Sufyan";
+
+      const st1 = stores[0];
+      const s1Val = st1 ? formatStoreExportDetail(st1) : "3303: 7 ELEVEN 3303 PIONEER MALL";
+      const s2Val = "custom: Marina Bay Event Hall";
+      const st3 = stores[1] || stores[0];
+      const s3Val = st3 ? formatStoreExportDetail(st3) : "SH50: SHENG SIONG JURONG";
+
+      dataRows = [
+        [p1, sampleDate1, 900, 1700, s1Val, "Entrance product sampling"],
+        [p2, sampleDate2, 1000, 1800, s2Val, "Weekend roadshow activation"],
+        [p3, sampleDate3, 1200, 2000, s3Val, "Flyer distribution & booth display"]
+      ];
+    }
+
+    const aoaData = [
+      instructionsRow,
+      campaignTitleRow,
+      headerRow,
+      ...dataRows
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(aoaData);
+    ws["!merges"] = [
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } } // Merge A2:F2 for Campaign Title
+    ];
+    ws["!cols"] = [
+      { wch: 34 }, // Promoter Name
+      { wch: 22 }, // Date
+      { wch: 20 }, // Time Start
+      { wch: 24 }, // Time End
+      { wch: 52 }, // Store ID
+      { wch: 50 }  // Remark
+    ];
+    ws["!rows"] = [
+      { hpt: 180 }, // Row 1: Comprehensive multiline instructions
+      { hpt: 30 },  // Row 2: Campaign Title
+      { hpt: 26 },  // Row 3: Headers
+      ...dataRows.map(() => ({ hpt: 22 }))
+    ];
+
+    const colKeys = ["A", "B", "C", "D", "E", "F"];
+
+    // 1. Style Row 1: Instructions (Yellow background, Red italic text)
+    colKeys.forEach((col) => {
+      const cellRef = `${col}1`;
+      if (ws[cellRef]) {
+        (ws[cellRef] as any).s = {
+          fill: { fgColor: { rgb: "FFFF00" } }, // Bright Yellow
+          font: { name: "Calibri", sz: 9.5, italic: true, bold: false, color: { rgb: "CC0000" } }, // Red text
+          alignment: { vertical: "top", horizontal: "left", wrapText: true },
+          border: {
+            top: { style: "thin", color: { rgb: "E6E600" } },
+            bottom: { style: "thin", color: { rgb: "E6E600" } },
+            left: { style: "thin", color: { rgb: "E6E600" } },
+            right: { style: "thin", color: { rgb: "E6E600" } }
+          }
+        };
+      }
+    });
+
+    // 2. Style Row 2: Campaign Title (Bold Navy, size 13)
+    colKeys.forEach((col) => {
+      const cellRef = `${col}2`;
+      if (!ws[cellRef]) {
+        ws[cellRef] = { t: "s", v: "" };
+      }
+      (ws[cellRef] as any).s = {
+        fill: { fgColor: { rgb: "F0F4FA" } },
+        font: { name: "Calibri", sz: 13, bold: true, italic: true, color: { rgb: "002060" } },
+        alignment: { vertical: "center", horizontal: "left", indent: 1 },
+        border: {
+          top: { style: "thin", color: { rgb: "D9D9D9" } },
+          bottom: { style: "medium", color: { rgb: "002060" } },
+          left: { style: "thin", color: { rgb: "D9D9D9" } },
+          right: { style: "thin", color: { rgb: "D9D9D9" } }
+        }
+      };
+    });
+
+    // 3. Style Row 3: Table Headers (Deep Navy Blue background, White bold text, size 11)
+    colKeys.forEach((col, idx) => {
+      const cellRef = `${col}3`;
+      if (ws[cellRef]) {
+        const isCenter = idx === 1 || idx === 2 || idx === 3;
+        (ws[cellRef] as any).s = {
+          fill: { fgColor: { rgb: "002060" } }, // Deep Navy
+          font: { name: "Calibri", sz: 11, bold: true, color: { rgb: "FFFFFF" } }, // Crisp White
+          alignment: { vertical: "center", horizontal: isCenter ? "center" : "left", wrapText: false },
+          border: {
+            top: { style: "thin", color: { rgb: "001A4D" } },
+            bottom: { style: "thin", color: { rgb: "001A4D" } },
+            left: { style: "thin", color: { rgb: "001A4D" } },
+            right: { style: "thin", color: { rgb: "001A4D" } }
+          }
+        };
+      }
+    });
+
+    // 4. Style Row 4 onwards: Data Rows (Clean borders, alternating fills, proper font & alignments, soft red for locked)
+    const thinBorder = {
+      top: { style: "thin", color: { rgb: "D9D9D9" } },
+      bottom: { style: "thin", color: { rgb: "D9D9D9" } },
+      left: { style: "thin", color: { rgb: "D9D9D9" } },
+      right: { style: "thin", color: { rgb: "D9D9D9" } }
+    };
+
+    const lockedBorder = {
+      top: { style: "thin", color: { rgb: "FCA5A5" } },
+      bottom: { style: "thin", color: { rgb: "FCA5A5" } },
+      left: { style: "thin", color: { rgb: "FCA5A5" } },
+      right: { style: "thin", color: { rgb: "FCA5A5" } }
+    };
+
+    for (let r = 0; r < dataRows.length; r++) {
+      const rowNum = 4 + r;
+      const isEven = r % 2 === 1;
+      const isRowLocked = lockedRowIndices.has(r);
+
+      colKeys.forEach((col, idx) => {
+        const cellRef = `${col}${rowNum}`;
+        if (ws[cellRef]) {
+          const isCenter = idx === 1 || idx === 2 || idx === 3; // Date (Col B), Time Start (Col C), Time End (Col D)
+          
+          if (isRowLocked) {
+            // Locked row: Soft red background (#FEE2E2), dark red text (#991B1B), warning border
+            (ws[cellRef] as any).s = {
+              fill: { fgColor: { rgb: "FEE2E2" } },
+              font: { name: "Calibri", sz: 10, italic: true, bold: false, color: { rgb: "991B1B" } },
+              alignment: {
+                vertical: "center",
+                horizontal: isCenter ? "center" : "left"
+              },
+              border: lockedBorder
+            };
+          } else {
+            (ws[cellRef] as any).s = {
+              fill: { fgColor: { rgb: isEven ? "F9FAFB" : "FFFFFF" } },
+              font: { name: "Calibri", sz: 10, color: { rgb: "1F1F1F" } },
+              alignment: {
+                vertical: "center",
+                horizontal: isCenter ? "center" : "left"
+              },
+              border: thinBorder
+            };
+          }
+        }
+      });
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Schedule");
+    const safeTitle = campTitle.replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 30);
+    XLSX.writeFile(wb, `Schedule_${safeTitle}.xlsx`);
+
+    if (campaignShifts.length > 0) {
+      showToast(`Exported ${campaignShifts.length} shift(s) for "${campTitle}".`, "success");
+    } else {
+      showToast(`Schedule template downloaded with sample data for "${campTitle}".`, "success");
+    }
+  };
+
+  // Handle Schedule File Import (.xlsx, .xls, .csv)
+  const handleScheduleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!selectedCampaignId || selectedCampaignId === "" || selectedCampaignId === "all") {
+      showToast("Please select a campaign from the top bar before importing a schedule.", "warning");
+      if (e.target) e.target.value = "";
+      return;
+    }
+
+    const selectedCamp = campaigns.find(c => String(c.id) === String(selectedCampaignId));
+    if (!selectedCamp) {
+      showToast("Selected campaign not found.", "error");
+      if (e.target) e.target.value = "";
+      return;
+    }
+
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const data = new Uint8Array(evt.target?.result as ArrayBuffer);
+        const wb = XLSX.read(data, { type: "array" });
+        const sheetName = wb.SheetNames[0];
+        if (!sheetName) {
+          showToast("The uploaded Excel workbook contains no sheets.", "error");
+          return;
+        }
+
+        const ws = wb.Sheets[sheetName];
+        const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
+        if (!rows || rows.length < 2) {
+          showToast("The uploaded spreadsheet does not contain any schedule data.", "error");
+          return;
+        }
+
+        let headerRowIdx = -1;
+        for (let i = 0; i < Math.min(8, rows.length); i++) {
+          const rowCells = (rows[i] || []).map(cell => String(cell || "").trim().toLowerCase());
+          const hasPromoterHeader = rowCells.some(c => c === "promoter name" || c === "promoter");
+          const hasDateHeader = rowCells.some(c => c === "date");
+          if (hasPromoterHeader && hasDateHeader) {
+            headerRowIdx = i;
+            break;
+          }
+        }
+
+        if (headerRowIdx === -1) {
+          for (let i = 0; i < Math.min(8, rows.length); i++) {
+            const rowStr = (rows[i] || []).map(cell => String(cell || "").toLowerCase()).join(" ");
+            if (!rowStr.includes("instruction") && rowStr.includes("promoter") && (rowStr.includes("date") || rowStr.includes("time") || rowStr.includes("store"))) {
+              headerRowIdx = i;
+              break;
+            }
+          }
+        }
+
+        if (headerRowIdx === -1) headerRowIdx = 2;
+
+        const headerRow = (rows[headerRowIdx] || []).map(cell => String(cell || "").trim().toLowerCase());
+        
+        let colPromoter = headerRow.findIndex(h => h.includes("promoter"));
+        let colDate = headerRow.findIndex(h => h.includes("date"));
+        let colStart = headerRow.findIndex(h => h.includes("start"));
+        let colEnd = headerRow.findIndex(h => h.includes("end"));
+        let colStore = headerRow.findIndex(h => h.includes("store"));
+        let colRemark = headerRow.findIndex(h => h.includes("remark"));
+
+        if (colPromoter === -1) colPromoter = 0;
+        if (colDate === -1) colDate = 1;
+        if (colStart === -1) colStart = 2;
+        if (colEnd === -1) colEnd = 3;
+        if (colStore === -1) colStore = 4;
+        if (colRemark === -1) colRemark = 5;
+
+        const dataRows = rows.slice(headerRowIdx + 1);
+        if (dataRows.length === 0) {
+          showToast("No data rows found below the header.", "warning");
+          return;
+        }
+
+        const formatDDMMYYYY = (d: Date) => {
+          const day = String(d.getDate()).padStart(2, "0");
+          const month = String(d.getMonth() + 1).padStart(2, "0");
+          const year = d.getFullYear();
+          return `${day}/${month}/${year}`;
+        };
+
+        const parseImportDate = (raw: any): { dateMs: number; error?: string } => {
+          if (raw === undefined || raw === null || String(raw).trim() === "") {
+            return { dateMs: 0, error: "Date is missing" };
+          }
+          if (raw instanceof Date) {
+            if (isNaN(raw.getTime())) return { dateMs: 0, error: "Invalid date object" };
+            return { dateMs: new Date(raw.getFullYear(), raw.getMonth(), raw.getDate()).getTime() };
+          }
+          if (typeof raw === "number" && raw > 25000 && raw < 80000) {
+            const jsDate = new Date(Math.round((raw - 25569) * 86400 * 1000));
+            return { dateMs: new Date(jsDate.getUTCFullYear(), jsDate.getUTCMonth(), jsDate.getUTCDate()).getTime() };
+          }
+          const str = String(raw).trim();
+          const m = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+          if (!m) {
+            return { dateMs: 0, error: `Invalid date format "${str}". Expected dd/mm/yyyy` };
+          }
+          const day = parseInt(m[1], 10);
+          const month = parseInt(m[2], 10) - 1;
+          const year = parseInt(m[3], 10);
+          const d = new Date(year, month, day);
+          if (isNaN(d.getTime()) || d.getDate() !== day || d.getMonth() !== month || d.getFullYear() !== year) {
+            return { dateMs: 0, error: `Invalid calendar date "${str}"` };
+          }
+          return { dateMs: d.getTime() };
+        };
+
+        const parseImportTime = (raw: any): { timeStr: string; error?: string } => {
+          if (raw === undefined || raw === null || String(raw).trim() === "") {
+            return { timeStr: "", error: "Missing time value" };
+          }
+          const str = String(raw).trim();
+          
+          if (str.includes(":")) {
+            const parts = str.split(":");
+            const h = parseInt(parts[0], 10);
+            const m = parseInt(parts[1], 10);
+            if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+              return { timeStr: "", error: `Invalid time "${str}"` };
+            }
+            return { timeStr: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}` };
+          }
+
+          const num = Number(str);
+          if (!isNaN(num) && num > 0 && num < 1) {
+            const totalMinutes = Math.round(num * 24 * 60);
+            const h = Math.floor(totalMinutes / 60);
+            const m = totalMinutes % 60;
+            return { timeStr: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}` };
+          }
+
+          const digits = str.replace(/\D/g, "");
+          if (!digits) {
+            return { timeStr: "", error: `Invalid time "${str}"` };
+          }
+
+          let hours = 0;
+          let minutes = 0;
+
+          if (digits.length === 1 || digits.length === 2) {
+            hours = parseInt(digits, 10);
+            minutes = 0;
+          } else if (digits.length === 3) {
+            hours = parseInt(digits.slice(0, 1), 10);
+            minutes = parseInt(digits.slice(1), 10);
+          } else if (digits.length === 4) {
+            hours = parseInt(digits.slice(0, 2), 10);
+            minutes = parseInt(digits.slice(2), 10);
+          } else {
+            return { timeStr: "", error: `Invalid time format "${str}"` };
+          }
+
+          if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) {
+            return { timeStr: "", error: `Time out of range "${str}" (00:00 - 23:59)` };
+          }
+
+          return { timeStr: `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}` };
+        };
+
+        const unrecognizedNames = new Set<string>();
+        const rowErrors: string[] = [];
+        const parsedShifts: any[] = [];
+
+        const campStartMs = selectedCamp.start_date ? new Date(Number(selectedCamp.start_date)).setHours(0, 0, 0, 0) : null;
+        const campEndMs = selectedCamp.end_date ? new Date(Number(selectedCamp.end_date)).setHours(23, 59, 59, 999) : null;
+
+        dataRows.forEach((row, idx) => {
+          const excelRowNum = headerRowIdx + 2 + idx;
+          if (!row || row.every(c => c === undefined || c === null || String(c).trim() === "")) {
+            return;
+          }
+
+          // 1. Promoter Name validation (case-insensitive)
+          const rawName = String(row[colPromoter] || "").trim();
+          if (!rawName) {
+            rowErrors.push(`Row ${excelRowNum}: Promoter name is missing.`);
+            return;
+          }
+          const matchedPromoter = promoters.find(p => 
+            String(p.name || "").trim().toLowerCase() === rawName.toLowerCase() ||
+            String(p["full_name"] || p.full_name || "").trim().toLowerCase() === rawName.toLowerCase()
+          );
+          if (!matchedPromoter) {
+            unrecognizedNames.add(rawName);
+            return;
+          }
+
+          // 2. Date validation
+          const dateRes = parseImportDate(row[colDate]);
+          if (dateRes.error) {
+            rowErrors.push(`Row ${excelRowNum}: ${dateRes.error}`);
+            return;
+          }
+          if ((campStartMs && dateRes.dateMs < campStartMs) || (campEndMs && dateRes.dateMs > campEndMs)) {
+            rowErrors.push(`Row ${excelRowNum}: Date ${formatDDMMYYYY(new Date(dateRes.dateMs))} is outside campaign period (${selectedCamp.start_date ? formatEpochToDisplay(selectedCamp.start_date) : "—"} to ${selectedCamp.end_date ? formatEpochToDisplay(selectedCamp.end_date) : "—"}).`);
+            return;
+          }
+
+          // 3. Time Start & Time End validation
+          const startRes = parseImportTime(row[colStart]);
+          if (startRes.error) {
+            rowErrors.push(`Row ${excelRowNum}: Time Start ${startRes.error}`);
+            return;
+          }
+          const endRes = parseImportTime(row[colEnd]);
+          if (endRes.error) {
+            rowErrors.push(`Row ${excelRowNum}: Time End ${endRes.error}`);
+            return;
+          }
+
+          const [sh, sm] = startRes.timeStr.split(":").map(Number);
+          const [eh, em] = endRes.timeStr.split(":").map(Number);
+          if (sh * 60 + sm >= eh * 60 + em) {
+            rowErrors.push(`Row ${excelRowNum}: Time Start (${startRes.timeStr}) must be earlier than Time End (${endRes.timeStr}).`);
+            return;
+          }
+
+          // 4. Store ID / Custom Location validation
+          const rawStore = String(row[colStore] || "").trim();
+          if (!rawStore) {
+            rowErrors.push(`Row ${excelRowNum}: Store ID is missing.`);
+            return;
+          }
+
+          let storeId = "";
+          let storeName = "";
+          let storeAddress = "";
+
+          if (rawStore.toLowerCase().startsWith("custom:")) {
+            const locName = rawStore.replace(/^custom:\s*/i, "").trim();
+            if (!locName) {
+              rowErrors.push(`Row ${excelRowNum}: Custom location name is empty.`);
+              return;
+            }
+            storeId = `OTHER_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            storeName = locName;
+            storeAddress = locName;
+          } else {
+            // Read store ID before ":" only (e.g. "3303: 7 ELEVEN 3303 PIONEER MALL" -> "3303", or "3303" -> "3303")
+            const extractedStoreId = rawStore.includes(":") ? rawStore.split(":")[0].trim() : rawStore.trim();
+
+            const matchedStore = stores.find(s => 
+              String(s.id).trim() === extractedStoreId ||
+              (s.store_id && String(s.store_id).trim() === extractedStoreId)
+            );
+            if (!matchedStore) {
+              rowErrors.push(`Row ${excelRowNum}: Store ID "${extractedStoreId}" does not exist in the database (Case-Sensitive check failed).`);
+              return;
+            }
+            storeId = String(matchedStore.id);
+            storeName = matchedStore["display_name"] || matchedStore.name;
+            storeAddress = getCleanStoreAddress(matchedStore);
+          }
+
+          // 5. Remark validation (max 200 words)
+          let rawRemark = String(row[colRemark] || "").trim();
+          // Clean out [LOCKED BY PAYOUT] tag if present so it doesn't accumulate
+          rawRemark = rawRemark.replace(/^\[LOCKED BY PAYOUT\]\s*/i, "").trim();
+          if (rawRemark) {
+            const wordCount = rawRemark.split(/\s+/).filter(Boolean).length;
+            if (wordCount > 200) {
+              rowErrors.push(`Row ${excelRowNum}: Remark exceeds 200 words (${wordCount} words).`);
+              return;
+            }
+          }
+
+          // Check if this row matches an existing locked shift in the current campaign
+          const existingLockedShift = schedules.find(s => 
+            String(s.campaign_id) === String(selectedCampaignId) &&
+            isShiftLocked(s.id) &&
+            String(s.promoter_id) === String(matchedPromoter.id) &&
+            new Date(s.date).toDateString() === new Date(dateRes.dateMs).toDateString() &&
+            formatTimeDisplay(s.shift_start) === startRes.timeStr &&
+            formatTimeDisplay(s.shift_end) === endRes.timeStr
+          );
+
+          if (existingLockedShift) {
+            // Already preserved in otherSchedules; do not duplicate in parsedShifts
+            return;
+          }
+
+          // Check overlap with existing shifts in other campaigns or locked shifts in current campaign
+          const conflictingShift = schedules.find(s => {
+            // Exclude existing shifts of this same campaign that will be overwritten upon import, unless locked
+            if (String(s.campaign_id) === String(selectedCampaignId) && !isShiftLocked(s.id)) {
+              return false;
+            }
+            if (String(s.promoter_id) !== String(matchedPromoter.id)) return false;
+            if (new Date(s.date).toDateString() !== new Date(dateRes.dateMs).toDateString()) return false;
+            const exStart = formatTimeDisplay(s.shift_start) || "09:00";
+            const exEnd = formatTimeDisplay(s.shift_end) || "17:00";
+            return checkShiftTimeOverlap(startRes.timeStr, endRes.timeStr, exStart, exEnd);
+          });
+
+          if (conflictingShift) {
+            const campName = conflictingShift.campaign_title || "Another Campaign";
+            const exStart = formatTimeDisplay(conflictingShift.shift_start) || "09:00";
+            const exEnd = formatTimeDisplay(conflictingShift.shift_end) || "17:00";
+            rowErrors.push(`Row ${excelRowNum}: Overlap for "${matchedPromoter.name}" on ${formatDDMMYYYY(new Date(dateRes.dateMs))}. Shift (${startRes.timeStr} - ${endRes.timeStr}) conflicts with existing shift (${exStart} - ${exEnd}) in "${campName}".`);
+            return;
+          }
+
+          // Check overlap with other rows within this same import file
+          const batchConflict = parsedShifts.find(s => {
+            if (String(s.promoter_id) !== String(matchedPromoter.id)) return false;
+            if (new Date(s.date).toDateString() !== new Date(dateRes.dateMs).toDateString()) return false;
+            return checkShiftTimeOverlap(startRes.timeStr, endRes.timeStr, s.shift_start, s.shift_end);
+          });
+
+          if (batchConflict) {
+            rowErrors.push(`Row ${excelRowNum}: Overlap for "${matchedPromoter.name}" on ${formatDDMMYYYY(new Date(dateRes.dateMs))}. Shift (${startRes.timeStr} - ${endRes.timeStr}) conflicts with another row in this file (${batchConflict.shift_start} - ${batchConflict.shift_end}).`);
+            return;
+          }
+
+          parsedShifts.push({
+            id: `sch_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            date: dateRes.dateMs,
+            campaign_id: selectedCamp.id,
+            campaign_title: selectedCamp["campaign_title"],
+            store_id: storeId,
+            store_name: storeName,
+            promoter_id: String(matchedPromoter.id),
+            promoter_name: matchedPromoter.name,
+            shift_start: startRes.timeStr,
+            shift_end: endRes.timeStr,
+            store_address: storeAddress,
+            remarks: rawRemark
+          });
+        });
+
+        if (unrecognizedNames.size > 0) {
+          const namesList = Array.from(unrecognizedNames).map(n => `"${n}"`).join(", ");
+          showToast(`❌ Import Rejected: Unregistered promoter name(s): ${namesList}. All names must match registered promoters.`, "error");
+          return;
+        }
+
+        if (rowErrors.length > 0) {
+          const previewErrors = rowErrors.slice(0, 2).join(" | ");
+          const extraCount = rowErrors.length > 2 ? ` (+${rowErrors.length - 2} more errors)` : "";
+          showToast(`❌ Import Rejected: ${previewErrors}${extraCount}`, "error");
+          return;
+        }
+
+        if (parsedShifts.length === 0) {
+          showToast("No valid shifts were parsed from the file.", "warning");
+          return;
+        }
+
+        if (!isEditMode) {
+          setIsEditMode(true);
+          setSchedulesBackup([...schedules]);
+        }
+
+        const minImportDate = Math.min(...parsedShifts.map(s => s.date));
+        const maxImportDate = Math.max(...parsedShifts.map(s => s.date));
+        const minDateStr = formatEpochToDateInput(minImportDate);
+        const maxDateStr = formatEpochToDateInput(maxImportDate);
+
+        if (minDateStr && (!scheduleStartDate || minDateStr < scheduleStartDate)) {
+          setScheduleStartDate(minDateStr);
+        }
+        if (maxDateStr && (!scheduleEndDate || maxDateStr > scheduleEndDate)) {
+          setScheduleEndDate(maxDateStr);
+        }
+
+        const importedPromoterIds = parsedShifts.map(s => String(s.promoter_id));
+        setHiddenPromoterIds(prev => prev.filter(hid => !importedPromoterIds.includes(hid)));
+
+        // Replace existing unlocked shifts of this campaign with imported shifts, preserving locked shifts & other campaigns
+        const otherSchedules = schedules.filter(s => 
+          String(s.campaign_id) !== String(selectedCampaignId) || isShiftLocked(s.id)
+        );
+        const newSchedules = [...otherSchedules, ...parsedShifts];
+        pushHistory(newSchedules);
+        showToast(`Successfully imported ${parsedShifts.length} shift${parsedShifts.length === 1 ? "" : "s"} into draft! Click "Save & Deploy" to commit.`, "success");
+
+      } catch (err: any) {
+        showToast("Failed to process Excel file: " + (err?.message || "Unknown error"), "error");
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
   };
 
   // Admin Shift Tasks Actions (Monthly Calendar view)
@@ -5022,8 +6018,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     // 1. Filter payouts by status tab
     const filtered = payouts.filter((p) => {
       const isPaid = p.status === "Paid";
-      if (payoutStatusTab === "pending") return !isPaid;
+      const isVoided = p.status === "Voided";
+      if (payoutStatusTab === "pending") return !isPaid && !isVoided;
       if (payoutStatusTab === "paid") return isPaid;
+      if (payoutStatusTab === "voided") return isVoided;
       return true;
     });
 
@@ -5106,7 +6104,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         ),
         TotalPayout_raw: `$${Number(p["total_payout"] || 0).toFixed(2)}`,
         Status: (
-          <span className="text-xs text-zinc-700 font-normal">
+          <span className={cn(
+            "text-xs font-normal",
+            p.status === "Voided" ? "text-red-600 font-medium" : p.status === "Paid" ? "text-emerald-700 font-medium" : "text-zinc-700"
+          )} title={p.status === "Voided" && p["void_reason"] ? `Reason: ${p["void_reason"]}` : undefined}>
             {p.status || "Pending Payout"}
           </span>
         ),
@@ -5125,7 +6126,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         Reference_raw: p["payment_reference"] || "—",
         actions: (
           <div className="flex items-center gap-1.5 shrink-0 select-none">
-            {!isPaid ? (
+            {p.status !== "Voided" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setVoidModalPayout(p);
+                  setVoidReasonInput("");
+                }}
+                className="w-7 h-7 rounded bg-white hover:bg-red-50 border border-zinc-200 text-zinc-400 hover:text-red-600 transition-colors cursor-pointer flex items-center justify-center shadow-2xs"
+                title="Void Payout Paper (Reopen Shifts)"
+              >
+                <Ban size={12} />
+              </button>
+            )}
+            {!isPaid && p.status !== "Voided" ? (
               <>
                 <button
                   type="button"
@@ -5139,6 +6153,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       setEditedPayoutRows(JSON.parse(p["payout_details"]));
                     } catch (err) {
                       setEditedPayoutRows([]);
+                    }
+                    try {
+                      const adjs = JSON.parse(p["adjustments"] || "[]");
+                      setPayoutAdjustments(Array.isArray(adjs) ? adjs : []);
+                    } catch {
+                      setPayoutAdjustments([]);
                     }
                     setPayoutFetchError(null);
                     setIsCreatePayoutOpen(true);
@@ -5215,191 +6235,340 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         onTabSelect={(tabId) => setActiveTab(tabId)}
       />
 
+      {/* TopBar Center Campaign Selector */}
+      {mounted && topbarSlot && activeTab === "calendar" && createPortal(
+        <div className="flex items-center bg-white border border-slate-200/90 rounded-lg px-2.5 py-1 shadow-2xs animate-in fade-in duration-200">
+          <select
+            value={selectedCampaignId}
+            onChange={(e) => setSelectedCampaignId(e.target.value)}
+            className="bg-transparent text-xs font-semibold text-zinc-800 outline-none cursor-pointer max-w-[280px] truncate"
+          >
+            <option value="">-- Choose Campaign --</option>
+            {campaigns
+              .filter(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"))
+              .map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c["campaign_title"]}
+                </option>
+              ))}
+          </select>
+        </div>,
+        topbarSlot
+      )}
+
       {/* Tab Contents */}
       <div className="w-full flex-grow flex-shrink min-h-0 overflow-hidden">
         
         {/* Calendar & Scheduler Tab */}
         {activeTab === "calendar" && (
-          <div className="w-full h-full flex flex-col gap-2 overflow-hidden relative">
+          <div className="w-full h-full flex flex-col gap-3 overflow-hidden relative select-none">
             
-            {/* CAMPAIGN MODE / WEEK PLANNED GRID WITH COLLAPSIBLE STORES DRAWER */}
-            <div className="w-full h-full flex flex-row gap-4 overflow-hidden select-none flex-grow">
-              
-              {/* Left Panel: Weekly day-by-promoter layout grid */}
-              <div className={cn(
-                "bg-white border border-zinc-200 rounded p-4 flex flex-col justify-between overflow-hidden shadow-sm h-full font-primary transition-all duration-300",
-                (isStoreLibraryCollapsed || !isEditMode) ? "flex-[100]" : "flex-[70]"
-              )}>
-                <div className="flex flex-col flex-grow overflow-hidden">
-                  
-                  {/* Unified Header */}
-                  <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-zinc-150 shrink-0">
-                    {/* Left: Edit Actions & Campaign Selector */}
-                    <div className="flex items-center gap-4 select-none">
-                        {isEditAuthorized && (
-                          <div className="flex items-center h-5">
-                            {!isEditMode ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setIsEditMode(true);
-                                  setSchedulesBackup([...schedules]);
-                                  setHistory([[...schedules]]);
-                                  setHistoryIndex(0);
-                                  localStorage.setItem("ib_promoter_schedules_draft", JSON.stringify(schedules));
-                                  localStorage.setItem("ib_promoter_schedules_backup", JSON.stringify(schedules));
-                                }}
-                                className="h-[26px] px-2.5 text-[11px] font-medium bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center gap-1 shadow-sm justify-center"
-                              >
-                                <Pencil size={11} className="stroke-[2.5]" />
-                                Edit Schedule
-                              </button>
-                            ) : (
-                              <div className="flex items-center gap-1.5 animate-in fade-in duration-200">
-                                <button
-                                  type="button"
-                                  onClick={handleSaveAndDeploy}
-                                  className="h-[26px] px-2.5 text-[11px] font-medium bg-green-600 hover:bg-green-700 text-white rounded shadow-sm transition-all cursor-pointer flex items-center gap-1 justify-center"
-                                >
-                                  <Check size={11} className="stroke-[2.5]" />
-                                  Save & Deploy
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSchedules(schedulesBackup);
-                                    setIsEditMode(false);
-                                    setHistory([]);
-                                    setHistoryIndex(-1);
-                                    localStorage.removeItem("ib_promoter_schedules_draft");
-                                    localStorage.removeItem("ib_promoter_schedules_backup");
-                                    showToast("Draft changes discarded.", "info");
-                                  }}
-                                  className="h-[26px] px-2.5 text-[11px] font-medium bg-white text-zinc-555 border border-zinc-200 hover:bg-zinc-50 hover:text-zinc-850 rounded transition-all cursor-pointer flex items-center justify-center"
-                                >
-                                  Discard
-                                </button>
-                                {historyIndex > 0 && (
-                                  <button
-                                    type="button"
-                                    onClick={handleUndo}
-                                    className="h-[26px] w-[26px] bg-white border border-zinc-200 hover:bg-zinc-50 rounded text-zinc-650 hover:text-zinc-955 transition-all cursor-pointer flex items-center justify-center shadow-xs"
-                                    title="Undo"
-                                  >
-                                    <Undo size={11} className="stroke-[2.5]" />
-                                  </button>
-                                )}
-                                {historyIndex < history.length - 1 && (
-                                  <button
-                                    type="button"
-                                    onClick={handleRedo}
-                                    className="h-[26px] w-[26px] bg-white border border-zinc-200 hover:bg-zinc-50 rounded text-zinc-650 hover:text-zinc-955 transition-all cursor-pointer flex items-center justify-center shadow-xs"
-                                    title="Redo"
-                                  >
-                                    <Redo size={11} className="stroke-[2.5]" />
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
+            {/* Top Filter and Controls Bar - EXACT REPORT LOOK (Hidden when no campaign is selected) */}
+            {selectedCampaignId && selectedCampaignId !== "" && selectedCampaignId !== "all" && (
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-zinc-200 rounded-lg px-4 py-2 shadow-xs shrink-0 select-none">
+                
+                {/* Left: Edit Actions & Date Pickers */}
+                <div className="flex items-center gap-3">
+                  {/* Back to All Campaigns Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isEditMode) {
+                        setSchedules(schedulesBackup);
+                        setIsEditMode(false);
+                        setHistory([]);
+                        setHistoryIndex(-1);
+                        localStorage.removeItem("ib_promoter_schedules_draft");
+                        localStorage.removeItem("ib_promoter_schedules_backup");
+                      }
+                      setSelectedCampaignId("");
+                      localStorage.removeItem("ib_promoter_selected_campaign");
+                    }}
+                    className="h-[28px] px-2.5 bg-white border border-zinc-200 hover:bg-zinc-50 rounded text-xs font-medium text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center shrink-0"
+                    title="Back to All Campaigns"
+                  >
+                    <ArrowLeft size={12} className="stroke-[2.5] text-zinc-500" />
+                    All Campaigns
+                  </button>
 
-                        {/* Select Campaign Dropdown */}
-                        <div className="flex items-center gap-1.5 border-l border-zinc-200 pl-4 h-5">
-                          <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Select Campaign:</span>
-                          <select
-                            value={selectedCampaignId}
-                            onChange={(e) => setSelectedCampaignId(e.target.value)}
-                            className="h-[26px] px-2 py-0 bg-white border border-zinc-200 rounded text-[11px] font-semibold text-zinc-800 outline-none focus:border-zinc-955 cursor-pointer"
-                          >
-                            <option value="">-- Choose Campaign --</option>
-                            {campaigns
-                              .filter(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"))
-                              .map((c) => (
-                                <option key={c.id} value={c.id}>
-                                  {c["campaign_title"]}
-                                </option>
-                              ))}
-                          </select>
-                        </div>
-                      </div>
+                  <div className="h-4 w-px bg-zinc-200 shrink-0" />
 
-                      {/* Right: Show Stores */}
-                      <div className="flex items-center gap-3 select-none">
-                        {isStoreLibraryCollapsed && isEditMode && (
+                  {isEditAuthorized && (
+                    <div className="flex items-center h-7">
+                      {!isEditMode ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsEditMode(true);
+                            setSchedulesBackup([...schedules]);
+                            setHistory([[...schedules]]);
+                            setHistoryIndex(0);
+                            localStorage.setItem("ib_promoter_schedules_draft", JSON.stringify(schedules));
+                            localStorage.setItem("ib_promoter_schedules_backup", JSON.stringify(schedules));
+                            if (selectedCampaignId) {
+                              localStorage.setItem("ib_promoter_selected_campaign", String(selectedCampaignId));
+                            }
+                          }}
+                          className="h-[28px] px-3 text-xs font-medium bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded transition-all cursor-pointer flex items-center gap-1.5 shadow-xs justify-center"
+                        >
+                          <Pencil size={12} />
+                          Edit Schedule
+                        </button>
+                      ) : (
+                        <div className="flex items-center gap-1.5 animate-in fade-in duration-200">
                           <button
                             type="button"
-                            onClick={() => setIsStoreLibraryCollapsed(false)}
-                            className="h-[26px] px-2.5 bg-white border border-[#0B57D0] hover:bg-[#0B57D0]/5 rounded text-[11px] font-semibold text-[#0B57D0] flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center"
-                            title="Expand Stores Library"
+                            onClick={handleSaveAndDeploy}
+                            className="h-[28px] px-3 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded shadow-xs transition-all cursor-pointer flex items-center gap-1.5 justify-center"
                           >
-                            <ChevronLeft size={12} className="stroke-[2.5]" />
-                            Show Stores
+                            <Check size={12} className="stroke-[2.5]" />
+                            Save & Deploy
                           </button>
-                        )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSchedules(schedulesBackup);
+                              setIsEditMode(false);
+                              setHistory([]);
+                              setHistoryIndex(-1);
+                              localStorage.removeItem("ib_promoter_schedules_draft");
+                              localStorage.removeItem("ib_promoter_schedules_backup");
+                              localStorage.removeItem("ib_promoter_selected_campaign");
+                              showToast("Draft changes discarded.", "info");
+                            }}
+                            className="h-[28px] px-3 text-xs font-medium bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center justify-center shadow-xs"
+                          >
+                            Discard
+                          </button>
+                          {historyIndex > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleUndo}
+                              className="h-[28px] w-[28px] bg-white border border-zinc-200 hover:bg-zinc-50 rounded text-zinc-650 hover:text-zinc-950 transition-all cursor-pointer flex items-center justify-center shadow-xs"
+                              title="Undo"
+                            >
+                              <Undo size={12} className="stroke-[2.5]" />
+                            </button>
+                          )}
+                          {historyIndex < history.length - 1 && (
+                            <button
+                              type="button"
+                              onClick={handleRedo}
+                              className="h-[28px] w-[28px] bg-white border border-zinc-200 hover:bg-zinc-50 rounded text-zinc-650 hover:text-zinc-950 transition-all cursor-pointer flex items-center justify-center shadow-xs"
+                              title="Redo"
+                            >
+                              <Redo size={12} className="stroke-[2.5]" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Start & End Date Pickers */}
+                  {selectedCampaignId && selectedCampaignId !== "" && (() => {
+                    const activeCampaignObj = campaigns.find(c => String(c.id) === String(selectedCampaignId));
+                    const campMinDate = activeCampaignObj?.start_date ? formatEpochToDateInput(activeCampaignObj.start_date) : undefined;
+                    const campMaxDate = activeCampaignObj?.end_date ? formatEpochToDateInput(activeCampaignObj.end_date) : undefined;
+
+                    return (
+                      <div className="flex items-center gap-2 border-l border-zinc-200 pl-3.5 h-7 animate-in fade-in duration-200">
+                        <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Range Date:</span>
+                        <input
+                          type="date"
+                          value={scheduleStartDate}
+                          min={campMinDate}
+                          max={campMaxDate}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (campMinDate && val < campMinDate) return setScheduleStartDate(campMinDate);
+                            if (campMaxDate && val > campMaxDate) return setScheduleStartDate(campMaxDate);
+                            setScheduleStartDate(val);
+                          }}
+                          className="h-[28px] px-2 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-[11px] font-normal text-zinc-700 outline-none focus:border-[#0B57D0] cursor-pointer shadow-xs"
+                        />
+                        <span className="text-zinc-400 text-xs font-normal select-none">-</span>
+                        <input
+                          type="date"
+                          value={scheduleEndDate}
+                          min={campMinDate}
+                          max={campMaxDate}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            if (campMinDate && val < campMinDate) return setScheduleEndDate(campMinDate);
+                            if (campMaxDate && val > campMaxDate) return setScheduleEndDate(campMaxDate);
+                            setScheduleEndDate(val);
+                          }}
+                          className="h-[28px] px-2 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-[11px] font-normal text-zinc-700 outline-none focus:border-[#0B57D0] cursor-pointer shadow-xs"
+                        />
                       </div>
+                    );
+                  })()}
+                </div>
+
+                {/* Right: Template & Import Schedule, and Show Stores (Edit Mode Only) */}
+                <div className="flex items-center gap-2 select-none">
+                  {isEditMode && (
+                    <>
+                      {/* Export Schedule Button */}
+                      <button
+                        type="button"
+                        onClick={handleExportSchedule}
+                        className="h-[28px] px-2.5 bg-white border border-zinc-200 hover:bg-zinc-50 rounded text-xs font-medium text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center"
+                        title="Export Schedule to Excel"
+                      >
+                        <Download size={12} className="text-zinc-500" />
+                        Export Schedule
+                      </button>
+
+                      {/* Import Schedule Button */}
+                      {isEditAuthorized && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!selectedCampaignId || selectedCampaignId === "" || selectedCampaignId === "all") {
+                                showToast("Please select a campaign from the top bar before importing a schedule.", "warning");
+                                return;
+                              }
+                              scheduleImportFileInputRef.current?.click();
+                            }}
+                            className="h-[28px] px-2.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-[#0B57D0] hover:text-[#0842A0] rounded text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center"
+                            title="Import Schedule from Excel"
+                          >
+                            <Upload size={12} className="text-[#0B57D0]" />
+                            Import Schedule
+                          </button>
+                          <input
+                            type="file"
+                            ref={scheduleImportFileInputRef}
+                            accept=".xlsx,.xls,.csv"
+                            onChange={handleScheduleFileImport}
+                            className="hidden"
+                          />
+                        </>
+                      )}
+                    </>
+                  )}
+
+                  {/* Show Stores (when collapsed & in edit mode) */}
+                  {isStoreLibraryCollapsed && isEditMode && (
+                    <>
+                      <div className="h-4 w-px bg-zinc-200" />
+                      <button
+                        type="button"
+                        onClick={() => setIsStoreLibraryCollapsed(false)}
+                        className="h-[28px] px-2.5 bg-white border border-zinc-200 hover:bg-zinc-50 rounded text-xs font-medium text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center"
+                        title="Expand Stores Library"
+                      >
+                        <ChevronLeft size={12} className="stroke-[2.5]" />
+                        Show Stores
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Main Content Area: Grid / Table and Stores Drawer */}
+            <div className="flex-1 min-h-0 w-full flex flex-row gap-3 overflow-hidden select-none">
+              
+              {/* Left/Main Card: either Active Campaigns Grid or Weekly Planner Table */}
+              <div className={cn(
+                "bg-white border border-zinc-200 rounded-lg overflow-hidden flex flex-col shadow-xs h-full min-w-0 transition-all duration-300",
+                (isStoreLibraryCollapsed || !isEditMode) ? "flex-1" : "flex-[75]"
+              )}>
+                {(!selectedCampaignId || selectedCampaignId === "" || selectedCampaignId === "all") ? (
+                  <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+                    <div className="flex items-center justify-between px-4 py-2.5 bg-zinc-50 border-b border-zinc-150 shrink-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-medium text-zinc-600 uppercase tracking-wider">
+                          Active Campaigns
+                        </span>
+                        <span className="text-[11px] text-zinc-400 font-normal">
+                          ({sortedCampaignsForGrid.length})
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-zinc-400 font-normal">
+                        Sorted by latest edit
+                      </span>
                     </div>
 
-                    {selectedCampaignId === "" ? (
-                      <div className="flex-grow flex flex-col items-center justify-center p-12 bg-zinc-50 border border-zinc-200 border-dashed rounded text-center my-4 h-[380px]">
-                        <Megaphone size={36} className="text-zinc-400 stroke-1 mb-2.5 animate-pulse" />
-                        <span className="text-zinc-555 text-xs font-semibold uppercase tracking-wider">Campaign Selection Required</span>
-                        <p className="text-[11px] text-zinc-450 mt-1.5 max-w-xs font-semibold leading-relaxed">
-                          Please select a campaign from the dropdown above to view the promoter weekly planner and drag stores to assign shifts.
-                        </p>
-                      </div>
-                    ) : (
-                      /* Planner weekly table grid */
-                      <div className="flex-grow flex flex-col overflow-auto border border-zinc-200 rounded bg-white custom-scrollbar">
-                        <table className="w-full text-left border-collapse table-fixed min-w-[700px]">
+                    <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+                      {sortedCampaignsForGrid.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center p-12 text-center">
+                          <Megaphone size={36} className="text-zinc-300 stroke-1 mb-2.5" />
+                          <span className="text-zinc-600 text-xs font-medium uppercase tracking-wider">No Active Campaigns</span>
+                          <p className="text-[11px] text-zinc-400 mt-1 max-w-xs font-normal leading-relaxed">
+                            No active campaigns found. Please create a new campaign in the Campaigns tab.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                          {sortedCampaignsForGrid.map((c) => {
+                            const brandName = String(c.brand || "").split(",")
+                              .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["display_name"] || id.trim())
+                              .filter(Boolean)
+                              .join(", ");
+                            const shiftCount = schedules.filter(s => String(s.campaign_id) === String(c.id)).length;
+                            const hasDates = Boolean(c["start_date"] || c["end_date"]);
+
+                            return (
+                              <div
+                                key={c.id}
+                                onClick={() => setSelectedCampaignId(c.id)}
+                                className="group bg-white border border-zinc-200 hover:border-zinc-400 hover:shadow-xs rounded-lg p-3.5 flex flex-col justify-between transition-all duration-150 cursor-pointer select-none min-h-[140px]"
+                              >
+                                <div className="flex flex-col gap-1.5">
+                                  <div className="flex items-center justify-between gap-1">
+                                    <span className="text-[10.5px] font-medium text-zinc-500 uppercase tracking-wider truncate max-w-[140px]" title={brandName || "Campaign"}>
+                                      {brandName || "Campaign"}
+                                    </span>
+                                    <span className="text-[10.5px] text-zinc-400 font-normal shrink-0">
+                                      {shiftCount} {shiftCount === 1 ? "shift" : "shifts"}
+                                    </span>
+                                  </div>
+
+                                  <h4 className="text-xs font-medium text-zinc-850 group-hover:text-[#0B57D0] transition-colors line-clamp-2 leading-snug mt-0.5" title={c["campaign_title"]}>
+                                    {c["campaign_title"]}
+                                  </h4>
+
+                                  {c["campaign_description"] && (
+                                    <p className="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed mt-0.5 font-normal" title={c["campaign_description"]}>
+                                      {c["campaign_description"]}
+                                    </p>
+                                  )}
+                                </div>
+
+                                <div className="pt-2 mt-2 border-t border-zinc-100 flex items-center justify-between text-[10px] text-zinc-400">
+                                  <div className="flex items-center gap-1 truncate text-zinc-500 font-mono">
+                                    <CalendarIcon size={11} className="text-zinc-400 shrink-0" />
+                                    <span className="truncate">
+                                      {hasDates 
+                                        ? `${formatEpochToDisplay(c["start_date"]) || "—"} - ${formatEpochToDisplay(c["end_date"]) || "—"}`
+                                        : "Dates unassigned"}
+                                    </span>
+                                  </div>
+                                  <span className="text-[#0B57D0] font-medium text-[11px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center shrink-0">
+                                    Open →
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  /* Planner weekly table grid directly inside card (no extra container wrapper) */
+                  <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
+                    <table className="w-full text-left border-collapse table-fixed min-w-[700px]">
                           <thead>
                             <tr className="bg-zinc-50 border-b border-zinc-200">
-                              {/* Date switcher in top-left cell (sticky top & left) */}
-                              <th className="py-2.5 px-3 text-left border-r border-zinc-200 w-[150px] shrink-0 select-none bg-zinc-50 sticky top-0 left-0 z-30 shadow-[2px_0_5px_0_rgba(0,0,0,0.05)] border-b border-zinc-200">
-                                {(() => {
-                                  const activeCampaignObj = (selectedCampaignId && selectedCampaignId !== "all") 
-                                    ? campaigns.find(c => String(c.id) === String(selectedCampaignId)) 
-                                    : null;
-                                  const campMinDate = activeCampaignObj?.start_date ? formatEpochToDateInput(activeCampaignObj.start_date) : undefined;
-                                  const campMaxDate = activeCampaignObj?.end_date ? formatEpochToDateInput(activeCampaignObj.end_date) : undefined;
-
-                                  return (
-                                    <div className="flex flex-col gap-1.5 w-full">
-                                      <div className="flex flex-col gap-0.5">
-                                        <span className="text-[8px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">Start Date</span>
-                                        <input
-                                          type="date"
-                                          value={scheduleStartDate}
-                                          min={campMinDate}
-                                          max={campMaxDate}
-                                          onChange={(e) => {
-                                            const val = e.target.value;
-                                            if (campMinDate && val < campMinDate) return setScheduleStartDate(campMinDate);
-                                            if (campMaxDate && val > campMaxDate) return setScheduleStartDate(campMaxDate);
-                                            setScheduleStartDate(val);
-                                          }}
-                                          className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-semibold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
-                                        />
-                                      </div>
-                                      <div className="flex flex-col gap-0.5">
-                                        <span className="text-[8px] font-medium text-zinc-400 uppercase tracking-wider pl-0.5">End Date</span>
-                                        <input
-                                          type="date"
-                                          value={scheduleEndDate}
-                                          min={campMinDate}
-                                          max={campMaxDate}
-                                          onChange={(e) => {
-                                            const val = e.target.value;
-                                            if (campMinDate && val < campMinDate) return setScheduleEndDate(campMinDate);
-                                            if (campMaxDate && val > campMaxDate) return setScheduleEndDate(campMaxDate);
-                                            setScheduleEndDate(val);
-                                          }}
-                                          className="w-full px-1.5 py-1 bg-white border border-zinc-200 rounded text-[9px] font-semibold text-zinc-800 outline-none focus:border-zinc-950 transition-all shadow-xs cursor-pointer"
-                                        />
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
+                              {/* Date / Day column header (sticky top & left) */}
+                              <th className="py-3 px-4 text-left border-r border-zinc-200 w-[150px] shrink-0 select-none bg-zinc-50 sticky top-0 left-0 z-30 shadow-[2px_0_5px_0_rgba(0,0,0,0.05)] border-b border-zinc-200">
+                                <span className="text-[11px] font-semibold text-zinc-500 uppercase tracking-wider">Date / Day</span>
                               </th>
                               
                               {/* Promoter headers (sticky top) */}
@@ -5486,10 +6655,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 <tr key={date.toDateString()} className={cn("border-b border-zinc-200 hover:bg-zinc-50/10", !isDateWithinCamp && "opacity-40 bg-zinc-100/50")}>
                                   {/* Left date column */}
                                   <td className={cn(
-                                    "py-4 px-4 font-semibold text-xs border-r border-zinc-200 sticky left-0 z-10 select-none min-h-[110px] shadow-[2px_0_5px_0_rgba(0,0,0,0.05)]",
+                                    "py-3 px-4 align-top font-semibold text-xs border-r border-zinc-200 sticky left-0 z-10 select-none min-h-[110px] shadow-[2px_0_5px_0_rgba(0,0,0,0.05)]",
                                     isDateWithinCamp ? "text-zinc-805 bg-zinc-50" : "text-zinc-400 bg-zinc-100/80"
                                   )}>
-                                    <div className={cn("font-semibold", isDateWithinCamp ? "text-zinc-800" : "text-zinc-400")}>{formattedDay}</div>
+                                    <div className={cn("font-semibold leading-tight", isDateWithinCamp ? "text-zinc-800" : "text-zinc-400")}>{formattedDay}</div>
                                     <div className="text-zinc-450 text-[10px] font-medium font-mono mt-0.5">{formattedDateStr}</div>
                                     {!isDateWithinCamp && (
                                       <span className="text-[8px] font-medium uppercase text-amber-700 block mt-1">Outside range</span>
@@ -5655,42 +6824,38 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         </table>
                       </div>
                     )}
-
                   </div>
-                </div>
 
-                {/* Right Panel (30%): Draggable Stores List */}
-                {!isStoreLibraryCollapsed && isEditMode && (
-                  <div className="flex-[30] bg-white border border-zinc-200 rounded p-5 flex flex-col justify-between overflow-hidden shadow-sm h-full animate-in slide-in-from-right duration-300">
-                    <div className="flex flex-col flex-grow overflow-hidden">
-                      
-                      <div className="flex justify-between items-center border-b border-zinc-150 pb-2.5 shrink-0">
-                        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-900">
+                  {/* Right Panel: Draggable Stores List */}
+                  {!isStoreLibraryCollapsed && isEditMode && (
+                    <div className="w-[300px] shrink-0 bg-white border border-zinc-200 rounded-lg flex flex-col overflow-hidden shadow-xs h-full animate-in slide-in-from-right duration-200">
+                      <div className="flex justify-between items-center px-4 py-2.5 bg-zinc-50 border-b border-zinc-150 shrink-0">
+                        <h3 className="text-[11px] font-medium uppercase tracking-wider text-zinc-600">
                           Stores Library
                         </h3>
                         <button
                           type="button"
                           onClick={() => setIsStoreLibraryCollapsed(true)}
-                          className="p-1 hover:bg-zinc-100 rounded text-zinc-550 hover:text-zinc-805 cursor-pointer transition-colors"
+                          className="p-1 hover:bg-zinc-200/60 rounded text-zinc-400 hover:text-zinc-700 cursor-pointer transition-colors"
                           title="Collapse Stores Library"
                         >
-                          <ChevronRight size={14} className="stroke-[2.5]" />
+                          <ChevronRight size={13} className="stroke-[2.5]" />
                         </button>
                       </div>
 
                       {/* Stores filtering options */}
-                      <div className="flex flex-col gap-2 mt-3 shrink-0">
+                      <div className="p-3 flex flex-col gap-2 shrink-0 border-b border-zinc-150">
                         <input
                           type="text"
                           value={storeSearch}
                           onChange={(e) => setStoreSearch(e.target.value)}
                           placeholder="Search store name..."
-                          className="w-full px-2.5 py-1.5 border border-zinc-200 rounded text-xs font-semibold outline-none focus:border-zinc-500 shadow-xs"
+                          className="w-full h-[28px] px-2.5 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-xs font-normal outline-none focus:border-[#0B57D0] shadow-xs"
                         />
                         <select
                           value={selectedRetailerFilter}
                           onChange={(e) => setSelectedRetailerFilter(e.target.value)}
-                          className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs font-semibold text-zinc-850 outline-none cursor-pointer focus:border-zinc-555"
+                          className="w-full h-[28px] px-2 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none cursor-pointer focus:border-[#0B57D0] shadow-xs"
                         >
                           <option value="all">All Retailers</option>
                           {retailers.filter(r => !isGroupRetailer(r)).map(r => (
@@ -5702,56 +6867,52 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       </div>
 
                       {/* Draggable Stores library card container */}
-                      <div className="flex-grow overflow-y-auto custom-scrollbar mt-4 pr-1">
-                        <div className="flex flex-col gap-2">
-                          {/* Other Location Draggable Card */}
+                      <div className="flex-1 overflow-y-auto custom-scrollbar p-3 flex flex-col gap-2">
+                        {/* Other Location Draggable Card */}
+                        <div
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData("otherLocation", "true");
+                          }}
+                          className="bg-amber-50/30 hover:bg-amber-50/60 border border-dashed border-amber-300 hover:border-amber-400 rounded-md p-2.5 shadow-2xs cursor-grab active:cursor-grabbing select-none transition-all flex flex-col gap-1 text-xs"
+                        >
+                          <div className="font-medium text-amber-800 flex items-center gap-1.5">
+                            <MapPin size={12} className="text-amber-600 stroke-[2.5]" />
+                            Other Location
+                          </div>
+                          <div className="text-[10px] text-zinc-500 font-normal whitespace-normal leading-normal">
+                            Drag here to specify a custom venue / location
+                          </div>
+                        </div>
+
+                        {filteredStores.map((store) => (
                           <div
+                            key={store.id}
                             draggable
-                            onDragStart={(e) => {
-                              e.dataTransfer.setData("otherLocation", "true");
-                            }}
-                            className="bg-amber-50/20 hover:bg-amber-50/40 border border-dashed border-amber-300 hover:border-amber-500 rounded p-3 shadow-xs cursor-grab active:cursor-grabbing select-none transition-all flex flex-col gap-1.5 text-xs font-primary animate-in fade-in duration-200"
+                            onDragStart={(e) => e.dataTransfer.setData("storeId", String(store.id))}
+                            className="bg-white hover:bg-zinc-50 border border-zinc-200 hover:border-zinc-400 rounded-md p-2.5 shadow-2xs cursor-grab active:cursor-grabbing select-none transition-all flex flex-col gap-1 text-xs"
                           >
-                            <div className="font-semibold text-amber-800 flex items-center gap-1.5">
-                              <MapPin size={13} className="text-amber-600 stroke-[2.5]" />
-                              Other Location
+                            <div className="font-medium text-zinc-800 leading-tight">
+                              {getFormattedStoreName(store.id, store["display_name"])}
                             </div>
                             <div className="text-[10.5px] text-zinc-500 font-normal whitespace-normal leading-normal">
-                              Drag here to specify a custom venue / location
+                              {getCleanStoreAddress(store)}
                             </div>
                           </div>
-
-                          {filteredStores.map((store) => (
-                            <div
-                              key={store.id}
-                              draggable
-                              onDragStart={(e) => e.dataTransfer.setData("storeId", String(store.id))}
-                              className="bg-zinc-50/40 hover:bg-blue-50/5 border border-zinc-200 hover:border-[#0B57D0] rounded p-3 shadow-xs cursor-grab active:cursor-grabbing select-none transition-all flex flex-col gap-1.5 text-xs font-primary animate-in fade-in duration-200"
-                            >
-                              <div className="font-medium text-zinc-800 leading-tight">
-                                {getFormattedStoreName(store.id, store["display_name"])}
-                              </div>
-                              <div className="text-[10.5px] text-zinc-500 font-normal whitespace-normal leading-normal">
-                                {getCleanStoreAddress(store)}
-                              </div>
-                            </div>
-                          ))}
-                          {filteredStores.length === 0 && (
-                            <div className="text-center text-zinc-400 font-normal select-none border border-dashed border-zinc-200 rounded p-6 bg-zinc-50/20 text-[10.5px]">
-                              No stores found
-                            </div>
-                          )}
-                        </div>
+                        ))}
+                        {filteredStores.length === 0 && (
+                          <div className="text-center text-zinc-400 font-normal select-none border border-dashed border-zinc-200 rounded p-6 bg-zinc-50/20 text-[10.5px]">
+                            No stores found
+                          </div>
+                        )}
                       </div>
-
                     </div>
-                  </div>
-                )}
+                  )}
 
-              </div>
+                </div>
 
-          </div>
-        )}
+            </div>
+          )}
 
         {/* Reports Tab */}
         {activeTab === "reports" && (
@@ -7880,9 +9041,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           <div className="w-full h-full flex flex-col gap-3 overflow-hidden relative select-none">
             {!isCreatePayoutOpen ? (
               <>
-                {/* Top Filter and Controls Bar with Integrated Metric Pills */}
-                <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-zinc-200 rounded-lg px-3.5 py-2 shadow-xs shrink-0 select-none">
-                  {/* Left: Status Filter and Minimal Summary Pills */}
+                {/* Top Filter and Controls Bar with Minimal Integrated Metrics */}
+                <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-zinc-200 rounded-lg px-4 py-2 shadow-xs shrink-0 select-none">
+                  {/* Left: Status Filter and Minimal Summary Metrics */}
                   <div className="flex items-center gap-3 flex-wrap">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider whitespace-nowrap">Status:</span>
@@ -7891,79 +9052,69 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           type="button"
                           onClick={() => setPayoutStatusTab("all")}
                           className={cn(
-                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1.5",
+                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1",
                             payoutStatusTab === "all"
-                              ? "bg-white text-zinc-900 font-semibold shadow-2xs border border-zinc-200"
+                              ? "bg-white text-zinc-900 font-medium shadow-2xs border border-zinc-200"
                               : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 font-normal"
                           )}
                         >
                           All
-                          <span className={cn(
-                            "px-1.5 py-0.2 rounded-full text-[10.5px] font-medium",
-                            payoutStatusTab === "all" ? "bg-blue-100 text-[#0B57D0]" : "bg-zinc-200 text-zinc-600"
-                          )}>
-                            {payoutMetrics.allCount}
-                          </span>
+                          <span className="text-[11px] text-zinc-400 font-normal">({payoutMetrics.allCount})</span>
                         </button>
 
                         <button
                           type="button"
                           onClick={() => setPayoutStatusTab("pending")}
                           className={cn(
-                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1.5",
+                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1",
                             payoutStatusTab === "pending"
-                              ? "bg-white text-zinc-900 font-semibold shadow-2xs border border-zinc-200"
+                              ? "bg-white text-zinc-900 font-medium shadow-2xs border border-zinc-200"
                               : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 font-normal"
                           )}
                         >
                           Pending
-                          <span className={cn(
-                            "px-1.5 py-0.2 rounded-full text-[10.5px] font-medium",
-                            payoutStatusTab === "pending" ? "bg-amber-100 text-amber-900" : "bg-zinc-200 text-zinc-600"
-                          )}>
-                            {payoutMetrics.pendingCount}
-                          </span>
+                          <span className="text-[11px] text-zinc-400 font-normal">({payoutMetrics.pendingCount})</span>
                         </button>
 
                         <button
                           type="button"
                           onClick={() => setPayoutStatusTab("paid")}
                           className={cn(
-                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1.5",
+                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1",
                             payoutStatusTab === "paid"
-                              ? "bg-white text-zinc-900 font-semibold shadow-2xs border border-zinc-200"
+                              ? "bg-white text-zinc-900 font-medium shadow-2xs border border-zinc-200"
                               : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 font-normal"
                           )}
                         >
                           Paid
-                          <span className={cn(
-                            "px-1.5 py-0.2 rounded-full text-[10.5px] font-medium",
-                            payoutStatusTab === "paid" ? "bg-emerald-100 text-emerald-900" : "bg-zinc-200 text-zinc-600"
-                          )}>
-                            {payoutMetrics.paidCount}
-                          </span>
+                          <span className="text-[11px] text-zinc-400 font-normal">({payoutMetrics.paidCount})</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setPayoutStatusTab("voided")}
+                          className={cn(
+                            "px-2.5 py-1 rounded-md text-xs transition-all cursor-pointer flex items-center gap-1",
+                            payoutStatusTab === "voided"
+                              ? "bg-white text-zinc-900 font-medium shadow-2xs border border-zinc-200"
+                              : "text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/50 font-normal"
+                          )}
+                        >
+                          Voided
+                          <span className="text-[11px] text-zinc-400 font-normal">({payoutMetrics.voidedCount})</span>
                         </button>
                       </div>
                     </div>
 
                     <div className="h-5 w-px bg-zinc-200 hidden md:block" />
 
-                    {/* Minimal Summary Metric Pills */}
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-amber-50/80 border border-amber-200 text-xs shadow-2xs">
-                        <span className="text-[10.5px] font-medium text-amber-800">Pending:</span>
-                        <span className="font-semibold text-amber-900 font-mono">${payoutMetrics.pendingTotal.toFixed(2)}</span>
-                      </div>
-
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50/80 border border-emerald-200 text-xs shadow-2xs">
-                        <span className="text-[10.5px] font-medium text-emerald-800">Paid:</span>
-                        <span className="font-semibold text-emerald-900 font-mono">${payoutMetrics.paidTotal.toFixed(2)}</span>
-                      </div>
-
-                      <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-50/80 border border-blue-200 text-xs shadow-2xs">
-                        <span className="text-[10.5px] font-medium text-[#0B57D0]">Total:</span>
-                        <span className="font-semibold text-[#0B57D0] font-mono">${payoutMetrics.grandTotal.toFixed(2)}</span>
-                      </div>
+                    {/* Minimal Summary Metrics */}
+                    <div className="flex items-center gap-3 text-xs font-normal text-zinc-500">
+                      <div>Pending: <span className="font-medium text-zinc-800 font-mono">${payoutMetrics.pendingTotal.toFixed(2)}</span></div>
+                      <span className="text-zinc-200">|</span>
+                      <div>Paid: <span className="font-medium text-zinc-800 font-mono">${payoutMetrics.paidTotal.toFixed(2)}</span></div>
+                      <span className="text-zinc-200">|</span>
+                      <div>Total: <span className="font-medium text-zinc-800 font-mono">${payoutMetrics.grandTotal.toFixed(2)}</span></div>
                     </div>
                   </div>
 
@@ -7981,6 +9132,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         setPayoutFetchError(null);
                         setIsPromoterDropdownOpen(false);
                         setPromoterSearchQuery("");
+                        setPayoutAdjustments([]);
                         setIsCreatePayoutOpen(true);
                       }}
                       className="h-[28px] px-3.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
@@ -8006,7 +9158,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             ) : (
               <div className="flex-1 min-h-0 flex flex-col gap-3">
                 {/* Compact Top Header & Payout Configurations Bar */}
-                <div className="bg-white px-3.5 py-2.5 rounded border border-zinc-200 shadow-2xs flex flex-wrap items-center justify-between gap-3 shrink-0 select-none">
+                <div className="bg-white px-4 py-2.5 rounded-lg border border-zinc-200 shadow-xs flex flex-wrap items-center justify-between gap-3 shrink-0 select-none">
                   <div className="flex items-center gap-3.5 flex-wrap">
                     <div className="flex flex-col">
                       <h3 className="text-sm font-semibold text-zinc-900 leading-tight">
@@ -8104,6 +9256,47 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         />
                       </div>
 
+                      {/* 1-Click Quick Date Presets */}
+                      {!editingPayoutId && (
+                        <div className="hidden lg:flex items-center gap-1 pl-1">
+                          <button
+                            type="button"
+                            onClick={() => handleApplyDatePreset("today")}
+                            className="h-7 px-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10.5px] font-medium rounded transition-colors cursor-pointer"
+                          >
+                            Today
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleApplyDatePreset("this_week")}
+                            className="h-7 px-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10.5px] font-medium rounded transition-colors cursor-pointer"
+                          >
+                            This Week
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleApplyDatePreset("last_week")}
+                            className="h-7 px-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10.5px] font-medium rounded transition-colors cursor-pointer"
+                          >
+                            Last Week
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleApplyDatePreset("this_month")}
+                            className="h-7 px-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10.5px] font-medium rounded transition-colors cursor-pointer"
+                          >
+                            This Month
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleApplyDatePreset("last_month")}
+                            className="h-7 px-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10.5px] font-medium rounded transition-colors cursor-pointer"
+                          >
+                            Last Month
+                          </button>
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-1.5">
                         <label className="text-[10.5px] font-medium text-zinc-600 uppercase tracking-wider">Rate</label>
                         <div className="relative">
@@ -8167,7 +9360,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                   {/* Schedules Table */}
                   {editedPayoutRows.length > 0 && (
-                    <div className="flex-1 bg-white border border-zinc-200 rounded overflow-hidden shadow-2xs flex flex-col min-h-[250px]">
+                    <div className="flex-1 bg-white border border-zinc-200 rounded-lg overflow-hidden shadow-xs flex flex-col min-h-[250px]">
                       <div className="bg-zinc-50 px-4 py-2.5 border-b border-zinc-200 flex justify-between items-center">
                         <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Shift Wage Breakdown</span>
                         <span className="text-[10.5px] font-normal text-zinc-500">
@@ -8192,10 +9385,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               <th className="py-2.5 px-4 w-12 text-center">No.</th>
                               <th className="py-2.5 px-3">Date</th>
                               <th className="py-2.5 px-3">Clock Photos</th>
-                              <th className="py-2.5 px-3">Start Time</th>
-                              <th className="py-2.5 px-3">End Time</th>
-                              <th className="py-2.5 px-3">Total Time</th>
-                              <th className="py-2.5 px-3 text-center">Rate / Hour ($)</th>
+                              <th className="py-2.5 px-2">Start</th>
+                              <th className="py-2.5 px-2">End</th>
+                              <th className="py-2.5 px-2 text-center" title="Break 1 in minutes">Break 1 (m)</th>
+                              <th className="py-2.5 px-2 text-center" title="Break 2 in minutes">Break 2 (m)</th>
+                              <th className="py-2.5 px-2">Net Hours</th>
+                              <th className="py-2.5 px-2 text-center">Rate ($)</th>
                               <th className="py-2.5 px-3">Total Payout</th>
                               <th className="py-2.5 px-3">Task Details</th>
                             </tr>
@@ -8281,14 +9476,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     </td>
                                   ) : (
                                     <>
-                                      <td className="py-2.5 px-3">
+                                      <td className="py-2.5 px-2">
                                         <input
                                           type="time"
                                           value={row.startTime || ""}
                                           disabled={isAlreadyPaid}
                                           onChange={(e) => {
                                             const newStart = e.target.value;
-                                            const newTotal = calculateHours(newStart, row.endTime);
+                                            const newTotal = calcNetHours(newStart, row.endTime, row.break1Minutes, row.break2Minutes);
                                             const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
                                               ...r,
                                               startTime: newStart,
@@ -8297,17 +9492,17 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             } : r);
                                             setEditedPayoutRows(updated);
                                           }}
-                                          className="px-2 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                          className="px-1.5 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
                                         />
                                       </td>
-                                      <td className="py-2.5 px-3">
+                                      <td className="py-2.5 px-2">
                                         <input
                                           type="time"
                                           value={row.endTime || ""}
                                           disabled={isAlreadyPaid}
                                           onChange={(e) => {
                                             const newEnd = e.target.value;
-                                            const newTotal = calculateHours(row.startTime, newEnd);
+                                            const newTotal = calcNetHours(row.startTime, newEnd, row.break1Minutes, row.break2Minutes);
                                             const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
                                               ...r,
                                               endTime: newEnd,
@@ -8316,11 +9511,59 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                             } : r);
                                             setEditedPayoutRows(updated);
                                           }}
-                                          className="px-2 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                          className="px-1.5 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
                                         />
                                       </td>
-                                      <td className="py-2.5 px-3 font-medium text-zinc-800">{formatTimeBase(row.startTime, row.endTime, row.totalTime)}</td>
-                                      <td className="py-2.5 px-3 text-center">
+                                      {/* Break 1 (mins) */}
+                                      <td className="py-2.5 px-2 text-center">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max="360"
+                                          placeholder="0"
+                                          value={row.break1Minutes || ""}
+                                          disabled={isAlreadyPaid}
+                                          onChange={(e) => {
+                                            const b1 = Math.max(0, Number(e.target.value) || 0);
+                                            const newTotal = calcNetHours(row.startTime, row.endTime, b1, row.break2Minutes);
+                                            const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
+                                              ...r,
+                                              break1Minutes: b1,
+                                              totalTime: newTotal,
+                                              totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                            } : r);
+                                            setEditedPayoutRows(updated);
+                                          }}
+                                          className="w-12 h-6 px-1 border border-zinc-200 rounded text-center text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs disabled:bg-zinc-100 disabled:text-zinc-500"
+                                          title="Break 1 duration in minutes"
+                                        />
+                                      </td>
+                                      {/* Break 2 (mins) */}
+                                      <td className="py-2.5 px-2 text-center">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          max="360"
+                                          placeholder="0"
+                                          value={row.break2Minutes || ""}
+                                          disabled={isAlreadyPaid}
+                                          onChange={(e) => {
+                                            const b2 = Math.max(0, Number(e.target.value) || 0);
+                                            const newTotal = calcNetHours(row.startTime, row.endTime, row.break1Minutes, b2);
+                                            const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
+                                              ...r,
+                                              break2Minutes: b2,
+                                              totalTime: newTotal,
+                                              totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                            } : r);
+                                            setEditedPayoutRows(updated);
+                                          }}
+                                          className="w-12 h-6 px-1 border border-zinc-200 rounded text-center text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs disabled:bg-zinc-100 disabled:text-zinc-500"
+                                          title="Break 2 duration in minutes"
+                                        />
+                                      </td>
+                                      <td className="py-2.5 px-2 font-medium text-zinc-800">{formatTimeBase("", "", row.totalTime)}</td>
+                                      <td className="py-2.5 px-2 text-center">
                                         <div className="relative inline-block">
                                           <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-[10px] text-zinc-400 font-normal">$</span>
                                           <input
@@ -8353,6 +9596,148 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     </div>
                   )}
 
+                  {/* Adjustments & Deductions Section */}
+                  {editedPayoutRows.length > 0 && (
+                    <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden shadow-xs flex flex-col shrink-0">
+                      <div className="bg-zinc-50 px-4 py-2 border-b border-zinc-200 flex justify-between items-center select-none">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
+                            Adjustments & Allowances (Optional)
+                          </span>
+                          <span className="text-[10px] text-zinc-400 font-normal">
+                            Transport allowance, incentives, penalties, uniform deposits
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPayoutAdjustments(prev => [
+                              ...prev,
+                              {
+                                id: `adj_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                                type: "addition",
+                                description: "",
+                                amount: 0
+                              }
+                            ]);
+                          }}
+                          className="h-6 px-2.5 bg-white hover:bg-zinc-100 border border-zinc-200 text-zinc-700 hover:text-zinc-950 font-medium text-[11px] rounded transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                        >
+                          <Plus size={12} className="text-[#0B57D0]" />
+                          Add Line
+                        </button>
+                      </div>
+
+                      {payoutAdjustments.length === 0 ? (
+                        <div className="px-4 py-2 text-xs text-zinc-400 italic">
+                          No adjustments added. (Optional line items like transport allowances or deductions)
+                        </div>
+                      ) : (
+                        <div className="p-3 flex flex-col gap-2">
+                          {payoutAdjustments.map((adj, aIdx) => (
+                            <div key={adj.id} className="flex items-center gap-2 text-xs">
+                              <span className="text-[10.5px] text-zinc-400 font-mono w-4 text-center">{aIdx + 1}.</span>
+                              
+                              {/* Type Selector */}
+                              <select
+                                value={adj.type}
+                                onChange={(e) => {
+                                  const newType = e.target.value as "addition" | "deduction";
+                                  setPayoutAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, type: newType } : a));
+                                }}
+                                className={cn(
+                                  "h-7 px-2 border rounded font-medium text-xs outline-none cursor-pointer shadow-2xs",
+                                  adj.type === "addition" 
+                                    ? "bg-emerald-50 text-emerald-800 border-emerald-250" 
+                                    : "bg-red-50 text-red-800 border-red-250"
+                                )}
+                              >
+                                <option value="addition">+ Allowance / Bonus</option>
+                                <option value="deduction">- Deduction / Penalty</option>
+                              </select>
+
+                              {/* Description */}
+                              <input
+                                type="text"
+                                value={adj.description}
+                                placeholder="Description (e.g. Transport Allowance, Uniform Penalty...)"
+                                onChange={(e) => {
+                                  const desc = e.target.value;
+                                  setPayoutAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, description: desc } : a));
+                                }}
+                                className="flex-1 h-7 px-2.5 bg-white border border-zinc-200 rounded text-xs text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs"
+                              />
+
+                              {/* Amount */}
+                              <div className="relative w-28">
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400">$</span>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={adj.amount || ""}
+                                  placeholder="0.00"
+                                  onChange={(e) => {
+                                    const amt = Math.max(0, parseFloat(e.target.value) || 0);
+                                    setPayoutAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, amount: amt } : a));
+                                  }}
+                                  className="w-full h-7 pl-5 pr-2 bg-white border border-zinc-200 rounded text-xs font-mono font-medium text-right text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs"
+                                />
+                              </div>
+
+                              {/* Remove */}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPayoutAdjustments(prev => prev.filter(a => a.id !== adj.id));
+                                }}
+                                className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
+                                title="Remove adjustment line"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Subtotals Bar */}
+                      <div className="bg-zinc-50 px-4 py-2 border-t border-zinc-200 flex flex-wrap items-center justify-end gap-5 text-xs select-none">
+                        <div className="flex items-center gap-1.5 text-zinc-600">
+                          <span>Shifts Subtotal:</span>
+                          <span className="font-semibold text-zinc-800 font-mono">
+                            ${editedPayoutRows.filter(r => r.selected).reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2)}
+                          </span>
+                        </div>
+
+                        {payoutAdjustments.length > 0 && (
+                          <div className="flex items-center gap-1.5 text-zinc-600">
+                            <span>Adjustments:</span>
+                            <span className={cn(
+                              "font-semibold font-mono",
+                              payoutAdjustments.reduce((acc, curr) => acc + (curr.type === 'deduction' ? -1 : 1) * (Number(curr.amount) || 0), 0) >= 0
+                                ? "text-emerald-700"
+                                : "text-red-700"
+                            )}>
+                              {payoutAdjustments.reduce((acc, curr) => acc + (curr.type === 'deduction' ? -1 : 1) * (Number(curr.amount) || 0), 0) >= 0 ? "+" : ""}
+                              ${payoutAdjustments.reduce((acc, curr) => acc + (curr.type === 'deduction' ? -1 : 1) * (Number(curr.amount) || 0), 0).toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-1.5 text-zinc-900 border-l border-zinc-250 pl-5">
+                          <span className="font-semibold uppercase tracking-wider text-[11px] text-zinc-600">Net Total:</span>
+                          <span className="font-bold text-[#0B57D0] text-sm font-mono">
+                            ${Math.max(0, 
+                              editedPayoutRows.filter(r => r.selected).reduce((acc, curr) => acc + curr.totalPayout, 0) +
+                              payoutAdjustments.reduce((acc, curr) => acc + (curr.type === 'deduction' ? -1 : 1) * (Number(curr.amount) || 0), 0)
+                            ).toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                 {/* Form Footer */}
                 <div className="flex justify-between items-center pt-2 select-none">
                   <button
@@ -8374,12 +9759,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     {isPayoutSaving ? (
                       <>
                         <div className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-zinc-400 border-t-white"></div>
-                        Creating Payout Paper...
+                        {editingPayoutId ? "Saving Payout Paper..." : "Creating Payout Paper..."}
                       </>
                     ) : (
                       <>
                         <Check size={14} className="stroke-[2.5]" />
-                        Create Payout Paper
+                        {editingPayoutId ? "Save Payout Paper" : "Create Payout Paper"}
                       </>
                     )}
                   </button>
@@ -8556,86 +9941,178 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     </div>
 
                     {/* Modal Content */}
-                    <div className="flex-1 overflow-auto p-4 min-h-0">
+                    <div className="flex-1 overflow-auto p-4 min-h-0 flex flex-col gap-3">
+                      {/* Payout Metadata & Snapshot Card */}
+                      <div className="p-3 bg-zinc-50 border border-zinc-200 rounded-lg text-xs grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        <div>
+                          <span className="text-[10px] text-zinc-400 uppercase font-medium block">Promoter Name</span>
+                          <span className="font-semibold text-zinc-900">{viewingJobsPayout["promoter_full_name"] || viewingJobsPayout["promoter_name"]}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-zinc-400 uppercase font-medium block">PayNow Number</span>
+                          <span className="font-mono text-zinc-800">{viewingJobsPayout["promoter_paynow"] || "—"}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-zinc-400 uppercase font-medium block">Status</span>
+                          <span className={cn(
+                            "font-semibold",
+                            viewingJobsPayout.status === "Voided" ? "text-red-600" : viewingJobsPayout.status === "Paid" ? "text-emerald-700" : "text-amber-700"
+                          )}>
+                            {viewingJobsPayout.status || "Pending"}
+                          </span>
+                        </div>
+                        {viewingJobsPayout["promoter_bank_name"] && (
+                          <div>
+                            <span className="text-[10px] text-zinc-400 uppercase font-medium block">Bank Name</span>
+                            <span className="text-zinc-800 font-medium">{viewingJobsPayout["promoter_bank_name"]}</span>
+                          </div>
+                        )}
+                        {viewingJobsPayout["promoter_bank_account"] && (
+                          <div>
+                            <span className="text-[10px] text-zinc-400 uppercase font-medium block">Bank Account</span>
+                            <span className="font-mono text-zinc-800">{viewingJobsPayout["promoter_bank_account"]}</span>
+                          </div>
+                        )}
+                        <div>
+                          <span className="text-[10px] text-zinc-400 uppercase font-medium block">Total Payout</span>
+                          <span className="font-bold text-[#0B57D0] font-mono">${Number(viewingJobsPayout["total_payout"] || 0).toFixed(2)}</span>
+                        </div>
+                      </div>
+
+                      {/* Void Alert if Voided */}
+                      {viewingJobsPayout.status === "Voided" && (
+                        <div className="bg-red-50 border border-red-200 text-red-900 p-2.5 rounded text-xs flex items-start gap-2">
+                          <AlertTriangle size={14} className="text-red-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-semibold block text-red-800">This payout paper has been VOIDED</span>
+                            <p className="text-[11px] text-red-700 mt-0.5">
+                              Reason: <em>"{viewingJobsPayout["void_reason"] || "No reason specified"}"</em>
+                              {viewingJobsPayout["voided_by"] && ` &bull; Voided by ${viewingJobsPayout["voided_by"]}`}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Shifts Table */}
                       {jobs.length === 0 ? (
                         <p className="text-zinc-500 text-xs text-center py-8">No shifts found in this payout.</p>
                       ) : (
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead>
-                            <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-semibold uppercase tracking-wider sticky top-0">
-                              <th className="py-2 px-3 w-10 text-center">No.</th>
-                              <th className="py-2 px-3">Date</th>
-                              <th className="py-2 px-3">Clock Photos</th>
-                              <th className="py-2 px-3">Actual Hours</th>
-                              <th className="py-2 px-3">Rate</th>
-                              <th className="py-2 px-3">Payout</th>
-                              <th className="py-2 px-3">Task Details</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-zinc-100 font-normal text-zinc-700">
-                            {jobs.map((job, idx) => {
-                              const sched = schedules.find(s => String(s.id) === String(job.scheduleId));
-                              const checkInPhoto = job.checkInSelfie || sched?.check_in_selfie;
-                              const checkOutPhoto = job.checkOutSelfie || sched?.check_out_selfie;
+                        <div className="border border-zinc-200 rounded overflow-hidden">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-semibold uppercase tracking-wider sticky top-0">
+                                <th className="py-2 px-2.5 w-8 text-center">No.</th>
+                                <th className="py-2 px-2.5">Date</th>
+                                <th className="py-2 px-2">Photos</th>
+                                <th className="py-2 px-2">Shift Time</th>
+                                <th className="py-2 px-2 text-center" title="Break 1 (minutes)">B1 (m)</th>
+                                <th className="py-2 px-2 text-center" title="Break 2 (minutes)">B2 (m)</th>
+                                <th className="py-2 px-2">Net Hours</th>
+                                <th className="py-2 px-2">Rate</th>
+                                <th className="py-2 px-2 font-mono">Payout</th>
+                                <th className="py-2 px-2.5">Details</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-zinc-100 font-normal text-zinc-700">
+                              {jobs.map((job, idx) => {
+                                const sched = schedules.find(s => String(s.id) === String(job.scheduleId));
+                                const checkInPhoto = job.checkInSelfie || sched?.check_in_selfie;
+                                const checkOutPhoto = job.checkOutSelfie || sched?.check_out_selfie;
 
-                              return (
-                                <tr key={job.scheduleId || idx} className="hover:bg-zinc-50/40">
-                                  <td className="py-2 px-3 text-center text-zinc-400 font-medium">{idx + 1}</td>
-                                  <td className="py-2 px-3 text-zinc-800 font-medium">{formatRowTimestamp(job.date)}</td>
-                                  
-                                  {/* Clock Photos */}
-                                  <td className="py-2 px-3">
-                                    {!checkInPhoto && !checkOutPhoto ? (
-                                      <span className="text-[10px] text-zinc-400 font-mono italic">No photos</span>
-                                    ) : (
-                                      <div className="flex items-center gap-1.5">
-                                        {checkInPhoto ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => setImagePreviewModalUrl(checkInPhoto)}
-                                            className="relative group w-7 h-7 rounded border border-blue-200 hover:border-blue-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
-                                            title="View Clock-In Selfie"
-                                          >
-                                            <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                                            <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[6.5px] text-white font-semibold text-center leading-none py-0.5">IN</span>
-                                          </button>
-                                        ) : (
-                                          <span className="text-[9px] text-zinc-400 font-mono italic">No In</span>
-                                        )}
+                                return (
+                                  <tr key={job.scheduleId || idx} className="hover:bg-zinc-50/40">
+                                    <td className="py-2 px-2.5 text-center text-zinc-400 font-medium">{idx + 1}</td>
+                                    <td className="py-2 px-2.5 text-zinc-800 font-medium">{formatRowTimestamp(job.date)}</td>
+                                    
+                                    {/* Clock Photos */}
+                                    <td className="py-2 px-2">
+                                      {!checkInPhoto && !checkOutPhoto ? (
+                                        <span className="text-[10px] text-zinc-400 font-mono italic">—</span>
+                                      ) : (
+                                        <div className="flex items-center gap-1">
+                                          {checkInPhoto && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setImagePreviewModalUrl(checkInPhoto)}
+                                              className="w-6 h-6 rounded border border-blue-200 overflow-hidden shrink-0 cursor-pointer"
+                                              title="Clock-In Photo"
+                                            >
+                                              <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover" />
+                                            </button>
+                                          )}
+                                          {checkOutPhoto && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setImagePreviewModalUrl(checkOutPhoto)}
+                                              className="w-6 h-6 rounded border border-emerald-200 overflow-hidden shrink-0 cursor-pointer"
+                                              title="Clock-Out Photo"
+                                            >
+                                              <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </td>
 
-                                        {checkOutPhoto ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => setImagePreviewModalUrl(checkOutPhoto)}
-                                            className="relative group w-7 h-7 rounded border border-emerald-200 hover:border-emerald-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
-                                            title="View Clock-Out Selfie"
-                                          >
-                                            <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                                            <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[6.5px] text-white font-semibold text-center leading-none py-0.5">OUT</span>
-                                          </button>
-                                        ) : (
-                                          <span className="text-[9px] text-zinc-400 font-mono italic">No Out</span>
-                                        )}
-                                      </div>
-                                    )}
-                                  </td>
-
-                                  <td className="py-2 px-3 text-zinc-700 font-normal">
-                                    {job.absent ? (
-                                      <span className="text-red-600 font-medium">Absent</span>
-                                    ) : (
-                                      `${job.startTime} - ${job.endTime} (${formatTimeBase(job.startTime, job.endTime, job.totalTime)})`
-                                    )}
-                                  </td>
-                                  <td className="py-2 px-3 text-zinc-600 font-mono">${Number(job.hourlyRate || 0).toFixed(2)}</td>
-                                  <td className="py-2 px-3 text-zinc-900 font-semibold font-mono">${Number(job.totalPayout || 0).toFixed(2)}</td>
-                                  <td className="py-2 px-3 text-zinc-500 font-normal">{job.taskDetails}</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                                    <td className="py-2 px-2 text-zinc-700 font-normal">
+                                      {job.absent ? (
+                                        <span className="text-red-600 font-medium">Absent</span>
+                                      ) : (
+                                        `${job.startTime || '00:00'} - ${job.endTime || '00:00'}`
+                                      )}
+                                    </td>
+                                    <td className="py-2 px-2 text-center text-zinc-500 font-mono">{Number(job.break1Minutes || 0)}m</td>
+                                    <td className="py-2 px-2 text-center text-zinc-500 font-mono">{Number(job.break2Minutes || 0)}m</td>
+                                    <td className="py-2 px-2 text-zinc-800 font-medium">
+                                      {job.absent ? "—" : formatTimeBase(job.startTime, job.endTime, job.totalTime)}
+                                    </td>
+                                    <td className="py-2 px-2 text-zinc-600 font-mono">${Number(job.hourlyRate || 0).toFixed(2)}</td>
+                                    <td className="py-2 px-2 text-zinc-900 font-semibold font-mono">${Number(job.totalPayout || 0).toFixed(2)}</td>
+                                    <td className="py-2 px-2.5 text-zinc-500 font-normal truncate max-w-[120px]" title={job.taskDetails}>{job.taskDetails}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
                       )}
+
+                      {/* Adjustments Section in Viewing Modal */}
+                      {(() => {
+                        let adjs: any[] = [];
+                        try {
+                          adjs = JSON.parse(viewingJobsPayout["adjustments"] || "[]");
+                        } catch {
+                          adjs = [];
+                        }
+                        if (!Array.isArray(adjs) || adjs.length === 0) return null;
+
+                        return (
+                          <div className="bg-zinc-50 border border-zinc-200 rounded-lg p-3 flex flex-col gap-1.5 text-xs">
+                            <span className="text-[10.5px] font-semibold uppercase tracking-wider text-zinc-500">
+                              Adjustments & Allowances
+                            </span>
+                            <div className="flex flex-col divide-y divide-zinc-200/80">
+                              {adjs.map((a: any, i: number) => {
+                                const isDed = a.type === "deduction";
+                                return (
+                                  <div key={i} className="py-1.5 flex items-center justify-between">
+                                    <span className="text-zinc-700">
+                                      <span className={cn("font-medium mr-1.5", isDed ? "text-red-700" : "text-emerald-700")}>
+                                        {isDed ? "- Deduction" : "+ Allowance"}
+                                      </span>
+                                      {a.description}
+                                    </span>
+                                    <span className={cn("font-mono font-semibold", isDed ? "text-red-700" : "text-emerald-700")}>
+                                      {isDed ? "-" : "+"}${Number(a.amount || 0).toFixed(2)}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Modal Footer */}
@@ -8679,6 +10156,97 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                   </div>
                   <div className="p-3 bg-zinc-950 flex items-center justify-center overflow-auto max-h-[80vh]">
                     <img src={imagePreviewModalUrl} alt="Attendance Preview" className="max-w-full max-h-[75vh] object-contain rounded" />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Void Payout Paper Modal Overlay */}
+            {voidModalPayout && (
+              <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 animate-in fade-in duration-200">
+                <div className="w-[450px] bg-white rounded-lg border border-zinc-200 shadow-2xl flex flex-col font-primary animate-in zoom-in-95 duration-150 overflow-hidden">
+                  <div className="bg-red-50/70 px-4 py-3 border-b border-red-200 flex justify-between items-center select-none">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-full bg-red-100 flex items-center justify-center text-red-600 shrink-0">
+                        <AlertTriangle size={13} />
+                      </div>
+                      <h3 className="text-xs font-semibold uppercase tracking-wider text-red-900">Void Payout Paper</h3>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVoidModalPayout(null);
+                        setVoidReasonInput("");
+                      }}
+                      className="p-1 hover:bg-red-100 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  <div className="p-5 flex flex-col gap-3 text-xs">
+                    <div className="p-3 bg-zinc-50 border border-zinc-200 rounded flex flex-col gap-1">
+                      <div className="flex justify-between items-center text-zinc-600">
+                        <span className="font-medium">Promoter:</span>
+                        <span className="font-semibold text-zinc-900">{voidModalPayout["promoter_name"]}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-zinc-600">
+                        <span className="font-medium">Total Payout:</span>
+                        <span className="font-bold text-zinc-900 font-mono">${Number(voidModalPayout["total_payout"] || 0).toFixed(2)}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-zinc-600">
+                        <span className="font-medium">Status:</span>
+                        <span className="font-medium text-zinc-800">{voidModalPayout.status || "Pending"}</span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11.5px] text-zinc-600 leading-relaxed">
+                      Voiding this payout paper will revoke it and <strong>automatically reopen all associated shifts</strong> so they can be reviewed, edited, and included in a corrected payout paper.
+                    </p>
+
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10.5px] font-semibold text-zinc-700 uppercase tracking-wider">
+                        Void Reason <span className="text-red-500">*</span>
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={voidReasonInput}
+                        onChange={(e) => setVoidReasonInput(e.target.value)}
+                        placeholder="Please specify why this payout paper is being voided (e.g. wrong hourly rate, shift hours miscalculated)..."
+                        className="w-full px-2.5 py-1.5 bg-white border border-zinc-200 rounded text-xs text-zinc-800 outline-none focus:border-red-500 shadow-2xs resize-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="px-4 py-3 bg-zinc-50 border-t border-zinc-200 flex justify-end gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVoidModalPayout(null);
+                        setVoidReasonInput("");
+                      }}
+                      className="px-3.5 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 font-medium rounded text-xs transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!voidReasonInput.trim() || isVoidSaving}
+                      onClick={handleConfirmVoidPayout}
+                      className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {isVoidSaving ? (
+                        <>
+                          <div className="animate-spin rounded-full h-3 w-3 border-2 border-red-300 border-t-white"></div>
+                          Voiding...
+                        </>
+                      ) : (
+                        <>
+                          <Ban size={13} />
+                          Confirm Void
+                        </>
+                      )}
+                    </button>
                   </div>
                 </div>
               </div>

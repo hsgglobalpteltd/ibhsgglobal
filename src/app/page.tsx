@@ -74,8 +74,18 @@ export default function Home() {
   const [lockoutRemaining, setLockoutRemaining] = React.useState<number>(0);
   const pinInputsRef = React.useRef<(HTMLInputElement | null)[]>([]);
 
-  const [activeItem, setActiveItem] = React.useState("Dashboard");
-  const [breadcrumbPath, setBreadcrumbPath] = React.useState<string[]>(["Dashboard"]);
+  const [activeItem, setActiveItem] = React.useState<string>(() => {
+    if (typeof window !== "undefined" && localStorage.getItem("ib_promoter_schedules_draft")) {
+      return "Frontline";
+    }
+    return "Dashboard";
+  });
+  const [breadcrumbPath, setBreadcrumbPath] = React.useState<string[]>(() => {
+    if (typeof window !== "undefined" && localStorage.getItem("ib_promoter_schedules_draft")) {
+      return ["Frontline", "Promoter"];
+    }
+    return ["Dashboard"];
+  });
 
   const [conflictDialogOpen, setConflictDialogOpen] = React.useState(false);
   const [pendingLogin, setPendingLogin] = React.useState<{
@@ -654,6 +664,7 @@ export default function Home() {
   const handlePendingNavConfirm = () => {
     localStorage.removeItem("ib_promoter_schedules_draft");
     localStorage.removeItem("ib_promoter_schedules_backup");
+    localStorage.removeItem("ib_promoter_selected_campaign");
     window.dispatchEvent(new CustomEvent("ib-clear-edit-mode"));
 
     if (pendingNavAction) {
@@ -711,11 +722,18 @@ export default function Home() {
 
   const handleMenuSelect = async (item: string) => {
     const draft = localStorage.getItem("ib_promoter_schedules_draft");
-    if (draft) {
+    if (draft && item !== "Frontline") {
       setPendingNavAction({ type: "menu", target: item });
       setNavConfirmOpen(true);
     } else {
-      executeMenuSelect(item);
+      if (draft && item === "Frontline") {
+        setActiveItem("Frontline");
+        setBreadcrumbPath(["Frontline", "Promoter"]);
+        window.dispatchEvent(new CustomEvent("set-breadcrumb", { detail: ["Frontline", "Promoter"] }));
+        window.dispatchEvent(new CustomEvent("collapse-sidepanel"));
+      } else {
+        executeMenuSelect(item);
+      }
     }
   };
 

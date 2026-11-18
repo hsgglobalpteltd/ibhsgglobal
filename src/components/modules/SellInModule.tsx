@@ -37,8 +37,6 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   Filter,
-  Eye,
-  EyeOff,
   ShoppingBag
 } from "lucide-react";
 import { showToast } from "@/lib/toast";
@@ -313,7 +311,7 @@ const ITEM_TYPES = [
     label: "Bundle / Package",
     shortLabel: "Bundle",
     description: "Packaged merchandise containing multiple sub-items. Sub-items are grouped inside this bundle.",
-    badgeClass: "bg-indigo-50 text-indigo-700 border-indigo-200/90 hover:bg-indigo-100"
+    badgeClass: "bg-slate-100 text-zinc-700 border-slate-200/90 hover:bg-slate-200/70"
   }
 ];
 
@@ -346,6 +344,7 @@ interface DonutPieChartProps {
   hoveredKey?: string | null;
   onHoverKey?: (key: string | null) => void;
   emptyMessage?: string;
+  footerNote?: React.ReactNode;
 }
 
 function DonutPieChart({
@@ -356,7 +355,8 @@ function DonutPieChart({
   unitLabel = "Total Net",
   hoveredKey,
   onHoverKey,
-  emptyMessage = "No sales distribution"
+  emptyMessage = "No sales distribution",
+  footerNote
 }: DonutPieChartProps) {
   const [internalHover, setInternalHover] = React.useState<string | null>(null);
   const activeHover = hoveredKey !== undefined ? hoveredKey : internalHover;
@@ -489,7 +489,7 @@ function DonutPieChart({
           </div>
 
           {/* Legend Items */}
-          <div className="md:col-span-7 space-y-1.5 max-h-44 overflow-y-auto pr-1">
+          <div className="md:col-span-7 space-y-1 overflow-y-auto max-h-[260px] pr-1">
             {processedSlices.map((slice, idx) => {
               const isHovered = activeSlice?.label.toLowerCase() === slice.label.toLowerCase();
               return (
@@ -498,7 +498,7 @@ function DonutPieChart({
                   onMouseEnter={() => setHover(slice.label)}
                   onMouseLeave={() => setHover(null)}
                   className={cn(
-                    "flex items-center justify-between p-1.5 rounded-md text-xs cursor-pointer transition-all",
+                    "flex items-center justify-between py-1 px-1.5 rounded-md text-xs cursor-pointer transition-all",
                     isHovered ? "bg-blue-50/80 border border-blue-100" : "hover:bg-slate-50 border border-transparent"
                   )}
                 >
@@ -523,6 +523,12 @@ function DonutPieChart({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {footerNote && (
+        <div className="pt-2.5 mt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px] text-zinc-500">
+          {footerNote}
         </div>
       )}
     </div>
@@ -771,7 +777,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const [bundleTarget, setBundleTarget] = React.useState<any | null>(null);
   const [loadingBundleInvoiceItems, setLoadingBundleInvoiceItems] = React.useState<boolean>(false);
   const [bundleInvoiceGroups, setBundleInvoiceGroups] = React.useState<any[]>([]);
+  const [bundleDocFilter, setBundleDocFilter] = React.useState<"all" | "credit_note" | "invoice">("all");
+  const bundleCnGroupsCount = React.useMemo(() => bundleInvoiceGroups.filter((g: any) => g.type === "credit_note").length, [bundleInvoiceGroups]);
+  const bundleInvGroupsCount = React.useMemo(() => bundleInvoiceGroups.filter((g: any) => g.type === "invoice").length, [bundleInvoiceGroups]);
+  const displayedBundleGroups = React.useMemo(() => {
+    if (bundleDocFilter === "credit_note") return bundleInvoiceGroups.filter((g: any) => g.type === "credit_note");
+    if (bundleDocFilter === "invoice") return bundleInvoiceGroups.filter((g: any) => g.type === "invoice");
+    return bundleInvoiceGroups;
+  }, [bundleInvoiceGroups, bundleDocFilter]);
   const [selectedBundleComponents, setSelectedBundleComponents] = React.useState<Set<string>>(new Set());
+  const [selectedBundleDocNumber, setSelectedBundleDocNumber] = React.useState<string>("all");
+  const [collapsedBundleDocCards, setCollapsedBundleDocCards] = React.useState<Set<string>>(new Set());
+  const [bundleItemFilterSearch, setBundleItemFilterSearch] = React.useState<string>("");
   const [bundlePrimaryBrand, setBundlePrimaryBrand] = React.useState<string>("");
   const [bundleCustomName, setBundleCustomName] = React.useState<string>("");
   const [existingBundles, setExistingBundles] = React.useState<Array<{ product_name: string; brand: string }>>([]);
@@ -821,19 +838,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
   // View Mode: "summary" (Default when Published) vs "details" (Line-by-line items)
   const [sellinViewMode, setSellinViewMode] = React.useState<"summary" | "details">("details");
-  const [summaryBuyerSearch, setSummaryBuyerSearch] = React.useState<string>("");
-  const [summarySkuSearch, setSummarySkuSearch] = React.useState<string>("");
-  const [expandedBuyerKeys, setExpandedBuyerKeys] = React.useState<Record<string, boolean>>({});
-
   // Summary View Executive Filters & Comparison States
   const [allBatches, setAllBatches] = React.useState<any[]>([]);
   const [summaryBenchmark, setSummaryBenchmark] = React.useState<"mom" | "yoy" | "ytd">("mom");
   const [summaryChannelFilter, setSummaryChannelFilter] = React.useState<string>("all");
   const [summaryBuyerFilter, setSummaryBuyerFilter] = React.useState<string>("all");
   const [summaryBrandFilter, setSummaryBrandFilter] = React.useState<string>("all");
-  const [showDetailedTables, setShowDetailedTables] = React.useState<boolean>(false);
   const [hoveredChannelSlice, setHoveredChannelSlice] = React.useState<string | null>(null);
   const [hoveredBrandSlice, setHoveredBrandSlice] = React.useState<string | null>(null);
+  const [buyerLoyaltyTab, setBuyerLoyaltyTab] = React.useState<"active" | "dormant">("active");
+  const [hoveredTimelinePeriod, setHoveredTimelinePeriod] = React.useState<string | null>(null);
+  const [selectedTimelineMonth, setSelectedTimelineMonth] = React.useState<any | null>(null);
 
   // Confirmation dialog
   const [confirmConfig, setConfirmConfig] = React.useState<{
@@ -931,18 +946,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
     }
   }, [activeMainTab, fetchTempProducts]);
 
-  // Fetch only years that actually have Sell-In data
+  // Fetch available years and all historical batches for cross-month comparisons and cash collection timeline
   const fetchAvailableYears = React.useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/sellin/available-years`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.years) && data.years.length > 0) {
-          setAvailableYears(data.years);
-          return;
-        }
-      }
-      // Fallback: fetch distinct years from batches
+      // 1. Always fetch all batches to keep allBatches updated for timeline & comparisons
       const bRes = await fetch(`${API_BASE}/api/sellin/batches`);
       if (bRes.ok) {
         const batches = await bRes.json();
@@ -960,8 +967,17 @@ export function SellInModule({ profile }: SellInModuleProps) {
           }
         }
       }
+
+      // 2. Also check available-years endpoint for any additional distinct years
+      const res = await fetch(`${API_BASE}/api/sellin/available-years`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.years) && data.years.length > 0) {
+          setAvailableYears((prev) => Array.from(new Set([...data.years, ...prev])).sort().reverse());
+        }
+      }
     } catch (err) {
-      console.warn("Could not fetch available years:", err);
+      console.warn("Could not fetch available years and batches:", err);
     }
   }, []);
 
@@ -1504,37 +1520,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
     };
   }, [batchData, records, buyersList, currentPeriod]);
 
-  // Summary filtered buyers
-  const filteredSummaryBuyers = React.useMemo(() => {
-    const list = compiledSummaryData?.buyers_summary || [];
-    if (!summaryBuyerSearch.trim()) return list;
-    const q = summaryBuyerSearch.toLowerCase().trim();
-    return list.filter((b: any) =>
-      String(b.buyer_code || "").toLowerCase().includes(q) ||
-      String(b.buyer_name || "").toLowerCase().includes(q) ||
-      String(b.channel || "").toLowerCase().includes(q)
-    );
-  }, [compiledSummaryData, summaryBuyerSearch]);
-
-  // Summary filtered SKUs
-  const filteredSummarySkus = React.useMemo(() => {
-    const list = compiledSummaryData?.sku_summary || [];
-    if (!summarySkuSearch.trim()) return list;
-    const q = summarySkuSearch.toLowerCase().trim();
-    return list.filter((s: any) =>
-      String(s.sku || "").toLowerCase().includes(q) ||
-      String(s.product_name || "").toLowerCase().includes(q) ||
-      String(s.brand || "").toLowerCase().includes(q)
-    );
-  }, [compiledSummaryData, summarySkuSearch]);
-
-  // Toggle expanded state for buyer items in summary
-  const toggleBuyerExpand = (key: string) => {
-    setExpandedBuyerKeys((prev) => ({
-      ...prev,
-      [key]: !prev[key]
-    }));
-  };
 
   // =========================================================================
   // EXECUTIVE SUMMARY VIEW: OPTIONS, FILTERS, BENCHMARKS & FREQUENT PURCHASE
@@ -1559,18 +1544,42 @@ export function SellInModule({ profile }: SellInModuleProps) {
   const summaryBuyerOptions = React.useMemo(() => {
     const map = new Map<string, string>();
     records.forEach((r) => {
+      if (r.is_bundle_component === true || r.is_bundle_component === "true") return;
+      if (summaryChannelFilter !== "all") {
+        const ch = String(r.channel || "").trim().toLowerCase();
+        if (ch !== summaryChannelFilter.toLowerCase()) return;
+      }
       const name = String(r.buyer_name || r.buyer_code || "").trim();
       if (name) map.set(name, name);
     });
-    buyersList.forEach((b) => {
-      const name = String(b.buyer_name || b.buyer_code || "").trim();
-      if (name) map.set(name, name);
-    });
+
+    const bSummary = batchData?.sellin_summary?.buyers_summary;
+    if (Array.isArray(bSummary)) {
+      bSummary.forEach((b: any) => {
+        if (summaryChannelFilter !== "all") {
+          const ch = String(b.channel || "").trim().toLowerCase();
+          if (ch !== summaryChannelFilter.toLowerCase()) return;
+        }
+        const name = String(b.buyer_name || b.buyer_code || "").trim();
+        if (name) map.set(name, name);
+      });
+    }
+
     return [
       { label: "ALL BUYERS", value: "all" },
       ...Array.from(map.keys()).sort().map((b) => ({ label: b.toUpperCase(), value: b }))
     ];
-  }, [records, buyersList]);
+  }, [records, batchData, summaryChannelFilter]);
+
+  // Reset summaryBuyerFilter if current selection is not present in available buyers
+  React.useEffect(() => {
+    if (summaryBuyerFilter !== "all") {
+      const exists = summaryBuyerOptions.some((opt) => opt.value.toLowerCase() === summaryBuyerFilter.toLowerCase());
+      if (!exists) {
+        setSummaryBuyerFilter("all");
+      }
+    }
+  }, [summaryBuyerOptions, summaryBuyerFilter]);
 
   const summaryBrandOptions = React.useMemo(() => {
     const set = new Set<string>();
@@ -1744,7 +1753,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
         reject_amount: 0,
         non_sales_amount: 0,
         net_amount: 0,
-        itemsCount: 0
+        itemsCount: 0,
+        invoiceSet: new Set<string>()
       };
       bExisting.demand_qty += dQty;
       bExisting.demand_amount += dAmt;
@@ -1753,6 +1763,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
       if (isNonProduct) bExisting.non_sales_amount += dAmt;
       bExisting.net_amount += nAmt;
       bExisting.itemsCount += 1;
+
+      // Extract unique invoice identifiers
+      if (Array.isArray(r.invoices)) {
+        r.invoices.forEach((inv: any) => {
+          const invNo = typeof inv === "string" ? inv : (inv.invoice_number || inv.invoice_no || inv.id);
+          if (invNo) bExisting.invoiceSet.add(String(invNo).trim());
+        });
+      }
+      if (r.invoice_number) bExisting.invoiceSet.add(String(r.invoice_number).trim());
+      if (r.invoice_no) bExisting.invoiceSet.add(String(r.invoice_no).trim());
+      if (r.raw_data?.invoice_number) bExisting.invoiceSet.add(String(r.raw_data.invoice_number).trim());
+
       buyerAggMap.set(bKey, bExisting);
 
       // Channel aggregation
@@ -1796,12 +1818,15 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 net_qty: 0,
                 net_amount: 0,
                 total_cost: 0,
-                gross_profit: 0
+                gross_profit: 0,
+                prices: [] as number[]
               };
               sExisting.demand_qty += siQty;
               sExisting.net_qty += siQty;
               sExisting.net_amount += itemRev;
               sExisting.total_cost += siCost;
+              const siUnitP = Number(si.unit_price || 0);
+              if (siUnitP > 0) sExisting.prices.push(siUnitP);
               sExisting.gross_profit = sExisting.net_amount - sExisting.total_cost;
               skuAggMap.set(siSku, sExisting);
             }
@@ -1832,12 +1857,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
             net_qty: 0,
             net_amount: 0,
             total_cost: 0,
-            gross_profit: 0
+            gross_profit: 0,
+            prices: [] as number[]
           };
           sExisting.demand_qty += dQty;
           sExisting.net_qty += netQty;
           sExisting.net_amount += nAmt;
           sExisting.total_cost += rowCost;
+          if (up > 0) sExisting.prices.push(up);
           sExisting.gross_profit = sExisting.net_amount - sExisting.total_cost;
           skuAggMap.set(sku, sExisting);
         }
@@ -1859,10 +1886,32 @@ export function SellInModule({ profile }: SellInModuleProps) {
       grossProfit,
       marginPercent,
       cnRatePercent,
-      buyers: Array.from(buyerAggMap.values()).sort((a, b) => b.net_amount - a.net_amount),
+      buyers: Array.from(buyerAggMap.values())
+        .map((b) => ({
+          ...b,
+          invoiceCount: b.invoiceSet.size > 0 ? b.invoiceSet.size : Math.max(1, b.itemsCount)
+        }))
+        .sort((a, b) => b.net_amount - a.net_amount),
       channels: Array.from(channelAggMap.values()).filter((x) => x.amount > 0).sort((a, b) => b.amount - a.amount),
       brands: Array.from(brandAggMap.values()).filter((x) => x.amount > 0).sort((a, b) => b.amount - a.amount),
-      topSkus: Array.from(skuAggMap.values()).sort((a, b) => b.demand_qty - a.demand_qty).slice(0, 5)
+      topSkus: Array.from(skuAggMap.values())
+        .sort((a, b) => b.demand_qty - a.demand_qty)
+        .slice(0, 5)
+        .map((s) => {
+          const uniquePrices = (Array.from(new Set(s.prices.map((p: number) => Number(p.toFixed(2))))) as number[]).sort((a, b) => a - b);
+          const minPrice = uniquePrices.length > 0 ? uniquePrices[0] : 0;
+          const maxPrice = uniquePrices.length > 0 ? uniquePrices[uniquePrices.length - 1] : 0;
+          let priceDisplay = "—";
+          if (minPrice > 0 && maxPrice > 0) {
+            priceDisplay = minPrice === maxPrice ? `$${minPrice.toFixed(2)}` : `$${minPrice.toFixed(2)} – $${maxPrice.toFixed(2)}`;
+          }
+          return {
+            ...s,
+            minPrice,
+            maxPrice,
+            priceDisplay
+          };
+        })
     };
   }, [summaryFilteredRecords]);
 
@@ -1900,7 +1949,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
     let netRevenue = 0;
     let demandQty = 0;
     let demandAmount = 0;
+    let cnQty = 0;
     let cnAmount = 0;
+    let totalCost = 0;
     let grossProfit = 0;
     let hasData = false;
 
@@ -1915,6 +1966,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
           demandQty += Number(b.total_demand_qty || 0);
           demandAmount += Number(b.total_demand_amount || 0);
           cnAmount += Number(b.total_cn_amount || 0);
+          cnQty += Number(b.total_cn_qty ?? b.total_reject_qty ?? 0);
+          totalCost += Number(b.total_cost || 0);
           grossProfit += Number(b.gross_profit || 0);
           hasData = true;
         }
@@ -1949,10 +2002,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
           matchingItems.forEach((it: any) => {
             const itNet = Number(it.nett_amount ?? it.net_amount ?? (Number(it.total_demand || 0) - Number(it.cn_amount || 0)));
             const itQty = Number(it.qty ?? it.demand_qty ?? 0);
+            const itCnQty = Number(it.cn_qty ?? it.reject_qty ?? 0);
+            const itCost = Number(it.total_cost || 0);
             netRevenue += itNet;
             demandQty += itQty;
             demandAmount += Number(it.total_demand || 0);
             cnAmount += Number(it.cn_amount || 0);
+            cnQty += itCnQty;
+            totalCost += itCost;
 
             const bKey = (buyer.buyer_code || buyer.buyer_name).toLowerCase();
             const prevB = buyersMap.get(bKey) || {
@@ -1970,10 +2027,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
           // All brands
           const bNet = Number(buyer.net_amount ?? buyer.net_receivable ?? 0);
           const bQty = Number(buyer.demand_qty ?? 0);
+          const bCnQty = Number(buyer.cn_qty ?? buyer.reject_qty ?? 0);
+          const bCost = Number(buyer.total_cost || 0);
           netRevenue += bNet;
           demandQty += bQty;
           demandAmount += Number(buyer.demand_amount ?? 0);
           cnAmount += Number(buyer.cn_amount ?? 0);
+          cnQty += bCnQty;
+          totalCost += bCost;
 
           const bKey = (buyer.buyer_code || buyer.buyer_name).toLowerCase();
           const prevB = buyersMap.get(bKey) || {
@@ -1991,6 +2052,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
       if (summary.gross_profit !== undefined && summaryBrandFilter === "all" && summaryChannelFilter === "all" && summaryBuyerFilter === "all") {
         grossProfit += Number(summary.gross_profit || 0);
+      } else {
+        grossProfit = netRevenue - totalCost;
       }
     });
 
@@ -1998,7 +2061,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
       netRevenue,
       demandQty,
       demandAmount,
+      cnQty,
       cnAmount,
+      totalCost,
       grossProfit,
       hasData,
       buyersMap
@@ -2012,15 +2077,22 @@ export function SellInModule({ profile }: SellInModuleProps) {
       netRevenue: number;
       demandQty: number;
       demandAmount: number;
+      cnQty: number;
+      cnAmount: number;
+      totalCost: number;
       grossProfit: number;
       hasData: boolean;
       label: string;
       sublabel: string;
       buyersMap?: Map<string, any>;
-    } = { netRevenue: 0, demandQty: 0, demandAmount: 0, grossProfit: 0, hasData: false, label: "", sublabel: "" };
+    } = { netRevenue: 0, demandQty: 0, demandAmount: 0, cnQty: 0, cnAmount: 0, totalCost: 0, grossProfit: 0, hasData: false, label: "", sublabel: "" };
 
     let currentCompNet = cur.netRevenue;
     let currentCompDemand = cur.demandQty;
+    let currentCompDemandAmount = cur.demandAmount;
+    let currentCompCnQty = cur.cnQty;
+    let currentCompCnAmount = cur.cnAmount;
+    let currentCompCost = cur.totalCost;
     let currentCompProfit = cur.grossProfit;
 
     if (summaryBenchmark === "mom") {
@@ -2041,6 +2113,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
       const priorYtd = computeBatchFilteredMetrics(priorYtdBatches);
       currentCompNet = cur.netRevenue + priorYtd.netRevenue;
       currentCompDemand = cur.demandQty + priorYtd.demandQty;
+      currentCompDemandAmount = cur.demandAmount + priorYtd.demandAmount;
+      currentCompCnQty = cur.cnQty + priorYtd.cnQty;
+      currentCompCnAmount = cur.cnAmount + priorYtd.cnAmount;
+      currentCompCost = cur.totalCost + priorYtd.totalCost;
       currentCompProfit = cur.grossProfit + priorYtd.grossProfit;
 
       const lytdBatches = allBatches.filter((b) => benchmarkPeriods.lytdPeriods.includes(b.period));
@@ -2069,31 +2145,101 @@ export function SellInModule({ profile }: SellInModuleProps) {
     };
 
     const netDelta = calcDelta(currentCompNet, baseline.netRevenue);
-    const demandDelta = calcDelta(currentCompDemand, baseline.demandQty);
+    const purchaseAmountDelta = calcDelta(currentCompDemandAmount, baseline.demandAmount);
+    const purchaseQtyDelta = calcDelta(currentCompDemand, baseline.demandQty);
+    const returnAmountDelta = calcDelta(currentCompCnAmount, baseline.cnAmount);
+    const returnQtyDelta = calcDelta(currentCompCnQty, baseline.cnQty);
     const profitDelta = calcDelta(currentCompProfit, baseline.grossProfit);
 
     return {
       baseline,
       currentCompNet,
       currentCompDemand,
+      currentCompDemandAmount,
+      currentCompCnQty,
+      currentCompCnAmount,
+      currentCompCost,
       currentCompProfit,
       netDelta,
-      demandDelta,
+      demandDelta: purchaseQtyDelta,
+      purchaseAmountDelta,
+      purchaseQtyDelta,
+      returnAmountDelta,
+      returnQtyDelta,
       profitDelta
     };
   }, [currentSummaryMetrics, summaryBenchmark, allBatches, benchmarkPeriods, computeBatchFilteredMetrics, currentPeriod]);
 
-  // Frequent Purchase & Loyalty Matrix (Current vs MoM Prior Month)
+  // Frequent Purchase & Loyalty Matrix (3-Month Historical Lookback)
   const frequentPurchaseAnalysis = React.useMemo(() => {
-    const momBatch = allBatches.find((b) => b.period === benchmarkPeriods.momPeriod);
-    const momMetrics = computeBatchFilteredMetrics(momBatch);
-    const prevBuyerMap = momMetrics.buyersMap || new Map<string, any>();
+    const [yStr, mStr] = (currentPeriod || "2026-01").split("-");
+    const y = parseInt(yStr, 10) || 2026;
+    const m = parseInt(mStr, 10) || 1;
+
+    // 1. Get 3 prior calendar months (e.g. for 2026-07: 2026-06, 2026-05, 2026-04)
+    const prior3Periods: string[] = [];
+    for (let i = 1; i <= 3; i++) {
+      const d = new Date(y, m - 1 - i, 1);
+      const py = d.getFullYear();
+      const pm = String(d.getMonth() + 1).padStart(2, "0");
+      prior3Periods.push(`${py}-${pm}`);
+    }
+
+    const immediatePriorPeriod = prior3Periods[0]; // Month - 1 (for Dormant accounts)
+
+    // Build prior months buyer map: track in how many of the 3 prior months each buyer bought
+    const priorBuyersHistory = new Map<string, {
+      monthsCount: number;
+      periodsBought: string[];
+      totalPriorSpend: number;
+      lastMonthSpend: number;
+      lastMonthInvoices: number;
+      buyer_name: string;
+      buyer_code: string;
+      channel: string;
+    }>();
+
+    prior3Periods.forEach((p, pIdx) => {
+      const batch = allBatches.find((b) => b.period === p);
+      if (!batch) return;
+      const metrics = computeBatchFilteredMetrics(batch);
+      const buyersMap = metrics.buyersMap || new Map<string, any>();
+
+      buyersMap.forEach((bData, key) => {
+        if (bData.net_amount <= 0 && bData.demand_qty <= 0) return;
+        const existing = priorBuyersHistory.get(key) || {
+          monthsCount: 0,
+          periodsBought: [] as string[],
+          totalPriorSpend: 0,
+          lastMonthSpend: 0,
+          lastMonthInvoices: 0,
+          buyer_name: bData.buyer_name,
+          buyer_code: bData.buyer_code,
+          channel: bData.channel || ""
+        };
+
+        if (!existing.periodsBought.includes(p)) {
+          existing.periodsBought.push(p);
+          existing.monthsCount += 1;
+        }
+        existing.totalPriorSpend += bData.net_amount;
+
+        if (pIdx === 0) {
+          // Immediate prior month
+          existing.lastMonthSpend = bData.net_amount;
+          existing.lastMonthInvoices = bData.invoiceCount || 1;
+        }
+
+        priorBuyersHistory.set(key, existing);
+      });
+    });
 
     const currentBuyers = currentSummaryMetrics.buyers;
     const currentBuyerKeys = new Set(currentBuyers.map((b) => (b.buyer_code || b.buyer_name).toLowerCase()));
 
     const repeatCore: any[] = [];
     const newBuyers: any[] = [];
+    const allActiveBuyers: any[] = [];
     const dormantBuyers: any[] = [];
 
     let repeatSpend = 0;
@@ -2102,39 +2248,56 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
     currentBuyers.forEach((b) => {
       const key = (b.buyer_code || b.buyer_name).toLowerCase();
-      const prev = prevBuyerMap.get(key);
-      if (prev && prev.net_amount > 0) {
-        const diff = b.net_amount - prev.net_amount;
-        const pct = prev.net_amount > 0 ? (diff / prev.net_amount) * 100 : 0;
-        repeatCore.push({
-          ...b,
-          prev_amount: prev.net_amount,
-          diff,
-          pct
-        });
+      const history = priorBuyersHistory.get(key);
+      const isRepeat = history && history.monthsCount > 0;
+      const invCount = b.invoiceCount || 1;
+
+      const buyerRecord = {
+        ...b,
+        invoiceCount: invCount,
+        isRepeat: !!isRepeat,
+        priorMonthsCount: history ? history.monthsCount : 0,
+        repeatLabel: isRepeat ? `Repeat (${history!.monthsCount} of last 3 mos)` : "New Buyer",
+        totalPriorSpend: history ? history.totalPriorSpend : 0
+      };
+
+      allActiveBuyers.push(buyerRecord);
+
+      if (isRepeat) {
+        repeatCore.push(buyerRecord);
         repeatSpend += b.net_amount;
       } else {
-        newBuyers.push(b);
+        newBuyers.push(buyerRecord);
         newSpend += b.net_amount;
       }
     });
 
-    prevBuyerMap.forEach((prevB, key) => {
-      if (!currentBuyerKeys.has(key) && prevB.net_amount > 0) {
-        dormantBuyers.push(prevB);
-        dormantSpend += prevB.net_amount;
+    // Dormant accounts: ordered in immediate prior month (last month), but NOT in current month
+    priorBuyersHistory.forEach((history, key) => {
+      if (history.lastMonthSpend > 0 && !currentBuyerKeys.has(key)) {
+        dormantBuyers.push({
+          buyer_name: history.buyer_name,
+          buyer_code: history.buyer_code,
+          channel: history.channel,
+          lastMonthSpend: history.lastMonthSpend,
+          lastMonthInvoices: history.lastMonthInvoices || 1,
+          priorPeriod: immediatePriorPeriod
+        });
+        dormantSpend += history.lastMonthSpend;
       }
     });
 
+    allActiveBuyers.sort((a, b) => b.net_amount - a.net_amount);
     repeatCore.sort((a, b) => b.net_amount - a.net_amount);
     newBuyers.sort((a, b) => b.net_amount - a.net_amount);
-    dormantBuyers.sort((a, b) => b.net_amount - a.net_amount);
+    dormantBuyers.sort((a, b) => b.lastMonthSpend - a.lastMonthSpend);
 
-    const totalActive = currentBuyers.length;
+    const totalActive = allActiveBuyers.length;
     const totalBenchmarkBase = repeatCore.length + dormantBuyers.length;
-    const retentionRate = totalBenchmarkBase > 0 ? (repeatCore.length / totalBenchmarkBase) * 100 : 100;
+    const retentionRate = totalBenchmarkBase > 0 ? (repeatCore.length / totalBenchmarkBase) * 100 : (totalActive > 0 ? 100 : 0);
 
     return {
+      allActiveBuyers,
       repeatCore,
       newBuyers,
       dormantBuyers,
@@ -2143,9 +2306,171 @@ export function SellInModule({ profile }: SellInModuleProps) {
       dormantSpend,
       totalActive,
       retentionRate,
-      momLabel: formatPeriodLabel(benchmarkPeriods.momPeriod)
+      priorPeriodsLabel: `last 3 months (${formatPeriodLabel(prior3Periods[2]).split(" ")[0]}–${formatPeriodLabel(prior3Periods[0])})`,
+      lastMonthLabel: formatPeriodLabel(immediatePriorPeriod)
     };
-  }, [currentSummaryMetrics.buyers, allBatches, benchmarkPeriods, computeBatchFilteredMetrics]);
+  }, [currentSummaryMetrics.buyers, allBatches, currentPeriod, computeBatchFilteredMetrics]);
+
+  // Rolling 12-Month Expected Cash Collection Timeline (Current Month is Position #3: 2 months prior, 9 months projected)
+  const yearCollectionTimeline = React.useMemo(() => {
+    const [yStr, mStr] = (currentPeriod || "2026-01").split("-");
+    const curY = parseInt(yStr, 10) || 2026;
+    const curM = parseInt(mStr, 10) || 1;
+
+    // 12 Rolling Months: 2 months before, current month (#3), 9 months after
+    const offsets = [-2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+    const monthsData = offsets.map((offset, idx) => {
+      const d = new Date(curY, curM - 1 + offset, 1);
+      const yr = d.getFullYear();
+      const mo = d.getMonth() + 1;
+      const padM = String(mo).padStart(2, "0");
+      const periodKey = `${yr}-${padM}`;
+      const monthShort = d.toLocaleDateString("en-US", { month: "short" });
+      const label = `${monthShort} ${yr}`;
+      const isPast = offset < 0;
+      const isCurrent = offset === 0;
+      const isFuture = offset > 0;
+
+      return {
+        monthIndex: idx,
+        positionNumber: idx + 1, // 1 to 12 (Position 3 is current active month)
+        monthName: monthShort,
+        year: yr,
+        period: periodKey,
+        label,
+        isPast,
+        isCurrent,
+        isFuture,
+        amount: 0,
+        buyersMap: new Map<string, {
+          buyer_name: string;
+          buyer_code: string;
+          amount: number;
+          source_period: string;
+          term: string;
+          channel?: string;
+        }>(),
+        sourceBatches: new Set<string>()
+      };
+    });
+
+    const monthsMap = new Map<string, typeof monthsData[0]>();
+    monthsData.forEach((m) => monthsMap.set(m.period, m));
+
+    // Helper to add receivables to a collection month if it falls in the rolling window
+    const addBuyerReceivable = (
+      collPeriod: string,
+      netAmount: number,
+      buyerName: string,
+      buyerCode: string,
+      sourcePeriod: string,
+      paymentTerm: string,
+      channel?: string
+    ) => {
+      if (!collPeriod || netAmount <= 0) return;
+
+      // Filter by active summary filters if applied
+      if (summaryChannelFilter !== "all" && channel && channel.toLowerCase() !== summaryChannelFilter.toLowerCase()) {
+        return;
+      }
+      if (summaryBuyerFilter !== "all") {
+        const bTarget = summaryBuyerFilter.toLowerCase();
+        if (buyerCode.toLowerCase() !== bTarget && buyerName.toLowerCase() !== bTarget) {
+          return;
+        }
+      }
+
+      const targetMonth = monthsMap.get(collPeriod);
+      if (targetMonth) {
+        targetMonth.amount += netAmount;
+        targetMonth.sourceBatches.add(sourcePeriod);
+
+        const bKey = (buyerCode || buyerName).toLowerCase();
+        const existing = targetMonth.buyersMap.get(bKey) || {
+          buyer_name: buyerName,
+          buyer_code: buyerCode,
+          amount: 0,
+          source_period: sourcePeriod,
+          term: paymentTerm,
+          channel
+        };
+        existing.amount += netAmount;
+        targetMonth.buyersMap.set(bKey, existing);
+      }
+    };
+
+    // 1. Process all historical batches from allBatches (excluding currentPeriod which is handled live)
+    allBatches.forEach((b: any) => {
+      if (!b || b.period === currentPeriod) return;
+      const summary = b.sellin_summary;
+      if (!summary) return;
+
+      if (Array.isArray(summary.buyers_summary) && summary.buyers_summary.length > 0) {
+        summary.buyers_summary.forEach((bs: any) => {
+          const collP = bs.expected_collection_period;
+          const netAmt = Number(bs.net_receivable ?? bs.net_amount ?? 0);
+          addBuyerReceivable(
+            collP,
+            netAmt,
+            bs.buyer_name || "Unknown",
+            bs.buyer_code || "",
+            b.period,
+            bs.payment_term || "90",
+            bs.channel
+          );
+        });
+      } else if (Array.isArray(summary.cash_collection_timeline)) {
+        summary.cash_collection_timeline.forEach((item: any) => {
+          if (monthsMap.has(item.period)) {
+            const m = monthsMap.get(item.period)!;
+            const amt = Number(item.amount ?? item.expected_amount ?? 0);
+            m.amount += amt;
+            m.sourceBatches.add(b.period);
+          }
+        });
+      }
+    });
+
+    // 2. Process currentPeriod with live compiledSummaryData
+    if (compiledSummaryData?.buyers_summary && Array.isArray(compiledSummaryData.buyers_summary)) {
+      compiledSummaryData.buyers_summary.forEach((bs: any) => {
+        const collP = bs.expected_collection_period;
+        const netAmt = Number(bs.net_receivable ?? bs.net_amount ?? 0);
+        addBuyerReceivable(
+          collP,
+          netAmt,
+          bs.buyer_name || "Unknown",
+          bs.buyer_code || "",
+          currentPeriod,
+          bs.payment_term || "90",
+          bs.channel
+        );
+      });
+    }
+
+    let rollingTotal = 0;
+    let currentMonthAmount = 0;
+
+    monthsData.forEach((m) => {
+      rollingTotal += m.amount;
+      if (m.isCurrent) currentMonthAmount = m.amount;
+    });
+
+    const startLabel = monthsData[0].label;
+    const endLabel = monthsData[monthsData.length - 1].label;
+    const windowLabel = `${startLabel} – ${endLabel}`;
+
+    return {
+      windowLabel,
+      rollingTotal,
+      currentMonthAmount,
+      months: monthsData.map((m) => ({
+        ...m,
+        buyersList: Array.from(m.buyersMap.values()).sort((a, b) => b.amount - a.amount)
+      }))
+    };
+  }, [currentPeriod, allBatches, compiledSummaryData, summaryChannelFilter, summaryBuyerFilter]);
 
   // Handle Tax Invoice PDF/Image Upload and AI Parsing with 8-page batching
   const handleInvoicePdfUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -3975,6 +4300,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
     setLoadingBundleInvoiceItems(true);
     setBundleInvoiceGroups([]);
     setSelectedBundleComponents(new Set());
+    setSelectedBundleDocNumber("all");
+    setCollapsedBundleDocCards(new Set());
+    setBundleItemFilterSearch("");
+    setBundleDocFilter("all");
     setBundleCustomName(mappedTp.product_name || record.bundle_name || record.product_name || "");
 
     let initBrand = mappedTp.brand || (record.brand && record.brand !== "Unassigned Brand" ? record.brand : "");
@@ -4001,6 +4330,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
         const existingComponents = Array.isArray(data.target_item?.bundle_components) ? data.target_item.bundle_components : [];
         
         existingComponents.forEach((c: any) => {
+          if (c.line_id) selSet.add(String(c.line_id).toLowerCase());
           const inv = String(c.invoice_no || "").trim().toLowerCase();
           const recId = String(c.record_id || "").trim().toLowerCase();
           const sku = String(c.component_sku || "").trim().toLowerCase();
@@ -4012,9 +4342,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
         const detectedBrands: string[] = [];
         groups.forEach((grp: any) => {
-          (grp.items || []).forEach((item: any) => {
-            const key = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
-            if (item.is_selected || selSet.has(key)) {
+          (grp.items || []).forEach((item: any, itemIdx: number) => {
+            const key = item.line_id || `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}:::${itemIdx}`;
+            if (item.is_selected || selSet.has(key) || (item.line_id && selSet.has(item.line_id.toLowerCase()))) {
               selSet.add(key);
             }
             if (item.brand && item.brand !== "Unassigned Brand" && !detectedBrands.includes(item.brand)) {
@@ -4039,8 +4369,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
   };
 
   // Toggle selection of a component item in a specific invoice
-  const handleToggleBundleComponent = (invoiceNo: string, item: any) => {
-    const key = `${String(invoiceNo || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+  const handleToggleBundleComponent = (invoiceNo: string, item: any, itemIdx?: number) => {
+    const key = item.line_id || `${String(invoiceNo || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}:::${itemIdx ?? 0}`;
     setSelectedBundleComponents((prev) => {
       const next = new Set(prev);
       if (next.has(key)) {
@@ -4058,8 +4388,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
     const selectedNames = new Set<string>();
 
     bundleInvoiceGroups.forEach((grp) => {
-      (grp.items || []).forEach((item: any) => {
-        const key = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+      (grp.items || []).forEach((item: any, itemIdx: number) => {
+        const key = item.line_id || `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}:::${itemIdx}`;
         if (selectedBundleComponents.has(key)) {
           if (item.product_sku) selectedSkus.add(String(item.product_sku).trim().toLowerCase());
           if (item.product_name) selectedNames.add(String(item.product_name).trim().toLowerCase());
@@ -4076,12 +4406,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
     let newlySelectedCount = 0;
 
     bundleInvoiceGroups.forEach((grp) => {
-      (grp.items || []).forEach((item: any) => {
+      (grp.items || []).forEach((item: any, itemIdx: number) => {
         const itemSku = String(item.product_sku || "").trim().toLowerCase();
         const itemName = String(item.product_name || "").trim().toLowerCase();
         const match = (itemSku && selectedSkus.has(itemSku)) || (itemName && selectedNames.has(itemName));
         if (match) {
-          const key = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+          const key = item.line_id || `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}:::${itemIdx}`;
           if (!next.has(key)) {
             next.add(key);
             newlySelectedCount++;
@@ -4102,10 +4432,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
     try {
       const components: any[] = [];
       bundleInvoiceGroups.forEach((grp) => {
-        (grp.items || []).forEach((item: any) => {
-          const key = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
+        (grp.items || []).forEach((item: any, itemIdx: number) => {
+          const key = item.line_id || `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}:::${itemIdx}`;
           if (selectedBundleComponents.has(key)) {
             components.push({
+              line_id: key,
               record_id: item.record_id,
               invoice_no: grp.number,
               source_type: grp.type || item.source_type,
@@ -4114,7 +4445,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
               brand: item.brand || "",
               qty: Number(item.qty || 0),
               unit_price: Number(item.unit_price || 0),
-              amount: Number(item.amount || 0)
+              amount: Number(item.amount || 0),
+              doc_line_index: item.doc_line_index ?? itemIdx
             });
           }
         });
@@ -4608,6 +4940,10 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
   // Export Excel
   const handleExportExcel = () => {
+    if (!hasInvoiceUploaded) {
+      showToast("Please upload the Tax Invoice before exporting.", "warning");
+      return;
+    }
     if (records.length === 0) {
       showToast("No records to export", "error");
       return;
@@ -4984,29 +5320,47 @@ export function SellInModule({ profile }: SellInModuleProps) {
     };
   }, [currentPeriod]);
 
+  // At minimum, the Tax Invoice must be uploaded before enabling Export or Publish
+  const hasInvoiceUploaded = React.useMemo(() => {
+    if (invoiceSourceUrl) return true;
+    if (batchData?.source_file_url) return true;
+    return records.some(
+      (r: any) =>
+        r.source_type !== "pdf_credit_note" &&
+        (Number(r.total_demand || 0) > 0 ||
+          Number(r.quantity || 0) > 0 ||
+          Boolean(r.source_file_url) ||
+          Boolean(r.invoice_file_url) ||
+          (Array.isArray(r.invoices) && r.invoices.length > 0))
+    );
+  }, [invoiceSourceUrl, batchData, records]);
+
+  const canExport = hasInvoiceUploaded && records.length > 0;
+  const canPublish = hasInvoiceUploaded && records.length > 0 && batchData?.status !== "published";
+
   return (
     <div className="flex flex-col flex-1 h-full overflow-hidden bg-white rounded-lg border border-slate-200 shadow-xs font-primary select-none animate-in fade-in duration-150">
       {/* ========================================================================= */}
       {/* 1. DYNAMIC TOP HEADER BAR (Contextual to Active Tab)                      */}
       {/* ========================================================================= */}
-      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-white">
+      <div className="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0 bg-white relative">
         {activeMainTab === "sellin" ? (
           <>
-            <div className="flex items-center gap-5 flex-wrap">
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="text-base font-semibold text-zinc-900">Sell-In Data</h1>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-medium tracking-wide bg-slate-100 text-zinc-600 border border-slate-200">
-                    {batchData?.status === "published" ? "Published" : "Draft Inflow"}
-                  </span>
-                </div>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  Pure sales demand for stock, marketing, and manpower planning.
-                </p>
+            <div className="shrink-0 min-w-0 z-10">
+              <div className="flex items-center gap-2">
+                <h1 className="text-base font-semibold text-zinc-900">Sell-In Data</h1>
+                <span className="px-2 py-0.5 rounded text-[10px] font-medium tracking-wide bg-slate-100 text-zinc-600 border border-slate-200">
+                  {batchData?.status === "published" ? "Published" : "Draft Inflow"}
+                </span>
               </div>
+              <p className="text-xs text-zinc-500 mt-0.5">
+                B2B sales demand, invoices, and buyer performance.
+              </p>
+            </div>
 
-              {/* View Mode Tabs: Summary View vs Detailed Sell-In (Topside, No Qty) */}
-              {batchData?.status === "published" && (
+            {/* View Mode Tabs: Summary View vs Detailed Sell-In (Centered in Header) */}
+            {batchData?.status === "published" && (
+              <div className="flex items-center justify-center absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2 z-10 pointer-events-auto">
                 <div className="flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 shadow-2xs">
                   <button
                     type="button"
@@ -5035,11 +5389,11 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     <span>Detailed Sell-In</span>
                   </button>
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Action Controls: Clean Monochromatic Summary Pills + Month Selector */}
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap shrink-0 justify-end z-10">
               {/* Invoice (Gross Demand) Pill with integrated Upload / Download */}
               <div className="h-7 flex items-center gap-1.5 px-2 rounded-md bg-[#F8F9FA] border border-slate-200 text-[11px]">
                 <span className="text-zinc-500 font-normal">Invoice:</span>
@@ -5153,11 +5507,16 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
               <button
                 type="button"
-                onClick={handleExportExcel}
-                className="h-7 px-2 rounded-md bg-white border border-slate-300 hover:bg-slate-50 text-zinc-700 text-[11px] font-medium flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
-                title="Export current Sell-In rows to Excel"
+                onClick={canExport ? handleExportExcel : () => showToast("Please upload the Tax Invoice before exporting.", "warning")}
+                disabled={!canExport}
+                className={`h-7 px-2 rounded-md border text-[11px] font-medium flex items-center gap-1 transition-all shadow-2xs ${
+                  canExport
+                    ? "bg-white border-slate-300 hover:bg-slate-50 text-zinc-700 cursor-pointer active:scale-98"
+                    : "bg-slate-100 border-slate-200 text-zinc-400 cursor-not-allowed opacity-50"
+                }`}
+                title={!hasInvoiceUploaded ? "Tax Invoice must be uploaded before exporting" : records.length === 0 ? "No records to export" : "Export current Sell-In rows to Excel"}
               >
-                <Download size={11} className="text-zinc-500" />
+                <Download size={11} className={canExport ? "text-zinc-500" : "text-zinc-400"} />
                 <span>Export</span>
               </button>
 
@@ -5177,8 +5536,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
               {batchData?.status !== "published" && (
                 <button
                   type="button"
-                  onClick={handlePublishBatchWithConfirm}
-                  className="h-7 px-3 rounded-md bg-[#0B57D0] hover:bg-[#0842A0] text-white text-[11px] font-medium flex items-center justify-center transition-all cursor-pointer shadow-2xs active:scale-98"
+                  onClick={canPublish ? handlePublishBatchWithConfirm : () => showToast("Please upload the Tax Invoice before publishing this month.", "warning")}
+                  disabled={!canPublish}
+                  className={`h-7 px-3 rounded-md text-[11px] font-medium flex items-center justify-center transition-all shadow-2xs ${
+                    canPublish
+                      ? "bg-[#0B57D0] hover:bg-[#0842A0] text-white cursor-pointer active:scale-98"
+                      : "bg-slate-200 text-slate-400 cursor-not-allowed opacity-50"
+                  }`}
+                  title={!hasInvoiceUploaded ? "Tax Invoice must be uploaded before publishing" : records.length === 0 ? "No records to publish" : "Publish official Sell-In batch"}
                 >
                   <span>Publish</span>
                 </button>
@@ -5665,32 +6030,37 @@ export function SellInModule({ profile }: SellInModuleProps) {
                 {/* 2. EXECUTIVE COMPARATIVE SCOREBOARD (4 CARDS)                             */}
                 {/* ========================================================================= */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                  {/* Metric 1: Net Receivable Revenue */}
+                  {/* Metric 1: Buyer Purchase (Combine Amount + Qty) */}
                   <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
                     <div>
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-medium text-zinc-500">
-                          {summaryBenchmark === "ytd" ? "Net Revenue (YTD)" : "Net Receivable Revenue"}
+                          {summaryBenchmark === "ytd" ? "Buyer Purchase (YTD)" : "Buyer Purchase"}
                         </span>
                         {/* Comparison delta badge */}
-                        {benchmarkComparison.netDelta.isNew ? (
+                        {benchmarkComparison.purchaseAmountDelta.isNew ? (
                           <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
-                            {benchmarkComparison.netDelta.text}
+                            {benchmarkComparison.purchaseAmountDelta.text}
                           </span>
-                        ) : benchmarkComparison.netDelta.diff >= 0 ? (
+                        ) : benchmarkComparison.purchaseAmountDelta.diff >= 0 ? (
                           <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
                             <TrendingUp size={10} />
-                            <span>{benchmarkComparison.netDelta.text}</span>
+                            <span>{benchmarkComparison.purchaseAmountDelta.text}</span>
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">
                             <TrendingDown size={10} />
-                            <span>{benchmarkComparison.netDelta.text}</span>
+                            <span>{benchmarkComparison.purchaseAmountDelta.text}</span>
                           </span>
                         )}
                       </div>
-                      <div className="text-xl font-bold text-[#0B57D0] mt-1 font-mono">
-                        ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompNet : currentSummaryMetrics.netRevenue).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      <div className="flex items-baseline justify-between mt-1">
+                        <div className="text-xl font-bold text-[#0B57D0] font-mono">
+                          ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompDemandAmount : currentSummaryMetrics.demandAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-xs font-semibold text-zinc-600 font-mono">
+                          {(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompDemand : currentSummaryMetrics.demandQty).toLocaleString()} pcs
+                        </div>
                       </div>
                     </div>
                     <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
@@ -5698,17 +6068,60 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         {benchmarkComparison.baseline.label || "Benchmark"}
                       </span>
                       <span className="font-mono text-zinc-600 font-medium shrink-0 ml-1">
-                        ${benchmarkComparison.baseline.netRevenue.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                        ${benchmarkComparison.baseline.demandAmount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} • {benchmarkComparison.baseline.demandQty.toLocaleString()} pcs
                       </span>
                     </div>
                   </div>
 
-                  {/* Metric 2: Gross Profit & Margin */}
+                  {/* Metric 2: Buyer Return (Combine Amount + Qty) */}
                   <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
                     <div>
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-medium text-zinc-500">
-                          {summaryBenchmark === "ytd" ? "Gross Profit (YTD)" : "Gross Profit & Margin"}
+                          {summaryBenchmark === "ytd" ? "Buyer Return (YTD)" : "Buyer Return"}
+                        </span>
+                        {/* Comparison delta badge: decrease in returns is emerald */}
+                        {benchmarkComparison.returnAmountDelta.isNew ? (
+                          <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
+                            {benchmarkComparison.returnAmountDelta.text}
+                          </span>
+                        ) : benchmarkComparison.returnAmountDelta.diff <= 0 ? (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <TrendingDown size={10} />
+                            <span>{benchmarkComparison.returnAmountDelta.text}</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                            <TrendingUp size={10} />
+                            <span>{benchmarkComparison.returnAmountDelta.text}</span>
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-baseline justify-between mt-1">
+                        <div className="text-xl font-bold text-zinc-900 font-mono">
+                          ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompCnAmount : currentSummaryMetrics.cnAmount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-xs font-semibold text-zinc-600 font-mono">
+                          {(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompCnQty : currentSummaryMetrics.cnQty).toLocaleString()} pcs
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span className="truncate" title={benchmarkComparison.baseline.sublabel}>
+                        {benchmarkComparison.baseline.label || "Benchmark"}
+                      </span>
+                      <span className="font-mono text-zinc-600 font-medium shrink-0 ml-1">
+                        ${benchmarkComparison.baseline.cnAmount.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })} • {benchmarkComparison.baseline.cnQty.toLocaleString()} pcs
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Metric 3: Gross Profit */}
+                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-medium text-zinc-500">
+                          {summaryBenchmark === "ytd" ? "Gross Profit (YTD)" : "Gross Profit"}
                         </span>
                         {benchmarkComparison.profitDelta.isNew ? (
                           <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
@@ -5726,50 +6139,26 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           </span>
                         )}
                       </div>
-                      <div className={`text-xl font-bold mt-1 font-mono ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompProfit : currentSummaryMetrics.grossProfit) >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                        ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompProfit : currentSummaryMetrics.grossProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      <div className="flex items-baseline justify-between mt-1">
+                        <div className={`text-xl font-bold font-mono ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompProfit : currentSummaryMetrics.grossProfit) >= 0 ? "text-emerald-700" : "text-red-600"}`}>
+                          ${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompProfit : currentSummaryMetrics.grossProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-[10px] text-zinc-400 font-medium" title="Sales Invoice – Credit Note – Landed Cost">
+                          Net Rev – Landed
+                        </div>
                       </div>
                     </div>
                     <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span>Margin: <strong className="text-zinc-700 font-mono">{currentSummaryMetrics.marginPercent.toFixed(1)}%</strong></span>
-                      <span className="text-zinc-500">COGS: ${currentSummaryMetrics.totalCost.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                      <span title="Net Revenue (Sales Invoice – Credit Note)">
+                        Net Rev: <strong className="text-zinc-700 font-mono">${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompNet : currentSummaryMetrics.netRevenue).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong>
+                      </span>
+                      <span title="Cost of Goods (Landed Price)">
+                        COGS: <strong className="text-zinc-700 font-mono">${(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompCost : currentSummaryMetrics.totalCost).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</strong>
+                      </span>
                     </div>
                   </div>
 
-                  {/* Metric 3: Demand Volume & Returns */}
-                  <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-medium text-zinc-500">
-                          {summaryBenchmark === "ytd" ? "Demand Units (YTD)" : "Deliverable Demand Qty"}
-                        </span>
-                        {benchmarkComparison.demandDelta.isNew ? (
-                          <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
-                            {benchmarkComparison.demandDelta.text}
-                          </span>
-                        ) : benchmarkComparison.demandDelta.diff >= 0 ? (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                            <TrendingUp size={10} />
-                            <span>{benchmarkComparison.demandDelta.text}</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] font-bold bg-red-50 text-red-700 border border-red-200">
-                            <TrendingDown size={10} />
-                            <span>{benchmarkComparison.demandDelta.text}</span>
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xl font-bold text-zinc-900 mt-1 font-mono">
-                        {(summaryBenchmark === "ytd" ? benchmarkComparison.currentCompDemand : currentSummaryMetrics.demandQty).toLocaleString()} <span className="text-xs font-normal text-zinc-500">units</span>
-                      </div>
-                    </div>
-                    <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span>Returns: {currentSummaryMetrics.cnQty.toLocaleString()} pcs</span>
-                      <span className="text-zinc-500 font-mono">{currentSummaryMetrics.cnRatePercent.toFixed(2)}% return rate</span>
-                    </div>
-                  </div>
-
-                  {/* Metric 4: Frequent & Active Buyers */}
+                  {/* Metric 4: Active Purchasing Buyers */}
                   <div className="bg-white rounded-lg border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
                     <div>
                       <div className="flex items-center justify-between">
@@ -5784,9 +6173,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
                       </div>
                     </div>
                     <div className="text-[10.5px] text-zinc-500 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span className="text-emerald-700 font-semibold">{frequentPurchaseAnalysis.repeatCore.length} Repeat Core</span>
+                      <span className="text-emerald-700 font-semibold">{frequentPurchaseAnalysis.repeatCore.length} Repeat Buyer</span>
                       <span className="text-zinc-300">•</span>
-                      <span className="text-[#0B57D0] font-semibold">{frequentPurchaseAnalysis.newBuyers.length} New Inflow</span>
+                      <span className="text-[#0B57D0] font-semibold">{frequentPurchaseAnalysis.newBuyers.length} New Buyer</span>
                       <span className="text-zinc-300">•</span>
                       <span className="text-amber-700 font-medium">{frequentPurchaseAnalysis.dormantBuyers.length} Dormant</span>
                     </div>
@@ -5810,6 +6199,22 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     onHoverKey={setHoveredChannelSlice}
                     unitLabel="Total Net"
                     emptyMessage="No channel sales in this period"
+                    footerNote={
+                      <>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0" />
+                          <span className="text-zinc-500 truncate">
+                            Active distribution channels:
+                          </span>
+                        </div>
+                        <div className="font-mono font-semibold text-zinc-800 shrink-0 ml-2">
+                          {currentSummaryMetrics.channels.length} {currentSummaryMetrics.channels.length === 1 ? "channel" : "channels"}
+                          <span className="text-zinc-400 font-sans font-normal text-[10.5px] ml-1.5">
+                            (100% split)
+                          </span>
+                        </div>
+                      </>
+                    }
                   />
 
                   {/* Chart 2: Brand Revenue Share Pie / Donut */}
@@ -5825,6 +6230,32 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     onHoverKey={setHoveredBrandSlice}
                     unitLabel="Total Brand"
                     emptyMessage="No brand sales in this period"
+                    footerNote={
+                      <>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                          <span className="text-zinc-500 truncate" title="Non-product deductions (e.g. rebates, listing fees, delivery charges)">
+                            Non-sales amount (rebates & fees):
+                          </span>
+                        </div>
+                        <div className="font-mono font-semibold text-zinc-800 shrink-0 ml-2 flex items-baseline gap-1.5">
+                          <span>
+                            ${currentSummaryMetrics.nonSalesAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </span>
+                          <span className="text-zinc-400 font-sans font-normal text-[10.5px]">
+                            ({(() => {
+                              const bTotal = currentSummaryMetrics.brands.reduce((sum, b) => sum + Number(b.amount || 0), 0);
+                              return bTotal > 0
+                                ? `${((currentSummaryMetrics.nonSalesAmount / bTotal) * 100).toFixed(1)}%`
+                                : "0.0%";
+                            })()} of {(() => {
+                              const bTotal = currentSummaryMetrics.brands.reduce((sum, b) => sum + Number(b.amount || 0), 0);
+                              return bTotal >= 1000 ? `$${(bTotal / 1000).toFixed(1)}k` : `$${bTotal.toFixed(0)}`;
+                            })()})
+                          </span>
+                        </div>
+                      </>
+                    }
                   />
                 </div>
 
@@ -5835,118 +6266,139 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   {/* Card A: Frequent Purchase & Buyer Loyalty Matrix */}
                   <div className="bg-white rounded-lg border border-slate-200 p-4 shadow-2xs flex flex-col justify-between">
                     <div>
-                      <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
+                      <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100 flex-wrap gap-2">
                         <div>
                           <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider flex items-center gap-1.5">
                             <Users size={13} className="text-[#0B57D0]" />
-                            <span>Frequent Buyer Retention & MoM Velocity</span>
+                            <span>Buyer Purchases & 3-Month Loyalty</span>
                           </h3>
                           <p className="text-[11px] text-zinc-500 mt-0.5">
-                            Core repeat reorders, newly onboarded buyers, and dormant accounts vs {frequentPurchaseAnalysis.momLabel}.
+                            Active buyers vs {frequentPurchaseAnalysis.priorPeriodsLabel}.
                           </p>
                         </div>
-                        <span className="text-[11px] font-mono font-semibold text-[#0B57D0]">
-                          {frequentPurchaseAnalysis.totalActive} active buyers
-                        </span>
-                      </div>
 
-                      {/* 3 Status Capsules across top */}
-                      <div className="grid grid-cols-3 gap-2 mb-3">
-                        <div className="p-2 rounded-lg bg-emerald-50/70 border border-emerald-100 flex flex-col">
-                          <span className="text-[10px] font-semibold text-emerald-800 uppercase tracking-wide">Repeat Core</span>
-                          <span className="text-sm font-bold text-emerald-900 font-mono mt-0.5">
-                            {frequentPurchaseAnalysis.repeatCore.length} <span className="text-[10px] font-normal text-emerald-700">buyers</span>
-                          </span>
-                          <span className="text-[10px] font-mono text-emerald-700 mt-0.5">
-                            ${frequentPurchaseAnalysis.repeatSpend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                          </span>
-                        </div>
-
-                        <div className="p-2 rounded-lg bg-blue-50/70 border border-blue-100 flex flex-col">
-                          <span className="text-[10px] font-semibold text-[#0B57D0] uppercase tracking-wide">New Inflow</span>
-                          <span className="text-sm font-bold text-zinc-900 font-mono mt-0.5">
-                            {frequentPurchaseAnalysis.newBuyers.length} <span className="text-[10px] font-normal text-zinc-500">buyers</span>
-                          </span>
-                          <span className="text-[10px] font-mono text-zinc-600 mt-0.5">
-                            ${frequentPurchaseAnalysis.newSpend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                          </span>
-                        </div>
-
-                        <div className="p-2 rounded-lg bg-amber-50/70 border border-amber-100 flex flex-col">
-                          <span className="text-[10px] font-semibold text-amber-800 uppercase tracking-wide">Dormant</span>
-                          <span className="text-sm font-bold text-amber-900 font-mono mt-0.5">
-                            {frequentPurchaseAnalysis.dormantBuyers.length} <span className="text-[10px] font-normal text-amber-700">drop-off</span>
-                          </span>
-                          <span className="text-[10px] font-mono text-amber-700 mt-0.5">
-                            ${frequentPurchaseAnalysis.dormantSpend.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-                          </span>
+                        {/* View Switcher: Active Buyers vs Dormant Accounts */}
+                        <div className="flex items-center p-0.5 bg-slate-100 rounded-md border border-slate-200">
+                          <button
+                            type="button"
+                            onClick={() => setBuyerLoyaltyTab("active")}
+                            className={cn(
+                              "px-2.5 py-1 rounded text-[11px] font-medium transition-all cursor-pointer",
+                              buyerLoyaltyTab === "active"
+                                ? "bg-white text-[#0B57D0] shadow-2xs font-semibold"
+                                : "text-zinc-600 hover:text-zinc-900"
+                            )}
+                          >
+                            Active Buyers ({frequentPurchaseAnalysis.allActiveBuyers.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setBuyerLoyaltyTab("dormant")}
+                            className={cn(
+                              "px-2.5 py-1 rounded text-[11px] font-medium transition-all cursor-pointer",
+                              buyerLoyaltyTab === "dormant"
+                                ? "bg-white text-amber-700 shadow-2xs font-semibold"
+                                : "text-zinc-600 hover:text-zinc-900"
+                            )}
+                          >
+                            Dormant ({frequentPurchaseAnalysis.dormantBuyers.length})
+                          </button>
                         </div>
                       </div>
 
-                      {/* Ranked Repeat / Active Buyers List */}
-                      <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                        {currentSummaryMetrics.buyers.slice(0, 6).map((b: any, idx: number) => {
-                          const isRepeat = frequentPurchaseAnalysis.repeatCore.find(
-                            (rc) => (rc.buyer_code && rc.buyer_code === b.buyer_code) || rc.buyer_name === b.buyer_name
-                          );
-                          const totalSpend = currentSummaryMetrics.netRevenue;
-                          const spendPct = totalSpend > 0 ? (b.net_amount / totalSpend) * 100 : 0;
-
-                          return (
-                            <div key={idx} className="p-2 rounded-lg bg-slate-50/70 border border-slate-200/80 hover:bg-white hover:border-[#0B57D0]/40 transition-all text-xs">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <span className="text-[10px] font-mono font-bold text-zinc-400 w-4">#{idx + 1}</span>
-                                  <span className="font-semibold text-zinc-900 truncate text-[11px]" title={b.buyer_name}>
-                                    {b.buyer_name}
-                                  </span>
-                                  {b.channel && (
-                                    <span className="px-1 py-0.2 rounded text-[9px] font-medium bg-white text-zinc-600 border border-slate-200 shrink-0">
-                                      {b.channel}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 shrink-0">
-                                  {isRepeat ? (
-                                    <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-bold font-mono inline-flex items-center gap-0.5 ${
-                                      isRepeat.pct >= 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"
-                                    }`}>
-                                      {isRepeat.pct >= 0 ? <TrendingUp size={9} /> : <TrendingDown size={9} />}
-                                      <span>{isRepeat.pct >= 0 ? "+" : ""}{isRepeat.pct.toFixed(0)}% MoM</span>
-                                    </span>
-                                  ) : (
-                                    <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-100">
-                                      New Customer
-                                    </span>
-                                  )}
-                                  <span className="font-bold text-zinc-900 font-mono text-[11px]">
-                                    ${Number(b.net_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </span>
-                                </div>
-                              </div>
-                              {/* Horizontal progress bar */}
-                              <div className="w-full bg-slate-200/70 h-1 rounded-full mt-1.5 overflow-hidden">
-                                <div
-                                  className="h-full bg-[#0B57D0] rounded-full transition-all duration-300"
-                                  style={{ width: `${Math.min(100, Math.max(4, spendPct))}%` }}
-                                />
-                              </div>
+                      {/* List View: Active Buyers or Dormant Accounts (Clean Minimalist, NO Blue Bar) */}
+                      {buyerLoyaltyTab === "active" ? (
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1 divide-y divide-slate-100">
+                          {frequentPurchaseAnalysis.allActiveBuyers.length === 0 ? (
+                            <div className="py-8 text-center text-xs text-zinc-400">
+                              No active buyers in this period.
                             </div>
-                          );
-                        })}
-                      </div>
+                          ) : (
+                            frequentPurchaseAnalysis.allActiveBuyers.map((b: any, idx: number) => (
+                              <div key={idx} className="pt-2 first:pt-0 flex items-center justify-between gap-2 text-xs hover:bg-slate-50/60 p-1.5 rounded transition-colors">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-[10px] font-mono font-bold text-zinc-400 w-4 shrink-0">#{idx + 1}</span>
+                                    <span className="font-semibold text-zinc-900 truncate text-[11.5px]" title={b.buyer_name}>
+                                      {b.buyer_name}
+                                    </span>
+                                    {b.channel && (
+                                      <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200 shrink-0">
+                                        {b.channel}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-0.5 pl-5 text-[10.5px] text-zinc-500">
+                                    <span>{b.invoiceCount} {b.invoiceCount === 1 ? "Invoice" : "Invoices"}</span>
+                                    <span>•</span>
+                                    {b.isRepeat ? (
+                                      <span className="text-emerald-700 font-medium font-mono">{b.repeatLabel}</span>
+                                    ) : (
+                                      <span className="text-[#0B57D0] font-medium">New Buyer</span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="text-right shrink-0">
+                                  <div className="font-bold text-zinc-900 font-mono text-xs">
+                                    ${Number(b.net_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1 divide-y divide-slate-100">
+                          {frequentPurchaseAnalysis.dormantBuyers.length === 0 ? (
+                            <div className="py-8 text-center text-xs text-zinc-400">
+                              No dormant buyers. All buyers from {frequentPurchaseAnalysis.lastMonthLabel} have reordered!
+                            </div>
+                          ) : (
+                            frequentPurchaseAnalysis.dormantBuyers.map((db: any, idx: number) => (
+                              <div key={idx} className="pt-2 first:pt-0 flex items-center justify-between gap-2 text-xs hover:bg-slate-50/60 p-1.5 rounded transition-colors">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-[10px] font-mono font-bold text-zinc-400 w-4 shrink-0">#{idx + 1}</span>
+                                    <span className="font-semibold text-zinc-800 truncate text-[11.5px]" title={db.buyer_name}>
+                                      {db.buyer_name}
+                                    </span>
+                                    {db.channel && (
+                                      <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-amber-50 text-amber-700 border border-amber-200 shrink-0">
+                                        {db.channel}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-0.5 pl-5 text-[10.5px] text-zinc-500">
+                                    <span>Ordered in {frequentPurchaseAnalysis.lastMonthLabel} ({db.lastMonthInvoices} {db.lastMonthInvoices === 1 ? "inv" : "invs"})</span>
+                                    <span>•</span>
+                                    <span className="text-amber-700 font-medium">0 orders this period</span>
+                                  </div>
+                                </div>
+
+                                <div className="text-right shrink-0">
+                                  <div className="font-bold text-amber-800 font-mono text-xs">
+                                    ${Number(db.lastMonthSpend || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                  <div className="text-[9.5px] text-zinc-400 mt-0.5">Prior Month Spend</div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span>Showing top {Math.min(6, currentSummaryMetrics.buyers.length)} buyers by spend</span>
-                      <span>{frequentPurchaseAnalysis.repeatCore.length} repeat buyers vs {frequentPurchaseAnalysis.momLabel}</span>
+                      <span>Listing all {frequentPurchaseAnalysis.allActiveBuyers.length} active buyers with invoice counts</span>
+                      <span>{frequentPurchaseAnalysis.repeatCore.length} repeat buyers vs {frequentPurchaseAnalysis.priorPeriodsLabel}</span>
                     </div>
                   </div>
 
                   {/* Card B: High-Velocity Fast-Moving SKUs */}
                   <div className="bg-white rounded-lg border border-slate-200 p-4 shadow-2xs flex flex-col justify-between">
                     <div>
-                      <div className="flex items-center justify-between pb-2 mb-3 border-b border-slate-100">
+                      <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
                         <div>
                           <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider flex items-center gap-1.5">
                             <ShoppingBag size={13} className="text-[#0B57D0]" />
@@ -5966,51 +6418,45 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           No product deliveries recorded for this period.
                         </div>
                       ) : (
-                        <div className="space-y-2.5">
+                        <div className="space-y-3">
                           {currentSummaryMetrics.topSkus.map((sku: any, idx: number) => {
-                            const topQty = currentSummaryMetrics.topSkus[0]?.demand_qty || 1;
-                            const barPct = topQty > 0 ? (sku.demand_qty / topQty) * 100 : 0;
                             const marginPct = sku.net_amount > 0 ? (sku.gross_profit / sku.net_amount) * 100 : 0;
 
                             return (
-                              <div key={idx} className="p-2 rounded-lg bg-slate-50/70 border border-slate-200/80 hover:bg-white hover:border-[#0B57D0]/40 transition-all text-xs">
-                                <div className="flex items-start justify-between gap-2">
-                                  <div className="min-w-0">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="text-[10px] font-mono font-bold text-zinc-400 w-4">#{idx + 1}</span>
-                                      <span className="font-semibold text-zinc-900 truncate text-[11px]" title={sku.name}>
-                                        {sku.name}
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center gap-2 mt-0.5 pl-5 text-[10px] text-zinc-500">
-                                      <span className="font-mono">{sku.sku}</span>
-                                      {sku.brand && <span>• {sku.brand}</span>}
-                                    </div>
-                                  </div>
-
-                                  <div className="flex flex-col items-end shrink-0">
-                                    <span className="font-bold text-zinc-900 font-mono text-xs">
-                                      {sku.demand_qty.toLocaleString()} <span className="text-[10px] font-normal text-zinc-500">pcs</span>
+                              <div key={idx} className="pb-2.5 border-b border-slate-100 last:border-b-0 last:pb-0 text-xs flex items-center justify-between gap-3">
+                                {/* Left: Product Name, SKU, Brand, Price Range and Margin Badge */}
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-[10px] font-mono font-bold text-zinc-400 w-4 shrink-0">#{idx + 1}</span>
+                                    <span className="font-semibold text-zinc-900 truncate text-[11.5px]" title={sku.name}>
+                                      {sku.name}
                                     </span>
-                                    <div className="flex items-center gap-1.5 mt-0.5 text-[10.5px]">
-                                      <span className="font-mono text-[#0B57D0] font-semibold">
-                                        ${sku.net_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                      </span>
-                                      <span className={`px-1 py-0.2 rounded text-[9px] font-mono font-semibold ${
-                                        marginPct >= 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"
-                                      }`}>
-                                        {marginPct.toFixed(0)}% margin
-                                      </span>
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-0.5 pl-5 text-[10px] text-zinc-500">
+                                    <span className="font-mono text-zinc-600 font-medium">{sku.sku}</span>
+                                    {sku.brand && <span>• {sku.brand}</span>}
+                                  </div>
+                                  <div className="flex items-center gap-2 mt-1 pl-5 text-[11px]">
+                                    <div className="flex items-center gap-1 text-zinc-600">
+                                      <span className="text-zinc-400">Price:</span>
+                                      <span className="font-mono font-semibold text-zinc-800">{sku.priceDisplay}</span>
                                     </div>
+                                    <span className={`px-1.5 py-0.2 rounded text-[9.5px] font-semibold shrink-0 ${
+                                      marginPct >= 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"
+                                    }`}>
+                                      {marginPct.toFixed(0)}% margin
+                                    </span>
                                   </div>
                                 </div>
 
-                                {/* Volume visual bar */}
-                                <div className="w-full bg-slate-200/70 h-1.5 rounded-full mt-2 overflow-hidden">
-                                  <div
-                                    className="h-full bg-gradient-to-r from-blue-500 to-[#0B57D0] rounded-full transition-all duration-300"
-                                    style={{ width: `${Math.min(100, Math.max(5, barPct))}%` }}
-                                  />
+                                {/* Right: Clean stacked numbers (Big text: Amount, Small text: Qty output) */}
+                                <div className="flex flex-col items-end shrink-0 text-right">
+                                  <span className="font-bold text-zinc-900 font-mono text-xs sm:text-[13px]">
+                                    ${sku.net_amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                  <span className="text-[10.5px] font-mono text-zinc-500 mt-0.5">
+                                    {sku.demand_qty.toLocaleString()} pcs
+                                  </span>
                                 </div>
                               </div>
                             );
@@ -6020,374 +6466,212 @@ export function SellInModule({ profile }: SellInModuleProps) {
                     </div>
 
                     <div className="text-[10.5px] text-zinc-400 mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                      <span>Volume bars scaled relative to #1 product</span>
+                      <span>Selling prices reflect active rates given to buyers on invoices</span>
                       <span>Ranked by deliverable demand qty</span>
                     </div>
                   </div>
                 </div>
 
                 {/* ========================================================================= */}
-                {/* 5. EXPECTED CASH COLLECTION SCHEDULE                                      */}
+                {/* 5. EXPECTED CASH COLLECTION TIMELINE (12-MONTH ROLLING HORIZONTAL STRIP)  */}
                 {/* ========================================================================= */}
-                <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
-                  <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex items-center justify-between">
-                    <div>
-                      <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                        Expected Cash Collection Schedule
-                      </h3>
-                      <p className="text-[11px] text-zinc-500 mt-0.5">
-                        Forecasted collection periods calculated from customer payment terms (30, 60, 90 days from mid-month).
-                      </p>
+                <div className="bg-white rounded-lg border border-slate-200 p-4 shadow-2xs relative">
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-4 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-zinc-900 uppercase tracking-wider flex items-center gap-1.5">
+                        <Calendar size={13} className="text-[#0B57D0]" />
+                        <span>Expected Cash Collection Timeline</span>
+                      </span>
+                      <span className="text-[11px] text-zinc-400 font-normal hidden sm:inline">
+                        • Rolling 12 months ({yearCollectionTimeline.windowLabel})
+                      </span>
                     </div>
-                    <span className="text-[11px] text-zinc-500 font-medium font-mono">
-                      {(compiledSummaryData?.cash_collection_timeline || []).length} scheduled collection periods
-                    </span>
+
+                    <div className="flex items-center gap-3 text-xs flex-wrap">
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <span className="text-zinc-500 font-normal">Active Month:</span>
+                        <span className="font-mono font-bold text-[#0B57D0]">
+                          ${yearCollectionTimeline.currentMonthAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="h-3 w-px bg-slate-200 hidden sm:block" />
+                      <div className="flex items-center gap-1.5 text-[11px]">
+                        <span className="text-zinc-500 font-normal">12-Month Inflow:</span>
+                        <span className="font-mono font-bold text-zinc-900">
+                          ${yearCollectionTimeline.rollingTotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
                   </div>
 
-                  {(!compiledSummaryData?.cash_collection_timeline || compiledSummaryData.cash_collection_timeline.length === 0) ? (
-                    <div className="p-6 text-center text-xs text-zinc-400">
-                      No payment terms configured for buyers in this period.
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 p-4">
-                      {compiledSummaryData.cash_collection_timeline.map((item: any) => (
-                        <div
-                          key={item.period}
-                          className="p-3.5 rounded-lg border border-slate-200 bg-[#F8F9FA]/40 hover:bg-white hover:border-[#0B57D0]/40 transition-all flex flex-col justify-between"
-                        >
-                          <div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">{item.period}</span>
-                              <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-blue-50 text-[#0B57D0] border border-blue-100">
-                                {item.buyer_count || item.buyers?.length || 0} {(item.buyer_count || item.buyers?.length || 0) === 1 ? "buyer" : "buyers"}
+                  {/* Horizontal Continuous Timeline: Line Track + 12 Nodes */}
+                  <div className="relative pt-1 pb-2">
+                    {/* Continuous Connecting Line Rail */}
+                    <div className="absolute top-[39px] left-[4.16%] right-[4.16%] h-0.5 bg-slate-200 z-0" />
+
+                    <div className="grid grid-cols-12 gap-1 relative z-10">
+                      {yearCollectionTimeline.months.map((m, idx) => {
+                        const isHovered = hoveredTimelinePeriod === m.period;
+
+                        return (
+                          <div
+                            key={m.period}
+                            onMouseEnter={() => setHoveredTimelinePeriod(m.period)}
+                            onMouseLeave={() => setHoveredTimelinePeriod(null)}
+                            onClick={() => {
+                              setSelectedTimelineMonth(m);
+                              setHoveredTimelinePeriod(null);
+                            }}
+                            className="flex flex-col items-center text-center group relative select-none py-1 transition-all rounded-md cursor-pointer hover:bg-slate-50/60"
+                          >
+                            {/* Floating Custom Tooltip on Hover */}
+                            {!selectedTimelineMonth && isHovered && (
+                              <div
+                                className={cn(
+                                  "absolute bottom-full mb-3 z-50 w-72 sm:w-80 bg-white rounded-xl shadow-2xl border border-slate-200 p-3.5 text-left pointer-events-none animate-in fade-in zoom-in-95 duration-150",
+                                  idx <= 1 ? "left-0" : idx >= 10 ? "right-0" : "left-1/2 -translate-x-1/2"
+                                )}
+                              >
+                                {/* Tooltip Header */}
+                                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                                  <div>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="text-xs font-bold text-zinc-900">{m.label}</span>
+                                      {m.isCurrent && (
+                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-blue-50 text-[#0B57D0] border border-blue-200">
+                                          Active Month
+                                        </span>
+                                      )}
+                                      {m.isPast && (
+                                        <span className="px-1.5 py-0.2 rounded text-[9px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
+                                          Past Matured
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-[10px] text-zinc-400 mt-0.5 block">
+                                      {m.isCurrent ? "Receivables matured in active month" : m.isPast ? "Historical matured collections" : "Expected future collection maturity"}
+                                    </span>
+                                  </div>
+
+                                  <div className="text-right shrink-0">
+                                    <span className={cn(
+                                      "font-mono text-xs font-bold block",
+                                      m.amount > 0 ? "text-[#0B57D0]" : "text-zinc-400"
+                                    )}>
+                                      ${m.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </span>
+                                    <span className="text-[9.5px] text-zinc-400">
+                                      {m.buyersList.length} {m.buyersList.length === 1 ? "buyer" : "buyers"}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Buyer List: Who will pay us */}
+                                <div className="mt-2.5 max-h-52 overflow-y-auto space-y-2 divide-y divide-slate-100 pr-0.5">
+                                  {m.buyersList.length === 0 ? (
+                                    <div className="py-4 text-center text-xs text-zinc-400">
+                                      No buyers scheduled to pay in this month.
+                                    </div>
+                                  ) : (
+                                    m.buyersList.map((b, bIdx) => (
+                                      <div key={bIdx} className="pt-2 first:pt-0 flex items-start justify-between gap-2 text-xs">
+                                        <div className="min-w-0">
+                                          <div className="flex items-center gap-1.5 min-w-0">
+                                            <span className="font-semibold text-zinc-900 truncate text-[11.5px]" title={b.buyer_name}>
+                                              {b.buyer_name}
+                                            </span>
+                                            {b.channel && (
+                                              <span className="px-1.5 py-0.2 rounded text-[9px] font-medium bg-slate-100 text-zinc-600 border border-slate-200 shrink-0">
+                                                {b.channel}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="flex items-center gap-1.5 text-[10px] text-zinc-500 mt-0.5">
+                                            {b.term && <span>{b.term} Days Credit</span>}
+                                            {b.source_period && (
+                                              <>
+                                                <span className="text-zinc-300">•</span>
+                                                <span className="text-zinc-400">Order: {formatPeriodLabel(b.source_period)}</span>
+                                              </>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div className="font-mono font-bold text-zinc-900 shrink-0 text-right text-xs">
+                                          ${Number(b.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </div>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+
+                                {/* Tooltip Arrow Pointer */}
+                                <div
+                                  className={cn(
+                                    "absolute top-full -mt-1 w-2.5 h-2.5 bg-white border-r border-b border-slate-200 rotate-45",
+                                    idx <= 1 ? "left-6" : idx >= 10 ? "right-6" : "left-1/2 -translate-x-1/2"
+                                  )}
+                                />
+                              </div>
+                            )}
+
+                            {/* Node Top: Month & Year Label */}
+                            <div className="h-7 flex flex-col items-center justify-end pb-1 w-full">
+                              <span className={cn(
+                                "text-[11px] tracking-tight whitespace-nowrap block transition-colors leading-none",
+                                m.isCurrent
+                                  ? "text-[#0B57D0] font-bold"
+                                  : m.isPast
+                                  ? "text-zinc-400 group-hover:text-zinc-700 font-medium"
+                                  : "text-zinc-700 group-hover:text-zinc-900 font-medium"
+                              )}>
+                                {m.label}
                               </span>
                             </div>
-                            <div className="text-sm font-bold text-zinc-900 mt-1">
-                              {item.label}
+
+                            {/* Node Middle: Circle Dot on the Line Rail */}
+                            <div className="h-6 flex items-center justify-center relative z-10 w-full">
+                              {m.isCurrent ? (
+                                <div className="w-3.5 h-3.5 rounded-full bg-[#0B57D0] border-2 border-white" />
+                              ) : m.amount > 0 ? (
+                                <div className="w-3.5 h-3.5 rounded-full bg-zinc-900 border-2 border-white" />
+                              ) : (
+                                <div className="w-3 h-3 rounded-full bg-slate-300 border-2 border-white" />
+                              )}
                             </div>
-                            <div className="text-base font-bold text-[#0B57D0] mt-1 font-mono">
-                              ${(item.expected_amount ?? item.amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+
+                            {/* Node Bottom: Dollar Amount & Buyers Count (Empty when $0) */}
+                            <div className="pt-1.5 flex flex-col items-center w-full min-h-[34px]">
+                              {m.amount > 0 ? (
+                                <>
+                                  <div className={cn(
+                                    "font-mono text-xs font-bold transition-colors whitespace-nowrap",
+                                    m.isCurrent
+                                      ? "text-[#0B57D0]"
+                                      : "text-zinc-900 group-hover:text-[#0B57D0]"
+                                  )}>
+                                    {m.amount >= 1000 ? `$${(m.amount / 1000).toFixed(1)}k` : `$${m.amount.toFixed(0)}`}
+                                  </div>
+                                  <div className={cn(
+                                    "text-[9.5px] mt-0.5 whitespace-nowrap transition-colors",
+                                    m.isCurrent
+                                      ? "text-blue-600 font-semibold"
+                                      : "text-zinc-500"
+                                  )}>
+                                    {m.buyersList.length} {m.buyersList.length === 1 ? "buyer" : "buyers"}
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="h-[30px]" />
+                              )}
                             </div>
                           </div>
-                          <div
-                            className="text-[10px] text-zinc-500 mt-2 truncate pt-2 border-t border-slate-100"
-                            title={Array.isArray(item.buyers) ? item.buyers.join(", ") : ""}
-                          >
-                            {Array.isArray(item.buyers) ? item.buyers.join(", ") : ""}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* ========================================================================= */}
-                {/* 6. COLLAPSIBLE ITEMIZE TABLES (ON-DEMAND AUDIT TRAIL)                     */}
-                {/* ========================================================================= */}
-                <div className="pt-1 flex flex-col items-center">
-                  <button
-                    type="button"
-                    onClick={() => setShowDetailedTables((prev) => !prev)}
-                    className="px-4 py-2 rounded-lg bg-white border border-slate-300 hover:bg-slate-50 hover:border-[#0B57D0]/50 text-xs font-semibold text-zinc-800 inline-flex items-center gap-2 transition-all cursor-pointer shadow-2xs"
-                  >
-                    {showDetailedTables ? <EyeOff size={13} className="text-[#0B57D0]" /> : <Eye size={13} className="text-[#0B57D0]" />}
-                    <span>
-                      {showDetailedTables
-                        ? "Hide Itemized Data Tables"
-                        : `Show Itemized Data Tables (${filteredSummaryBuyers.length} Buyers, ${filteredSummarySkus.length} SKUs)`}
-                    </span>
-                    {showDetailedTables ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                  </button>
-                </div>
-
-                {/* Detailed Buyer & SKU Output Tables (Only when expanded) */}
-                {showDetailedTables && (
-                  <div className="space-y-4 animate-in fade-in duration-200">
-                    {/* Buyer Breakdown Table */}
-                    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
-                      <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                            Buyer Breakdown & Orders ({filteredSummaryBuyers.length})
-                          </h3>
-                          <p className="text-[11px] text-zinc-500 mt-0.5">
-                            Itemized demand, return deductions, credit notes, payment terms, and net receivable per customer.
-                          </p>
-                        </div>
-
-                        <div className="relative w-64">
-                          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                          <input
-                            type="text"
-                            placeholder="Search buyer, code, channel..."
-                            value={summaryBuyerSearch}
-                            onChange={(e) => setSummaryBuyerSearch(e.target.value)}
-                            className="w-full h-7 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="overflow-x-auto max-h-96">
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 text-[11px] font-medium text-zinc-500">
-                            <tr>
-                              <th className="py-2.5 px-3 w-10 text-center">#</th>
-                              <th className="py-2.5 px-3 min-w-[200px]">Buyer</th>
-                              <th className="py-2.5 px-3 w-24 text-center">Payment Term</th>
-                              <th className="py-2.5 px-3 w-32 text-center">Expected Month</th>
-                              <th className="py-2.5 px-3 w-24 text-right">Demand (pcs)</th>
-                              <th className="py-2.5 px-3 w-28 text-right">Gross Demand ($)</th>
-                              <th className="py-2.5 px-3 w-24 text-right">CN Deduct ($)</th>
-                              <th className="py-2.5 px-3 w-24 text-right">Non-Sales ($)</th>
-                              <th className="py-2.5 px-3 w-28 text-right">Net Receivable ($)</th>
-                              <th className="py-2.5 px-3 w-20 text-center">Items</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {filteredSummaryBuyers.map((b: any, bIdx: number) => {
-                              const isExpanded = Boolean(expandedBuyerKeys[b.buyer_code || b.buyer_name]);
-                              const buyerNetAmt = b.net_receivable ?? b.net_amount ?? 0;
-                              const buyerCnAmt = b.cn_amount ?? b.reject_amount ?? 0;
-                              const itemsCount = Array.isArray(b.items) ? b.items.length : 0;
-                              const nonSalesCount = Array.isArray(b.non_sales_items) ? b.non_sales_items.length : 0;
-
-                              return (
-                                <React.Fragment key={b.buyer_code || b.buyer_name || bIdx}>
-                                  <tr className="hover:bg-slate-50/80 transition-colors">
-                                    <td className="py-2.5 px-3 text-center text-zinc-400 font-mono text-[11px]">{bIdx + 1}</td>
-                                    <td className="py-2.5 px-3">
-                                      <div className="font-semibold text-zinc-900">{b.buyer_name || "—"}</div>
-                                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                        <span className="text-[11px] text-zinc-400 font-mono">{b.buyer_code}</span>
-                                        <span className={`px-1.5 py-0.5 rounded text-[9.5px] font-medium border inline-flex items-center leading-none ${
-                                          !b.channel || b.channel === "Not Set"
-                                            ? "bg-amber-50 text-amber-700 border-amber-200 italic"
-                                            : "bg-slate-100 text-zinc-600 border-slate-200"
-                                        }`}>
-                                          {b.channel || "Not Set"}
-                                        </span>
-                                      </div>
-                                    </td>
-                                    <td className="py-2.5 px-3 text-center text-zinc-700 font-mono">
-                                      {b.payment_term || "90"} Days
-                                    </td>
-                                    <td className="py-2.5 px-3 text-center">
-                                      <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-blue-50 text-[#0B57D0] border border-blue-100">
-                                        {b.expected_collection_label || b.expected_collection_period || "—"}
-                                      </span>
-                                    </td>
-                                    <td className="py-2.5 px-3 text-right text-zinc-800 font-mono font-medium">
-                                      {Number(b.demand_qty || 0).toLocaleString()}
-                                    </td>
-                                    <td className="py-2.5 px-3 text-right text-zinc-800 font-mono">
-                                      ${Number(b.demand_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </td>
-                                    <td className="py-2.5 px-3 text-right text-zinc-600 font-mono">
-                                      {buyerCnAmt > 0 ? `-$${Number(buyerCnAmt).toFixed(2)}` : "-"}
-                                    </td>
-                                    <td className="py-2.5 px-3 text-right text-zinc-500 font-mono">
-                                      {Number(b.non_sales_amount || 0) > 0 ? `-$${Number(b.non_sales_amount).toFixed(2)}` : "-"}
-                                    </td>
-                                    <td className="py-2.5 px-3 text-right text-[#0B57D0] font-mono font-bold">
-                                      ${Number(buyerNetAmt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    </td>
-                                    <td className="py-2.5 px-3 text-center">
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleBuyerExpand(b.buyer_code || b.buyer_name)}
-                                        className="px-2 py-1 rounded bg-white hover:bg-slate-100 border border-slate-200 text-zinc-700 text-[10.5px] font-medium inline-flex items-center gap-1 transition-all cursor-pointer shadow-2xs"
-                                        title="View itemized products purchased"
-                                      >
-                                        <span>{itemsCount} {itemsCount === 1 ? "SKU" : "SKUs"}</span>
-                                        {isExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
-                                      </button>
-                                    </td>
-                                  </tr>
-
-                                  {/* Expanded Itemized Order Details */}
-                                  {isExpanded && (
-                                    <tr className="bg-slate-50/50">
-                                      <td colSpan={10} className="py-3 px-6 border-y border-slate-200/80">
-                                        <div className="bg-white rounded-lg border border-slate-200 p-3 shadow-2xs">
-                                          <div className="text-[11px] font-bold text-zinc-700 uppercase tracking-wider mb-2 flex items-center justify-between">
-                                            <span>Product Deliveries for {b.buyer_name}</span>
-                                            <span className="text-zinc-400 font-normal">
-                                              {itemsCount} line items {nonSalesCount > 0 ? `+ ${nonSalesCount} deductions` : ""}
-                                            </span>
-                                          </div>
-                                          <table className="w-full text-left border-collapse text-xs">
-                                            <thead className="border-b border-slate-100 text-[10.5px] font-medium text-zinc-400 bg-slate-50/60">
-                                              <tr>
-                                                <th className="py-1.5 px-2.5">Product SKU & Name</th>
-                                                <th className="py-1.5 px-2.5 w-20 text-right">Demand Qty</th>
-                                                <th className="py-1.5 px-2.5 w-24 text-right">Unit Price</th>
-                                                <th className="py-1.5 px-2.5 w-24 text-right">Total Demand</th>
-                                                <th className="py-1.5 px-2.5 w-24 text-right">CN Rejects</th>
-                                                <th className="py-1.5 px-2.5 w-24 text-right">Net Amount</th>
-                                              </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-slate-100">
-                                              {(b.items || []).map((it: any, itIdx: number) => {
-                                                const itNetAmt = it.nett_amount ?? it.net_receivable ?? (Number(it.total_demand || 0) - Number(it.cn_amount || 0));
-                                                return (
-                                                  <tr key={it.sku || itIdx} className="hover:bg-slate-50/60 text-[11px]">
-                                                    <td className="py-1.5 px-2.5">
-                                                      <span className="font-semibold text-zinc-900">{it.sku || "—"}</span>
-                                                      <span className="text-zinc-600 ml-2">{it.name || "—"}</span>
-                                                      {it.brand && it.brand !== "—" && it.brand !== "Unassigned" && (
-                                                        <span className="text-zinc-400 ml-1.5 text-[10px]">({it.brand})</span>
-                                                      )}
-                                                    </td>
-                                                    <td className="py-1.5 px-2.5 text-right font-mono text-zinc-800">
-                                                      {Number(it.qty ?? it.demand_qty ?? 0).toLocaleString()}
-                                                    </td>
-                                                    <td className="py-1.5 px-2.5 text-right font-mono text-zinc-600">
-                                                      ${Number(it.unit_price || 0).toFixed(2)}
-                                                    </td>
-                                                    <td className="py-1.5 px-2.5 text-right font-mono text-zinc-800">
-                                                      ${Number(it.total_demand ?? it.demand_amount ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                    </td>
-                                                    <td className="py-1.5 px-2.5 text-right font-mono text-zinc-500">
-                                                      {Number(it.cn_amount || 0) > 0 ? `-$${Number(it.cn_amount).toFixed(2)}` : "-"}
-                                                    </td>
-                                                    <td className="py-1.5 px-2.5 text-right font-mono font-semibold text-zinc-900">
-                                                      ${Number(itNetAmt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                                    </td>
-                                                  </tr>
-                                                );
-                                              })}
-                                            </tbody>
-                                          </table>
-
-                                          {/* Non sales items for this buyer */}
-                                          {Array.isArray(b.non_sales_items) && b.non_sales_items.length > 0 && (
-                                            <div className="mt-2.5 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2">
-                                              <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wide">Non-Sales Deductions:</span>
-                                              {b.non_sales_items.map((ns: any, nsIdx: number) => (
-                                                <span key={nsIdx} className="px-2 py-0.5 rounded text-[10.5px] font-medium bg-red-50 text-red-700 border border-red-200">
-                                                  {ns.description}: -${Number(ns.amount || 0).toFixed(2)}
-                                                </span>
-                                              ))}
-                                            </div>
-                                          )}
-                                        </div>
-                                      </td>
-                                    </tr>
-                                  )}
-                                </React.Fragment>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    {/* SKU Output Summary Table */}
-                    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-2xs">
-                      <div className="px-4 py-3 border-b border-slate-200 bg-[#F8F9FA] flex flex-wrap items-center justify-between gap-3">
-                        <div>
-                          <h3 className="text-xs font-bold text-zinc-900 uppercase tracking-wider">
-                            SKU Output Summary ({filteredSummarySkus.length})
-                          </h3>
-                          <p className="text-[11px] text-zinc-500 mt-0.5">
-                            Compiled physical product volumes, net shipments, revenue, inventory COGS, and gross profit margins.
-                          </p>
-                        </div>
-
-                        <div className="relative w-64">
-                          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400" />
-                          <input
-                            type="text"
-                            placeholder="Search SKU, name, brand..."
-                            value={summarySkuSearch}
-                            onChange={(e) => setSummarySkuSearch(e.target.value)}
-                            className="w-full h-7 pl-8 pr-2.5 bg-white border border-slate-200 rounded-lg text-xs text-zinc-800 placeholder:text-zinc-400 focus:outline-none focus:border-[#0B57D0]"
-                          />
-                        </div>
-                      </div>
-
-                      <div className="overflow-x-auto max-h-96">
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead className="bg-[#F8F9FA] sticky top-0 z-10 border-b border-slate-200 text-[11px] font-medium text-zinc-500">
-                            <tr>
-                              <th className="py-2.5 px-3 w-10 text-center">#</th>
-                              <th className="py-2.5 px-3 min-w-[220px]">Product SKU & Description</th>
-                              <th className="py-2.5 px-3 w-24 text-right">Demand (pcs)</th>
-                              <th className="py-2.5 px-3 w-24 text-right">Reject (pcs)</th>
-                              <th className="py-2.5 px-3 w-24 text-right">Net Qty (pcs)</th>
-                              <th className="py-2.5 px-3 w-28 text-right">Demand ($)</th>
-                              <th className="py-2.5 px-3 w-24 text-right">CN ($)</th>
-                              <th className="py-2.5 px-3 w-28 text-right">Net Revenue ($)</th>
-                              <th className="py-2.5 px-3 w-24 text-right">Unit Cost ($)</th>
-                              <th className="py-2.5 px-3 w-28 text-right">Total COGS ($)</th>
-                              <th className="py-2.5 px-3 w-28 text-right">Gross Profit ($)</th>
-                              <th className="py-2.5 px-3 w-20 text-right">Margin (%)</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100">
-                            {filteredSummarySkus.map((s: any, sIdx: number) => {
-                              const sNetRev = s.net_revenue ?? s.net_amount ?? (Number(s.demand_amount || 0) - Number(s.cn_amount || 0));
-                              const sProfit = s.gross_profit ?? (sNetRev - Number(s.total_cost || 0));
-                              const sMargin = s.margin_percent ?? (sNetRev > 0 ? (sProfit / sNetRev) * 100 : 0);
-
-                              return (
-                                <tr key={s.sku || sIdx} className="hover:bg-slate-50/80 transition-colors">
-                                  <td className="py-2.5 px-3 text-center text-zinc-400 font-mono text-[11px]">{sIdx + 1}</td>
-                                  <td className="py-2.5 px-3">
-                                    <div className="flex flex-col min-w-0">
-                                      <span className="font-semibold text-zinc-900 truncate block" title={s.product_name}>
-                                        {s.product_name || "—"}
-                                      </span>
-                                      <div className="flex items-center gap-1.5 mt-0.5 text-[10px] min-w-0">
-                                        <span className="font-mono font-medium text-zinc-600 shrink-0">{s.sku}</span>
-                                        {s.brand && s.brand !== "—" && s.brand !== "Unassigned" && (
-                                          <>
-                                            <span className="text-zinc-300 shrink-0">•</span>
-                                            <span className="text-zinc-500 font-medium truncate" title={`Brand: ${s.brand}`}>
-                                              {s.brand}
-                                            </span>
-                                          </>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </td>
-                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-800">{Number(s.demand_qty || 0).toLocaleString()}</td>
-                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-500">
-                                    {Number(s.reject_qty || 0) > 0 ? Number(s.reject_qty).toLocaleString() : "-"}
-                                  </td>
-                                  <td className="py-2.5 px-3 text-right font-mono font-semibold text-zinc-900">
-                                    {Number(s.net_qty || (Number(s.demand_qty || 0) - Number(s.reject_qty || 0))).toLocaleString()}
-                                  </td>
-                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-800">
-                                    ${Number(s.demand_amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </td>
-                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-500">
-                                    {Number(s.cn_amount || 0) > 0 ? `-$${Number(s.cn_amount).toFixed(2)}` : "-"}
-                                  </td>
-                                  <td className="py-2.5 px-3 text-right font-mono font-semibold text-[#0B57D0]">
-                                    ${Number(sNetRev).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </td>
-                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-600">
-                                    ${Number(s.cost_price || 0).toFixed(2)}
-                                  </td>
-                                  <td className="py-2.5 px-3 text-right font-mono text-zinc-600">
-                                    ${Number(s.total_cost || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </td>
-                                  <td className={`py-2.5 px-3 text-right font-mono font-semibold ${sProfit >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                                    ${Number(sProfit).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                  </td>
-                                  <td className={`py-2.5 px-3 text-right font-mono font-semibold ${sMargin >= 0 ? "text-emerald-700" : "text-red-600"}`}>
-                                    {Number(sMargin).toFixed(1)}%
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                        );
+                      })}
                     </div>
                   </div>
-                )}
+                </div>
+
+
               </div>
             ) : filteredRecords.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center px-4">
@@ -6700,24 +6984,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                 <div className="flex items-center gap-1.5 w-full min-w-0">
                                   <button
                                     type="button"
-                                    onClick={() => handleToggleExpandBundle(String(r.id || idx))}
+                                    onClick={() => handleOpenBundleModal(r)}
                                     className="text-[10px] text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200/90 px-1.5 py-0.5 rounded font-medium flex items-center gap-1 cursor-pointer transition-colors shrink-0"
-                                    title="Click to view/hide component outcome quantities"
+                                    title="Click to view and remap bundle components"
                                   >
                                     <Layers size={10} className="shrink-0 text-indigo-600" />
                                     <span>Bundle ({Array.isArray(r.bundle_components) ? r.bundle_components.length : 0})</span>
-                                    {expandedBundleIds.has(String(r.id || idx)) ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
                                   </button>
-                                  {batchData?.status !== "published" && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenBundleModal(r)}
-                                      className="text-[10px] text-zinc-500 hover:text-indigo-600 hover:underline font-medium shrink-0 cursor-pointer"
-                                      title="Remap bundle items"
-                                    >
-                                      Remap
-                                    </button>
-                                  )}
                                   {r.brand && r.brand !== "Unassigned" && (
                                     <>
                                       <span className="text-zinc-300 text-[10px] shrink-0">•</span>
@@ -6866,95 +7139,6 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           ${Number(r.nett_amount ?? ((r.total_demand || 0) - (r.cn_amount || 0))).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                       </tr>
-                      {isExpandedBundle && r.item_type === "bundle" && (
-                        <tr className="bg-indigo-50/20 border-b border-indigo-100">
-                          <td colSpan={18} className="py-2.5 px-4 bg-gradient-to-r from-indigo-50/40 via-white to-indigo-50/20">
-                            <div className="flex flex-col gap-2">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-[11px] font-bold text-indigo-950 uppercase tracking-wide flex items-center gap-1.5">
-                                    <Layers size={12} className="text-indigo-600" />
-                                    Bundle Component Outcomes (Items & Quantities Inside This Package)
-                                  </span>
-                                  <span className="text-[10px] text-indigo-700 bg-indigo-100/70 border border-indigo-200/60 px-1.5 py-0.2 rounded font-semibold">
-                                    {Array.isArray(r.bundle_components) ? r.bundle_components.length : 0} component lines
-                                  </span>
-                                </div>
-                                {batchData?.status !== "published" && (
-                                  <div className="flex items-center gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenRenameBundleModal(r)}
-                                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer transition-colors"
-                                      title="Rename this bundle package"
-                                    >
-                                      <Tag size={11} />
-                                      <span>Rename Bundle</span>
-                                    </button>
-                                    <span className="text-slate-300">|</span>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenBundleModal(r)}
-                                      className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer transition-colors"
-                                    >
-                                      <Edit2 size={11} />
-                                      <span>Edit Components</span>
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-
-                              {/* Component Outcome Chips Summary */}
-                              <div className="flex flex-wrap items-center gap-2 pt-0.5">
-                                {Array.isArray(r.component_outcome_summary) && r.component_outcome_summary.length > 0 ? (
-                                  r.component_outcome_summary.map((c: any, cIdx: number) => (
-                                    <div
-                                      key={cIdx}
-                                      className="flex items-center gap-2 px-2.5 py-1 bg-white border border-indigo-200 rounded-lg shadow-2xs text-xs"
-                                    >
-                                      <div className="flex flex-col">
-                                        <span className="font-semibold text-zinc-900 leading-tight">
-                                          {c.component_sku ? `${c.component_sku} - ` : ""}{c.component_name}
-                                        </span>
-                                        <span className="text-[10px] text-zinc-500">{c.brand || "Unassigned Brand"}</span>
-                                      </div>
-                                      <div className="ml-2 pl-2 border-l border-slate-200 flex items-center gap-1.5">
-                                        <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-[11px]">
-                                          {Number(c.total_qty || 0).toLocaleString()} pcs
-                                        </span>
-                                        {Number(c.total_amount || 0) > 0 && (
-                                          <span className="font-mono text-zinc-600 text-[11px]">
-                                            (${Number(c.total_amount).toFixed(2)})
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                  ))
-                                ) : Array.isArray(r.bundle_components) && r.bundle_components.length > 0 ? (
-                                  r.bundle_components.map((c: any, cIdx: number) => (
-                                    <div
-                                      key={cIdx}
-                                      className="flex items-center gap-2 px-2.5 py-1 bg-white border border-indigo-200 rounded-lg shadow-2xs text-xs"
-                                    >
-                                      <span className="font-semibold text-zinc-900">
-                                        {c.component_sku ? `${c.component_sku} - ` : ""}{c.component_name}
-                                      </span>
-                                      <span className="font-mono font-bold text-indigo-700 bg-indigo-50 px-1.5 py-0.5 rounded text-[11px]">
-                                        {Number(c.qty || 0).toLocaleString()} pcs
-                                        {Number(c.amount || 0) > 0 && ` • $${Number(c.amount).toFixed(2)}`}
-                                      </span>
-                                    </div>
-                                  ))
-                                ) : (
-                                  <span className="text-xs text-zinc-400 italic">
-                                    No component items linked to this bundle yet. Click "Remap" to select components.
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
                     </React.Fragment>
                   );
                   })}
@@ -9163,45 +9347,44 @@ export function SellInModule({ profile }: SellInModuleProps) {
               </button>
             </div>
 
-            <div className="p-4 flex flex-col gap-3.5 text-xs">
-              {/* Item Context Card */}
-              <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex flex-col gap-1.5">
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-zinc-500 font-medium text-[11px] shrink-0">Item:</span>
-                  <span className="font-semibold text-zinc-900 text-right break-words">
+            <div className="p-5 flex flex-col gap-4 text-xs font-primary">
+              {/* Flat Context Header (Hairline separated, no heavy box) */}
+              <div className="pb-3 border-b border-slate-200/80 space-y-1.5 text-xs">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-[11px] font-medium text-zinc-500 shrink-0">Item Description</span>
+                  <span className="font-semibold text-zinc-950 text-right break-words">
                     {assignItemTypeTarget.product_name || assignItemTypeTarget.product_sku || "(No Description)"}
                   </span>
                 </div>
                 {assignItemTypeTarget.product_sku && (
                   <div className="flex items-center justify-between">
-                    <span className="text-zinc-500 font-medium text-[11px]">Invoice Code:</span>
+                    <span className="text-[11px] font-medium text-zinc-500">Invoice Code</span>
                     <span className="font-mono text-zinc-700">{assignItemTypeTarget.product_sku}</span>
                   </div>
                 )}
                 <div className="flex items-center justify-between">
-                  <span className="text-zinc-500 font-medium text-[11px]">Buyer:</span>
+                  <span className="text-[11px] font-medium text-zinc-500">Buyer</span>
                   <span className="text-zinc-700 font-medium">{assignItemTypeTarget.buyer_name || assignItemTypeTarget.buyer_code || "-"}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-zinc-500 font-medium text-[11px]">Line Amount:</span>
-                  <span className="font-mono font-semibold text-zinc-800">${Number(assignItemTypeTarget.total_demand || 0).toFixed(2)}</span>
+                  <span className="text-[11px] font-medium text-zinc-500">Line Amount</span>
+                  <span className="font-mono font-bold text-zinc-900">${Number(assignItemTypeTarget.total_demand || 0).toFixed(2)}</span>
                 </div>
               </div>
 
-              {/* Dropdown Selection with Details */}
+              {/* Classification Selector */}
               {(() => {
                 const selectedConfig = ITEM_TYPES.find((t) => t.value === selectedItemType) || ITEM_TYPES[0];
 
                 return (
-                  <div className="flex flex-col gap-2">
+                  <div className="flex flex-col gap-1.5">
                     <label className="font-semibold text-zinc-800 text-xs flex items-center justify-between">
-                      <span>Select Item Classification <span className="text-red-500">*</span></span>
+                      <span>Item Classification <span className="text-red-500">*</span></span>
                       <span className="text-[11px] text-zinc-400 font-normal">Categorize item</span>
                     </label>
 
                     {/* Relative dropdown container */}
                     <div className="relative">
-                      {/* Invisible backdrop to close dropdown on outside click */}
                       {isItemTypeDropdownOpen && (
                         <div
                           className="fixed inset-0 z-10 cursor-default"
@@ -9213,13 +9396,13 @@ export function SellInModule({ profile }: SellInModuleProps) {
                       <button
                         type="button"
                         onClick={() => setIsItemTypeDropdownOpen(!isItemTypeDropdownOpen)}
-                        className="w-full h-11 px-3 bg-white border border-slate-300 hover:border-slate-400 rounded-lg flex items-center justify-between transition-all cursor-pointer shadow-2xs focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] relative z-20"
+                        className="w-full h-10 px-3 bg-white border border-slate-300 hover:border-slate-400 rounded-lg flex items-center justify-between transition-colors cursor-pointer shadow-2xs focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0] relative z-20"
                       >
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-xs font-semibold text-zinc-900 truncate">
                             {selectedConfig.label}
                           </span>
-                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border shrink-0 ${selectedConfig.badgeClass}`}>
+                          <span className={cn("px-1.5 py-0.5 rounded text-[10px] font-medium border shrink-0", selectedConfig.badgeClass)}>
                             {selectedConfig.shortLabel}
                           </span>
                         </div>
@@ -9229,9 +9412,9 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         />
                       </button>
 
-                      {/* Dropdown Menu Options with Details */}
+                      {/* Dropdown Menu Options */}
                       {isItemTypeDropdownOpen && (
-                        <div className="absolute top-full left-0 right-0 mt-1.5 bg-white rounded-lg border border-slate-200 shadow-xl z-30 overflow-hidden divide-y divide-slate-100 max-h-[280px] overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
+                        <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg border border-slate-200 shadow-xl z-30 overflow-hidden divide-y divide-slate-100 max-h-[260px] overflow-y-auto animate-in fade-in zoom-in-95 duration-100">
                           {ITEM_TYPES.map((t) => {
                             const isSelected = selectedItemType === t.value;
                             return (
@@ -9245,8 +9428,8 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                   setIsItemTypeDropdownOpen(false);
                                 }}
                                 className={cn(
-                                  "w-full p-3 transition-colors cursor-pointer flex items-start justify-between gap-3 text-left focus:outline-none",
-                                  isSelected ? "bg-blue-50/80 hover:bg-blue-50" : "hover:bg-slate-50"
+                                  "w-full p-2.5 transition-colors cursor-pointer flex items-start justify-between gap-3 text-left focus:outline-none",
+                                  isSelected ? "bg-slate-50" : "hover:bg-slate-50"
                                 )}
                               >
                                 <div className="flex flex-col min-w-0 flex-1">
@@ -9258,7 +9441,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                       {t.shortLabel}
                                     </span>
                                   </div>
-                                  <span className="text-[11px] text-zinc-500 mt-1 leading-relaxed">
+                                  <span className="text-[11px] text-zinc-500 mt-0.5 leading-relaxed">
                                     {t.description}
                                   </span>
                                 </div>
@@ -9271,26 +9454,16 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         </div>
                       )}
                     </div>
+                    <p className="text-[11px] text-zinc-500 mt-0.5">
+                      {selectedConfig.description}
+                    </p>
 
-                    {/* Classification Details Box */}
-                    <div className="p-3 rounded-lg bg-slate-50 border border-slate-200 flex flex-col gap-1">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[11px] font-semibold text-zinc-700">Classification Details:</span>
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${selectedConfig.badgeClass}`}>
-                          {selectedConfig.shortLabel}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-zinc-600 leading-relaxed">
-                        {selectedConfig.description}
-                      </p>
-                    </div>
-
+                    {/* Bundle Mapping Section (Clean flat layout without nested box inside box) */}
                     {selectedItemType === "bundle" && (
-                      <div className="flex flex-col gap-2 p-3 bg-indigo-50/70 border border-indigo-200 rounded-lg">
+                      <div className="pt-3 border-t border-slate-200/80 flex flex-col gap-2">
                         <div className="flex items-center justify-between">
-                          <label className="text-xs font-bold text-zinc-900 flex items-center gap-1.5">
-                            <Layers size={14} className="text-indigo-600" />
-                            <span>Map to Bundle Temporary Product <span className="text-red-500">*</span></span>
+                          <label className="text-xs font-semibold text-zinc-900">
+                            Map to Bundle Temporary Product <span className="text-red-500">*</span>
                           </label>
                           <button
                             type="button"
@@ -9303,18 +9476,18 @@ export function SellInModule({ profile }: SellInModuleProps) {
                               setTempProductCostPrice("0");
                               setTempProductRemarks("");
                             }}
-                            className="text-[11px] font-semibold text-[#0B57D0] hover:underline flex items-center gap-1 cursor-pointer"
+                            className="text-[11px] font-semibold text-[#0B57D0] hover:underline flex items-center gap-0.5 cursor-pointer"
                           >
-                            <Plus size={12} />
-                            <span>+ Add New Temp Product</span>
+                            <Plus size={11} />
+                            <span>Add New Temp Product</span>
                           </button>
                         </div>
                         <p className="text-[11px] text-zinc-500">
-                          Map this bundle to a Temporary Product to lock its official standardized name, brand, and Landing Price (no guessing).
+                          Lock standardized name, brand, and Landing Price from your catalog.
                         </p>
 
                         {tempProductsList.length === 0 ? (
-                          <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800 flex items-center justify-between">
+                          <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-zinc-700 flex items-center justify-between">
                             <span>No temporary products registered yet.</span>
                             <button
                               type="button"
@@ -9327,7 +9500,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                                 setTempProductCostPrice("0");
                                 setTempProductRemarks("");
                               }}
-                              className="px-2 py-1 bg-amber-600 text-white rounded text-[11px] font-semibold cursor-pointer"
+                              className="px-2 py-1 bg-[#0B57D0] text-white rounded text-[11px] font-medium cursor-pointer"
                             >
                               + Create Temp Product
                             </button>
@@ -9336,7 +9509,7 @@ export function SellInModule({ profile }: SellInModuleProps) {
                           <select
                             value={selectedBundleTempProductId}
                             onChange={(e) => setSelectedBundleTempProductId(e.target.value)}
-                            className="w-full h-9 px-2.5 bg-white border border-slate-300 rounded-lg text-xs font-semibold text-zinc-900 focus:outline-none focus:border-[#0B57D0]"
+                            className="w-full h-9 px-3 bg-white border border-slate-300 rounded-lg text-xs font-medium text-zinc-900 focus:outline-none focus:ring-2 focus:ring-[#0B57D0]/20 focus:border-[#0B57D0]"
                           >
                             <option value="">-- Choose Bundle Temporary Product --</option>
                             {tempProductsList.map((tp) => (
@@ -9348,25 +9521,14 @@ export function SellInModule({ profile }: SellInModuleProps) {
                         )}
 
                         {selectedBundleTempProduct && (
-                          <div className="mt-1 p-2.5 bg-white rounded-md border border-indigo-100 flex items-center justify-between text-xs">
-                            <div className="flex flex-col">
-                              <span className="font-bold text-zinc-900 uppercase">{selectedBundleTempProduct.product_name}</span>
-                              <div className="flex items-center gap-2 text-[11px] text-zinc-500 mt-0.5">
-                                <span className="text-[#0B57D0] font-semibold uppercase">{selectedBundleTempProduct.brand}</span>
-                                {selectedBundleTempProduct.sku && (
-                                  <>
-                                    <span>·</span>
-                                    <span className="font-mono">{selectedBundleTempProduct.sku}</span>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex flex-col items-end">
-                              <span className="text-[10px] text-zinc-400 font-medium uppercase">Landing Price</span>
-                              <span className="font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded text-xs mt-0.5">
-                                ${Number(selectedBundleTempProduct.cost_price || 0).toFixed(2)}
-                              </span>
-                            </div>
+                          <div className="flex items-center justify-between text-xs pt-1 px-1 text-zinc-600">
+                            <span className="text-[11px] text-zinc-500">
+                              Selected: <strong className="text-zinc-900 uppercase font-semibold">{selectedBundleTempProduct.product_name}</strong>
+                              {selectedBundleTempProduct.sku ? ` (${selectedBundleTempProduct.sku})` : ""}
+                            </span>
+                            <span className="font-mono font-bold text-zinc-900 text-xs">
+                              Landing: ${Number(selectedBundleTempProduct.cost_price || 0).toFixed(2)}
+                            </span>
                           </div>
                         )}
                       </div>
@@ -9377,15 +9539,15 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
               {/* Checkbox: Apply to all matching items in this period */}
               {assignItemTypeTarget.product_name && (
-                <label className="flex items-start gap-2.5 p-2.5 rounded-lg bg-blue-50/50 border border-blue-100 cursor-pointer text-zinc-700">
+                <label className="flex items-start gap-2 pt-2 border-t border-slate-200/80 cursor-pointer text-zinc-700 select-none">
                   <input
                     type="checkbox"
                     checked={applyItemTypeToAllMatching}
                     onChange={(e) => setApplyItemTypeToAllMatching(e.target.checked)}
-                    className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 mt-0.5"
+                    className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 mt-0.5 cursor-pointer"
                   />
                   <div className="flex flex-col">
-                    <span className="text-xs font-semibold text-zinc-800">
+                    <span className="text-xs font-medium text-zinc-800">
                       Apply to all rows matching this item in {formatPeriodLabel(currentPeriod)}
                     </span>
                     <span className="text-[11px] text-zinc-500 leading-tight mt-0.5">
@@ -9423,12 +9585,12 @@ export function SellInModule({ profile }: SellInModuleProps) {
 
       {/* Modal: Bundle & Component Remapping */}
       {showBundleModal && bundleTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-4xl bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col max-h-[92vh]">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 sm:p-6 animate-in fade-in duration-150">
+          <div className="w-full max-w-5xl h-[88vh] max-h-[88vh] bg-white rounded-xl border border-slate-200 shadow-2xl overflow-hidden animate-in zoom-in-95 duration-100 flex flex-col min-h-0">
             {/* Modal Header */}
-            <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+            <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 border border-blue-200 flex items-center justify-center text-[#0B57D0]">
                   <Layers size={17} />
                 </div>
                 <div>
@@ -9449,225 +9611,400 @@ export function SellInModule({ profile }: SellInModuleProps) {
             </div>
 
             {/* Target Bundle Context Bar */}
-            <div className="px-5 py-3 bg-[#F8F9FA] border-b border-slate-200 flex flex-col gap-2 shrink-0">
-              <div className="flex flex-wrap items-center justify-between gap-4 text-xs">
-                <div className="flex items-center gap-5 flex-wrap">
-                  <div>
-                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Bundle Package (Temp Product)</span>
-                    <span className="font-bold text-zinc-950 text-xs uppercase">
-                      {bundleMappedTempProduct?.product_name || bundleTarget.bundle_name || bundleTarget.product_name}
-                    </span>
-                  </div>
-                  <div className="h-6 w-px bg-slate-200" />
-                  <div>
-                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Brand</span>
-                    <span className="font-semibold text-zinc-800 uppercase">
-                      {bundleMappedTempProduct?.brand || bundleTarget.brand || "UNASSIGNED"}
-                    </span>
-                  </div>
-                  <div className="h-6 w-px bg-slate-200" />
-                  <div>
-                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Landing Price</span>
-                    <span className="font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px] inline-flex items-center gap-1">
-                      ${Number(bundleMappedTempProduct?.cost_price ?? bundleTarget.cost_price ?? 0).toFixed(2)}
-                      <span className="text-[9px] font-medium text-emerald-600 bg-white/70 px-1 rounded uppercase">From Temp</span>
-                    </span>
-                  </div>
-                  <div className="h-6 w-px bg-slate-200" />
-                  <div>
-                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Buyer</span>
-                    <span className="font-medium text-zinc-700 uppercase">
-                      {bundleTarget.buyer_name || bundleTarget.buyer_code || "-"}
-                    </span>
-                  </div>
+            <div className="px-5 py-2.5 bg-[#F8F9FA] border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 shrink-0 text-xs">
+              <div className="flex items-center gap-4 flex-wrap">
+                <div>
+                  <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Bundle Package (Temp Product)</span>
+                  <span className="font-bold text-zinc-950 text-xs uppercase">
+                    {bundleMappedTempProduct?.product_name || bundleTarget.bundle_name || bundleTarget.product_name}
+                  </span>
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const tgt = bundleTarget;
-                      setShowBundleModal(false);
-                      setAssignItemTypeTarget(tgt);
-                      setSelectedItemType("bundle");
-                      setSelectedBundleTempProductId(bundleMappedTempProduct?.id || bundleMappedTempProduct?.sku || "");
-                      setShowAssignItemTypeModal(true);
-                    }}
-                    className="h-7 px-2.5 rounded-lg border border-slate-200 text-indigo-700 hover:bg-indigo-50 text-[11px] font-semibold cursor-pointer transition-colors flex items-center gap-1"
-                  >
-                    <Edit2 size={11} />
-                    <span>Change Temp Product</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedBundleComponents(new Set())}
-                    className="h-7 px-3 rounded-lg border border-slate-200 text-zinc-600 hover:bg-slate-100 text-xs font-medium cursor-pointer transition-colors"
-                  >
-                    Clear All
-                  </button>
+                <div className="h-6 w-px bg-slate-200" />
+                <div>
+                  <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Brand</span>
+                  <span className="font-semibold text-zinc-800 uppercase">
+                    {bundleMappedTempProduct?.brand || bundleTarget.brand || "UNASSIGNED"}
+                  </span>
+                </div>
+                <div className="h-6 w-px bg-slate-200" />
+                <div>
+                  <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Landing Price</span>
+                  <span className="font-mono font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px] inline-flex items-center gap-1">
+                    ${Number(bundleMappedTempProduct?.cost_price ?? bundleTarget.cost_price ?? 0).toFixed(2)}
+                    <span className="text-[9px] font-medium text-emerald-600 bg-white/70 px-1 rounded uppercase">From Temp</span>
+                  </span>
+                </div>
+                <div className="h-6 w-px bg-slate-200" />
+                <div>
+                  <span className="text-[10px] text-zinc-400 uppercase font-semibold block">Buyer</span>
+                  <span className="font-medium text-zinc-700 uppercase">
+                    {bundleTarget.buyer_name || bundleTarget.buyer_code || "-"}
+                  </span>
                 </div>
               </div>
 
-              <div className="text-[11px] text-zinc-500 pt-1 border-t border-slate-200/80">
-                Select component items on invoices or credit notes belonging to this bundle package:
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const tgt = bundleTarget;
+                    setShowBundleModal(false);
+                    setAssignItemTypeTarget(tgt);
+                    setSelectedItemType("bundle");
+                    setSelectedBundleTempProductId(bundleMappedTempProduct?.id || bundleMappedTempProduct?.sku || "");
+                    setShowAssignItemTypeModal(true);
+                  }}
+                  className="h-7 px-2.5 rounded-lg border border-slate-200 text-[#0B57D0] hover:bg-blue-50 text-[11px] font-semibold cursor-pointer transition-colors flex items-center gap-1"
+                >
+                  <Edit2 size={11} />
+                  <span>Change Temp Product</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedBundleComponents(new Set())}
+                  className="h-7 px-3 rounded-lg border border-slate-200 text-zinc-600 hover:bg-slate-100 text-xs font-medium cursor-pointer transition-colors"
+                >
+                  Clear All
+                </button>
               </div>
             </div>
 
-            {/* Modal Body: Grouped Invoices */}
-            <div className="p-5 overflow-y-auto flex-1 flex flex-col gap-4 text-xs">
+            {/* Document Tabs Bar (Clean, Uncluttered, Document Navigation) */}
+            <div className="px-5 py-2 bg-white border-b border-slate-200 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-1.5 flex-wrap overflow-x-auto min-w-0 py-0.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedBundleDocNumber("all")}
+                  className={cn(
+                    "px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 border",
+                    selectedBundleDocNumber === "all"
+                      ? "bg-slate-900 text-white border-slate-900 shadow-xs font-semibold"
+                      : "bg-white text-zinc-600 hover:text-zinc-950 hover:bg-slate-50 border-slate-200"
+                  )}
+                >
+                  <span>All Documents</span>
+                  <span className={cn(
+                    "px-1.5 py-0.2 rounded text-[10px] font-mono",
+                    selectedBundleDocNumber === "all" ? "bg-white/20 text-white" : "bg-slate-100 text-zinc-600"
+                  )}>
+                    {bundleInvoiceGroups.length}
+                  </span>
+                </button>
+
+                <div className="h-4 w-px bg-slate-200 mx-0.5 shrink-0" />
+
+                {bundleInvoiceGroups.map((grp: any) => {
+                  const isSelectedDoc = selectedBundleDocNumber.toLowerCase() === grp.number.toLowerCase();
+                  const isInvoice = grp.type === "invoice";
+                  const totalDocItems = (grp.items || []).length + (grp.bundle_parent_item ? 1 : 0);
+                  const docSelectedCount = (grp.items || []).filter((it: any, itIdx: number) => {
+                    const k = it.line_id || `${String(grp.number).toLowerCase()}:::${String(it.record_id || it.product_sku || it.product_name || "").toLowerCase()}:::${itIdx}`;
+                    return selectedBundleComponents.has(k);
+                  }).length;
+
+                  return (
+                    <button
+                      key={`${grp.type}_${grp.number}`}
+                      type="button"
+                      onClick={() => setSelectedBundleDocNumber(grp.number)}
+                      className={cn(
+                        "px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition-all whitespace-nowrap flex items-center gap-1.5 border shrink-0",
+                        isSelectedDoc
+                          ? "bg-[#0B57D0] text-white border-[#0B57D0] shadow-xs font-semibold"
+                          : "bg-white text-zinc-700 hover:text-zinc-950 hover:bg-slate-50 border-slate-200"
+                      )}
+                    >
+                      <span className={cn(
+                        "px-1 py-0.2 rounded text-[9px] font-bold uppercase",
+                        isSelectedDoc ? "bg-white/20 text-white" : isInvoice ? "bg-blue-50 text-[#0B57D0]" : "bg-red-50 text-red-700"
+                      )}>
+                        {isInvoice ? "INV" : "CN"}
+                      </span>
+                      <span className="font-mono text-xs">#{grp.number}</span>
+                      <span className={cn(
+                        "px-1.5 py-0.2 rounded text-[10px] font-mono",
+                        isSelectedDoc ? "bg-white/20 text-white" : "bg-slate-100 text-zinc-500"
+                      )}>
+                        {totalDocItems}
+                      </span>
+                      {docSelectedCount > 0 && (
+                        <span className={cn(
+                          "px-1.5 py-0.2 rounded text-[10px] font-bold",
+                          isSelectedDoc ? "bg-emerald-400 text-slate-950" : "bg-emerald-100 text-emerald-800"
+                        )}>
+                          ✓ {docSelectedCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Quick Search */}
+              <div className="relative shrink-0 w-48 sm:w-56">
+                <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" />
+                <input
+                  type="text"
+                  value={bundleItemFilterSearch}
+                  onChange={(e) => setBundleItemFilterSearch(e.target.value)}
+                  placeholder="Filter items in doc..."
+                  className="w-full h-7 pl-8 pr-6 bg-slate-50 border border-slate-200 rounded-lg text-xs placeholder:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-[#0B57D0] focus:bg-white"
+                />
+                {bundleItemFilterSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setBundleItemFilterSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 cursor-pointer"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Body: Active Invoices/CNs View with Smooth Native Scrolling */}
+            <div className="p-4 overflow-y-auto flex-1 min-h-0 flex flex-col gap-3 text-xs bg-slate-50/50">
               {loadingBundleInvoiceItems ? (
-                <div className="py-16 flex flex-col items-center justify-center gap-2 text-zinc-500">
+                <div className="py-20 flex flex-col items-center justify-center gap-2 text-zinc-500">
                   <RefreshCw size={22} className="animate-spin text-[#0B57D0]" />
                   <span className="text-xs font-medium">Scanning matching invoices and line items...</span>
                 </div>
-              ) : bundleInvoiceGroups.length === 0 ? (
-                <div className="py-16 flex flex-col items-center justify-center gap-2 text-zinc-400">
+              ) : displayedBundleGroups.length === 0 ? (
+                <div className="py-20 flex flex-col items-center justify-center gap-2 text-zinc-400">
                   <FileText size={24} className="stroke-[1.5]" />
-                  <span className="text-xs">No matching invoices or credit notes found for this item in {formatPeriodLabel(currentPeriod)}.</span>
+                  <span className="text-xs">No matching documents found for this item in {formatPeriodLabel(currentPeriod)}.</span>
                 </div>
               ) : (
-                bundleInvoiceGroups.map((grp: any) => {
-                  const isInvoice = grp.type === "invoice";
-                  const allGroupKeys = (grp.items || []).map((it: any) => 
-                    `${String(grp.number || "").toLowerCase()}:::${String(it.record_id || it.product_sku || it.product_name || "").toLowerCase()}`
-                  );
-                  const allChecked = allGroupKeys.length > 0 && allGroupKeys.every((k: string) => selectedBundleComponents.has(k));
+                (() => {
+                  const groupsToRender = selectedBundleDocNumber === "all"
+                    ? displayedBundleGroups
+                    : displayedBundleGroups.filter((g: any) => g.number.toLowerCase() === selectedBundleDocNumber.toLowerCase());
 
-                  return (
-                    <div key={`${grp.type}_${grp.number}`} className="bg-white border border-slate-200 rounded-lg shadow-2xs overflow-hidden">
-                      {/* Group Header */}
-                      <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-                        <div className="flex items-center gap-2.5">
-                          <span className={cn(
-                            "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border",
-                            isInvoice ? "bg-blue-50 text-[#0B57D0] border-blue-200" : "bg-red-50 text-red-700 border-red-200"
-                          )}>
-                            {isInvoice ? "Tax Invoice" : "Credit Note"}
-                          </span>
-                          <span className="font-mono font-bold text-xs text-zinc-900">
-                            #{grp.number}
-                          </span>
-                          {grp.date && (
-                            <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1">
-                              <Calendar size={11} className="text-zinc-400" />
-                              {grp.date}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-[11px] text-zinc-500">
-                            {(grp.items || []).length + (grp.bundle_parent_item ? 1 : 0)} line item(s)
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const next = new Set(selectedBundleComponents);
-                              if (allChecked) {
-                                allGroupKeys.forEach((k: string) => next.delete(k));
-                              } else {
-                                allGroupKeys.forEach((k: string) => next.add(k));
-                              }
-                              setSelectedBundleComponents(next);
-                            }}
-                            className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer underline"
-                          >
-                            {allChecked ? (isInvoice ? "Deselect All in Invoice" : "Deselect All in Credit Note") : (isInvoice ? "Select All in Invoice" : "Select All in Credit Note")}
-                          </button>
-                        </div>
+                  if (groupsToRender.length === 0) {
+                    return (
+                      <div className="py-16 text-center text-zinc-400">
+                        No documents matching the active filter.
                       </div>
+                    );
+                  }
 
-                      {/* Line Items Table */}
-                      <table className="w-full text-left text-xs divide-y divide-slate-100">
-                        <thead className="bg-[#F8F9FA] text-zinc-500 text-[10.5px] uppercase font-semibold">
-                          <tr>
-                            <th className="py-2 px-3 w-12 text-center">Bundle</th>
-                            <th className="py-2 px-3 w-28">SKU</th>
-                            <th className="py-2 px-3">Description</th>
-                            <th className="py-2 px-3 w-28">Brand</th>
-                            <th className="py-2 px-3 w-20 text-right">Qty</th>
-                            <th className="py-2 px-3 w-24 text-right">Unit Price</th>
-                            <th className="py-2 px-3 w-28 text-right">Amount ($)</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {/* Parent Bundle Item */}
-                          {grp.bundle_parent_item && (
-                            <tr className="bg-indigo-50/30 text-indigo-950 font-medium border-b border-indigo-100/60">
-                              <td className="py-2 px-3 text-center">
-                                <span className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-indigo-100 text-indigo-700 border border-indigo-200">
-                                  Package
-                                </span>
-                              </td>
-                              <td className="py-2 px-3 font-mono text-[11px] text-indigo-800 font-semibold">
-                                {grp.bundle_parent_item.product_sku || "(No SKU)"}
-                              </td>
-                              <td className="py-2 px-3 font-bold text-zinc-950">
-                                {grp.bundle_parent_item.product_name}
-                              </td>
-                              <td className="py-2 px-3 text-zinc-600">
-                                {bundleTarget.brand || grp.bundle_parent_item.brand || "Unassigned"}
-                              </td>
-                              <td className="py-2 px-3 text-right font-mono font-bold text-indigo-900">
-                                {Number(grp.bundle_parent_item.qty || 0).toLocaleString()}
-                              </td>
-                              <td className="py-2 px-3 text-right font-mono text-zinc-700">
-                                ${Number(grp.bundle_parent_item.unit_price || 0).toFixed(2)}
-                              </td>
-                              <td className="py-2 px-3 text-right font-mono font-bold text-indigo-950">
-                                ${Number(grp.bundle_parent_item.amount || 0).toFixed(2)}
-                              </td>
-                            </tr>
+                  const isSingleDoc = selectedBundleDocNumber !== "all";
+
+                  return groupsToRender.map((grp: any) => {
+                    const isInvoice = grp.type === "invoice";
+                    const isCollapsed = selectedBundleDocNumber === "all" && collapsedBundleDocCards.has(grp.number.toLowerCase());
+                    const qSearch = bundleItemFilterSearch.trim().toLowerCase();
+
+                    const filteredItems = (grp.items || []).filter((item: any) => {
+                      if (!qSearch) return true;
+                      return String(item.product_sku || "").toLowerCase().includes(qSearch) ||
+                             String(item.product_name || "").toLowerCase().includes(qSearch) ||
+                             String(item.brand || "").toLowerCase().includes(qSearch);
+                    });
+
+                    const allGroupKeys = (grp.items || []).map((it: any, itIdx: number) => 
+                      it.line_id || `${String(grp.number || "").toLowerCase()}:::${String(it.record_id || it.product_sku || it.product_name || "").toLowerCase()}:::${itIdx}`
+                    );
+                    const allChecked = allGroupKeys.length > 0 && allGroupKeys.every((k: string) => selectedBundleComponents.has(k));
+                    const selectedCountInGrp = allGroupKeys.filter((k: string) => selectedBundleComponents.has(k)).length;
+
+                    return (
+                      <div
+                        key={`${grp.type}_${grp.number}`}
+                        className={cn(
+                          "bg-white border border-slate-200 rounded-lg shadow-2xs overflow-hidden flex flex-col",
+                          isSingleDoc ? "flex-1 min-h-0" : "shrink-0"
+                        )}
+                      >
+                        {/* Group Header */}
+                        <div
+                          onClick={() => {
+                            if (selectedBundleDocNumber === "all") {
+                              setCollapsedBundleDocCards((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(grp.number.toLowerCase())) {
+                                  next.delete(grp.number.toLowerCase());
+                                } else {
+                                  next.add(grp.number.toLowerCase());
+                                }
+                                return next;
+                              });
+                            }
+                          }}
+                          className={cn(
+                            "px-4 py-2.5 bg-slate-50/90 border-b border-slate-200 flex items-center justify-between shrink-0 select-none",
+                            selectedBundleDocNumber === "all" ? "cursor-pointer hover:bg-slate-100/70" : ""
                           )}
-
-                          {/* Sibling Items */}
-                          {(grp.items || []).map((item: any) => {
-                            const itemKey = `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}`;
-                            const isChecked = selectedBundleComponents.has(itemKey);
-
-                            return (
-                              <tr
-                                key={itemKey}
-                                onClick={() => handleToggleBundleComponent(grp.number, item)}
-                                className={cn(
-                                  "cursor-pointer transition-colors select-none",
-                                  isChecked ? "bg-blue-50/60 hover:bg-blue-50" : "hover:bg-slate-50"
-                                )}
+                        >
+                          <div className="flex items-center gap-2.5">
+                            {selectedBundleDocNumber === "all" && (
+                              <button
+                                type="button"
+                                className="p-0.5 text-zinc-400 hover:text-zinc-700 transition-transform"
                               >
-                                <td className="py-2 px-3 text-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    onClick={(e) => e.stopPropagation()}
-                                    onChange={() => handleToggleBundleComponent(grp.number, item)}
-                                    className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
-                                  />
-                                </td>
-                                <td className="py-2 px-3 font-mono text-[11px] text-zinc-700">
-                                  {item.product_sku || "—"}
-                                </td>
-                                <td className="py-2 px-3 text-zinc-800 font-medium">
-                                  {item.product_name}
-                                </td>
-                                <td className="py-2 px-3 text-zinc-600">
-                                  {item.brand || "Unassigned"}
-                                </td>
-                                <td className="py-2 px-3 text-right font-mono text-zinc-800">
-                                  {Number(item.qty || 0).toLocaleString()}
-                                </td>
-                                <td className="py-2 px-3 text-right font-mono text-zinc-600">
-                                  ${Number(item.unit_price || 0).toFixed(2)}
-                                </td>
-                                <td className="py-2 px-3 text-right font-mono font-semibold text-zinc-900">
-                                  ${Number(item.amount || 0).toFixed(2)}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  );
-                })
+                                {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                              </button>
+                            )}
+                            <span className={cn(
+                              "px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider border",
+                              isInvoice ? "bg-blue-50 text-[#0B57D0] border-blue-200" : "bg-red-50 text-red-700 border-red-200"
+                            )}>
+                              {isInvoice ? "Tax Invoice" : "Credit Note"}
+                            </span>
+                            <span className="font-mono font-bold text-xs text-zinc-900">
+                              #{grp.number}
+                            </span>
+                            {grp.date && (
+                              <span className="text-[11px] text-zinc-500 font-medium flex items-center gap-1">
+                                <Calendar size={11} className="text-zinc-400" />
+                                {grp.date}
+                              </span>
+                            )}
+                            {selectedCountInGrp > 0 && (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold text-[10px]">
+                                {selectedCountInGrp} selected
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-3">
+                            <span className="text-[11px] text-zinc-500 font-medium">
+                              {(grp.items || []).length + (grp.bundle_parent_item ? 1 : 0)} line item(s)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const next = new Set(selectedBundleComponents);
+                                if (allChecked) {
+                                  allGroupKeys.forEach((k: string) => next.delete(k));
+                                } else {
+                                  allGroupKeys.forEach((k: string) => next.add(k));
+                                }
+                                setSelectedBundleComponents(next);
+                              }}
+                              className="text-[11px] text-[#0B57D0] hover:text-[#0842A0] font-semibold cursor-pointer hover:underline"
+                            >
+                              {allChecked
+                                ? (isInvoice ? "Deselect All in Invoice" : "Deselect All in Credit Note")
+                                : (isInvoice ? "Select All in Invoice" : "Select All in Credit Note")}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Line Items Table Container */}
+                        {!isCollapsed && (
+                          <div className={cn("overflow-y-auto", isSingleDoc ? "flex-1 min-h-0" : "max-h-[380px]")}>
+                            <table className="w-full text-left text-xs divide-y divide-slate-100">
+                              <thead className="sticky top-0 z-10 bg-[#F8F9FA] text-zinc-500 text-[10.5px] uppercase font-semibold border-b border-slate-200">
+                                <tr>
+                                  <th className="py-2 px-2 w-8 text-center text-zinc-400">#</th>
+                                  <th className="py-2 px-3 w-12 text-center">Bundle</th>
+                                  <th className="py-2 px-3 w-28">SKU</th>
+                                  <th className="py-2 px-3">Description</th>
+                                  <th className="py-2 px-3 w-28">Brand</th>
+                                  <th className="py-2 px-3 w-20 text-right">Qty</th>
+                                  <th className="py-2 px-3 w-24 text-right">Unit Price</th>
+                                  <th className="py-2 px-3 w-28 text-right">Amount ($)</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 bg-white">
+                                {/* Parent Bundle Item */}
+                                {grp.bundle_parent_item && (
+                                  <tr className="bg-blue-50/40 text-zinc-900 font-medium border-b border-blue-100">
+                                    <td className="py-2 px-2 text-center font-mono text-[10px] text-[#0B57D0] font-bold">
+                                      ★
+                                    </td>
+                                    <td className="py-2 px-3 text-center">
+                                      <span className="px-1.5 py-0.5 rounded text-[9.5px] font-bold bg-blue-100 text-[#0B57D0] border border-blue-200 uppercase">
+                                        Package
+                                      </span>
+                                    </td>
+                                    <td className="py-2 px-3 font-mono text-[11px] text-[#0B57D0] font-semibold">
+                                      {grp.bundle_parent_item.product_sku || "(No SKU)"}
+                                    </td>
+                                    <td className="py-2 px-3 font-bold text-zinc-950">
+                                      {grp.bundle_parent_item.product_name}
+                                    </td>
+                                    <td className="py-2 px-3 text-zinc-600">
+                                      {bundleTarget.brand || grp.bundle_parent_item.brand || "Unassigned"}
+                                    </td>
+                                    <td className="py-2 px-3 text-right font-mono font-bold text-zinc-900">
+                                      {Number(grp.bundle_parent_item.qty || 0).toLocaleString()}
+                                    </td>
+                                    <td className="py-2 px-3 text-right font-mono text-zinc-700">
+                                      ${Number(grp.bundle_parent_item.unit_price || 0).toFixed(2)}
+                                    </td>
+                                    <td className="py-2 px-3 text-right font-mono font-bold text-zinc-950">
+                                      ${Number(grp.bundle_parent_item.amount || 0).toFixed(2)}
+                                    </td>
+                                  </tr>
+                                )}
+
+                                {/* Sibling Items */}
+                                {filteredItems.map((item: any, itemIdx: number) => {
+                                  const itemKey = item.line_id || `${String(grp.number || "").toLowerCase()}:::${String(item.record_id || item.product_sku || item.product_name || "").toLowerCase()}:::${itemIdx}`;
+                                  const isChecked = selectedBundleComponents.has(itemKey);
+                                  const lineNum = item.doc_line_index !== undefined ? Number(item.doc_line_index) + 1 : itemIdx + 1;
+
+                                  return (
+                                    <tr
+                                      key={itemKey}
+                                      onClick={() => handleToggleBundleComponent(grp.number, item, itemIdx)}
+                                      className={cn(
+                                        "cursor-pointer transition-colors select-none",
+                                        isChecked ? "bg-blue-50/60 hover:bg-blue-50" : "hover:bg-slate-50"
+                                      )}
+                                    >
+                                      <td className="py-2 px-2 text-center font-mono text-[11px] text-zinc-400 font-medium">
+                                        {lineNum}
+                                      </td>
+                                      <td className="py-2 px-3 text-center">
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onClick={(e) => e.stopPropagation()}
+                                          onChange={() => handleToggleBundleComponent(grp.number, item, itemIdx)}
+                                          className="rounded border-slate-300 text-[#0B57D0] focus:ring-0 cursor-pointer"
+                                        />
+                                      </td>
+                                      <td className="py-2 px-3 font-mono text-[11px] text-zinc-700">
+                                        {item.product_sku || "—"}
+                                      </td>
+                                      <td className="py-2 px-3 text-zinc-800 font-medium">
+                                        {item.product_name}
+                                      </td>
+                                      <td className="py-2 px-3 text-zinc-600">
+                                        {item.brand || "Unassigned"}
+                                      </td>
+                                      <td className="py-2 px-3 text-right font-mono text-zinc-800 font-semibold">
+                                        {Number(item.qty || 0).toLocaleString()}
+                                      </td>
+                                      <td className="py-2 px-3 text-right font-mono text-zinc-600">
+                                        ${Number(item.unit_price || 0).toFixed(2)}
+                                      </td>
+                                      <td className="py-2 px-3 text-right font-mono font-semibold text-zinc-900">
+                                        ${Number(item.amount || 0).toFixed(2)}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+
+                                {filteredItems.length === 0 && (
+                                  <tr>
+                                    <td colSpan={8} className="py-8 text-center text-zinc-400 italic">
+                                      {qSearch ? `No line items matching "${bundleItemFilterSearch}" in this document.` : "No sibling line items on this document."}
+                                    </td>
+                                  </tr>
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  });
+                })()
               )}
             </div>
 
@@ -11055,6 +11392,150 @@ export function SellInModule({ profile }: SellInModuleProps) {
                   </button>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Timeline Month Center Popup Breakdown Modal */}
+      {selectedTimelineMonth && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xs animate-in fade-in duration-150"
+          onClick={() => setSelectedTimelineMonth(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-150 flex flex-col max-h-[85vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="px-5 py-3.5 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-blue-50 text-[#0B57D0] border border-blue-100 flex items-center justify-center">
+                  <Calendar size={16} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-zinc-900">{selectedTimelineMonth.label}</h3>
+                    {selectedTimelineMonth.isCurrent && (
+                      <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-50 text-[#0B57D0] border border-blue-200">
+                        Active Month
+                      </span>
+                    )}
+                    {selectedTimelineMonth.isPast && (
+                      <span className="px-1.5 py-0.2 rounded text-[10px] font-medium bg-slate-100 text-zinc-600 border border-slate-200">
+                        Past Matured
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-zinc-500 mt-0.5">
+                    Expected Cash Collection Breakdown
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedTimelineMonth(null)}
+                className="w-7 h-7 rounded-lg text-zinc-400 hover:text-zinc-700 hover:bg-slate-200/60 flex items-center justify-center transition-colors cursor-pointer"
+                title="Close"
+              >
+                <X size={15} />
+              </button>
+            </div>
+
+            {/* Summary Banner inside Modal */}
+            <div className="px-5 py-3 bg-white border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <span className="text-[11px] text-zinc-500 font-medium block">Total Expected Collection</span>
+                <span className={cn(
+                  "font-mono text-lg font-bold block",
+                  selectedTimelineMonth.amount > 0 ? "text-[#0B57D0]" : "text-zinc-400"
+                )}>
+                  ${selectedTimelineMonth.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="text-right">
+                <span className="text-[11px] text-zinc-500 font-medium block">Scheduled Payers</span>
+                <span className="text-sm font-bold text-zinc-800">
+                  {selectedTimelineMonth.buyersList.length} {selectedTimelineMonth.buyersList.length === 1 ? "Buyer" : "Buyers"}
+                </span>
+              </div>
+            </div>
+
+            {/* Modal Body: Buyer List Breakdown */}
+            <div className="p-5 overflow-y-auto max-h-[50vh] space-y-2">
+              {selectedTimelineMonth.buyersList.length === 0 ? (
+                <div className="py-10 text-center text-xs text-zinc-400">
+                  No receivables scheduled to mature in {selectedTimelineMonth.label}.
+                </div>
+              ) : (
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-lg overflow-hidden">
+                  {selectedTimelineMonth.buyersList.map((b: any, bIdx: number) => (
+                    <div
+                      key={bIdx}
+                      className="p-3 flex items-start justify-between gap-3 text-xs hover:bg-slate-50/80 transition-colors"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <span className="text-[10px] font-mono font-bold text-zinc-400 w-4 shrink-0">
+                            #{bIdx + 1}
+                          </span>
+                          <span className="font-semibold text-zinc-900 truncate text-[12px]" title={b.buyer_name}>
+                            {b.buyer_name}
+                          </span>
+                          {b.channel && (
+                            <span className="px-1.5 py-0.2 rounded text-[9.5px] font-medium bg-slate-100 text-zinc-600 border border-slate-200 shrink-0">
+                              {b.channel}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 pl-5 text-[11px] text-zinc-500">
+                          {b.term && <span>{b.term} Days Credit Term</span>}
+                          {b.source_period && (
+                            <>
+                              <span className="text-zinc-300">•</span>
+                              <span>From {formatPeriodLabel(b.source_period)} Order</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="text-right shrink-0">
+                        <div className="font-mono font-bold text-zinc-900 text-xs sm:text-[13px]">
+                          ${Number(b.amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-5 py-3 bg-slate-50 border-t border-slate-200 flex items-center justify-between">
+              <div>
+                {allBatches.some((b) => b.period === selectedTimelineMonth.period) && selectedTimelineMonth.period !== currentPeriod && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCurrentPeriod(selectedTimelineMonth.period);
+                      setSelectedTimelineMonth(null);
+                    }}
+                    className="text-xs font-semibold text-[#0B57D0] hover:underline cursor-pointer flex items-center gap-1"
+                  >
+                    <span>Open {selectedTimelineMonth.label} Sell-In</span>
+                    <span>→</span>
+                  </button>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedTimelineMonth(null)}
+                className="h-8 px-4 rounded-lg bg-[#0B57D0] hover:bg-[#0842A0] text-white text-xs font-semibold shadow-2xs transition-colors cursor-pointer"
+              >
+                Close
+              </button>
             </div>
           </div>
         </div>
