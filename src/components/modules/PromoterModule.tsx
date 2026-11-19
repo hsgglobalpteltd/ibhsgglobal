@@ -36,6 +36,7 @@ import {
   CreditCard,
   Receipt,
   Ban,
+  Coffee,
   Image as ImageIcon
 } from "lucide-react";
 import { NavigationTabs } from "../navigation-tabs";
@@ -1115,9 +1116,18 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     // Build payout rows
     const rows = filtered.map(s => {
       const isAbsent = s["actual_start"] === "Absent";
-      const displayStart = isAbsent ? "" : formatTimeDisplay(s["actual_start"]);
-      const displayEnd = isAbsent ? "" : formatTimeDisplay(s["actual_end"]);
-      const totalTime = isAbsent ? 0 : calculateHours(displayStart, displayEnd);
+      
+      const scheduledStart = formatTimeDisplay(s["shift_start"] || s.shift_start || s["time_start"] || s.time_start || "");
+      const scheduledEnd = formatTimeDisplay(s["shift_end"] || s.shift_end || s["time_end"] || s.time_end || "");
+
+      const rawActualStart = s["actual_start"];
+      const rawActualEnd = s["actual_end"];
+
+      // Fallback: If actual attendance exists, use it. If empty/missing, fall back to scheduled times!
+      const displayStart = isAbsent ? "" : (formatTimeDisplay(rawActualStart) || scheduledStart);
+      const displayEnd = isAbsent ? "" : (formatTimeDisplay(rawActualEnd) || scheduledEnd);
+
+      const totalTime = isAbsent ? 0 : calcNetHours(displayStart, displayEnd, 0, 0);
       const rate = Number(payoutHourlyRate);
       const totalPayout = isAbsent ? 0 : Number((totalTime * rate).toFixed(2));
 
@@ -1135,6 +1145,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       return {
         scheduleId: s.id,
         date: s.date,
+        scheduledStart,
+        scheduledEnd,
         startTime: displayStart,
         endTime: displayEnd,
         break1Minutes: 0,
@@ -1157,7 +1169,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     setEditedPayoutRows(rows);
     setIsPayoutFetching(false);
-  }, [selectedPayoutPromoterId, payoutStartDate, payoutEndDate, payoutHourlyRate, schedules, stores, campaigns, getFormattedStoreName, calculateHours, payouts, editingPayoutId, paidScheduleIds]);
+  }, [selectedPayoutPromoterId, payoutStartDate, payoutEndDate, payoutHourlyRate, schedules, stores, campaigns, getFormattedStoreName, calcNetHours, payouts, editingPayoutId, paidScheduleIds]);
 
   // Save Payout to database
   const handleSavePayout = async () => {
@@ -9383,12 +9395,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 />
                               </th>
                               <th className="py-2.5 px-4 w-12 text-center">No.</th>
-                              <th className="py-2.5 px-3">Date</th>
-                              <th className="py-2.5 px-3">Clock Photos</th>
+                              <th className="py-2.5 px-3">Job Date</th>
                               <th className="py-2.5 px-2">Start</th>
                               <th className="py-2.5 px-2">End</th>
-                              <th className="py-2.5 px-2 text-center" title="Break 1 in minutes">Break 1 (m)</th>
-                              <th className="py-2.5 px-2 text-center" title="Break 2 in minutes">Break 2 (m)</th>
+                              <th className="py-2.5 px-2 text-center" title="Optional Breaks (Max 2)">Breaks</th>
                               <th className="py-2.5 px-2">Net Hours</th>
                               <th className="py-2.5 px-2 text-center">Rate ($)</th>
                               <th className="py-2.5 px-3">Total Payout</th>
@@ -9416,6 +9426,17 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               const checkInPhoto = row.checkInSelfie || sched?.check_in_selfie;
                               const checkOutPhoto = row.checkOutSelfie || sched?.check_out_selfie;
 
+                              const planStart = row.scheduledStart || formatTimeDisplay(sched?.shift_start || sched?.["shift_start"] || sched?.time_start || sched?.["time_start"] || "");
+                              const planEnd = row.scheduledEnd || formatTimeDisplay(sched?.shift_end || sched?.["shift_end"] || sched?.time_end || sched?.["time_end"] || "");
+
+                              const currentStart = row.startTime || planStart || "";
+                              const currentEnd = row.endTime || planEnd || "";
+
+                              const b1 = Number(row.break1Minutes) || 0;
+                              const b2 = Number(row.break2Minutes) || 0;
+                              const hasB1 = Boolean(row.hasBreak1 || b1 > 0);
+                              const hasB2 = Boolean(row.hasBreak2 || b2 > 0);
+
                               return (
                                 <tr key={row.scheduleId} className={rowStyle}>
                                   <td className="py-2.5 px-3 text-center">
@@ -9431,137 +9452,232 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     />
                                   </td>
                                   <td className="py-2.5 px-4 text-center font-medium text-zinc-400">{idx + 1}</td>
-                                  <td className="py-2.5 px-3 font-medium text-zinc-800">{formatRowTimestamp(row.date)}</td>
-                                  
-                                  {/* Clock In & Clock Out Photos */}
                                   <td className="py-2.5 px-3">
-                                    {!checkInPhoto && !checkOutPhoto ? (
-                                      <span className="text-[10px] text-zinc-400 font-mono italic">No photos</span>
-                                    ) : (
-                                      <div className="flex items-center gap-1.5">
-                                        {checkInPhoto ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => setImagePreviewModalUrl(checkInPhoto)}
-                                            className="relative group w-7 h-7 rounded border border-blue-200 hover:border-blue-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
-                                            title="View Clock-In Selfie"
-                                          >
-                                            <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                                            <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[6.5px] text-white font-semibold text-center leading-none py-0.5">IN</span>
-                                          </button>
-                                        ) : (
-                                          <span className="text-[9px] text-zinc-400 font-mono italic">No In</span>
-                                        )}
-
-                                        {checkOutPhoto ? (
-                                          <button
-                                            type="button"
-                                            onClick={() => setImagePreviewModalUrl(checkOutPhoto)}
-                                            className="relative group w-7 h-7 rounded border border-emerald-200 hover:border-emerald-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
-                                            title="View Clock-Out Selfie"
-                                          >
-                                            <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
-                                            <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[6.5px] text-white font-semibold text-center leading-none py-0.5">OUT</span>
-                                          </button>
-                                        ) : (
-                                          <span className="text-[9px] text-zinc-400 font-mono italic">No Out</span>
-                                        )}
-                                      </div>
-                                    )}
+                                    <div className="font-semibold text-zinc-900 leading-tight">
+                                      {formatRowTimestamp(row.date)}
+                                    </div>
+                                    <div className="text-[10.5px] text-zinc-500 font-mono mt-0.5">
+                                      {planStart || "—"} - {planEnd || "—"}
+                                    </div>
                                   </td>
 
                                   {row.absent ? (
-                                    <td colSpan={4} className="py-2.5 px-3 text-red-600 font-medium">
+                                    <td colSpan={5} className="py-2.5 px-3 text-red-600 font-medium">
                                       Absent: {row.absentReason || "Reason not specified"}
                                     </td>
                                   ) : (
                                     <>
+                                      {/* Start Time with Clock-In Photo Icon */}
                                       <td className="py-2.5 px-2">
-                                        <input
-                                          type="time"
-                                          value={row.startTime || ""}
-                                          disabled={isAlreadyPaid}
-                                          onChange={(e) => {
-                                            const newStart = e.target.value;
-                                            const newTotal = calcNetHours(newStart, row.endTime, row.break1Minutes, row.break2Minutes);
-                                            const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
-                                              ...r,
-                                              startTime: newStart,
-                                              totalTime: newTotal,
-                                              totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
-                                            } : r);
-                                            setEditedPayoutRows(updated);
-                                          }}
-                                          className="px-1.5 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
-                                        />
+                                        <div className="flex items-center gap-1.5">
+                                          <input
+                                            type="time"
+                                            value={currentStart}
+                                            disabled={isAlreadyPaid}
+                                            onChange={(e) => {
+                                              const newStart = e.target.value;
+                                              const newTotal = calcNetHours(newStart, currentEnd, row.break1Minutes, row.break2Minutes);
+                                              const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
+                                                ...r,
+                                                startTime: newStart,
+                                                totalTime: newTotal,
+                                                totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                              } : r);
+                                              setEditedPayoutRows(updated);
+                                            }}
+                                            className="px-1.5 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                          />
+                                          {checkInPhoto && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setImagePreviewModalUrl(checkInPhoto)}
+                                              className="relative group w-5 h-5 rounded border border-blue-200 hover:border-blue-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
+                                              title="View Clock-In Selfie"
+                                            >
+                                              <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                                              <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[5px] text-white font-bold text-center leading-none py-px">IN</span>
+                                            </button>
+                                          )}
+                                        </div>
                                       </td>
+
+                                      {/* End Time with Clock-Out Photo Icon */}
                                       <td className="py-2.5 px-2">
-                                        <input
-                                          type="time"
-                                          value={row.endTime || ""}
-                                          disabled={isAlreadyPaid}
-                                          onChange={(e) => {
-                                            const newEnd = e.target.value;
-                                            const newTotal = calcNetHours(row.startTime, newEnd, row.break1Minutes, row.break2Minutes);
-                                            const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
-                                              ...r,
-                                              endTime: newEnd,
-                                              totalTime: newTotal,
-                                              totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
-                                            } : r);
-                                            setEditedPayoutRows(updated);
-                                          }}
-                                          className="px-1.5 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
-                                        />
+                                        <div className="flex items-center gap-1.5">
+                                          <input
+                                            type="time"
+                                            value={currentEnd}
+                                            disabled={isAlreadyPaid}
+                                            onChange={(e) => {
+                                              const newEnd = e.target.value;
+                                              const newTotal = calcNetHours(currentStart, newEnd, row.break1Minutes, row.break2Minutes);
+                                              const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
+                                                ...r,
+                                                endTime: newEnd,
+                                                totalTime: newTotal,
+                                                totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                              } : r);
+                                              setEditedPayoutRows(updated);
+                                            }}
+                                            className="px-1.5 py-0.5 border border-zinc-200 rounded text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs bg-white disabled:bg-zinc-100 disabled:text-zinc-500 disabled:cursor-not-allowed"
+                                          />
+                                          {checkOutPhoto && (
+                                            <button
+                                              type="button"
+                                              onClick={() => setImagePreviewModalUrl(checkOutPhoto)}
+                                              className="relative group w-5 h-5 rounded border border-emerald-200 hover:border-emerald-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
+                                              title="View Clock-Out Selfie"
+                                            >
+                                              <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                                              <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[5px] text-white font-bold text-center leading-none py-px">OUT</span>
+                                            </button>
+                                          )}
+                                        </div>
                                       </td>
-                                      {/* Break 1 (mins) */}
+
+                                      {/* Optional Dynamic Breaks (Max 2) */}
                                       <td className="py-2.5 px-2 text-center">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          max="360"
-                                          placeholder="0"
-                                          value={row.break1Minutes || ""}
-                                          disabled={isAlreadyPaid}
-                                          onChange={(e) => {
-                                            const b1 = Math.max(0, Number(e.target.value) || 0);
-                                            const newTotal = calcNetHours(row.startTime, row.endTime, b1, row.break2Minutes);
-                                            const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
-                                              ...r,
-                                              break1Minutes: b1,
-                                              totalTime: newTotal,
-                                              totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
-                                            } : r);
-                                            setEditedPayoutRows(updated);
-                                          }}
-                                          className="w-12 h-6 px-1 border border-zinc-200 rounded text-center text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs disabled:bg-zinc-100 disabled:text-zinc-500"
-                                          title="Break 1 duration in minutes"
-                                        />
+                                        {!hasB1 && !hasB2 ? (
+                                          <button
+                                            type="button"
+                                            disabled={isAlreadyPaid}
+                                            onClick={() => {
+                                              const defaultB1 = 30;
+                                              const newTotal = calcNetHours(currentStart, currentEnd, defaultB1, 0);
+                                              setEditedPayoutRows(prev => prev.map(r => r.scheduleId === row.scheduleId ? {
+                                                ...r,
+                                                hasBreak1: true,
+                                                break1Minutes: defaultB1,
+                                                totalTime: newTotal,
+                                                totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                              } : r));
+                                            }}
+                                            className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-zinc-300 hover:border-[#0B57D0] hover:text-[#0B57D0] text-zinc-400 text-[11px] font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                            title="Add Break (max 2)"
+                                          >
+                                            <Coffee size={11} />
+                                            <span>+ Break</span>
+                                          </button>
+                                        ) : (
+                                          <div className="inline-flex items-center gap-1.5 flex-wrap justify-center">
+                                            {hasB1 && (
+                                              <div className="inline-flex items-center gap-1 bg-zinc-50 border border-zinc-200 px-1 py-0.5 rounded text-[11px]">
+                                                <span className="text-[10px] text-zinc-400 font-medium">B1</span>
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  max="360"
+                                                  value={row.break1Minutes ?? 30}
+                                                  disabled={isAlreadyPaid}
+                                                  onChange={(e) => {
+                                                    const val = Math.max(0, Number(e.target.value) || 0);
+                                                    const newTotal = calcNetHours(currentStart, currentEnd, val, row.break2Minutes || 0);
+                                                    setEditedPayoutRows(prev => prev.map(r => r.scheduleId === row.scheduleId ? {
+                                                      ...r,
+                                                      break1Minutes: val,
+                                                      totalTime: newTotal,
+                                                      totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                                    } : r));
+                                                  }}
+                                                  className="w-9 text-center font-mono text-zinc-800 bg-white border border-zinc-200 rounded px-0.5 py-px text-xs outline-none focus:border-[#0B57D0] disabled:bg-zinc-100"
+                                                />
+                                                <span className="text-[10px] text-zinc-400">m</span>
+                                                {!isAlreadyPaid && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const nextB1 = hasB2 ? (row.break2Minutes || 0) : 0;
+                                                      const nextB2 = 0;
+                                                      const nextHasB1 = hasB2;
+                                                      const nextHasB2 = false;
+                                                      const newTotal = calcNetHours(currentStart, currentEnd, nextB1, nextB2);
+                                                      setEditedPayoutRows(prev => prev.map(r => r.scheduleId === row.scheduleId ? {
+                                                        ...r,
+                                                        hasBreak1: nextHasB1,
+                                                        hasBreak2: nextHasB2,
+                                                        break1Minutes: nextB1,
+                                                        break2Minutes: nextB2,
+                                                        totalTime: newTotal,
+                                                        totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                                      } : r));
+                                                    }}
+                                                    className="text-zinc-400 hover:text-red-500 cursor-pointer ml-0.5"
+                                                    title="Remove Break 1"
+                                                  >
+                                                    <X size={10} />
+                                                  </button>
+                                                )}
+                                              </div>
+                                            )}
+
+                                            {hasB2 ? (
+                                              <div className="inline-flex items-center gap-1 bg-zinc-50 border border-zinc-200 px-1 py-0.5 rounded text-[11px]">
+                                                <span className="text-[10px] text-zinc-400 font-medium">B2</span>
+                                                <input
+                                                  type="number"
+                                                  min="0"
+                                                  max="360"
+                                                  value={row.break2Minutes ?? 15}
+                                                  disabled={isAlreadyPaid}
+                                                  onChange={(e) => {
+                                                    const val = Math.max(0, Number(e.target.value) || 0);
+                                                    const newTotal = calcNetHours(currentStart, currentEnd, row.break1Minutes || 0, val);
+                                                    setEditedPayoutRows(prev => prev.map(r => r.scheduleId === row.scheduleId ? {
+                                                      ...r,
+                                                      break2Minutes: val,
+                                                      totalTime: newTotal,
+                                                      totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                                    } : r));
+                                                  }}
+                                                  className="w-9 text-center font-mono text-zinc-800 bg-white border border-zinc-200 rounded px-0.5 py-px text-xs outline-none focus:border-[#0B57D0] disabled:bg-zinc-100"
+                                                />
+                                                <span className="text-[10px] text-zinc-400">m</span>
+                                                {!isAlreadyPaid && (
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                      const newTotal = calcNetHours(currentStart, currentEnd, row.break1Minutes || 0, 0);
+                                                      setEditedPayoutRows(prev => prev.map(r => r.scheduleId === row.scheduleId ? {
+                                                        ...r,
+                                                        hasBreak2: false,
+                                                        break2Minutes: 0,
+                                                        totalTime: newTotal,
+                                                        totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                                      } : r));
+                                                    }}
+                                                    className="text-zinc-400 hover:text-red-500 cursor-pointer ml-0.5"
+                                                    title="Remove Break 2"
+                                                  >
+                                                    <X size={10} />
+                                                  </button>
+                                                )}
+                                              </div>
+                                            ) : (
+                                              !isAlreadyPaid && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() => {
+                                                    const defaultB2 = 15;
+                                                    const newTotal = calcNetHours(currentStart, currentEnd, row.break1Minutes || 0, defaultB2);
+                                                    setEditedPayoutRows(prev => prev.map(r => r.scheduleId === row.scheduleId ? {
+                                                      ...r,
+                                                      hasBreak2: true,
+                                                      break2Minutes: defaultB2,
+                                                      totalTime: newTotal,
+                                                      totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
+                                                    } : r));
+                                                  }}
+                                                  className="w-5 h-5 rounded border border-dashed border-zinc-300 hover:border-[#0B57D0] hover:text-[#0B57D0] text-zinc-400 flex items-center justify-center cursor-pointer transition-colors"
+                                                  title="Add Break 2 (max 2)"
+                                                >
+                                                  <Plus size={10} />
+                                                </button>
+                                              )
+                                            )}
+                                          </div>
+                                        )}
                                       </td>
-                                      {/* Break 2 (mins) */}
-                                      <td className="py-2.5 px-2 text-center">
-                                        <input
-                                          type="number"
-                                          min="0"
-                                          max="360"
-                                          placeholder="0"
-                                          value={row.break2Minutes || ""}
-                                          disabled={isAlreadyPaid}
-                                          onChange={(e) => {
-                                            const b2 = Math.max(0, Number(e.target.value) || 0);
-                                            const newTotal = calcNetHours(row.startTime, row.endTime, row.break1Minutes, b2);
-                                            const updated = editedPayoutRows.map(r => r.scheduleId === row.scheduleId ? {
-                                              ...r,
-                                              break2Minutes: b2,
-                                              totalTime: newTotal,
-                                              totalPayout: Number((newTotal * r.hourlyRate).toFixed(2))
-                                            } : r);
-                                            setEditedPayoutRows(updated);
-                                          }}
-                                          className="w-12 h-6 px-1 border border-zinc-200 rounded text-center text-xs font-normal focus:border-[#0B57D0] outline-none shadow-2xs disabled:bg-zinc-100 disabled:text-zinc-500"
-                                          title="Break 2 duration in minutes"
-                                        />
-                                      </td>
+
                                       <td className="py-2.5 px-2 font-medium text-zinc-800">{formatTimeBase("", "", row.totalTime)}</td>
                                       <td className="py-2.5 px-2 text-center">
                                         <div className="relative inline-block">
@@ -9586,7 +9702,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     </>
                                   )}
                                   <td className="py-2.5 px-3 font-semibold text-zinc-900 font-mono">${row.totalPayout.toFixed(2)}</td>
-                                  <td className="py-2.5 px-3 text-zinc-600 font-normal">{row.taskDetails}</td>
+                                  <td className="py-2.5 px-3 text-zinc-600 font-normal max-w-[200px]">
+                                    <div className="text-[11px] leading-snug line-clamp-2" title={row.taskDetails}>
+                                      {row.taskDetails}
+                                    </div>
+                                  </td>
                                 </tr>
                               );
                             })}
@@ -9920,7 +10040,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
               return (
                 <div className="fixed inset-0 bg-black/45 backdrop-blur-xs flex items-center justify-center z-50 animate-in fade-in duration-200">
-                  <div className="w-[700px] max-h-[80vh] bg-white rounded border border-zinc-200 shadow-2xl flex flex-col font-primary animate-in zoom-in-95 duration-150">
+                  <div className="w-[820px] max-w-[95vw] max-h-[85vh] bg-white rounded border border-zinc-200 shadow-2xl flex flex-col font-primary animate-in zoom-in-95 duration-150">
                     {/* Modal Header */}
                     <div className="bg-zinc-50 px-4 py-3.5 border-b border-zinc-200 flex justify-between items-center select-none shrink-0">
                       <div className="flex flex-col gap-0.5">
@@ -10000,17 +10120,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         <div className="border border-zinc-200 rounded overflow-hidden">
                           <table className="w-full text-left border-collapse text-xs">
                             <thead>
-                              <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-semibold uppercase tracking-wider sticky top-0">
-                                <th className="py-2 px-2.5 w-8 text-center">No.</th>
-                                <th className="py-2 px-2.5">Date</th>
-                                <th className="py-2 px-2">Photos</th>
-                                <th className="py-2 px-2">Shift Time</th>
-                                <th className="py-2 px-2 text-center" title="Break 1 (minutes)">B1 (m)</th>
-                                <th className="py-2 px-2 text-center" title="Break 2 (minutes)">B2 (m)</th>
-                                <th className="py-2 px-2">Net Hours</th>
-                                <th className="py-2 px-2">Rate</th>
-                                <th className="py-2 px-2 font-mono">Payout</th>
-                                <th className="py-2 px-2.5">Details</th>
+                              <tr className="bg-zinc-50 border-b border-zinc-200 text-zinc-500 font-semibold uppercase tracking-wider sticky top-0 select-none">
+                                <th className="py-2.5 px-3 w-10 text-center">No.</th>
+                                <th className="py-2.5 px-3">Job Date</th>
+                                <th className="py-2.5 px-3">Shift Time</th>
+                                <th className="py-2.5 px-2 text-center" title="Breaks">Breaks</th>
+                                <th className="py-2.5 px-2">Net Hours</th>
+                                <th className="py-2.5 px-2 text-center">Rate</th>
+                                <th className="py-2.5 px-3 font-mono">Payout</th>
+                                <th className="py-2.5 px-3">Task Details</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-zinc-100 font-normal text-zinc-700">
@@ -10019,56 +10137,98 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                 const checkInPhoto = job.checkInSelfie || sched?.check_in_selfie;
                                 const checkOutPhoto = job.checkOutSelfie || sched?.check_out_selfie;
 
+                                const planStart = job.scheduledStart || formatTimeDisplay(sched?.shift_start || sched?.["shift_start"] || sched?.time_start || sched?.["time_start"] || "");
+                                const planEnd = job.scheduledEnd || formatTimeDisplay(sched?.shift_end || sched?.["shift_end"] || sched?.time_end || sched?.["time_end"] || "");
+
+                                const currentStart = job.startTime || planStart || "00:00";
+                                const currentEnd = job.endTime || planEnd || "00:00";
+
+                                const b1 = Number(job.break1Minutes) || 0;
+                                const b2 = Number(job.break2Minutes) || 0;
+
                                 return (
                                   <tr key={job.scheduleId || idx} className="hover:bg-zinc-50/40">
-                                    <td className="py-2 px-2.5 text-center text-zinc-400 font-medium">{idx + 1}</td>
-                                    <td className="py-2 px-2.5 text-zinc-800 font-medium">{formatRowTimestamp(job.date)}</td>
+                                    <td className="py-2.5 px-3 text-center text-zinc-400 font-medium">{idx + 1}</td>
                                     
-                                    {/* Clock Photos */}
-                                    <td className="py-2 px-2">
-                                      {!checkInPhoto && !checkOutPhoto ? (
-                                        <span className="text-[10px] text-zinc-400 font-mono italic">—</span>
+                                    {/* Job Date with Planned Time Underneath */}
+                                    <td className="py-2.5 px-3">
+                                      <div className="font-semibold text-zinc-900 leading-tight">
+                                        {formatRowTimestamp(job.date)}
+                                      </div>
+                                      <div className="text-[10px] text-zinc-500 font-mono mt-0.5">
+                                        {planStart || "—"} - {planEnd || "—"}
+                                      </div>
+                                    </td>
+
+                                    {/* Shift Time with Clock-In & Clock-Out Photos Beside */}
+                                    <td className="py-2.5 px-3 text-zinc-700 font-normal">
+                                      {job.absent ? (
+                                        <span className="text-red-600 font-medium">Absent</span>
                                       ) : (
-                                        <div className="flex items-center gap-1">
-                                          {checkInPhoto && (
-                                            <button
-                                              type="button"
-                                              onClick={() => setImagePreviewModalUrl(checkInPhoto)}
-                                              className="w-6 h-6 rounded border border-blue-200 overflow-hidden shrink-0 cursor-pointer"
-                                              title="Clock-In Photo"
-                                            >
-                                              <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover" />
-                                            </button>
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className="font-mono text-zinc-800 font-medium text-xs">
+                                            {currentStart} - {currentEnd}
+                                          </span>
+                                          <div className="flex items-center gap-1">
+                                            {checkInPhoto && (
+                                              <button
+                                                type="button"
+                                                onClick={() => setImagePreviewModalUrl(checkInPhoto)}
+                                                className="relative group w-5 h-5 rounded border border-blue-200 hover:border-blue-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
+                                                title="View Clock-In Selfie"
+                                              >
+                                                <img src={checkInPhoto} alt="Clock-In" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                                                <span className="absolute bottom-0 inset-x-0 bg-blue-600/90 text-[5px] text-white font-bold text-center leading-none py-px">IN</span>
+                                              </button>
+                                            )}
+                                            {checkOutPhoto && (
+                                              <button
+                                                type="button"
+                                                onClick={() => setImagePreviewModalUrl(checkOutPhoto)}
+                                                className="relative group w-5 h-5 rounded border border-emerald-200 hover:border-emerald-500 overflow-hidden shrink-0 cursor-pointer transition-all shadow-2xs"
+                                                title="View Clock-Out Selfie"
+                                              >
+                                                <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                                                <span className="absolute bottom-0 inset-x-0 bg-emerald-600/90 text-[5px] text-white font-bold text-center leading-none py-px">OUT</span>
+                                              </button>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </td>
+
+                                    {/* Consolidated Breaks */}
+                                    <td className="py-2.5 px-2 text-center">
+                                      {b1 === 0 && b2 === 0 ? (
+                                        <span className="text-zinc-400 font-mono text-[11px]">—</span>
+                                      ) : (
+                                        <div className="inline-flex items-center gap-1 flex-wrap justify-center text-[10.5px]">
+                                          {b1 > 0 && (
+                                            <span className="bg-zinc-100 text-zinc-700 px-1.5 py-0.5 rounded font-mono border border-zinc-200">
+                                              B1: {b1}m
+                                            </span>
                                           )}
-                                          {checkOutPhoto && (
-                                            <button
-                                              type="button"
-                                              onClick={() => setImagePreviewModalUrl(checkOutPhoto)}
-                                              className="w-6 h-6 rounded border border-emerald-200 overflow-hidden shrink-0 cursor-pointer"
-                                              title="Clock-Out Photo"
-                                            >
-                                              <img src={checkOutPhoto} alt="Clock-Out" className="w-full h-full object-cover" />
-                                            </button>
+                                          {b2 > 0 && (
+                                            <span className="bg-zinc-100 text-zinc-700 px-1.5 py-0.5 rounded font-mono border border-zinc-200">
+                                              B2: {b2}m
+                                            </span>
                                           )}
                                         </div>
                                       )}
                                     </td>
 
-                                    <td className="py-2 px-2 text-zinc-700 font-normal">
-                                      {job.absent ? (
-                                        <span className="text-red-600 font-medium">Absent</span>
-                                      ) : (
-                                        `${job.startTime || '00:00'} - ${job.endTime || '00:00'}`
-                                      )}
+                                    <td className="py-2.5 px-2 text-zinc-800 font-medium">
+                                      {job.absent ? "—" : formatTimeBase(currentStart, currentEnd, job.totalTime)}
                                     </td>
-                                    <td className="py-2 px-2 text-center text-zinc-500 font-mono">{Number(job.break1Minutes || 0)}m</td>
-                                    <td className="py-2 px-2 text-center text-zinc-500 font-mono">{Number(job.break2Minutes || 0)}m</td>
-                                    <td className="py-2 px-2 text-zinc-800 font-medium">
-                                      {job.absent ? "—" : formatTimeBase(job.startTime, job.endTime, job.totalTime)}
+                                    <td className="py-2.5 px-2 text-zinc-600 font-mono text-center">${Number(job.hourlyRate || 0).toFixed(2)}</td>
+                                    <td className="py-2.5 px-3 text-zinc-900 font-semibold font-mono">${Number(job.totalPayout || 0).toFixed(2)}</td>
+                                    
+                                    {/* Task Details with 2-line wrap at very end */}
+                                    <td className="py-2.5 px-3 text-zinc-600 font-normal max-w-[200px]" title={job.taskDetails}>
+                                      <div className="text-[11px] leading-snug line-clamp-2">
+                                        {job.taskDetails}
+                                      </div>
                                     </td>
-                                    <td className="py-2 px-2 text-zinc-600 font-mono">${Number(job.hourlyRate || 0).toFixed(2)}</td>
-                                    <td className="py-2 px-2 text-zinc-900 font-semibold font-mono">${Number(job.totalPayout || 0).toFixed(2)}</td>
-                                    <td className="py-2 px-2.5 text-zinc-500 font-normal truncate max-w-[120px]" title={job.taskDetails}>{job.taskDetails}</td>
                                   </tr>
                                 );
                               })}
