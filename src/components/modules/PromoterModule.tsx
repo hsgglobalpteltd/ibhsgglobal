@@ -47,6 +47,7 @@ import { cn } from "@/lib/utils";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import XLSX from "xlsx-js-style";
+import ExcelJS from "exceljs";
 
 interface UserProfile {
   role: string;
@@ -113,6 +114,106 @@ const isGroupRetailer = (r: any): boolean => {
   );
 };
 
+interface ActiveCampaignsGridProps {
+  campaigns: any[];
+  schedules: any[];
+  brands: any[];
+  onSelectCampaign: (campaignId: string) => void;
+}
+
+const ActiveCampaignsGrid: React.FC<ActiveCampaignsGridProps> = ({
+  campaigns,
+  schedules,
+  brands,
+  onSelectCampaign,
+}) => {
+  return (
+    <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden flex flex-col shadow-xs h-full min-w-0 transition-all duration-300 flex-1">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-2.5 bg-zinc-50 border-b border-zinc-150 shrink-0 select-none">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-medium text-zinc-600 uppercase tracking-wider">
+              Active Campaigns
+            </span>
+            <span className="text-[11px] text-zinc-400 font-normal">
+              ({campaigns.length})
+            </span>
+          </div>
+          <span className="text-[11px] text-zinc-400 font-normal">
+            Sorted by latest edit
+          </span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 select-none">
+          {campaigns.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center p-12 text-center">
+              <Megaphone size={36} className="text-zinc-300 stroke-1 mb-2.5" />
+              <span className="text-zinc-600 text-xs font-medium uppercase tracking-wider">No Active Campaigns</span>
+              <p className="text-[11px] text-zinc-400 mt-1 max-w-xs font-normal leading-relaxed">
+                No active campaigns found. Please create a new campaign in the Campaigns tab.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+              {campaigns.map((c) => {
+                const brandName = String(c.brand || "").split(",")
+                  .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["display_name"] || id.trim())
+                  .filter(Boolean)
+                  .join(", ");
+                const shiftCount = schedules.filter(s => String(s.campaign_id) === String(c.id)).length;
+                const hasDates = Boolean(c["start_date"] || c["end_date"]);
+
+                return (
+                  <div
+                    key={c.id}
+                    onClick={() => onSelectCampaign(c.id)}
+                    className="group bg-white border border-zinc-200 hover:border-zinc-400 hover:shadow-xs rounded-lg p-3.5 flex flex-col justify-between transition-all duration-150 cursor-pointer select-none min-h-[140px]"
+                  >
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="text-[10.5px] font-medium text-zinc-500 uppercase tracking-wider truncate max-w-[140px]" title={brandName || "Campaign"}>
+                          {brandName || "Campaign"}
+                        </span>
+                        <span className="text-[10.5px] text-zinc-400 font-normal shrink-0">
+                          {shiftCount} {shiftCount === 1 ? "shift" : "shifts"}
+                        </span>
+                      </div>
+
+                      <h4 className="text-xs font-medium text-zinc-850 group-hover:text-[#0B57D0] transition-colors line-clamp-2 leading-snug mt-0.5" title={c["campaign_title"]}>
+                        {c["campaign_title"]}
+                      </h4>
+
+                      {c["campaign_description"] && (
+                        <p className="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed mt-0.5 font-normal" title={c["campaign_description"]}>
+                          {c["campaign_description"]}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="pt-2 mt-2 border-t border-zinc-100 flex items-center justify-between text-[10px] text-zinc-400">
+                      <div className="flex items-center gap-1 truncate text-zinc-500 font-mono">
+                        <CalendarIcon size={11} className="text-zinc-400 shrink-0" />
+                        <span className="truncate">
+                          {hasDates 
+                            ? `${formatEpochToDisplay(c["start_date"]) || "—"} - ${formatEpochToDisplay(c["end_date"]) || "—"}`
+                            : "Dates unassigned"}
+                        </span>
+                      </div>
+                      <span className="text-[#0B57D0] font-medium text-[11px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center shrink-0">
+                        Open →
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export function PromoterModule({ profile }: PromoterModuleProps) {
   const [activeTab, setActiveTab] = React.useState<string>("calendar");
   const [mounted, setMounted] = React.useState(false);
@@ -164,6 +265,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     const dd = String(sun.getDate()).padStart(2, "0");
     return `${yyyy}-${mm}-${dd}`;
   });
+  const [scheduleSearchQuery, setScheduleSearchQuery] = React.useState<string>("");
+  const tableContainerRef = React.useRef<HTMLDivElement | null>(null);
+  const [isTableScrollable, setIsTableScrollable] = React.useState<boolean>(false);
 
   // Schedules state
   const [schedules, setSchedules] = React.useState<any[]>([]);
@@ -289,8 +393,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     };
   }, [isPrintRetailerOpen]);
 
-  // Reports Tab State
-  const [reportCampaignId, setReportCampaignId] = React.useState<string>("");
+  // Reports Tab State - shares campaign selection directly with Schedule tab
+  const reportCampaignId = selectedCampaignId;
+  const setReportCampaignId = setSelectedCampaignId;
   const [reportStartDate, setReportStartDate] = React.useState<string>("");
   const [reportEndDate, setReportEndDate] = React.useState<string>("");
   const [isReportEditMode, setIsReportEditMode] = React.useState<boolean>(false);
@@ -302,6 +407,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   const [reportClaimModalItems, setReportClaimModalItems] = React.useState<any[]>([]);
   const [uploadingReceiptIndex, setUploadingReceiptIndex] = React.useState<number | null>(null);
   const [promotingCostModalShiftId, setPromotingCostModalShiftId] = React.useState<string | null>(null);
+
+  // Working File Import / Export State
+  const [workingFilePreview, setWorkingFilePreview] = React.useState<any | null>(null);
+  const [isImportPreviewOpen, setIsImportPreviewOpen] = React.useState<boolean>(false);
+  const [isSavingWorkingFile, setIsSavingWorkingFile] = React.useState<boolean>(false);
+  const workingFileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   const openReportClaimModal = (evt: any) => {
     if (!evt) return;
@@ -1039,6 +1150,28 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     return `${h}h ${String(m).padStart(2, "0")}m`;
   };
 
+  // Helper: Parse time string to minutes from midnight for robust chronologic sorting
+  const parseTimeToMinutes = (timeStr?: string): number => {
+    if (!timeStr) return 0;
+    const match = String(timeStr).trim().match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return 0;
+    const h = Number(match[1]);
+    const m = Number(match[2]);
+    return h * 60 + m;
+  };
+
+  // Helper: Sort payout jobs / rows primarily by Date ASC, secondarily by Hour Start ASC
+  const sortPayoutRowsByDateAndStart = (a: any, b: any): number => {
+    const dateA = Number(a.date) || 0;
+    const dateB = Number(b.date) || 0;
+    if (dateA !== dateB) {
+      return dateA - dateB;
+    }
+    const timeA = parseTimeToMinutes(a.startTime || a.scheduledStart);
+    const timeB = parseTimeToMinutes(b.startTime || b.scheduledStart);
+    return timeA - timeB;
+  };
+
   // Helper: Format date or timestamp to YYYY-MM-DD
   const formatDateToYYYYMMDD = React.useCallback((ts: any): string => {
     const d = new Date(Number(ts));
@@ -1164,8 +1297,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       };
     });
 
-    // Sort rows by date asc
-    rows.sort((a, b) => Number(a.date) - Number(b.date));
+    // Sort rows by date asc, then by hour start asc
+    rows.sort(sortPayoutRowsByDateAndStart);
 
     setEditedPayoutRows(rows);
     setIsPayoutFetching(false);
@@ -1179,6 +1312,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
 
     const selectedRows = editedPayoutRows.filter(r => r.selected);
+    selectedRows.sort(sortPayoutRowsByDateAndStart);
     if (selectedRows.length === 0) {
       showToast("Please select at least one shift to pay.", "warning");
       return;
@@ -1504,6 +1638,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     let detailRows: any[] = [];
     try {
       detailRows = JSON.parse(payout["payout_details"]);
+      if (Array.isArray(detailRows)) {
+        detailRows.sort(sortPayoutRowsByDateAndStart);
+      }
       totalHours = detailRows.reduce((acc, curr) => acc + Number(curr.totalTime || 0), 0);
     } catch (e) {
       console.error(e);
@@ -1678,8 +1815,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     doc.rect(15, 78, 180, 7, "S");
 
     doc.text("Date", 17, 82.5);
-    doc.text("Hours / Remarks", 48, 82.5);
-    doc.text("Total Time", 98, 82.5, { align: "right" });
+    doc.text("Hours / Remarks", 46, 82.5);
+    doc.text("Break", 80, 82.5, { align: "right" });
+    doc.text("Total Time", 100, 82.5, { align: "right" });
     doc.text("Rate", 118, 82.5, { align: "right" });
     doc.text("Amount", 143, 82.5, { align: "right" });
     doc.text("Task Details", 148, 82.5);
@@ -1698,8 +1836,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         doc.rect(15, yPos, 180, 7, "S");
         doc.setFont("helvetica", "bold");
         doc.text("Date", 17, yPos + 4.5);
-        doc.text("Hours / Remarks", 48, yPos + 4.5);
-        doc.text("Total Time", 98, yPos + 4.5, { align: "right" });
+        doc.text("Hours / Remarks", 46, yPos + 4.5);
+        doc.text("Break", 80, yPos + 4.5, { align: "right" });
+        doc.text("Total Time", 100, yPos + 4.5, { align: "right" });
         doc.text("Rate", 118, yPos + 4.5, { align: "right" });
         doc.text("Amount", 143, yPos + 4.5, { align: "right" });
         doc.text("Task Details", 148, yPos + 4.5);
@@ -1718,15 +1857,18 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         // Combined absent details
         doc.setFont("helvetica", "bold");
         doc.setTextColor(153, 27, 27); // red
-        doc.text(`Absent: ${r.absentReason || "Reason not specified"}`, 48, yPos + 5);
+        doc.text(`Absent: ${r.absentReason || "Reason not specified"}`, 46, yPos + 5);
         doc.setFont("helvetica", "normal");
         doc.setTextColor(24, 24, 27);
-        doc.text("-", 98, yPos + 5, { align: "right" });
+        doc.text("—", 80, yPos + 5, { align: "right" });
+        doc.text("-", 100, yPos + 5, { align: "right" });
         doc.text("-", 118, yPos + 5, { align: "right" });
       } else {
         // Work shift details
-        doc.text(`${r.startTime} - ${r.endTime}`, 48, yPos + 5);
-        doc.text(`${Number(r.totalTime)?.toFixed(2)} hrs`, 98, yPos + 5, { align: "right" });
+        doc.text(`${r.startTime} - ${r.endTime}`, 46, yPos + 5);
+        const totalBreakMins = (Number(r.break1Minutes) || 0) + (Number(r.break2Minutes) || 0);
+        doc.text(totalBreakMins > 0 ? `${totalBreakMins}m` : "—", 80, yPos + 5, { align: "right" });
+        doc.text(formatTimeBase(r.startTime, r.endTime, r.totalTime), 100, yPos + 5, { align: "right" });
         doc.text(`$${Number(r.hourlyRate)?.toFixed(2)}`, 118, yPos + 5, { align: "right" });
       }
 
@@ -1750,12 +1892,12 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     }
 
     if (Array.isArray(pdfAdjustments) && pdfAdjustments.length > 0) {
-      yPos += 3;
+      yPos += 7;
       doc.setFont("helvetica", "bold");
       doc.setFontSize(7.5);
       doc.setTextColor(113, 113, 122);
       doc.text("ADJUSTMENTS & ALLOWANCES", 17, yPos);
-      yPos += 4;
+      yPos += 5;
 
       doc.setFont("helvetica", "normal");
       doc.setFontSize(8);
@@ -1766,10 +1908,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         doc.setTextColor(isDed ? 185 : 22, isDed ? 28 : 101, isDed ? 28 : 52);
         doc.text(`${sign} ${adj.description || "Adjustment"}`, 20, yPos);
         doc.text(amtStr, 143, yPos, { align: "right" });
-        yPos += 5;
+        yPos += 5.5;
       });
       doc.setTextColor(24, 24, 27);
       doc.setFontSize(8.5);
+      yPos += 4;
+    } else {
+      yPos += 4;
     }
 
     // Add spacing and total row at end of table
@@ -2749,47 +2894,35 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     const startDisplay = formatEpochToDisplay(c["start_date"]) || "—";
     const endDisplay = formatEpochToDisplay(c["end_date"]) || "—";
-    doc.text(`Duration: ${startDisplay} to ${endDisplay}`, 110, 37);
-
-    // Target Products & Promoters
-    let targetProds = "All Products in Brand";
-    if (c.products && c.products.trim()) {
-      const prodSkus = c.products.split(",").map((s: string) => s.trim()).filter(Boolean);
-      const prodList = prodSkus.map((sku: string) => {
-        const dName = getProductDisplayName(sku);
-        const cSku = getProductCleanSku(sku);
-        return dName !== cSku ? `${dName} (${cSku})` : dName;
-      });
-      targetProds = prodList.join(", ");
-    }
-    const promotersText = involvedPromoterNames.length > 0 
-      ? involvedPromoterNames.join(", ") 
-      : "No promoters assigned yet.";
+    doc.text(`Duration: ${startDisplay} to ${endDisplay}`, 196, 37, { align: "right" });
 
     doc.setFont("helvetica", "normal");
     doc.setFontSize(8.5);
     doc.setTextColor(71, 85, 105);
 
-    const prodLines = doc.splitTextToSize(`Target Products: ${targetProds}`, 182);
-    doc.text(prodLines, 14, 43);
-    let yPos = 43 + prodLines.length * 4.2;
+    let yPos = 43;
 
-    const promLines = doc.splitTextToSize(`Promoters Involved: ${promotersText}`, 182);
-    doc.text(promLines, 14, yPos);
-    yPos += promLines.length * 4.2 + 2;
-
-    // Optional Description
+    // 1. Description (Swapped before Promoters Involved per user request)
     if (c["campaign_description"]) {
       const descLines = doc.splitTextToSize(`Description: ${c["campaign_description"]}`, 182);
       doc.text(descLines, 14, yPos);
       yPos += descLines.length * 4.2 + 2;
     }
 
-    // --- Performance & Financial Summary KPI Cards ---
+    // 2. Promoters Involved
+    const promotersText = involvedPromoterNames.length > 0 
+      ? involvedPromoterNames.join(", ") 
+      : "No promoters assigned yet.";
+
+    const promLines = doc.splitTextToSize(`Promoters Involved: ${promotersText}`, 182);
+    doc.text(promLines, 14, yPos);
+    yPos += promLines.length * 4.2 + 2;
+
+    // --- Performance & Financial Summary KPI Cards (Clean Black & White Design) ---
     yPos += 2;
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10.5);
-    doc.setTextColor(24, 24, 27);
+    doc.setTextColor(17, 24, 39);
     doc.text("Campaign Summary", 14, yPos);
     yPos += 4;
 
@@ -2801,65 +2934,54 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       {
         label: "Product Move",
         val: `${grandTotalUnitsMoved} Pcs`,
-        sub: `${Object.keys(skuMoveMap).length} SKUs Moved`,
-        bg: [240, 249, 255],
-        border: [186, 230, 253],
-        text: [2, 132, 199]
+        sub: `${Object.keys(skuMoveMap).length} SKUs Moved`
       },
       {
         label: "Promoting Cost",
         val: `$${grandTotalCost.toFixed(2)}`,
-        sub: "Claims & Expenses",
-        bg: [255, 251, 235],
-        border: [254, 243, 199],
-        text: [180, 83, 9]
+        sub: "Claims & Expenses"
       },
       {
         label: "Wages Spend",
         val: `$${grandTotalWage.toFixed(2)}`,
-        sub: "Promoter Payroll",
-        bg: [240, 253, 244],
-        border: [187, 247, 208],
-        text: [21, 128, 61]
+        sub: "Promoter Payroll"
       },
       {
         label: "Total Spend",
         val: `$${grandTotalSpend.toFixed(2)}`,
-        sub: `${campaignSchedules.length} Shifts / ${uniqueStoresCount} Stores`,
-        bg: [239, 246, 255],
-        border: [191, 219, 254],
-        text: [11, 87, 208]
+        sub: `${campaignSchedules.length} Shifts / ${uniqueStoresCount} Stores`
       }
     ];
 
     summaryCards.forEach((card, idx) => {
       const x = 14 + idx * (cardWidth + cardGap);
-      doc.setFillColor(card.bg[0], card.bg[1], card.bg[2]);
+      // Clean white background with crisp neutral light border
+      doc.setFillColor(255, 255, 255);
       doc.roundedRect(x, yPos, cardWidth, cardHeight, 1.5, 1.5, "F");
-      doc.setDrawColor(card.border[0], card.border[1], card.border[2]);
+      doc.setDrawColor(209, 213, 219);
       doc.roundedRect(x, yPos, cardWidth, cardHeight, 1.5, 1.5, "S");
 
-      // Label
+      // Label (muted neutral uppercase)
       doc.setFont("helvetica", "bold");
       doc.setFontSize(7);
-      doc.setTextColor(100, 116, 139);
+      doc.setTextColor(107, 114, 128);
       doc.text(card.label.toUpperCase(), x + 3.5, yPos + 5);
 
-      // Value
+      // Value (crisp dark text)
       doc.setFontSize(10.5);
-      doc.setTextColor(card.text[0], card.text[1], card.text[2]);
+      doc.setTextColor(17, 24, 39);
       doc.text(card.val, x + 3.5, yPos + 12);
 
-      // Subtext
+      // Subtext (subtle neutral)
       doc.setFont("helvetica", "normal");
       doc.setFontSize(6.5);
-      doc.setTextColor(148, 163, 184);
+      doc.setTextColor(156, 163, 175);
       doc.text(card.sub, x + 3.5, yPos + 17);
     });
 
     yPos += cardHeight + 8;
 
-    // --- Product Move Breakdown Table (if items moved) ---
+    // --- Product Move Breakdown Table (Clean B&W, % column removed) ---
     const skuMoveList = Object.values(skuMoveMap).sort((a, b) => b.qty - a.qty);
     if (skuMoveList.length > 0) {
       if (yPos > 240) {
@@ -2869,18 +2991,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10);
-      doc.setTextColor(24, 24, 27);
+      doc.setTextColor(17, 24, 39);
       doc.text("Product Movement Breakdown", 14, yPos);
       yPos += 3;
 
-      const prodTableHeaders = [["SKU", "Product Display Name", "Units Moved (Pcs)", "% of Total Movement"]];
-      const prodTableBody = skuMoveList.map(it => {
-        const pct = grandTotalUnitsMoved > 0 ? ((it.qty / grandTotalUnitsMoved) * 100).toFixed(1) + "%" : "0%";
-        return [it.sku, it.name, String(it.qty), pct];
-      });
+      const prodTableHeaders = [["SKU", "Product Display Name", "Units Moved (Pcs)"]];
+      const prodTableBody = skuMoveList.map(it => [it.sku, it.name, `${it.qty} pcs`]);
 
       // Add Total Row
-      prodTableBody.push(["TOTAL", `${skuMoveList.length} SKUs`, String(grandTotalUnitsMoved), "100.0%"]);
+      prodTableBody.push(["TOTAL", `${skuMoveList.length} SKUs`, `${grandTotalUnitsMoved} pcs`]);
 
       autoTable(doc, {
         head: prodTableHeaders,
@@ -2889,20 +3008,19 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         margin: { left: 14, right: 14 },
         theme: "striped",
         columnStyles: {
-          0: { cellWidth: 35 },
-          1: { cellWidth: 85 },
-          2: { cellWidth: 32, halign: "right" },
-          3: { cellWidth: 30, halign: "right" }
+          0: { cellWidth: 40 },
+          1: { cellWidth: 105 },
+          2: { cellWidth: 37, halign: "center" }
         },
         headStyles: {
-          fillColor: [240, 244, 249],
-          textColor: [71, 71, 71],
+          fillColor: [243, 244, 246],
+          textColor: [17, 24, 39],
           fontStyle: "bold",
           fontSize: 8
         },
         bodyStyles: {
           fontSize: 7.5,
-          textColor: [39, 39, 42]
+          textColor: [31, 41, 55]
         },
         styles: {
           font: "helvetica",
@@ -2910,10 +3028,19 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         }
       });
 
-      yPos = (doc as any).lastAutoTable.finalY + 8;
+      yPos = (doc as any).lastAutoTable.finalY + 3.5;
+
+      // Small disclaimer note below Product Movement table
+      doc.setFont("helvetica", "italic");
+      doc.setFontSize(6.5);
+      doc.setTextColor(107, 114, 128);
+      const noteText = "* Note: Product movement figures are recorded based on promoter on-ground inventory reports, not POS scan sales. Actual figures may vary.";
+      const noteLines = doc.splitTextToSize(noteText, 182);
+      doc.text(noteLines, 14, yPos);
+      yPos += noteLines.length * 3.2 + 5.5;
     }
 
-    // --- Stores & Activations Summary (Grouped by Retailer) ---
+    // --- Stores & Activations Summary (Grouped by Retailer, Clean B&W) ---
     if (yPos > 240) {
       doc.addPage();
       yPos = 20;
@@ -2921,9 +3048,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10);
-    doc.setTextColor(24, 24, 27);
+    doc.setTextColor(17, 24, 39);
     doc.text("Stores & Activations Summary", 14, yPos);
-    doc.setDrawColor(228, 228, 231);
+    doc.setDrawColor(229, 231, 235);
     doc.line(14, yPos + 2, 196, yPos + 2);
     yPos += 7;
 
@@ -2946,14 +3073,14 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
         doc.setFont("helvetica", "bold");
         doc.setFontSize(9.5);
-        doc.setTextColor(11, 87, 208);
+        doc.setTextColor(17, 24, 39);
         doc.text(`${retailerName} (${qtyStores} Store${qtyStores === 1 ? "" : "s"}, ${totalVisits} Activation${totalVisits === 1 ? "" : "s"})`, 14, yPos);
         yPos += 2;
 
-        const tableHeaders = [["Store Name & Address", "Activations", "Promoters", "Product Move", "Cost", "Wages", "Total Spend"]];
+        const tableHeaders = [["Locations", "Activations", "Promoters", "Product Move", "Cost", "Wages", "Total Spend"]];
         const tableBody = storeList.map(st => [
           `${st.storeName}\n${st.storeAddress}`,
-          `${st.visitCount}x (${st.visitCount} visit${st.visitCount === 1 ? "" : "s"})`,
+          `${st.visitCount}x`,
           Array.from(st.promoters).join(", ") || "—",
           st.unitsMoved > 0 ? `${st.unitsMoved} pcs` : "—",
           st.costVal > 0 ? `$${st.costVal.toFixed(2)}` : "—",
@@ -2969,26 +3096,53 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
           theme: "striped",
           columnStyles: {
             0: { cellWidth: 55 },
-            1: { cellWidth: 26, halign: "center" },
-            2: { cellWidth: 32 },
+            1: { cellWidth: 20, halign: "center" },
+            2: { cellWidth: 38 },
             3: { cellWidth: 22, halign: "right" },
             4: { cellWidth: 15, halign: "right" },
-            5: { cellWidth: 17, halign: "right" },
-            6: { cellWidth: 15, halign: "right" }
+            5: { cellWidth: 16, halign: "right" },
+            6: { cellWidth: 16, halign: "right" }
           },
           headStyles: {
-            fillColor: [240, 244, 249],
-            textColor: [71, 71, 71],
+            fillColor: [243, 244, 246],
+            textColor: [17, 24, 39],
             fontStyle: "bold",
             fontSize: 7.5
           },
           bodyStyles: {
             fontSize: 7,
-            textColor: [39, 39, 42]
+            textColor: [31, 41, 55],
+            valign: "middle"
           },
           styles: {
             font: "helvetica",
             cellPadding: 2
+          },
+          willDrawCell: (data) => {
+            if (data.section === "body" && data.column.index === 0) {
+              data.cell.text = []; // Suppress default text to draw store name and smaller address
+            }
+          },
+          didDrawCell: (data) => {
+            if (data.section === "body" && data.column.index === 0) {
+              const rawVal = data.cell.raw;
+              const [storeName, ...addrParts] = String(rawVal).split("\n");
+              const address = addrParts.join("\n");
+
+              doc.setFont("helvetica", "bold");
+              doc.setFontSize(7.5);
+              doc.setTextColor(17, 24, 39);
+              const nameLines = doc.splitTextToSize(storeName, data.cell.width - 4);
+              doc.text(nameLines, data.cell.x + 2, data.cell.y + 3.8);
+
+              if (address) {
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(5.5);
+                doc.setTextColor(107, 114, 128); // Muted small address
+                const addrLines = doc.splitTextToSize(address, data.cell.width - 4);
+                doc.text(addrLines, data.cell.x + 2, data.cell.y + 3.8 + nameLines.length * 3.2);
+              }
+            }
           }
         });
 
@@ -3135,19 +3289,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
   }, [campaigns, campaignSubTab, brands, products]);
 
   // --- Reports Tab Computations & Handlers ---
-  
-  // Set default report campaign and date bounds
-  React.useEffect(() => {
-    if (!reportCampaignId && campaigns.length > 0) {
-      const firstActive = campaigns.find(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"));
-      if (firstActive) {
-        setReportCampaignId(firstActive.id);
-        if (firstActive.start_date) setReportStartDate(formatEpochToDateInput(firstActive.start_date));
-        if (firstActive.end_date) setReportEndDate(formatEpochToDateInput(firstActive.end_date));
-      }
-    }
-  }, [campaigns, reportCampaignId]);
-
   // When reportCampaignId changes, update date bounds
   React.useEffect(() => {
     if (reportCampaignId && reportCampaignId !== "all" && reportCampaignId !== "") {
@@ -3448,7 +3589,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
       for (const id of shiftIds) {
         const changes = reportDrafts[id];
-        const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter?table=Promoter_Schedule`, {
+        const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -3475,6 +3616,893 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       showToast("Failed to save report changes: " + err.message, "error");
     } finally {
       setSavingReport(false);
+    }
+  };
+
+  // --- Helper: Convert 0-indexed column number to Excel column letter ---
+  const getExcelColLetter = (c: number): string => {
+    let temp = "", letter = "";
+    let col = c;
+    while (col >= 0) {
+      temp = String.fromCharCode((col % 26) + 65);
+      letter = temp + letter;
+      col = Math.floor(col / 26) - 1;
+    }
+    return letter;
+  };
+
+  // --- Helper: Format epoch timestamp to DD/MM string ---
+  const formatEpochToDDMM = (epoch: any): string => {
+    if (!epoch) return "";
+    const d = new Date(Number(epoch));
+    if (isNaN(d.getTime())) return "";
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    return `${dd}/${mm}`;
+  };
+
+  // --- Helper: Format shift start and end into military 0000 - 0000 format ---
+  const formatShiftMilitary = (startVal: any, endVal: any) => {
+    const sStr = formatTimeDisplay(startVal) || "09:00";
+    const eStr = formatTimeDisplay(endVal) || "17:00";
+    const sClean = sStr.replace(/[^0-9]/g, "").padStart(4, "0").slice(-4);
+    const eClean = eStr.replace(/[^0-9]/g, "").padStart(4, "0").slice(-4);
+    return `${sClean} - ${eClean}`;
+  };
+
+  // --- Working File Excel Export (3-Tab Architecture with Native Dropdowns) ---
+  const handleExportReportWorkingFile = async () => {
+    if (reportActivationEvents.length === 0) {
+      showToast("No activation events found to export.", "warning");
+      return;
+    }
+
+    try {
+      const wb = new ExcelJS.Workbook();
+      wb.creator = "iB - HSG Global";
+      wb.created = new Date();
+
+      const currentCamp = campaigns.find(c => String(c.id) === String(reportCampaignId));
+      const campTitle = currentCamp ? currentCamp["campaign_title"] : (reportCampaignId === "all" ? "All Active Campaigns" : "Campaign");
+
+      // Shared styling constants
+      const thinBorder: any = {
+        top: { style: "thin", color: { argb: "FFD9D9D9" } },
+        bottom: { style: "thin", color: { argb: "FFD9D9D9" } },
+        left: { style: "thin", color: { argb: "FFD9D9D9" } },
+        right: { style: "thin", color: { argb: "FFD9D9D9" } }
+      };
+
+      const headerBorder: any = {
+        top: { style: "thin", color: { argb: "FF001A4D" } },
+        bottom: { style: "thin", color: { argb: "FF001A4D" } },
+        left: { style: "thin", color: { argb: "FF001A4D" } },
+        right: { style: "thin", color: { argb: "FF001A4D" } }
+      };
+
+      const applyInstructionBanner = (ws: any, numCols: number, text: string, height: number = 65) => {
+        ws.mergeCells(1, 1, 1, numCols);
+        const row = ws.getRow(1);
+        row.height = height;
+        const cell = row.getCell(1);
+        cell.value = text;
+        cell.font = { name: "Calibri", size: 9.5, italic: true, bold: false, color: { argb: "FFCC0000" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFF00" } }; // Yellow
+        cell.alignment = { vertical: "top", horizontal: "left", wrapText: true };
+      };
+
+      const applyCampaignHeaderBanner = (ws: any, numCols: number, titleText: string) => {
+        ws.mergeCells(2, 1, 2, numCols);
+        const row = ws.getRow(2);
+        row.height = 28;
+        const cell = row.getCell(1);
+        cell.value = titleText;
+        cell.font = { name: "Calibri", size: 13, bold: true, italic: true, color: { argb: "FF002060" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF0F4FA" } }; // Soft blue
+        cell.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+        cell.border = { bottom: { style: "medium", color: { argb: "FF002060" } } };
+      };
+
+      const applyTableHeaders = (ws: any, headers: string[], centerIndices: number[] = []) => {
+        const row = ws.getRow(3);
+        row.height = 26;
+        headers.forEach((h, idx) => {
+          const cell = row.getCell(idx + 1);
+          cell.value = h;
+          cell.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FFFFFFFF" } };
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF002060" } }; // Deep Navy
+          cell.alignment = { vertical: "middle", horizontal: centerIndices.includes(idx) ? "center" : "left" };
+          cell.border = headerBorder;
+        });
+      };
+
+      // ----------------------------------------------------
+      // Build Lookup Source Lists (For System Reference and Validations)
+      // ----------------------------------------------------
+      const activationEventsList: { label: string; eventKey: string }[] = [];
+      const assignmentSlotsList: { label: string; eventKey: string; claimant: string; type: "personal" | "company_expense" | "company_goods" }[] = [];
+
+      reportActivationEvents.forEach(evt => {
+        const dateDDMM = formatEpochToDDMM(evt.date);
+        const primaryShift = evt.shifts?.[0];
+        const defaultShiftStr = formatShiftMilitary(primaryShift?.shift_start, primaryShift?.shift_end);
+        const storeName = getFormattedStoreName(evt.store_id, evt.store_name);
+
+        const eventSlotStr = `${dateDDMM} | ${defaultShiftStr} | ${storeName}`;
+        activationEventsList.push({ label: eventSlotStr, eventKey: evt.eventKey });
+
+        // Assigned promoters (Personal Expense slot)
+        evt.promoterList.forEach((p: any) => {
+          const pShiftStr = formatShiftMilitary(p.shiftStart, p.shiftEnd) || defaultShiftStr;
+          const slotStr = `${dateDDMM} | ${pShiftStr} | ${p.promoterName} | ${storeName}`;
+          assignmentSlotsList.push({ label: slotStr, eventKey: evt.eventKey, claimant: p.promoterName, type: "personal" });
+        });
+
+        // Company Expense slot
+        const compExpSlotStr = `${dateDDMM} | ${defaultShiftStr} | Company Expense | ${storeName}`;
+        assignmentSlotsList.push({ label: compExpSlotStr, eventKey: evt.eventKey, claimant: "Company Expense", type: "company_expense" });
+
+        // Company Goods slot
+        const compGoodsSlotStr = `${dateDDMM} | ${defaultShiftStr} | Company Goods | ${storeName}`;
+        assignmentSlotsList.push({ label: compGoodsSlotStr, eventKey: evt.eventKey, claimant: "Company Goods", type: "company_goods" });
+      });
+
+      const campaignProductOptions = reportCampaignProducts.map(p => ({
+        label: `${p.sku} (${p["display_name"] || p.name || p.sku})`,
+        sku: p.sku,
+        cost: Number(p.cost_price || p.unit_cost || 1.00)
+      }));
+
+      const maxRefEvents = Math.max(4, 3 + activationEventsList.length);
+      const maxRefSlots = Math.max(4, 3 + assignmentSlotsList.length);
+      const maxRefProducts = Math.max(4, 3 + campaignProductOptions.length);
+
+      // ==========================================
+      // TAB 1: Goods Movement (1st Worksheet in Workbook)
+      // Columns: Activation Event | Product SKU | Qty Moved (Units)
+      // ==========================================
+      const wsGoods = wb.addWorksheet("Goods Movement");
+      wsGoods.views = [{ activeCell: "A4", state: "normal" }];
+      wsGoods.columns = [
+        { key: "activation", width: 50 },
+        { key: "sku", width: 44 },
+        { key: "qty", width: 22 }
+      ];
+
+      applyInstructionBanner(
+        wsGoods,
+        3,
+        "INSTRUCTIONS FOR GOODS MOVEMENT:\n" +
+        "1. Select Activation Event from dropdown in Column A (Date | Shift | Store).\n" +
+        "2. Select Product SKU moved from dropdown in Column B.\n" +
+        "3. Enter Quantity Moved in Column C. If an activation moved multiple products, simply add multiple rows!\n" +
+        "4. Save and re-upload this file in Admin Console > Campaign Report to commit stock movements.",
+        65
+      );
+      applyCampaignHeaderBanner(wsGoods, 3, `Campaign: ${campTitle} | Goods Movement Ledger`);
+      applyTableHeaders(wsGoods, [
+        "Activation Event (Dropdown ▼)",
+        "Product SKU (Dropdown ▼)",
+        "Qty Moved (Units)"
+      ], [2]);
+
+      // Populate existing recorded movements from database
+      const existingGoodsRows: { eventSlot: string; product: string; qty: any }[] = [];
+      reportActivationEvents.forEach(evt => {
+        const dateDDMM = formatEpochToDDMM(evt.date);
+        const primaryShift = evt.shifts?.[0];
+        const defaultShiftStr = formatShiftMilitary(primaryShift?.shift_start, primaryShift?.shift_end);
+        const storeName = getFormattedStoreName(evt.store_id, evt.store_name);
+        const eventSlotStr = `${dateDDMM} | ${defaultShiftStr} | ${storeName}`;
+
+        if (Array.isArray(evt.itemsMoved) && evt.itemsMoved.length > 0) {
+          evt.itemsMoved.forEach((it: any) => {
+            const matchedProd = campaignProductOptions.find(p => String(p.sku).toLowerCase() === String(it.sku).toLowerCase());
+            const prodStr = matchedProd ? matchedProd.label : String(it.sku);
+            existingGoodsRows.push({
+              eventSlot: eventSlotStr,
+              product: prodStr,
+              qty: Number(it.qty || 0)
+            });
+          });
+        }
+      });
+
+      // Provide 500 rows with dropdowns all the way down so user has no limit to add rows
+      const goodsTotalDataRows = Math.max(500, existingGoodsRows.length + 50);
+      for (let r = 0; r < goodsTotalDataRows; r++) {
+        const rowNum = 4 + r;
+        const row = wsGoods.getRow(rowNum);
+        row.height = 22;
+
+        const existing = existingGoodsRows[r];
+
+        // Col 1: Activation Event (Dropdown)
+        const cellA = row.getCell(1);
+        cellA.value = existing ? existing.eventSlot : "";
+        cellA.dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: [`'System Reference'!$A$4:$A$${maxRefEvents}`]
+        };
+        cellA.border = thinBorder;
+        cellA.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFFF" } }; // Clean white
+        cellA.font = { name: "Calibri", size: 10.5, color: { argb: "FF111827" } };
+        cellA.alignment = { vertical: "middle", horizontal: "left" };
+
+        // Col 2: Product SKU (Dropdown)
+        const cellB = row.getCell(2);
+        cellB.value = existing ? existing.product : "";
+        cellB.dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: [`'System Reference'!$C$4:$C$${maxRefProducts}`]
+        };
+        cellB.border = thinBorder;
+        cellB.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFFF" } }; // Clean white
+        cellB.font = { name: "Calibri", size: 10.5, color: { argb: "FF111827" } };
+        cellB.alignment = { vertical: "middle", horizontal: "left" };
+
+        // Col 3: Qty Moved (Leave empty if blank row - no pre-filled 0!)
+        const cellC = row.getCell(3);
+        cellC.value = existing ? existing.qty : "";
+        cellC.border = thinBorder;
+        cellC.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFFF" } }; // Clean white
+        cellC.font = { name: "Calibri", size: 11, bold: true, color: { argb: "FF002060" } };
+        cellC.alignment = { vertical: "middle", horizontal: "right" };
+        cellC.numFmt = "#,##0";
+      }
+
+      // ==========================================
+      // TAB 2: Claims Ledger (2nd Worksheet in Workbook)
+      // Columns: Assignment / Claim Slot | Description / Purpose | Cash Amount ($) | Goods Item (SKU) | Goods Qty
+      // ==========================================
+      const wsClaims = wb.addWorksheet("Claims Ledger");
+      wsClaims.columns = [
+        { key: "slot", width: 56 },
+        { key: "desc", width: 36 },
+        { key: "cashAmount", width: 18 },
+        { key: "goodsSku", width: 44 },
+        { key: "goodsQty", width: 16 }
+      ];
+
+      applyInstructionBanner(
+        wsClaims,
+        5,
+        "INSTRUCTIONS FOR CLAIMS LEDGER:\n" +
+        "1. Select Assignment / Claim Slot in Column A (Date | Shift | Claimant / Company Type | Store Name).\n" +
+        "2. For Promoter / Company Expense: enter Description (Col B) and Cash Amount $ (Col C). Goods columns (Col D & E) will automatically gray out.\n" +
+        "3. For Company Goods: select Goods SKU (Col D) and enter Goods Qty (Col E). Description & Cash Amount (Col B & C) will automatically gray out.\n" +
+        "4. Save and re-upload this file in Admin Console > Campaign Report to commit all claims.",
+        70
+      );
+      applyCampaignHeaderBanner(wsClaims, 5, `Campaign: ${campTitle} | Itemized Claims & Receipts Ledger`);
+      applyTableHeaders(wsClaims, [
+        "Assignment / Claim Slot (Dropdown ▼)",
+        "Description / Purpose",
+        "Cash Amount ($)",
+        "Goods Item (SKU) (Dropdown ▼)",
+        "Goods Qty"
+      ], [2, 4]);
+
+      // Populate existing claims from database
+      const existingClaimsRows: {
+        slot: string;
+        desc: string;
+        cashAmt: any;
+        goodsSku: string;
+        goodsQty: any;
+      }[] = [];
+
+      reportActivationEvents.forEach(evt => {
+        const dateDDMM = formatEpochToDDMM(evt.date);
+        const primaryShift = evt.shifts?.[0];
+        const defaultShiftStr = formatShiftMilitary(primaryShift?.shift_start, primaryShift?.shift_end);
+        const storeName = getFormattedStoreName(evt.store_id, evt.store_name);
+
+        // 1. Promoter Personal Claims
+        evt.promoterList.forEach((p: any) => {
+          const pShiftStr = formatShiftMilitary(p.shiftStart, p.shiftEnd) || defaultShiftStr;
+          const pSlotStr = `${dateDDMM} | ${pShiftStr} | ${p.promoterName} | ${storeName}`;
+          if (Array.isArray(p.individualExpenses) && p.individualExpenses.length > 0) {
+            p.individualExpenses.forEach((item: any) => {
+              existingClaimsRows.push({
+                slot: pSlotStr,
+                desc: item.item || item.description || item.sku || "Expense",
+                cashAmt: Number(item.amount || 0),
+                goodsSku: "",
+                goodsQty: ""
+              });
+            });
+          }
+        });
+
+        // 2. Company Claims (Expenses and Goods)
+        if (Array.isArray(evt.companyClaimItems) && evt.companyClaimItems.length > 0) {
+          evt.companyClaimItems.forEach((item: any) => {
+            const isGoods = item.type === "goods" || !!item.sku;
+            if (isGoods) {
+              const compGoodsSlotStr = `${dateDDMM} | ${defaultShiftStr} | Company Goods | ${storeName}`;
+              const matchedProd = campaignProductOptions.find(p => String(p.sku).toLowerCase() === String(item.sku).toLowerCase());
+              const prodStr = matchedProd ? matchedProd.label : String(item.sku || "");
+              const qty = Number(item.qty || 0);
+              existingClaimsRows.push({
+                slot: compGoodsSlotStr,
+                desc: item.item || "Sampling stock",
+                cashAmt: "",
+                goodsSku: prodStr,
+                goodsQty: qty
+              });
+            } else {
+              const compExpSlotStr = `${dateDDMM} | ${defaultShiftStr} | Company Expense | ${storeName}`;
+              existingClaimsRows.push({
+                slot: compExpSlotStr,
+                desc: item.item || item.description || "Company Expense",
+                cashAmt: Number(item.amount || 0),
+                goodsSku: "",
+                goodsQty: ""
+              });
+            }
+          });
+        }
+      });
+
+      // Provide 500 rows with dropdowns all the way down so user has no limit to add rows
+      const claimsTotalDataRows = Math.max(500, existingClaimsRows.length + 50);
+      const disabledFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFE5E7EB" }, bgColor: { argb: "FFE5E7EB" } };
+      const whiteFill = { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FFFFFFFF" }, bgColor: { argb: "FFFFFFFF" } };
+
+      for (let r = 0; r < claimsTotalDataRows; r++) {
+        const rowNum = 4 + r;
+        const row = wsClaims.getRow(rowNum);
+        row.height = 22;
+
+        const existing = existingClaimsRows[r];
+        const isCompGoods = existing ? (Boolean(existing.goodsSku) || existing.slot.includes("Company Goods")) : false;
+        const isCompExpOrPromoter = existing ? (!isCompGoods && Boolean(existing.slot)) : false;
+
+        // Col 1: Assignment / Claim Slot (Dropdown)
+        const cellA = row.getCell(1);
+        cellA.value = existing ? existing.slot : "";
+        cellA.dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: [`'System Reference'!$B$4:$B$${maxRefSlots}`]
+        };
+        cellA.border = thinBorder;
+        cellA.fill = whiteFill;
+        cellA.font = { name: "Calibri", size: 10, color: { argb: "FF111827" } };
+        cellA.alignment = { vertical: "middle", horizontal: "left" };
+
+        // Col 2: Description / Purpose
+        const cellB = row.getCell(2);
+        cellB.value = existing ? existing.desc : "";
+        cellB.border = thinBorder;
+        cellB.fill = isCompGoods ? disabledFill : whiteFill;
+        cellB.font = { name: "Calibri", size: 10, color: { argb: isCompGoods ? "FF9CA3AF" : "FF111827" } };
+        cellB.alignment = { vertical: "middle", horizontal: "left" };
+
+        // Col 3: Cash Amount ($) (Leave empty if blank row - no pre-filled $0.00!)
+        const cellC = row.getCell(3);
+        cellC.value = existing && existing.cashAmt !== "" ? existing.cashAmt : "";
+        cellC.border = thinBorder;
+        cellC.fill = isCompGoods ? disabledFill : whiteFill;
+        cellC.font = { name: "Calibri", size: 10.5, color: { argb: isCompGoods ? "FF9CA3AF" : "FF111827" } };
+        cellC.alignment = { vertical: "middle", horizontal: "right" };
+        cellC.numFmt = "$#,##0.00";
+
+        // Col 4: Goods Item (SKU) (Dropdown)
+        const cellD = row.getCell(4);
+        cellD.value = existing ? existing.goodsSku : "";
+        cellD.dataValidation = {
+          type: "list",
+          allowBlank: true,
+          formulae: [`'System Reference'!$C$4:$C$${maxRefProducts}`]
+        };
+        cellD.border = thinBorder;
+        cellD.fill = isCompExpOrPromoter ? disabledFill : whiteFill;
+        cellD.font = { name: "Calibri", size: 10, color: { argb: isCompExpOrPromoter ? "FF9CA3AF" : "FF111827" } };
+        cellD.alignment = { vertical: "middle", horizontal: "left" };
+
+        // Col 5: Goods Qty (Leave empty if blank row - no pre-filled 0!)
+        const cellE = row.getCell(5);
+        cellE.value = existing && existing.goodsQty !== "" ? existing.goodsQty : "";
+        cellE.border = thinBorder;
+        cellE.fill = isCompExpOrPromoter ? disabledFill : whiteFill;
+        cellE.font = { name: "Calibri", size: 10.5, color: { argb: isCompExpOrPromoter ? "FF9CA3AF" : "FF111827" } };
+        cellE.alignment = { vertical: "middle", horizontal: "right" };
+        cellE.numFmt = "#,##0";
+      }
+
+      // Dynamic Conditional Formatting in Excel:
+      // 1. If Column A contains "Company Goods", dynamically gray out Col B (Description) and Col C (Cash Amount)
+      wsClaims.addConditionalFormatting({
+        ref: `B4:C${claimsTotalDataRows}`,
+        rules: [
+          {
+            type: "expression",
+            priority: 1,
+            formulae: ['ISNUMBER(SEARCH("Company Goods",$A4))'],
+            style: {
+              fill: {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFE5E7EB" },
+                bgColor: { argb: "FFE5E7EB" }
+              }
+            }
+          }
+        ]
+      });
+
+      // 2. If Column A is selected and does NOT contain "Company Goods" (i.e. Company Expense or Promoter claim),
+      // dynamically gray out Col D (Goods Item) and Col E (Goods Qty)
+      wsClaims.addConditionalFormatting({
+        ref: `D4:E${claimsTotalDataRows}`,
+        rules: [
+          {
+            type: "expression",
+            priority: 2,
+            formulae: ['AND($A4<>"",ISERROR(SEARCH("Company Goods",$A4)))'],
+            style: {
+              fill: {
+                type: "pattern",
+                pattern: "solid",
+                fgColor: { argb: "FFE5E7EB" },
+                bgColor: { argb: "FFE5E7EB" }
+              }
+            }
+          }
+        ]
+      });
+
+      // ==========================================
+      // TAB 3: System Reference (3rd Worksheet, strictly HIDDEN from tab bar)
+      // ==========================================
+      const wsRef = wb.addWorksheet("System Reference");
+      wsRef.state = "veryHidden"; // Strictly hidden in Excel
+      wsRef.columns = [
+        { key: "events", width: 48 },
+        { key: "slots", width: 56 },
+        { key: "products", width: 44 },
+        { key: "unitCost", width: 16 },
+        { key: "eventKey", width: 24 }
+      ];
+
+      applyInstructionBanner(
+        wsRef,
+        5,
+        "DROPDOWN SYSTEM REFERENCE (READ-ONLY / HIDDEN):\n" +
+        "This sheet contains the valid master lists powering the Excel dropdowns in Goods Movement and Claims Ledger.",
+        40
+      );
+      applyCampaignHeaderBanner(wsRef, 5, `Campaign System Reference & Dropdown Lists | ${campTitle}`);
+      applyTableHeaders(wsRef, [
+        "Valid Activation Events",
+        "Valid Assignment / Claim Slots",
+        "Campaign Product SKUs",
+        "Unit Cost ($)",
+        "Event Key"
+      ], [3, 4]);
+
+      const maxRefRowCount = Math.max(activationEventsList.length, assignmentSlotsList.length, campaignProductOptions.length, 3);
+      for (let i = 0; i < maxRefRowCount; i++) {
+        const row = wsRef.getRow(4 + i);
+        row.height = 20;
+
+        const ev = activationEventsList[i];
+        const sl = assignmentSlotsList[i];
+        const pr = campaignProductOptions[i];
+
+        row.getCell(1).value = ev?.label || "";
+        row.getCell(2).value = sl?.label || "";
+        row.getCell(3).value = pr?.label || "";
+        row.getCell(4).value = pr ? pr.cost : "";
+        row.getCell(5).value = ev?.eventKey || "";
+
+        for (let c = 1; c <= 5; c++) {
+          const cell = row.getCell(c);
+          cell.border = thinBorder;
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFFFF" } };
+          cell.font = { name: "Calibri", size: 10, color: { argb: "FF111827" } };
+          if (c === 4) {
+            cell.alignment = { vertical: "middle", horizontal: "right" };
+            cell.numFmt = "$#,##0.00";
+          } else if (c === 5) {
+            cell.alignment = { vertical: "middle", horizontal: "center" };
+          } else {
+            cell.alignment = { vertical: "middle", horizontal: "left" };
+          }
+        }
+      }
+
+      // ----------------------------------------------------
+      // Generate Binary Buffer & Trigger Download
+      // ----------------------------------------------------
+      const buffer = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const cleanCampName = campTitle.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 30);
+      const filename = `Activation_Working_File_${cleanCampName}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(downloadUrl);
+
+      showToast("Downloaded working file with native dropdowns and hidden reference sheet.", "success");
+    } catch (err: any) {
+      showToast("Failed to generate working file: " + err.message, "error");
+    }
+  };
+
+  // --- Working File Excel Import & Parsing ---
+  const handleImportReportWorkingFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array" });
+
+      // Find sheets by name
+      const goodsSheetName = wb.SheetNames.find(n => n.toLowerCase().includes("goods") || n.toLowerCase().includes("movement")) || wb.SheetNames[0];
+      const claimsSheetName = wb.SheetNames.find(n => n.toLowerCase().includes("claim") || n.toLowerCase().includes("ledger")) || wb.SheetNames[1];
+
+      const wsGoods = wb.Sheets[goodsSheetName];
+      const wsClaims = claimsSheetName ? wb.Sheets[claimsSheetName] : null;
+
+      if (!wsGoods) {
+        throw new Error("Goods Movement sheet not found in the uploaded workbook.");
+      }
+
+      // 1. Process Goods Movement Sheet (Itemized Rows)
+      const rawGoodsRows: any[][] = XLSX.utils.sheet_to_json(wsGoods, { header: 1, blankrows: false });
+      if (!rawGoodsRows || rawGoodsRows.length < 2) {
+        throw new Error("Goods Movement sheet contains no data rows.");
+      }
+
+      let goodsHeaderIdx = -1;
+      for (let i = 0; i < Math.min(8, rawGoodsRows.length); i++) {
+        const rowCells = (rawGoodsRows[i] || []).map(cell => String(cell || "").trim().toLowerCase());
+        if (rowCells.some(c => c.includes("activation") || (c.includes("sku") && c.includes("qty")) || (c.includes("product") && c.includes("qty")) || c.includes("goods"))) {
+          goodsHeaderIdx = i;
+          break;
+        }
+      }
+
+      if (goodsHeaderIdx === -1) {
+        throw new Error("Could not detect table headers in Goods Movement sheet.");
+      }
+
+      const eventUpdates: Record<string, { itemsMoved: any[]; totalMoved: number; eventKey: string; primaryShiftId: string; storeName: string; dateStr: string }> = {};
+
+      for (let r = goodsHeaderIdx + 1; r < rawGoodsRows.length; r++) {
+        const row = rawGoodsRows[r];
+        if (!row || row.length === 0) continue;
+
+        const eventSlotStr = String(row[0] || "").trim();
+        const skuStr = String(row[1] || "").trim();
+        const qty = parseInt(String(row[2] || 0)) || 0;
+
+        if (qty <= 0 || !eventSlotStr || !skuStr) continue;
+
+        // Parse event slot string: "DD/MM | Shift | Store Name"
+        const slotParts = eventSlotStr.split("|").map(s => s.trim());
+        const dateDDMM = slotParts[0] || "";
+        const storePart = slotParts[slotParts.length - 1] || "";
+
+        // Match activation event
+        const matchEvt = reportActivationEvents.find(e => {
+          const eDDMM = formatEpochToDDMM(e.date);
+          const eStore = getFormattedStoreName(e.store_id, e.store_name);
+          const dateMatches = !dateDDMM || eDDMM === dateDDMM;
+          const storeMatches = !storePart || 
+            eStore.toLowerCase().includes(storePart.toLowerCase().slice(0, 8)) || 
+            storePart.toLowerCase().includes(eStore.toLowerCase().slice(0, 8));
+          return dateMatches && storeMatches;
+        });
+
+        if (matchEvt) {
+          // Match product SKU
+          const matchProd = reportCampaignProducts.find(p => 
+            skuStr.toLowerCase().includes(p.sku.toLowerCase()) || 
+            p.sku.toLowerCase() === skuStr.toLowerCase()
+          );
+          const actualSku = matchProd ? matchProd.sku : skuStr.split(" ")[0].trim();
+
+          if (!eventUpdates[matchEvt.eventKey]) {
+            eventUpdates[matchEvt.eventKey] = {
+              itemsMoved: [],
+              totalMoved: 0,
+              eventKey: matchEvt.eventKey,
+              primaryShiftId: matchEvt.primaryShiftId,
+              storeName: getFormattedStoreName(matchEvt.store_id, matchEvt.store_name),
+              dateStr: formatEpochToDisplay(matchEvt.date)
+            };
+          }
+
+          // Aggregate quantity if SKU is listed multiple times
+          const existingItem = eventUpdates[matchEvt.eventKey].itemsMoved.find(it => it.sku.toLowerCase() === actualSku.toLowerCase());
+          if (existingItem) {
+            existingItem.qty += qty;
+          } else {
+            eventUpdates[matchEvt.eventKey].itemsMoved.push({ sku: actualSku, qty });
+          }
+          eventUpdates[matchEvt.eventKey].totalMoved += qty;
+        }
+      }
+
+      // 2. Process Claims Ledger Sheet (Embedded Claim Types in Col A)
+      const claimUpdates: {
+        companyClaims: Record<string, any[]>; // eventKey -> company claims array
+        promoterClaims: Record<string, any[]>; // shiftId -> promoter claims array
+      } = {
+        companyClaims: {},
+        promoterClaims: {}
+      };
+
+      let personalClaimsCount = 0;
+      let personalClaimsSum = 0;
+      let companyClaimsCount = 0;
+      let companyClaimsSum = 0;
+      const parsedClaimsList: any[] = [];
+
+      if (wsClaims) {
+        const rawClaimsRows: any[][] = XLSX.utils.sheet_to_json(wsClaims, { header: 1, blankrows: false });
+        if (rawClaimsRows && rawClaimsRows.length >= 2) {
+          let claimsHeaderIdx = -1;
+          for (let i = 0; i < Math.min(8, rawClaimsRows.length); i++) {
+            const rowCells = (rawClaimsRows[i] || []).map(cell => String(cell || "").trim().toLowerCase());
+            if (rowCells.some(c => c.includes("assignment") || c.includes("claim slot") || c.includes("cash amount") || c.includes("goods"))) {
+              claimsHeaderIdx = i;
+              break;
+            }
+          }
+
+          if (claimsHeaderIdx >= 0) {
+            for (let r = claimsHeaderIdx + 1; r < rawClaimsRows.length; r++) {
+              const row = rawClaimsRows[r];
+              if (!row || row.length === 0) continue;
+
+              const slotStr = String(row[0] || "").trim();
+              const desc = String(row[1] || "").trim();
+              const cashAmt = parseFloat(String(row[2] || 0)) || 0;
+              const goodsSkuStr = String(row[3] || "").trim();
+              const goodsQty = parseInt(String(row[4] || 0)) || 0;
+
+              if (!slotStr) continue;
+              if (cashAmt <= 0 && goodsQty <= 0) continue; // Skip zero/blank rows
+
+              // Parse assignment slot: "DD/MM | Shift | Claimant / Company Type | Store Name"
+              const slotParts = slotStr.split("|").map(s => s.trim());
+              const dateDDMM = slotParts[0] || "";
+              const claimantPart = slotParts.length >= 3 ? slotParts[2] : "";
+              const storePart = slotParts[slotParts.length - 1] || "";
+
+              // Match activation event
+              const matchEvt = reportActivationEvents.find(e => {
+                const eDDMM = formatEpochToDDMM(e.date);
+                const eStore = getFormattedStoreName(e.store_id, e.store_name);
+                const dateMatches = !dateDDMM || eDDMM === dateDDMM;
+                const storeMatches = !storePart || 
+                  eStore.toLowerCase().includes(storePart.toLowerCase().slice(0, 8)) || 
+                  storePart.toLowerCase().includes(eStore.toLowerCase().slice(0, 8));
+                return dateMatches && storeMatches;
+              });
+
+              if (matchEvt) {
+                const isCompanyGoods = claimantPart.toLowerCase().includes("company goods") || goodsQty > 0;
+                const isCompanyExpense = claimantPart.toLowerCase().includes("company expense") || claimantPart.toLowerCase() === "company";
+
+                if (isCompanyGoods) {
+                  // Company Goods Claim
+                  const matchProd = reportCampaignProducts.find(p => 
+                    goodsSkuStr.toLowerCase().includes(p.sku.toLowerCase()) || 
+                    p.sku.toLowerCase() === goodsSkuStr.toLowerCase()
+                  );
+                  const actualSku = matchProd ? matchProd.sku : goodsSkuStr.split(" ")[0].trim();
+                  const unitCost = Number(matchProd?.cost_price || matchProd?.unit_cost || 1.00);
+                  const totalGoodsCost = (goodsQty > 0 ? goodsQty : 1) * unitCost;
+
+                  if (!claimUpdates.companyClaims[matchEvt.eventKey]) {
+                    claimUpdates.companyClaims[matchEvt.eventKey] = [];
+                  }
+
+                  const claimObj = {
+                    id: `comp_goods_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                    type: "goods",
+                    sku: actualSku,
+                    qty: goodsQty,
+                    unitCost,
+                    amount: totalGoodsCost,
+                    item: matchProd ? (matchProd["display_name"] || matchProd.name || actualSku) : (desc || actualSku)
+                  };
+
+                  claimUpdates.companyClaims[matchEvt.eventKey].push(claimObj);
+                  companyClaimsCount++;
+                  companyClaimsSum += totalGoodsCost;
+
+                  parsedClaimsList.push({
+                    date: formatEpochToDisplay(matchEvt.date),
+                    store: getFormattedStoreName(matchEvt.store_id, matchEvt.store_name),
+                    claimant: "Company Goods",
+                    category: "Company Goods",
+                    description: `${goodsQty}x ${actualSku} (${desc || "Sampling"})`,
+                    amount: totalGoodsCost
+                  });
+                } else if (isCompanyExpense && cashAmt > 0) {
+                  // Company Cash Expense
+                  if (!claimUpdates.companyClaims[matchEvt.eventKey]) {
+                    claimUpdates.companyClaims[matchEvt.eventKey] = [];
+                  }
+
+                  const claimObj = {
+                    id: `comp_exp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                    type: "expense",
+                    item: desc || "Company Expense",
+                    amount: cashAmt
+                  };
+
+                  claimUpdates.companyClaims[matchEvt.eventKey].push(claimObj);
+                  companyClaimsCount++;
+                  companyClaimsSum += cashAmt;
+
+                  parsedClaimsList.push({
+                    date: formatEpochToDisplay(matchEvt.date),
+                    store: getFormattedStoreName(matchEvt.store_id, matchEvt.store_name),
+                    claimant: "Company Expense",
+                    category: "Company Expense",
+                    description: desc || "Company Expense",
+                    amount: cashAmt
+                  });
+                } else if (cashAmt > 0) {
+                  // Promoter Personal Claim
+                  const matchPromoter = matchEvt.promoterList.find((p: any) => 
+                    p.promoterName.toLowerCase().trim() === claimantPart.toLowerCase().trim() ||
+                    claimantPart.toLowerCase().includes(p.promoterName.toLowerCase())
+                  ) || matchEvt.promoterList[0];
+
+                  if (matchPromoter) {
+                    if (!claimUpdates.promoterClaims[matchPromoter.scheduleId]) {
+                      claimUpdates.promoterClaims[matchPromoter.scheduleId] = [];
+                    }
+
+                    const claimObj = {
+                      id: `claim_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+                      type: "expense",
+                      item: desc || "Expense",
+                      amount: cashAmt
+                    };
+
+                    claimUpdates.promoterClaims[matchPromoter.scheduleId].push(claimObj);
+                    personalClaimsCount++;
+                    personalClaimsSum += cashAmt;
+
+                    parsedClaimsList.push({
+                      date: formatEpochToDisplay(matchEvt.date),
+                      store: getFormattedStoreName(matchEvt.store_id, matchEvt.store_name),
+                      claimant: matchPromoter.promoterName,
+                      category: "Personal Expense",
+                      description: desc || "Expense",
+                      amount: cashAmt
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const preview = {
+        eventsCount: Object.keys(eventUpdates).length,
+        totalUnitsMoved: Object.values(eventUpdates).reduce((acc, curr) => acc + curr.totalMoved, 0),
+        personalClaimsCount,
+        personalClaimsSum,
+        companyClaimsCount,
+        companyClaimsSum,
+        eventUpdates,
+        claimUpdates,
+        parsedClaimsList
+      };
+
+      setWorkingFilePreview(preview);
+      setIsImportPreviewOpen(true);
+    } catch (err: any) {
+      showToast("Failed to parse Excel file: " + err.message, "error");
+    } finally {
+      if (e.target) e.target.value = "";
+    }
+  };
+
+  // --- Commit Working File Import Updates to Database ---
+  const handleConfirmApplyWorkingFile = async () => {
+    if (!workingFilePreview) return;
+    setIsSavingWorkingFile(true);
+
+    try {
+      const { eventUpdates, claimUpdates } = workingFilePreview;
+
+      // Compile drafts for schedules
+      const newDrafts: Record<string, any> = {};
+
+      // 1. Goods movement updates
+      Object.values(eventUpdates as Record<string, any>).forEach((upd: any) => {
+        newDrafts[upd.primaryShiftId] = {
+          ...(newDrafts[upd.primaryShiftId] || {}),
+          items_moved: JSON.stringify(upd.itemsMoved)
+        };
+      });
+
+      // 2. Company claims updates
+      Object.entries(claimUpdates.companyClaims as Record<string, any[]>).forEach(([evtKey, items]) => {
+        const evt = reportActivationEvents.find(e => e.eventKey === evtKey);
+        if (evt) {
+          newDrafts[evt.primaryShiftId] = {
+            ...(newDrafts[evt.primaryShiftId] || {}),
+            company_claim: JSON.stringify(items),
+            shared_event_cost: JSON.stringify(items)
+          };
+        }
+      });
+
+      // 3. Promoter personal claims updates
+      Object.entries(claimUpdates.promoterClaims as Record<string, any[]>).forEach(([shiftId, items]) => {
+        newDrafts[shiftId] = {
+          ...(newDrafts[shiftId] || {}),
+          promoting_cost: JSON.stringify(items)
+        };
+      });
+
+      const shiftIds = Object.keys(newDrafts);
+      if (shiftIds.length === 0) {
+        showToast("No updates were found in the uploaded file.", "info");
+        setIsImportPreviewOpen(false);
+        return;
+      }
+
+      // Optimistically update schedules in local state
+      setSchedules(prev => prev.map(s => {
+        if (newDrafts[s.id]) {
+          return { ...s, ...newDrafts[s.id] };
+        }
+        return s;
+      }));
+
+      // Save each shift update to database via Cloudflare Worker
+      for (const id of shiftIds) {
+        const changes = newDrafts[id];
+        const res = await fetch(`https://ib-v2.hsgglobalpteltd.workers.dev/api/promoter`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            table: "Promoter_Schedule",
+            action: "update",
+            data: {
+              id,
+              ...changes
+            }
+          })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `HTTP ${res.status} error updating shift.`);
+        }
+      }
+
+      showToast(`Successfully imported: ${workingFilePreview.eventsCount} events updated with ${workingFilePreview.totalUnitsMoved} units moved and ${workingFilePreview.personalClaimsCount + workingFilePreview.companyClaimsCount} claim entries!`, "success");
+      setIsImportPreviewOpen(false);
+      setWorkingFilePreview(null);
+      await loadSchedules();
+    } catch (err: any) {
+      showToast("Failed to apply working file updates: " + err.message, "error");
+    } finally {
+      setIsSavingWorkingFile(false);
     }
   };
 
@@ -4192,7 +5220,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       "TIME START (MANDATORY):\n• 24-hour military time format without leading zeros (e.g. 900 for 09:00, 1400 for 14:00, 830 for 08:30) or standard colon format (09:00, 14:00).\n• Must be strictly earlier than Time End.\n• A 15-minute buffer rule applies between shifts for the same promoter.\n• Shifts with missing or invalid start times will cause import rejection.",
       "TIME END (MANDATORY):\n• 24-hour military time format without leading zeros (e.g. 1700 for 17:00, 2200 for 22:00, 1730 for 17:30) or standard colon format (17:00, 22:00).\n• Must be strictly later than Time Start.\n• STRICT SHIFT OVERLAP RULE: No overlapping shifts are allowed for the same promoter on the same date.\n• Validation checks across all campaigns AND rows within this spreadsheet: If a promoter has another shift with less than 15 minutes gap, the entire import will be REJECTED with a detailed conflict toast notification.",
       "STORE ID / LOCATION (MANDATORY & CASE-SENSITIVE):\n• FOR REGISTERED STORES: Enter the exact Store ID (e.g. 3303 or SH50).\n• STRICTLY CASE-SENSITIVE: Store ID matching is 100% case-sensitive. 'SH50' will NOT match 'sh50'. If the Store ID does not exist in the database, the import will be REJECTED.\n• COLON RULE (':'): You can write the Store ID with or without details (e.g. '3303: 7 ELEVEN 3303 PIONEER MALL' or just '3303'). The system ONLY reads the Store ID before the colon (':'). Any description after the colon is ignored and not read by the system.\n• FOR CUSTOM LOCATIONS: Type 'custom: [Location Name]' (e.g. 'custom: Marina Bay Event Hall' or 'custom: Takashimaya Atrium B2'). The text after 'custom:' will become the custom address.\n• Missing or invalid Store IDs will reject the import.",
-      "REMARK / NOTES (OPTIONAL):\n• Optional shift notes, booth assignment, briefing instructions, or supervisor remarks.\n• Maximum character limit: 200 words per shift row. Exceeding 200 words will reject the row.\n• LOCKED SHIFTS (Red Background): Rows marked with a soft red background and '[LOCKED BY PAYOUT]' are linked to an active payout paper. These shifts are locked by accounting—do NOT edit them in Excel.\n• OVERWRITE BEHAVIOR: Uploading this spreadsheet will OVERWRITE all unlocked shifts in this campaign. Any shifts locked by payout papers are safely preserved and cannot be overwritten.\n• After uploading, review shifts in the calendar draft and click 'Save & Deploy' to apply changes."
+      "REMARK / NOTES (OPTIONAL):\n• Optional shift notes, booth assignment, briefing instructions, or supervisor remarks.\n• Maximum character limit: 200 words per shift row. Exceeding 200 words will reject the row.\n• LOCKED SHIFTS (Red Background): Rows marked with a soft red background and '[LOCKED BY PAYOUT]' are linked to an active payout paper. These shifts are locked by accounting—do NOT edit them in Excel.\n• OVERWRITE BEHAVIOR: Uploading this spreadsheet will OVERWRITE all unlocked shifts in this campaign. Any shifts locked by payout papers are safely preserved and cannot be overwritten.\n• After uploading, review shifts in the calendar draft and click 'Save Changes' to apply changes."
     ];
 
     // Row 2: Campaign Title
@@ -4835,7 +5863,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         );
         const newSchedules = [...otherSchedules, ...parsedShifts];
         pushHistory(newSchedules);
-        showToast(`Successfully imported ${parsedShifts.length} shift${parsedShifts.length === 1 ? "" : "s"} into draft! Click "Save & Deploy" to commit.`, "success");
+        showToast(`Successfully imported ${parsedShifts.length} shift${parsedShifts.length === 1 ? "" : "s"} into draft! Click "Save Changes" to commit.`, "success");
 
       } catch (err: any) {
         showToast("Failed to process Excel file: " + (err?.message || "Unknown error"), "error");
@@ -5883,12 +6911,65 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
     manuallyAddedPromoterIds.forEach(id => assignedSet.add(id));
 
-    return promoters.filter(p => 
+    let basePromoters = promoters.filter(p => 
       assignedSet.has(String(p.id)) && 
       !hiddenPromoterIds.includes(String(p.id)) &&
       !(p.archived && (String(p.archived) === "1" || String(p.archived) === "true"))
     );
-  }, [promoters, schedules, schedulesBackup, selectedCampaignId, manuallyAddedPromoterIds, hiddenPromoterIds]);
+
+    if (scheduleSearchQuery.trim()) {
+      const q = scheduleSearchQuery.toLowerCase().trim();
+      basePromoters = basePromoters.filter(p => {
+        const pName = String(p.name || p.Nickname || p.FullName || "").toLowerCase();
+        if (pName.includes(q)) return true;
+        return schedules.some(s => {
+          if (String(s["campaign_id"]) !== String(selectedCampaignId)) return false;
+          if (String(s["promoter_id"]) !== String(p.id)) return false;
+          const sName = String(getFormattedStoreName(s["store_id"], s["store_name"])).toLowerCase();
+          return sName.includes(q);
+        });
+      });
+    }
+
+    return basePromoters;
+  }, [promoters, schedules, schedulesBackup, selectedCampaignId, manuallyAddedPromoterIds, hiddenPromoterIds, scheduleSearchQuery, getFormattedStoreName]);
+
+  // Check whether planner table content exceeds the viewport container height
+  React.useEffect(() => {
+    const el = tableContainerRef.current;
+    if (!el) return;
+
+    const checkScrollable = () => {
+      const thead = el.querySelector("thead");
+      const theadHeight = thead ? thead.offsetHeight : 45;
+      
+      const rows = el.querySelectorAll("tbody > tr");
+      let contentHeight = theadHeight;
+      rows.forEach(tr => {
+        let maxCellContent = 110;
+        tr.querySelectorAll("td").forEach(td => {
+          const div = td.firstElementChild as HTMLElement | null;
+          if (div) {
+            maxCellContent = Math.max(maxCellContent, div.offsetHeight + 24);
+          }
+        });
+        contentHeight += maxCellContent;
+      });
+
+      setIsTableScrollable(contentHeight > el.clientHeight + 5);
+    };
+
+    checkScrollable();
+
+    const ro = new ResizeObserver(checkScrollable);
+    ro.observe(el);
+
+    window.addEventListener("resize", checkScrollable);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", checkScrollable);
+    };
+  }, [weekDates, visiblePromoters, schedules, isEditMode]);
 
   const handleShowPromoter = (id: any) => {
     setManuallyAddedPromoterIds(prev => [...prev, String(id)]);
@@ -5911,6 +6992,19 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
     if (selectedCampaignId !== "all" && selectedCampaignId !== "") {
       filtered = filtered.filter(s => String(s["campaign_id"]) === String(selectedCampaignId));
     }
+
+    if (scheduleSearchQuery.trim()) {
+      const q = scheduleSearchQuery.toLowerCase().trim();
+      const promoterObj = promoters.find(p => String(p.id) === String(promoterId));
+      const pName = String(promoterObj?.name || promoterObj?.Nickname || promoterObj?.FullName || "").toLowerCase();
+      if (!pName.includes(q)) {
+        filtered = filtered.filter(s => {
+          const sName = String(getFormattedStoreName(s["store_id"], s["store_name"])).toLowerCase();
+          return sName.includes(q);
+        });
+      }
+    }
+
     return filtered;
   };
 
@@ -6162,7 +7256,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     setPayoutEndDate(formatDateToYYYYMMDD(p["end_date"]));
                     setPayoutHourlyRate(p["hourly_rate"].toString());
                     try {
-                      setEditedPayoutRows(JSON.parse(p["payout_details"]));
+                      const parsed = JSON.parse(p["payout_details"]);
+                      if (Array.isArray(parsed)) {
+                        parsed.sort(sortPayoutRowsByDateAndStart);
+                      }
+                      setEditedPayoutRows(parsed);
                     } catch (err) {
                       setEditedPayoutRows([]);
                     }
@@ -6248,10 +7346,10 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
       />
 
       {/* TopBar Center Campaign Selector */}
-      {mounted && topbarSlot && activeTab === "calendar" && createPortal(
+      {mounted && topbarSlot && (activeTab === "calendar" || activeTab === "reports") && createPortal(
         <div className="flex items-center bg-white border border-slate-200/90 rounded-lg px-2.5 py-1 shadow-2xs animate-in fade-in duration-200">
           <select
-            value={selectedCampaignId}
+            value={selectedCampaignId || ""}
             onChange={(e) => setSelectedCampaignId(e.target.value)}
             className="bg-transparent text-xs font-semibold text-zinc-800 outline-none cursor-pointer max-w-[280px] truncate"
           >
@@ -6324,7 +7422,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           className="h-[28px] px-3 text-xs font-medium bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded transition-all cursor-pointer flex items-center gap-1.5 shadow-xs justify-center"
                         >
                           <Pencil size={12} />
-                          Edit Schedule
+                          Edit Mode
                         </button>
                       ) : (
                         <div className="flex items-center gap-1.5 animate-in fade-in duration-200">
@@ -6334,7 +7432,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             className="h-[28px] px-3 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded shadow-xs transition-all cursor-pointer flex items-center gap-1.5 justify-center"
                           >
                             <Check size={12} className="stroke-[2.5]" />
-                            Save & Deploy
+                            Save Changes
                           </button>
                           <button
                             type="button"
@@ -6416,26 +7514,45 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                       </div>
                     );
                   })()}
+
+                  {/* Search Box - 100% same look, size, distance as Reports tab */}
+                  <div className="relative flex items-center border-l border-zinc-200 pl-3.5 h-7">
+                    <Search size={12} className="absolute left-5.5 text-zinc-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={scheduleSearchQuery}
+                      onChange={(e) => setScheduleSearchQuery(e.target.value)}
+                      placeholder="Search store, promoter..."
+                      className="h-[28px] pl-7 pr-6 w-[180px] lg:w-[200px] bg-zinc-50 border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:bg-white focus:border-[#0B57D0] transition-colors shadow-2xs"
+                    />
+                    {scheduleSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setScheduleSearchQuery("")}
+                        className="absolute right-2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
+                      >
+                        <X size={11} />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Right: Template & Import Schedule, and Show Stores (Edit Mode Only) */}
                 <div className="flex items-center gap-2 select-none">
                   {isEditMode && (
                     <>
-                      {/* Export Schedule Button */}
-                      <button
-                        type="button"
-                        onClick={handleExportSchedule}
-                        className="h-[28px] px-2.5 bg-white border border-zinc-200 hover:bg-zinc-50 rounded text-xs font-medium text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center"
-                        title="Export Schedule to Excel"
-                      >
-                        <Download size={12} className="text-zinc-500" />
-                        Export Schedule
-                      </button>
-
-                      {/* Import Schedule Button */}
-                      {isEditAuthorized && (
-                        <>
+                      {/* Combined Working File Schedule Button */}
+                      <div className="flex items-center bg-white border border-zinc-200 hover:border-zinc-300 rounded text-xs font-medium text-zinc-700 shadow-xs h-[28px] overflow-hidden transition-all">
+                        <button
+                          type="button"
+                          onClick={handleExportSchedule}
+                          className="h-full px-2.5 hover:bg-zinc-100 flex items-center gap-1.5 cursor-pointer text-zinc-700 border-r border-zinc-200"
+                          title="Export Working File Schedule (.xlsx)"
+                        >
+                          <Download size={12} className="text-zinc-600" />
+                          <span>Working File Schedule</span>
+                        </button>
+                        {isEditAuthorized && (
                           <button
                             type="button"
                             onClick={() => {
@@ -6445,21 +7562,20 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               }
                               scheduleImportFileInputRef.current?.click();
                             }}
-                            className="h-[28px] px-2.5 bg-white border border-zinc-200 hover:bg-zinc-50 text-[#0B57D0] hover:text-[#0842A0] rounded text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center"
-                            title="Import Schedule from Excel"
+                            className="h-full px-2 hover:bg-zinc-100 flex items-center justify-center cursor-pointer text-zinc-600 hover:text-zinc-900"
+                            title="Import / Upload Working File Schedule (.xlsx, .csv)"
                           >
-                            <Upload size={12} className="text-[#0B57D0]" />
-                            Import Schedule
+                            <Upload size={12} />
                           </button>
-                          <input
-                            type="file"
-                            ref={scheduleImportFileInputRef}
-                            accept=".xlsx,.xls,.csv"
-                            onChange={handleScheduleFileImport}
-                            className="hidden"
-                          />
-                        </>
-                      )}
+                        )}
+                      </div>
+                      <input
+                        type="file"
+                        ref={scheduleImportFileInputRef}
+                        accept=".xlsx,.xls,.csv"
+                        onChange={handleScheduleFileImport}
+                        className="hidden"
+                      />
                     </>
                   )}
 
@@ -6486,96 +7602,24 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
             <div className="flex-1 min-h-0 w-full flex flex-row gap-3 overflow-hidden select-none">
               
               {/* Left/Main Card: either Active Campaigns Grid or Weekly Planner Table */}
-              <div className={cn(
-                "bg-white border border-zinc-200 rounded-lg overflow-hidden flex flex-col shadow-xs h-full min-w-0 transition-all duration-300",
-                (isStoreLibraryCollapsed || !isEditMode) ? "flex-1" : "flex-[75]"
-              )}>
-                {(!selectedCampaignId || selectedCampaignId === "" || selectedCampaignId === "all") ? (
-                  <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-                    <div className="flex items-center justify-between px-4 py-2.5 bg-zinc-50 border-b border-zinc-150 shrink-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] font-medium text-zinc-600 uppercase tracking-wider">
-                          Active Campaigns
-                        </span>
-                        <span className="text-[11px] text-zinc-400 font-normal">
-                          ({sortedCampaignsForGrid.length})
-                        </span>
-                      </div>
-                      <span className="text-[11px] text-zinc-400 font-normal">
-                        Sorted by latest edit
-                      </span>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
-                      {sortedCampaignsForGrid.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center p-12 text-center">
-                          <Megaphone size={36} className="text-zinc-300 stroke-1 mb-2.5" />
-                          <span className="text-zinc-600 text-xs font-medium uppercase tracking-wider">No Active Campaigns</span>
-                          <p className="text-[11px] text-zinc-400 mt-1 max-w-xs font-normal leading-relaxed">
-                            No active campaigns found. Please create a new campaign in the Campaigns tab.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                          {sortedCampaignsForGrid.map((c) => {
-                            const brandName = String(c.brand || "").split(",")
-                              .map(id => brands.find(b => String(b.id) === String(id.trim()))?.["display_name"] || id.trim())
-                              .filter(Boolean)
-                              .join(", ");
-                            const shiftCount = schedules.filter(s => String(s.campaign_id) === String(c.id)).length;
-                            const hasDates = Boolean(c["start_date"] || c["end_date"]);
-
-                            return (
-                              <div
-                                key={c.id}
-                                onClick={() => setSelectedCampaignId(c.id)}
-                                className="group bg-white border border-zinc-200 hover:border-zinc-400 hover:shadow-xs rounded-lg p-3.5 flex flex-col justify-between transition-all duration-150 cursor-pointer select-none min-h-[140px]"
-                              >
-                                <div className="flex flex-col gap-1.5">
-                                  <div className="flex items-center justify-between gap-1">
-                                    <span className="text-[10.5px] font-medium text-zinc-500 uppercase tracking-wider truncate max-w-[140px]" title={brandName || "Campaign"}>
-                                      {brandName || "Campaign"}
-                                    </span>
-                                    <span className="text-[10.5px] text-zinc-400 font-normal shrink-0">
-                                      {shiftCount} {shiftCount === 1 ? "shift" : "shifts"}
-                                    </span>
-                                  </div>
-
-                                  <h4 className="text-xs font-medium text-zinc-850 group-hover:text-[#0B57D0] transition-colors line-clamp-2 leading-snug mt-0.5" title={c["campaign_title"]}>
-                                    {c["campaign_title"]}
-                                  </h4>
-
-                                  {c["campaign_description"] && (
-                                    <p className="text-[11px] text-zinc-500 line-clamp-2 leading-relaxed mt-0.5 font-normal" title={c["campaign_description"]}>
-                                      {c["campaign_description"]}
-                                    </p>
-                                  )}
-                                </div>
-
-                                <div className="pt-2 mt-2 border-t border-zinc-100 flex items-center justify-between text-[10px] text-zinc-400">
-                                  <div className="flex items-center gap-1 truncate text-zinc-500 font-mono">
-                                    <CalendarIcon size={11} className="text-zinc-400 shrink-0" />
-                                    <span className="truncate">
-                                      {hasDates 
-                                        ? `${formatEpochToDisplay(c["start_date"]) || "—"} - ${formatEpochToDisplay(c["end_date"]) || "—"}`
-                                        : "Dates unassigned"}
-                                    </span>
-                                  </div>
-                                  <span className="text-[#0B57D0] font-medium text-[11px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center shrink-0">
-                                    Open →
-                                  </span>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  /* Planner weekly table grid directly inside card (no extra container wrapper) */
-                  <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
-                    <table className="w-full text-left border-collapse table-fixed min-w-[700px]">
+              {(!selectedCampaignId || selectedCampaignId === "" || selectedCampaignId === "all") ? (
+                <ActiveCampaignsGrid
+                  campaigns={sortedCampaignsForGrid}
+                  schedules={schedules}
+                  brands={brands}
+                  onSelectCampaign={setSelectedCampaignId}
+                />
+              ) : (
+                <div className={cn(
+                  "bg-white border border-zinc-200 rounded-lg overflow-hidden flex flex-col shadow-xs h-full min-w-0 transition-all duration-300",
+                  (isStoreLibraryCollapsed || !isEditMode) ? "flex-1" : "flex-[75]"
+                )}>
+                  {/* Planner weekly table grid directly inside card (no extra container wrapper) */}
+                  <div ref={tableContainerRef} className="flex-1 min-h-0 overflow-auto custom-scrollbar">
+                    <table className={cn(
+                      "w-full text-left border-collapse table-fixed min-w-[700px]",
+                      !isTableScrollable ? "h-full min-h-full" : "min-h-full"
+                    )}>
                           <thead>
                             <tr className="bg-zinc-50 border-b border-zinc-200">
                               {/* Date / Day column header (sticky top & left) */}
@@ -6586,7 +7630,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               {/* Promoter headers (sticky top) */}
                               {visiblePromoters.map((p) => (
                                 <th 
-                                  key={p.id} 
+                                   key={p.id} 
                                   className="py-3 px-4 font-semibold text-xs text-zinc-700 text-center border-r border-zinc-200 w-[320px] shrink-0 relative group select-none bg-zinc-50 sticky top-0 z-20 border-b border-zinc-200"
                                 >
                                   <span>{p.name}</span>
@@ -6646,7 +7690,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             </tr>
                           </thead>
                           <tbody>
-                            {weekDates.map((date) => {
+                            {weekDates.map((date, dateIndex) => {
+                              const isLastRow = dateIndex === weekDates.length - 1;
                               const formattedDay = date.toLocaleDateString("en-US", { weekday: "long" });
                               const formattedDateStr = date.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
                               
@@ -6664,7 +7709,15 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               })();
 
                               return (
-                                <tr key={date.toDateString()} className={cn("border-b border-zinc-200 hover:bg-zinc-50/10", !isDateWithinCamp && "opacity-40 bg-zinc-100/50")}>
+                                <tr
+                                  key={date.toDateString()}
+                                  style={
+                                    !isTableScrollable
+                                      ? (isLastRow ? { height: "100%" } : { height: "1px" })
+                                      : undefined
+                                  }
+                                  className={cn("border-b border-zinc-200 hover:bg-zinc-50/10", !isDateWithinCamp && "opacity-40 bg-zinc-100/50")}
+                                >
                                   {/* Left date column */}
                                   <td className={cn(
                                     "py-3 px-4 align-top font-semibold text-xs border-r border-zinc-200 sticky left-0 z-10 select-none min-h-[110px] shadow-[2px_0_5px_0_rgba(0,0,0,0.05)]",
@@ -6835,8 +7888,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           </tbody>
                         </table>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {/* Right Panel: Draggable Stores List */}
                   {!isStoreLibraryCollapsed && isEditMode && (
@@ -6929,161 +7982,200 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
         {/* Reports Tab */}
         {activeTab === "reports" && (
           <div className="w-full h-full flex flex-col gap-3 overflow-hidden relative select-none">
-            
-            {/* Top Filter and Controls Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-zinc-200 rounded-lg px-4 py-2 shadow-xs shrink-0">
-              
-              {/* Left Filters: Campaign & Date Range */}
-              <div className="flex flex-wrap items-center gap-3">
-                {/* Select Campaign */}
-                <div className="flex items-center gap-1.5">
-                  <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider whitespace-nowrap">Campaign:</span>
-                  <select
-                    value={reportCampaignId}
-                    onChange={(e) => setReportCampaignId(e.target.value)}
-                    className="h-[28px] px-2.5 py-0 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0] focus:ring-1 focus:ring-[#0B57D0]/20 cursor-pointer max-w-[220px] transition-all"
-                  >
-                    <option value="all">All Campaigns</option>
-                    {campaigns
-                      .filter(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"))
-                      .map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c["campaign_title"]}
-                        </option>
-                      ))}
-                  </select>
-                </div>
+            {(!selectedCampaignId || selectedCampaignId === "" || selectedCampaignId === "all") ? (
+              <ActiveCampaignsGrid
+                campaigns={sortedCampaignsForGrid}
+                schedules={schedules}
+                brands={brands}
+                onSelectCampaign={setSelectedCampaignId}
+              />
+            ) : (
+              <>
+                {/* Top Filter and Controls Bar - EXACT SAME LAYOUT AS SCHEDULE TAB */}
+                {(() => {
+                  const activeCamp = campaigns.find(c => String(c.id) === String(selectedCampaignId));
+                  const campMinDate = activeCamp?.start_date ? formatEpochToDateInput(activeCamp.start_date) : undefined;
+                  const campMaxDate = activeCamp?.end_date ? formatEpochToDateInput(activeCamp.end_date) : undefined;
 
-                {/* Date Range Controls */}
-                <div className="flex items-center gap-1.5 border-l border-zinc-200 pl-3">
-                  <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider whitespace-nowrap">Range:</span>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="date"
-                      value={reportStartDate}
-                      onChange={(e) => setReportStartDate(e.target.value)}
-                      className="h-[28px] px-2 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-[11px] font-normal text-zinc-700 outline-none focus:border-[#0B57D0] cursor-pointer shadow-xs"
-                    />
-                    <span className="text-zinc-400 text-xs">to</span>
-                    <input
-                      type="date"
-                      value={reportEndDate}
-                      onChange={(e) => setReportEndDate(e.target.value)}
-                      className="h-[28px] px-2 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-[11px] font-normal text-zinc-700 outline-none focus:border-[#0B57D0] cursor-pointer shadow-xs"
-                    />
-                  </div>
-                </div>
+                  return (
+                    <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-zinc-200 rounded-lg px-4 py-2 shadow-xs shrink-0 select-none">
+                      
+                      {/* Left: Back Button, Edit Mode & Range Date (Matching Schedule tab 100%) */}
+                      <div className="flex items-center gap-3">
+                        {/* Back to All Campaigns Button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isReportEditMode) {
+                              setReportDrafts({});
+                              setIsReportEditMode(false);
+                            }
+                            setSelectedCampaignId("");
+                          }}
+                          className="h-[28px] px-2.5 bg-white border border-zinc-200 hover:bg-zinc-50 rounded text-xs font-medium text-zinc-700 flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs justify-center shrink-0"
+                          title="Back to All Campaigns"
+                        >
+                          <ArrowLeft size={12} className="stroke-[2.5] text-zinc-500" />
+                          All Campaigns
+                        </button>
 
-                {/* Search Box */}
-                <div className="relative flex items-center border-l border-zinc-200 pl-3">
-                  <Search size={12} className="absolute left-5 text-zinc-400 pointer-events-none" />
-                  <input
-                    type="text"
-                    value={reportSearchQuery}
-                    onChange={(e) => setReportSearchQuery(e.target.value)}
-                    placeholder="Search store, promoter..."
-                    className="h-[28px] pl-7 pr-6 w-[200px] bg-zinc-50 border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:bg-white focus:border-[#0B57D0] transition-colors"
-                  />
-                  {reportSearchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setReportSearchQuery("")}
-                      className="absolute right-2 text-zinc-400 hover:text-zinc-600 p-0.5"
-                    >
-                      <X size={11} />
-                    </button>
-                  )}
-                </div>
-              </div>
+                        <div className="h-4 w-px bg-zinc-200 shrink-0" />
 
-              {/* Right Action Buttons: Edit Mode / Save / Export */}
-              <div className="flex items-center gap-2">
-                {!isReportEditMode ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setIsReportEditMode(true)}
-                      className="h-[28px] px-3.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Pencil size={12} />
-                      Edit Mode
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (reportCampaignId && reportCampaignId !== "all") {
-                          const curCamp = campaigns.find(c => String(c.id) === String(reportCampaignId));
-                          if (curCamp) {
-                            handlePrintCampaignReport(curCamp);
-                            return;
-                          }
-                        }
-                        // If "all" campaigns or none explicitly selected, prompt or pick active
-                        if (campaigns.length > 0) {
-                          const activeCamps = campaigns.filter(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"));
-                          if (activeCamps.length === 1) {
-                            handlePrintCampaignReport(activeCamps[0]);
-                          } else {
-                            // Switch to print layout or alert
-                            setSelectedPrintLayout("campaign-reporting");
-                            setActiveTab("print");
-                          }
-                        } else {
-                          showToast("No campaigns available to print.", "info");
-                        }
-                      }}
-                      className="h-[28px] px-3 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                      title="Print Campaign Report"
-                    >
-                      <Printer size={12} />
-                      Print Report
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleExportReportCSV}
-                      className="h-[28px] px-3 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                      title="Export CSV"
-                    >
-                      <Download size={12} />
-                      Export CSV
-                    </button>
-                  </>
-                ) : (
-                  <div className="flex items-center gap-2 animate-in fade-in duration-150">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setReportDrafts({});
-                        setIsReportEditMode(false);
-                      }}
-                      className="h-[28px] px-3 border border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 rounded text-xs font-medium transition-all cursor-pointer"
-                      disabled={savingReport}
-                    >
-                      Discard
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveReportChanges}
-                      disabled={savingReport}
-                      className="h-[28px] px-4 bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded text-xs font-semibold transition-all shadow flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
-                    >
-                      {savingReport ? (
-                        <>
-                          <RefreshCw size={12} className="animate-spin" />
-                          Saving...
-                        </>
-                      ) : (
-                        <>
-                          <Check size={13} className="stroke-[3]" />
-                          Save Changes
-                        </>
-                      )}
-                    </button>
-                  </div>
-                )}
-              </div>
+                        {/* Edit Mode / Save / Discard Button (Same location as Schedule) */}
+                        <div className="flex items-center h-7">
+                          {!isReportEditMode ? (
+                            <button
+                              type="button"
+                              onClick={() => setIsReportEditMode(true)}
+                              className="h-[28px] px-3 text-xs font-medium bg-[#0B57D0] hover:bg-[#0842A0] text-white rounded transition-all cursor-pointer flex items-center gap-1.5 shadow-xs justify-center"
+                            >
+                              <Pencil size={12} />
+                              Edit Mode
+                            </button>
+                          ) : (
+                            <div className="flex items-center gap-1.5 animate-in fade-in duration-200">
+                              <button
+                                type="button"
+                                onClick={handleSaveReportChanges}
+                                disabled={savingReport}
+                                className="h-[28px] px-3 text-xs font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded shadow-xs transition-all cursor-pointer flex items-center gap-1.5 justify-center disabled:opacity-50"
+                              >
+                                {savingReport ? (
+                                  <>
+                                    <RefreshCw size={12} className="animate-spin" />
+                                    Saving...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check size={12} className="stroke-[2.5]" />
+                                    Save Changes
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setReportDrafts({});
+                                  setIsReportEditMode(false);
+                                }}
+                                disabled={savingReport}
+                                className="h-[28px] px-3 text-xs font-medium bg-white text-zinc-700 border border-zinc-200 hover:bg-zinc-50 rounded transition-all cursor-pointer flex items-center justify-center shadow-xs"
+                              >
+                                Discard
+                              </button>
+                            </div>
+                          )}
+                        </div>
 
-            </div>
+                        {/* Start & End Date Pickers (100% same location & layout as Schedule) */}
+                        {selectedCampaignId && selectedCampaignId !== "" && (
+                          <div className="flex items-center gap-2 border-l border-zinc-200 pl-3.5 h-7 animate-in fade-in duration-200">
+                            <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wider">Range Date:</span>
+                            <input
+                              type="date"
+                              value={reportStartDate}
+                              min={campMinDate}
+                              max={campMaxDate}
+                              onChange={(e) => setReportStartDate(e.target.value)}
+                              className="h-[28px] px-2 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-[11px] font-normal text-zinc-700 outline-none focus:border-[#0B57D0] cursor-pointer shadow-xs"
+                            />
+                            <span className="text-zinc-400 text-xs font-normal select-none">-</span>
+                            <input
+                              type="date"
+                              value={reportEndDate}
+                              min={campMinDate}
+                              max={campMaxDate}
+                              onChange={(e) => setReportEndDate(e.target.value)}
+                              className="h-[28px] px-2 bg-zinc-50 hover:bg-white border border-zinc-200 rounded text-[11px] font-normal text-zinc-700 outline-none focus:border-[#0B57D0] cursor-pointer shadow-xs"
+                            />
+                          </div>
+                        )}
+
+                        {/* Search Box */}
+                        <div className="relative flex items-center border-l border-zinc-200 pl-3.5 h-7">
+                          <Search size={12} className="absolute left-5.5 text-zinc-400 pointer-events-none" />
+                          <input
+                            type="text"
+                            value={reportSearchQuery}
+                            onChange={(e) => setReportSearchQuery(e.target.value)}
+                            placeholder="Search store, promoter..."
+                            className="h-[28px] pl-7 pr-6 w-[180px] lg:w-[200px] bg-zinc-50 border border-zinc-200 rounded text-xs font-normal text-zinc-800 outline-none focus:bg-white focus:border-[#0B57D0] transition-colors shadow-2xs"
+                          />
+                          {reportSearchQuery && (
+                            <button
+                              type="button"
+                              onClick={() => setReportSearchQuery("")}
+                              className="absolute right-2 text-zinc-400 hover:text-zinc-600 p-0.5 cursor-pointer"
+                            >
+                              <X size={11} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right: Combined Working File & Print Report (Print Report at the very end) */}
+                      <div className="flex items-center gap-2 select-none">
+                        {/* Combined Working File Button */}
+                        <div className="flex items-center bg-white border border-zinc-200 hover:border-zinc-300 rounded text-xs font-medium text-zinc-700 shadow-xs h-[28px] overflow-hidden transition-all">
+                          <button
+                            type="button"
+                            onClick={handleExportReportWorkingFile}
+                            className="h-full px-2.5 hover:bg-zinc-100 flex items-center gap-1.5 cursor-pointer text-zinc-700 border-r border-zinc-200"
+                            title="Export Working File (.xlsx)"
+                          >
+                            <Download size={12} className="text-zinc-600" />
+                            <span>Working File Report</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => workingFileInputRef.current?.click()}
+                            className="h-full px-2 hover:bg-zinc-100 flex items-center justify-center cursor-pointer text-zinc-600 hover:text-zinc-900"
+                            title="Import / Upload Working File (.xlsx)"
+                          >
+                            <Upload size={12} />
+                          </button>
+                        </div>
+                        <input
+                          type="file"
+                          ref={workingFileInputRef}
+                          onChange={handleImportReportWorkingFile}
+                          accept=".xlsx,.xls"
+                          className="hidden"
+                        />
+
+                        {/* Print Report Button at the very end */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (selectedCampaignId && selectedCampaignId !== "all") {
+                              const curCamp = campaigns.find(c => String(c.id) === String(selectedCampaignId));
+                              if (curCamp) {
+                                handlePrintCampaignReport(curCamp);
+                                return;
+                              }
+                            }
+                            if (campaigns.length > 0) {
+                              const activeCamps = campaigns.filter(c => !c.archived || (String(c.archived) !== "1" && String(c.archived) !== "true"));
+                              if (activeCamps.length === 1) {
+                                handlePrintCampaignReport(activeCamps[0]);
+                              } else {
+                                setSelectedPrintLayout("campaign-reporting");
+                                setActiveTab("print");
+                              }
+                            } else {
+                              showToast("No campaigns available to print.", "info");
+                            }
+                          }}
+                          className="h-[28px] px-3 bg-white border border-zinc-200 hover:bg-zinc-50 text-zinc-700 rounded text-xs font-medium transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                          title="Print Campaign Report"
+                        >
+                          <Printer size={12} />
+                          Print Report
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
 
             {/* KPI Metric Summary Cards Bar */}
             <div className="grid grid-cols-5 gap-3 shrink-0">
@@ -7192,16 +8284,13 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                               <div className="flex flex-col gap-1.5">
                                 {evt.promoterList.map((p: any) => (
                                   <div key={p.scheduleId} className="flex flex-col bg-zinc-50/80 border border-zinc-200 rounded px-2 py-1">
-                                    <div className="flex items-center justify-between gap-1">
-                                      <span className="font-medium text-zinc-850 truncate">{p.promoterName}</span>
-                                      {p.actualStart ? (
-                                        <span className="text-[9px] font-mono text-emerald-700 font-medium">Act: {p.actualStart}-{p.actualEnd}</span>
-                                      ) : (
-                                        <span className="text-[9px] font-mono text-zinc-400">{p.shiftStart}-{p.shiftEnd}</span>
-                                      )}
-                                    </div>
+                                    <span className="font-medium text-zinc-850 truncate">{p.promoterName}</span>
                                     <div className="flex items-center justify-between text-[9px] mt-0.5 text-zinc-500">
-                                      <span>Wage: <span className="font-mono text-zinc-700 font-medium">${p.wage.toFixed(2)}</span></span>
+                                      {p.actualStart ? (
+                                        <span className="font-mono text-emerald-700 font-medium">Act: {p.actualStart}-{p.actualEnd}</span>
+                                      ) : (
+                                        <span className="font-mono text-zinc-400">{p.shiftStart}-{p.shiftEnd}</span>
+                                      )}
                                       {p.personalClaimTotal > 0 && (
                                         <span className="text-amber-700 font-medium font-mono">Claim: ${p.personalClaimTotal.toFixed(2)}</span>
                                       )}
@@ -7318,46 +8407,25 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
 
                             {/* 6. Promoter Wages */}
                             <td className="py-2.5 px-3 align-top">
-                              {!isReportEditMode ? (
-                                <div className="flex flex-col gap-0.5">
-                                  <span className="font-medium font-mono text-zinc-800">
-                                    ${evt.totalWages.toFixed(2)}
-                                  </span>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-medium font-mono text-zinc-800">
+                                  ${evt.totalWages.toFixed(2)}
+                                </span>
+                                {evt.promoterList.length > 1 ? (
+                                  <div className="flex flex-col gap-0.5 mt-0.5">
+                                    {evt.promoterList.map((p: any) => (
+                                      <div key={p.scheduleId} className="flex items-center justify-between gap-1 text-[9px] text-zinc-500 font-mono">
+                                        <span className="truncate max-w-[85px]">{p.promoterName}:</span>
+                                        <span className="text-zinc-700 font-medium">${(Number(p.wage) || 0).toFixed(2)}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
                                   <span className="text-[9px] text-zinc-400">
                                     {evt.promoterList.length} Promoter{evt.promoterList.length === 1 ? "" : "s"}
                                   </span>
-                                </div>
-                              ) : (
-                                <div className="flex flex-col gap-2">
-                                  {evt.promoterList.map((p: any) => (
-                                    <div key={p.scheduleId} className="flex flex-col gap-0.5">
-                                      <span className="text-[9.5px] text-zinc-600 truncate">{p.promoterName}:</span>
-                                      <div className="flex items-center gap-1">
-                                        <span className="text-zinc-400 text-xs">$</span>
-                                        <input
-                                          type="number"
-                                          step="0.01"
-                                          min="0"
-                                          value={p.wage}
-                                          onChange={(e) => {
-                                            const num = parseFloat(e.target.value) || 0;
-                                            handleUpdateReportDraft(p.scheduleId, "promoter_wage", num);
-                                          }}
-                                          className="w-18 px-1.5 py-0.5 bg-white border border-zinc-200 rounded text-xs font-medium font-mono text-zinc-850 outline-none focus:border-[#0B57D0]"
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() => handleUpdateReportDraft(p.scheduleId, "promoter_wage", 0)}
-                                          className="text-[9px] font-medium text-zinc-500 hover:text-red-600 bg-zinc-100 hover:bg-red-50 border border-zinc-200 rounded px-1.5 py-0.5 cursor-pointer"
-                                          title="Mark No Pay"
-                                        >
-                                          No Pay
-                                        </button>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
+                                )}
+                              </div>
                             </td>
 
                             {/* 7. Total Cost */}
@@ -7374,6 +8442,8 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 </table>
               </div>
             </div>
+          </>
+        )}
 
             {/* Modal: Set / Edit Items Moved for a specific shift */}
             {activeItemsMovedModalShiftId && (() => {
@@ -7555,7 +8625,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         <div className="grid grid-cols-[170px_1fr_130px_110px_36px] gap-2.5 pb-2 border-b border-zinc-150 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider pl-1 select-none shrink-0">
                           <div>Claim For / Type</div>
                           <div>Description / Product</div>
-                          <div>Receipt Photo</div>
+                          <div>Receipt Photo / Qty</div>
                           <div>Amount</div>
                           <div></div>
                         </div>
@@ -7605,7 +8675,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                       className="w-full px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer"
                                     >
                                       <option value="company">🏢 Company (Expense)</option>
-                                      <option value="goods">📦 Company (Goods/Cost)</option>
+                                      <option value="goods">📦 Company Goods</option>
                                       {evt.promoterList.map((p: any) => (
                                         <option key={p.scheduleId} value={p.scheduleId}>
                                           👤 {p.promoterName}
@@ -7614,38 +8684,24 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     </select>
                                   </div>
 
-                                  {/* Description or Product SKU + Qty */}
+                                  {/* Description or Product SKU */}
                                   <div>
                                     {isGoods ? (
-                                      <div className="flex items-center gap-1.5">
-                                        <select
-                                          value={item.sku || ""}
-                                          onChange={(e) => handleUpdateClaimItem(item.id, "sku", e.target.value)}
-                                          className="flex-1 min-w-0 px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer truncate"
-                                        >
-                                          <option value="">-- Select Campaign Product --</option>
-                                          {reportCampaignProducts.map(p => {
-                                            const pCost = Number(p.Cost) || Number(p["Cost Price"]) || Number(p["cost_price"]) || Number(p["cost"]) || 0;
-                                            return (
-                                              <option key={p.sku} value={p.sku}>
-                                                {p.sku} - {p.display_name} (Cost: ${pCost.toFixed(2)})
-                                              </option>
-                                            );
-                                          })}
-                                        </select>
-                                        <div className="flex items-center gap-1 shrink-0">
-                                          <input
-                                            type="number"
-                                            min="1"
-                                            placeholder="Qty"
-                                            value={item.qty ?? 1}
-                                            onChange={(e) => handleUpdateClaimItem(item.id, "qty", Math.max(1, parseInt(e.target.value) || 1))}
-                                            className="w-14 px-1.5 py-1 text-center bg-white border border-zinc-200 rounded text-xs font-medium font-mono text-zinc-850 outline-none focus:border-[#0B57D0]"
-                                            title="Quantity of goods used"
-                                          />
-                                          <span className="text-[10px] text-zinc-400 font-mono">pcs</span>
-                                        </div>
-                                      </div>
+                                      <select
+                                        value={item.sku || ""}
+                                        onChange={(e) => handleUpdateClaimItem(item.id, "sku", e.target.value)}
+                                        className="w-full px-2 py-1 bg-white border border-zinc-200 rounded text-xs font-medium text-zinc-800 outline-none focus:border-[#0B57D0] cursor-pointer truncate"
+                                      >
+                                        <option value="">-- Select Campaign Product --</option>
+                                        {reportCampaignProducts.map(p => {
+                                          const pCost = Number(p.Cost) || Number(p["Cost Price"]) || Number(p["cost_price"]) || Number(p["cost"]) || 0;
+                                          return (
+                                            <option key={p.sku} value={p.sku}>
+                                              {p.sku} - {p.display_name} (Cost: ${pCost.toFixed(2)})
+                                            </option>
+                                          );
+                                        })}
+                                      </select>
                                     ) : (
                                       <input
                                         type="text"
@@ -7657,9 +8713,22 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                                     )}
                                   </div>
 
-                                  {/* Receipt Photo (Optional) */}
+                                  {/* Receipt Photo (for expenses) or Qty Input (for company goods) */}
                                   <div className="flex items-center gap-1.5">
-                                    {item.receipt_photo ? (
+                                    {isGoods ? (
+                                      <div className="flex items-center gap-1.5">
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          placeholder="Qty"
+                                          value={item.qty ?? 1}
+                                          onChange={(e) => handleUpdateClaimItem(item.id, "qty", Math.max(1, parseInt(e.target.value) || 1))}
+                                          className="w-20 px-2 py-1 text-center bg-white border border-zinc-200 rounded text-xs font-medium font-mono text-zinc-850 outline-none focus:border-[#0B57D0]"
+                                          title="Quantity of goods used"
+                                        />
+                                        <span className="text-[11px] text-zinc-500 font-mono font-medium">pcs</span>
+                                      </div>
+                                    ) : item.receipt_photo ? (
                                       <div className="flex items-center gap-1">
                                         <a
                                           href={item.receipt_photo}
@@ -7752,7 +8821,7 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                             className="px-3 py-1.5 border border-dashed border-emerald-600 hover:bg-emerald-50 text-emerald-700 font-medium rounded text-xs cursor-pointer transition-all flex items-center gap-1.5"
                           >
                             <Plus size={13} className="stroke-[2.5]" />
-                            Add Company Goods (Cost Price)
+                            Add Company Goods
                           </button>
                           {evt.promoterList.length > 0 && (
                             <button
@@ -7820,6 +8889,215 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                 </div>
               );
             })()}
+
+            {/* Modal: Working File Import Preview */}
+            {isImportPreviewOpen && workingFilePreview && (
+              <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-in fade-in duration-150 font-primary">
+                <div className="w-[860px] max-w-[95vw] max-h-[85vh] bg-white rounded-lg border border-zinc-200 shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
+                  {/* Header */}
+                  <div className="bg-zinc-50 px-5 py-3.5 border-b border-zinc-150 flex justify-between items-center select-none shrink-0">
+                    <div className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-full bg-blue-50 border border-blue-200 flex items-center justify-center text-[#0B57D0]">
+                        <FileText size={15} />
+                      </div>
+                      <div>
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-900">
+                          Working File Import Preview
+                        </h3>
+                        <p className="text-[10.5px] text-zinc-500 mt-0.5">
+                          Review goods movement and claim updates parsed from your working file.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isSavingWorkingFile}
+                      onClick={() => {
+                        setIsImportPreviewOpen(false);
+                        setWorkingFilePreview(null);
+                      }}
+                      className="p-1 hover:bg-zinc-200 text-zinc-400 hover:text-zinc-700 rounded transition-colors cursor-pointer"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+
+                  {/* Body */}
+                  <div className="flex-1 p-5 overflow-y-auto custom-scrollbar flex flex-col gap-4 text-xs">
+                    {/* Metrics Banner */}
+                    <div className="grid grid-cols-4 gap-3">
+                      <div className="bg-zinc-50 border border-zinc-200 rounded p-2.5 flex flex-col">
+                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">Store Activations</span>
+                        <span className="text-base font-bold text-zinc-900 font-mono mt-0.5">
+                          {workingFilePreview.eventsCount}
+                        </span>
+                      </div>
+                      <div className="bg-blue-50/50 border border-blue-200 rounded p-2.5 flex flex-col">
+                        <span className="text-[10px] text-blue-700 uppercase tracking-wider font-semibold">Total Goods Moved</span>
+                        <span className="text-base font-bold text-[#0B57D0] font-mono mt-0.5">
+                          {workingFilePreview.totalUnitsMoved} units
+                        </span>
+                      </div>
+                      <div className="bg-zinc-50 border border-zinc-200 rounded p-2.5 flex flex-col">
+                        <span className="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">Personal Claims</span>
+                        <div className="flex items-baseline gap-1 mt-0.5">
+                          <span className="text-base font-bold text-zinc-850 font-mono">
+                            ${workingFilePreview.personalClaimsSum.toFixed(2)}
+                          </span>
+                          <span className="text-[10.5px] text-zinc-450">({workingFilePreview.personalClaimsCount} items)</span>
+                        </div>
+                      </div>
+                      <div className="bg-amber-50/50 border border-amber-200 rounded p-2.5 flex flex-col">
+                        <span className="text-[10px] text-amber-800 uppercase tracking-wider font-semibold">Company Claims</span>
+                        <div className="flex items-baseline gap-1 mt-0.5">
+                          <span className="text-base font-bold text-amber-900 font-mono">
+                            ${workingFilePreview.companyClaimsSum.toFixed(2)}
+                          </span>
+                          <span className="text-[10.5px] text-amber-700">({workingFilePreview.companyClaimsCount} items)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Section 1: Store Goods Movement Preview */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-700">
+                          1. Store Goods Movement ({workingFilePreview.eventsCount} Events)
+                        </h4>
+                        <span className="text-[10px] text-zinc-400">Values will update activation stock</span>
+                      </div>
+                      <div className="border border-zinc-200 rounded overflow-hidden max-h-44 overflow-y-auto custom-scrollbar">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="bg-zinc-50 border-b border-zinc-200 sticky top-0 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                            <tr>
+                              <th className="py-2 px-3">Date</th>
+                              <th className="py-2 px-3">Store Name</th>
+                              <th className="py-2 px-3">SKUs Moved Breakdown</th>
+                              <th className="py-2 px-3 text-right">Total Units</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-150 font-normal text-zinc-700">
+                            {Object.values(workingFilePreview.eventUpdates as Record<string, any>).length === 0 ? (
+                              <tr>
+                                <td colSpan={4} className="py-4 text-center text-zinc-400 italic">No goods movement rows parsed.</td>
+                              </tr>
+                            ) : (
+                              Object.values(workingFilePreview.eventUpdates as Record<string, any>).map((upd: any, i: number) => (
+                                <tr key={i} className="hover:bg-zinc-50/50">
+                                  <td className="py-2 px-3 font-mono text-[11px] text-zinc-600">{upd.dateStr}</td>
+                                  <td className="py-2 px-3 font-medium text-zinc-900">{upd.storeName}</td>
+                                  <td className="py-2 px-3">
+                                    <div className="flex flex-wrap gap-1">
+                                      {upd.itemsMoved.length === 0 ? (
+                                        <span className="text-zinc-400 italic text-[10.5px]">0 units</span>
+                                      ) : (
+                                        upd.itemsMoved.map((it: any) => (
+                                          <span key={it.sku} className="px-1.5 py-0.2 bg-blue-50 text-[#0B57D0] border border-blue-200 rounded text-[9.5px] font-mono">
+                                            {it.qty}x {it.sku}
+                                          </span>
+                                        ))
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 text-right font-mono font-semibold text-zinc-900">{upd.totalMoved}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* Section 2: Claims Ledger Preview */}
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-[11px] font-semibold uppercase tracking-wider text-zinc-700">
+                          2. Itemized Claims Ledger ({workingFilePreview.parsedClaimsList?.length || 0} Entries)
+                        </h4>
+                        <span className="text-[10px] text-zinc-400">Total: ${(workingFilePreview.personalClaimsSum + workingFilePreview.companyClaimsSum).toFixed(2)}</span>
+                      </div>
+                      <div className="border border-zinc-200 rounded overflow-hidden max-h-48 overflow-y-auto custom-scrollbar">
+                        <table className="w-full text-left text-xs border-collapse">
+                          <thead className="bg-zinc-50 border-b border-zinc-200 sticky top-0 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
+                            <tr>
+                              <th className="py-2 px-3">Date</th>
+                              <th className="py-2 px-3">Store</th>
+                              <th className="py-2 px-3">Claimant</th>
+                              <th className="py-2 px-3">Category</th>
+                              <th className="py-2 px-3">Description</th>
+                              <th className="py-2 px-3 text-right">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-150 font-normal text-zinc-700">
+                            {(!workingFilePreview.parsedClaimsList || workingFilePreview.parsedClaimsList.length === 0) ? (
+                              <tr>
+                                <td colSpan={6} className="py-4 text-center text-zinc-400 italic">No non-zero claim rows found.</td>
+                              </tr>
+                            ) : (
+                              workingFilePreview.parsedClaimsList.map((c: any, i: number) => (
+                                <tr key={i} className="hover:bg-zinc-50/50">
+                                  <td className="py-2 px-3 font-mono text-[11px] text-zinc-600">{c.date}</td>
+                                  <td className="py-2 px-3 truncate max-w-[160px]" title={c.store}>{c.store}</td>
+                                  <td className="py-2 px-3 font-medium text-zinc-900">{c.claimant}</td>
+                                  <td className="py-2 px-3">
+                                    <span className={cn(
+                                      "px-1.5 py-0.2 rounded text-[9.5px] font-medium border",
+                                      c.category === "Company" ? "bg-amber-50 text-amber-800 border-amber-200" : "bg-blue-50 text-[#0B57D0] border-blue-200"
+                                    )}>
+                                      {c.category}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 px-3 text-zinc-600">{c.description}</td>
+                                  <td className="py-2 px-3 text-right font-mono font-semibold text-zinc-900">${Number(c.amount || 0).toFixed(2)}</td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div className="bg-zinc-50 px-5 py-3 border-t border-zinc-150 flex justify-between items-center select-none shrink-0">
+                    <span className="text-[11px] text-zinc-500">
+                      Changes will be written directly to the database and schedule records.
+                    </span>
+                    <div className="flex items-center gap-2.5">
+                      <button
+                        type="button"
+                        disabled={isSavingWorkingFile}
+                        onClick={() => {
+                          setIsImportPreviewOpen(false);
+                          setWorkingFilePreview(null);
+                        }}
+                        className="px-3.5 py-1.5 border border-zinc-300 hover:border-zinc-400 bg-white hover:bg-zinc-100 text-zinc-700 font-medium rounded text-xs cursor-pointer transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isSavingWorkingFile}
+                        onClick={handleConfirmApplyWorkingFile}
+                        className="px-4 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs cursor-pointer transition-all shadow-xs flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isSavingWorkingFile ? (
+                          <>
+                            <RefreshCw size={12} className="animate-spin" />
+                            Saving Changes...
+                          </>
+                        ) : (
+                          <>
+                            <Check size={13} className="stroke-[3]" />
+                            Apply & Save to Database
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
           </div>
         )}
@@ -9273,20 +10551,6 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         <div className="hidden lg:flex items-center gap-1 pl-1">
                           <button
                             type="button"
-                            onClick={() => handleApplyDatePreset("today")}
-                            className="h-7 px-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10.5px] font-medium rounded transition-colors cursor-pointer"
-                          >
-                            Today
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleApplyDatePreset("this_week")}
-                            className="h-7 px-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10.5px] font-medium rounded transition-colors cursor-pointer"
-                          >
-                            This Week
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => handleApplyDatePreset("last_week")}
                             className="h-7 px-2 bg-zinc-100 hover:bg-zinc-200 text-zinc-700 text-[10.5px] font-medium rounded transition-colors cursor-pointer"
                           >
@@ -9329,11 +10593,11 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           type="button"
                           onClick={fetchPayoutSchedules}
                           disabled={isPayoutFetching}
-                          className="h-8 px-3 bg-zinc-800 hover:bg-zinc-900 text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                          className="h-8 px-3.5 bg-[#0B57D0] hover:bg-[#0842A0] active:scale-98 text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {isPayoutFetching ? (
                             <>
-                              <div className="animate-spin rounded-full h-3 w-3 border-2 border-zinc-400 border-t-white"></div>
+                              <div className="animate-spin rounded-full h-3 w-3 border-2 border-white/40 border-t-white"></div>
                               Fetching...
                             </>
                           ) : (
@@ -9370,15 +10634,22 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                     </div>
                   )}
 
-                  {/* Schedules Table */}
-                  {editedPayoutRows.length > 0 && (
-                    <div className="flex-1 bg-white border border-zinc-200 rounded-lg overflow-hidden shadow-xs flex flex-col min-h-[250px]">
-                      <div className="bg-zinc-50 px-4 py-2.5 border-b border-zinc-200 flex justify-between items-center">
-                        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Shift Wage Breakdown</span>
-                        <span className="text-[10.5px] font-normal text-zinc-500">
-                          Total Wages: <span className="font-semibold text-[#0B57D0] text-xs font-mono">${editedPayoutRows.filter(r => r.selected).reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2)}</span>
-                        </span>
+                {/* Two-Column Layout */}
+                <div className="flex-1 min-h-0 flex gap-3">
+                  {/* Left Column: Shift Wage Breakdown Table */}
+                  <div className="flex-1 min-w-0 bg-white border border-zinc-200 rounded-lg overflow-hidden shadow-xs flex flex-col">
+                    <div className="bg-zinc-50 px-4 py-2.5 border-b border-zinc-200 flex justify-between items-center select-none shrink-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">Shift Wage Breakdown</span>
+                        {editedPayoutRows.length > 0 && (
+                          <span className="text-[10px] text-zinc-400 font-normal">
+                            ({editedPayoutRows.filter(r => r.selected).length} of {editedPayoutRows.length} shifts selected)
+                          </span>
+                        )}
                       </div>
+                    </div>
+
+                    {editedPayoutRows.length > 0 ? (
                       <div className="flex-1 overflow-auto">
                         <table className="w-full text-left border-collapse text-xs">
                           <thead>
@@ -9713,126 +10984,154 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           </tbody>
                         </table>
                       </div>
-                    </div>
-                  )}
-
-                  {/* Adjustments & Deductions Section */}
-                  {editedPayoutRows.length > 0 && (
-                    <div className="bg-white border border-zinc-200 rounded-lg overflow-hidden shadow-xs flex flex-col shrink-0">
-                      <div className="bg-zinc-50 px-4 py-2 border-b border-zinc-200 flex justify-between items-center select-none">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
-                            Adjustments & Allowances (Optional)
-                          </span>
-                          <span className="text-[10px] text-zinc-400 font-normal">
-                            Transport allowance, incentives, penalties, uniform deposits
-                          </span>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center p-8 text-center select-none">
+                        <div className="w-12 h-12 rounded-full bg-blue-50 text-[#0B57D0] flex items-center justify-center mb-3">
+                          <CalendarIcon size={22} />
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setPayoutAdjustments(prev => [
-                              ...prev,
-                              {
-                                id: `adj_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-                                type: "addition",
-                                description: "",
-                                amount: 0
-                              }
-                            ]);
-                          }}
-                          className="h-6 px-2.5 bg-white hover:bg-zinc-100 border border-zinc-200 text-zinc-700 hover:text-zinc-950 font-medium text-[11px] rounded transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
-                        >
-                          <Plus size={12} className="text-[#0B57D0]" />
-                          Add Line
-                        </button>
+                        <h4 className="text-sm font-semibold text-zinc-800 mb-1">No Shifts Loaded</h4>
+                        <p className="text-xs text-zinc-500 max-w-xs">
+                          Select a promoter and date range above, then click <strong className="text-zinc-700">Fetch Shifts</strong> to load eligible shifts.
+                        </p>
                       </div>
+                    )}
+                  </div>
 
-                      {payoutAdjustments.length === 0 ? (
-                        <div className="px-4 py-2 text-xs text-zinc-400 italic">
-                          No adjustments added. (Optional line items like transport allowances or deductions)
-                        </div>
-                      ) : (
-                        <div className="p-3 flex flex-col gap-2">
-                          {payoutAdjustments.map((adj, aIdx) => (
-                            <div key={adj.id} className="flex items-center gap-2 text-xs">
-                              <span className="text-[10.5px] text-zinc-400 font-mono w-4 text-center">{aIdx + 1}.</span>
-                              
-                              {/* Type Selector */}
-                              <select
-                                value={adj.type}
-                                onChange={(e) => {
-                                  const newType = e.target.value as "addition" | "deduction";
-                                  setPayoutAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, type: newType } : a));
-                                }}
-                                className={cn(
-                                  "h-7 px-2 border rounded font-medium text-xs outline-none cursor-pointer shadow-2xs",
-                                  adj.type === "addition" 
-                                    ? "bg-emerald-50 text-emerald-800 border-emerald-250" 
-                                    : "bg-red-50 text-red-800 border-red-250"
-                                )}
-                              >
-                                <option value="addition">+ Allowance / Bonus</option>
-                                <option value="deduction">- Deduction / Penalty</option>
-                              </select>
-
-                              {/* Description */}
-                              <input
-                                type="text"
-                                value={adj.description}
-                                placeholder="Description (e.g. Transport Allowance, Uniform Penalty...)"
-                                onChange={(e) => {
-                                  const desc = e.target.value;
-                                  setPayoutAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, description: desc } : a));
-                                }}
-                                className="flex-1 h-7 px-2.5 bg-white border border-zinc-200 rounded text-xs text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs"
-                              />
-
-                              {/* Amount */}
-                              <div className="relative w-28">
-                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-zinc-400">$</span>
-                                <input
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={adj.amount || ""}
-                                  placeholder="0.00"
-                                  onChange={(e) => {
-                                    const amt = Math.max(0, parseFloat(e.target.value) || 0);
-                                    setPayoutAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, amount: amt } : a));
-                                  }}
-                                  className="w-full h-7 pl-5 pr-2 bg-white border border-zinc-200 rounded text-xs font-mono font-medium text-right text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs"
-                                />
-                              </div>
-
-                              {/* Remove */}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setPayoutAdjustments(prev => prev.filter(a => a.id !== adj.id));
-                                }}
-                                className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer"
-                                title="Remove adjustment line"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
+                  {/* Right Column: Summary of what to pay, adjustments, and action buttons */}
+                  <div className="w-80 lg:w-[380px] shrink-0 bg-white border border-zinc-200 rounded-lg shadow-xs flex flex-col overflow-hidden">
+                    <div className="bg-zinc-50 px-4 py-2.5 border-b border-zinc-200 flex justify-between items-center select-none shrink-0">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">Payout Summary</span>
+                      {selectedPayoutPromoterId && (
+                        <span className="text-xs font-semibold text-[#0B57D0] truncate max-w-[180px]">
+                          {promoters.find(p => String(p.id) === String(selectedPayoutPromoterId))?.name || ""}
+                        </span>
                       )}
+                    </div>
 
-                      {/* Subtotals Bar */}
-                      <div className="bg-zinc-50 px-4 py-2 border-t border-zinc-200 flex flex-wrap items-center justify-end gap-5 text-xs select-none">
-                        <div className="flex items-center gap-1.5 text-zinc-600">
-                          <span>Shifts Subtotal:</span>
+                    <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+                      {/* Metric cards / Summary stats */}
+                      <div className="bg-zinc-50 border border-zinc-200/80 rounded-lg p-3 flex flex-col gap-2 text-xs">
+                        <div className="flex justify-between items-center text-zinc-600">
+                          <span>Selected Shifts:</span>
                           <span className="font-semibold text-zinc-800 font-mono">
+                            {editedPayoutRows.filter(r => r.selected).length} / {editedPayoutRows.length}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center text-zinc-600">
+                          <span>Total Net Working Time:</span>
+                          <span className="font-semibold text-zinc-800 font-mono">
+                            {formatTimeBase("", "", editedPayoutRows.filter(r => r.selected).reduce((acc, curr) => acc + (Number(curr.totalTime) || 0), 0))}
+                          </span>
+                        </div>
+                        <div className="h-px bg-zinc-200 my-0.5" />
+                        <div className="flex justify-between items-center text-zinc-700 font-medium">
+                          <span>Shifts Subtotal:</span>
+                          <span className="font-bold text-zinc-900 font-mono text-sm">
                             ${editedPayoutRows.filter(r => r.selected).reduce((acc, curr) => acc + curr.totalPayout, 0).toFixed(2)}
                           </span>
                         </div>
+                      </div>
 
+                      {/* Feature to Add Deduction or Bonus (Adjustments & Allowances) */}
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between select-none">
+                          <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
+                            Adjustments & Allowances
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPayoutAdjustments(prev => [
+                                ...prev,
+                                {
+                                  id: `adj_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+                                  type: "addition",
+                                  description: "",
+                                  amount: 0
+                                }
+                              ]);
+                            }}
+                            className="h-6 px-2 bg-white hover:bg-zinc-100 border border-zinc-200 text-zinc-700 hover:text-zinc-950 font-medium text-[10.5px] rounded transition-colors cursor-pointer flex items-center gap-1 shadow-2xs"
+                          >
+                            <Plus size={11} className="text-[#0B57D0]" />
+                            Add Line
+                          </button>
+                        </div>
+
+                        {payoutAdjustments.length === 0 ? (
+                          <div className="p-3 bg-zinc-50/60 border border-dashed border-zinc-200 rounded-lg text-center text-xs text-zinc-400 italic">
+                            No adjustments added. (Optional bonuses, transport, or deductions)
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-0.5">
+                            {payoutAdjustments.map((adj, aIdx) => (
+                              <div key={adj.id} className="p-2.5 bg-zinc-50 border border-zinc-200 rounded-lg flex flex-col gap-2">
+                                <div className="flex items-center justify-between gap-2">
+                                  <select
+                                    value={adj.type}
+                                    onChange={(e) => {
+                                      const newType = e.target.value as "addition" | "deduction";
+                                      setPayoutAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, type: newType } : a));
+                                    }}
+                                    className={cn(
+                                      "h-6 px-1.5 border rounded font-medium text-[11px] outline-none cursor-pointer shadow-2xs flex-1",
+                                      adj.type === "addition" 
+                                        ? "bg-emerald-50 text-emerald-800 border-emerald-300" 
+                                        : "bg-red-50 text-red-800 border-red-300"
+                                    )}
+                                  >
+                                    <option value="addition">+ Bonus / Allowance</option>
+                                    <option value="deduction">- Deduction / Penalty</option>
+                                  </select>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setPayoutAdjustments(prev => prev.filter(a => a.id !== adj.id));
+                                    }}
+                                    className="p-1 text-zinc-400 hover:text-red-600 rounded transition-colors cursor-pointer shrink-0"
+                                    title="Remove adjustment"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="text"
+                                    value={adj.description}
+                                    placeholder="Description (Transport, Bonus...)"
+                                    onChange={(e) => {
+                                      const desc = e.target.value;
+                                      setPayoutAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, description: desc } : a));
+                                    }}
+                                    className="flex-1 h-6 px-2 bg-white border border-zinc-200 rounded text-xs text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs"
+                                  />
+                                  <div className="relative w-20 shrink-0">
+                                    <span className="absolute left-1.5 top-1/2 -translate-y-1/2 text-xs text-zinc-400">$</span>
+                                    <input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      value={adj.amount || ""}
+                                      placeholder="0.00"
+                                      onChange={(e) => {
+                                        const amt = Math.max(0, parseFloat(e.target.value) || 0);
+                                        setPayoutAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, amount: amt } : a));
+                                      }}
+                                      className="w-full h-6 pl-4 pr-1.5 bg-white border border-zinc-200 rounded text-xs font-mono font-medium text-right text-zinc-800 outline-none focus:border-[#0B57D0] shadow-2xs"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Net Total Breakdown Callout */}
+                      <div className="mt-auto pt-3 border-t border-zinc-200 flex flex-col gap-2">
                         {payoutAdjustments.length > 0 && (
-                          <div className="flex items-center gap-1.5 text-zinc-600">
-                            <span>Adjustments:</span>
+                          <div className="flex justify-between items-center text-xs text-zinc-600">
+                            <span>Adjustments Total:</span>
                             <span className={cn(
                               "font-semibold font-mono",
                               payoutAdjustments.reduce((acc, curr) => acc + (curr.type === 'deduction' ? -1 : 1) * (Number(curr.amount) || 0), 0) >= 0
@@ -9845,9 +11144,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                           </div>
                         )}
 
-                        <div className="flex items-center gap-1.5 text-zinc-900 border-l border-zinc-250 pl-5">
-                          <span className="font-semibold uppercase tracking-wider text-[11px] text-zinc-600">Net Total:</span>
-                          <span className="font-bold text-[#0B57D0] text-sm font-mono">
+                        <div className="bg-blue-50/60 border border-blue-200/80 rounded-lg p-3 flex justify-between items-center select-none">
+                          <span className="font-bold text-xs uppercase tracking-wider text-zinc-700">Net Total</span>
+                          <span className="font-extrabold text-[#0B57D0] text-lg font-mono">
                             ${Math.max(0, 
                               editedPayoutRows.filter(r => r.selected).reduce((acc, curr) => acc + curr.totalPayout, 0) +
                               payoutAdjustments.reduce((acc, curr) => acc + (curr.type === 'deduction' ? -1 : 1) * (Number(curr.amount) || 0), 0)
@@ -9856,38 +11155,39 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
                         </div>
                       </div>
                     </div>
-                  )}
 
-                {/* Form Footer */}
-                <div className="flex justify-between items-center pt-2 select-none">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsCreatePayoutOpen(false);
-                      setEditingPayoutId(null);
-                    }}
-                    className="px-4 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-50 text-zinc-700 font-medium rounded text-xs cursor-pointer transition-colors shadow-2xs"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSavePayout}
-                    disabled={editedPayoutRows.filter(r => r.selected).length === 0 || isPayoutSaving}
-                    className="px-4.5 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {isPayoutSaving ? (
-                      <>
-                        <div className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-zinc-400 border-t-white"></div>
-                        {editingPayoutId ? "Saving Payout Paper..." : "Creating Payout Paper..."}
-                      </>
-                    ) : (
-                      <>
-                        <Check size={14} className="stroke-[2.5]" />
-                        {editingPayoutId ? "Save Payout Paper" : "Create Payout Paper"}
-                      </>
-                    )}
-                  </button>
+                    {/* Footer Action Buttons inside Right Summary Column */}
+                    <div className="p-3 bg-zinc-50 border-t border-zinc-200 flex items-center justify-between gap-2.5 select-none shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatePayoutOpen(false);
+                          setEditingPayoutId(null);
+                        }}
+                        className="px-3.5 py-1.5 border border-zinc-250 hover:border-zinc-300 bg-white hover:bg-zinc-100 text-zinc-700 font-medium rounded text-xs cursor-pointer transition-colors shadow-2xs"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSavePayout}
+                        disabled={editedPayoutRows.filter(r => r.selected).length === 0 || isPayoutSaving}
+                        className="flex-1 py-1.5 bg-[#0B57D0] hover:bg-[#0842A0] active:scale-98 text-white font-medium rounded text-xs shadow-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isPayoutSaving ? (
+                          <>
+                            <div className="animate-spin rounded-full h-3 w-3 border-2 border-white/40 border-t-white"></div>
+                            <span>{editingPayoutId ? "Saving..." : "Creating..."}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Check size={13} className="stroke-[2.5]" />
+                            <span>{editingPayoutId ? "Save Payout Paper" : "Create Payout Paper"}</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
@@ -10024,6 +11324,9 @@ export function PromoterModule({ profile }: PromoterModuleProps) {
               let jobs: any[] = [];
               try {
                 jobs = JSON.parse(viewingJobsPayout["payout_details"] || "[]");
+                if (Array.isArray(jobs)) {
+                  jobs.sort(sortPayoutRowsByDateAndStart);
+                }
               } catch (e) {
                 jobs = [];
               }
